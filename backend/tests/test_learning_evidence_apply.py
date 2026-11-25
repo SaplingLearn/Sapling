@@ -1591,108 +1591,9 @@ def _graph_update_payloads(source: str) -> list[tuple[int, str | None]]:
     return results
 
 
-# PKG-11 (a PKG-03 reopen): the one evidence caller sanctioned before PKG-05.
-# submit_quiz sends {"evidence": ...} only in the body of its `if loop_on:`
-# branch (spec §7); every other apply_graph_update call stays legacy-keyed.
-# PKG-14b (spec §11.2): the quiz is evidence-only for every student, so its
-# call is no longer behind `if loop_on:` — it moved to
-# SANCTIONED_EVIDENCE_PERSISTERS below. No gated caller is sanctioned now.
-SANCTIONED_EVIDENCE_CALLERS: frozenset = frozenset()
-LOOP_GATE_LOCAL = "loop_on"
-
-
-def _gated_evidence_calls(source: str) -> list[tuple[int, str]]:
-    """(line, enclosing def) for each apply_graph_update call whose payload is
-    a dict literal with exactly one key, the constant "evidence", and which
-    sits in the BODY (not the else) of an `if loop_on:` inside that def.
-    `line` is the callee's line, as _graph_update_payloads reports it."""
-    import ast
-
-    tree = ast.parse(source)
-    parents = {c: n for n in ast.walk(tree) for c in ast.iter_child_nodes(n)}
-    found = []
-    for call in ast.walk(tree):
-        if not (isinstance(call, ast.Call) and len(call.args) > 1):
-            continue
-        func = call.func
-        if not (
-            (isinstance(func, ast.Name) and func.id == "apply_graph_update")
-            or (isinstance(func, ast.Attribute) and func.attr == "apply_graph_update")
-        ):
-            continue
-        payload = call.args[1]
-        if not (
-            isinstance(payload, ast.Dict)
-            and len(payload.keys) == 1
-            and isinstance(payload.keys[0], ast.Constant)
-            and payload.keys[0].value == "evidence"
-        ):
-            continue
-        gated, child, node = False, call, parents.get(call)
-        while node is not None and not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            if (
-                isinstance(node, ast.If)
-                and isinstance(node.test, ast.Name)
-                and node.test.id == LOOP_GATE_LOCAL
-                and any(child is s for s in node.body)
-            ):
-                gated = True
-            child, node = node, parents.get(node)
-        if gated and node is not None:
-            found.append((func.lineno, node.name))
-    return found
-
-
-_GATED_QUIZ = """
-def submit_quiz(u, evs):
-    loop_on = learning_loop_active(u)
-    if loop_on:
-        applied = apply_graph_update(u, {"evidence": evs}, course_id=None)
-    else:
-        applied = apply_graph_update(u, {"updated_nodes": []}, course_id=None)
-"""
-
-
-@pytest.mark.parametrize(
-    ("source", "expected"),
-    [
-        (_GATED_QUIZ, ["submit_quiz"]),
-        (_GATED_QUIZ.replace("def submit_quiz", "def other_route"), ["other_route"]),
-        (_GATED_QUIZ.replace('{"evidence": evs}', '{"updated_nodes": []}'), []),
-        (_GATED_QUIZ.replace("if loop_on:", "if not loop_on:"), []),
-        (_GATED_QUIZ.replace("if loop_on:", "if True:"), []),
-        (
-            "def submit_quiz(u, evs):\n    if loop_on:\n        for e in evs:\n"
-            '            apply_graph_update(u, {"evidence": [e]})',
-            ["submit_quiz"],
-        ),
-        (
-            _GATED_QUIZ.replace('{"evidence": evs}', '{"evidence": evs, "updated_nodes": []}'),
-            [],
-        ),
-        (
-            'def submit_quiz(u, evs):\n    apply_graph_update(u, {"evidence": evs})',
-            [],
-        ),
-        (
-            "def submit_quiz(u, evs):\n    if loop_on:\n        pass\n"
-            '    else:\n        apply_graph_update(u, {"evidence": evs})',
-            [],
-        ),
-        ('if loop_on:\n    apply_graph_update(u, {"evidence": evs})', []),
-    ],
-)
-def test_gated_evidence_call_detector(source, expected):
-    """Mutation cases for the PKG-11 excuse in the caller scan below: only a
-    pure-evidence literal in the body of `if loop_on:` inside a def counts."""
-    assert [fn for _, fn in _gated_evidence_calls(source)] == expected
-
-
-# PKG-05 (a PKG-03 reopen): learning/evidence.py::flush_pending is the one
-# route persister (spec §5, §13 A16) — grade_answer appends, the route calls
-# flush_pending, which sends a pure {"evidence": ...} literal. No route calls it
-# yet; the package that adds the first route caller (PKG-07's /check/answer)
-# retires this scan, its detectors and both sanctioned sets.
+# The defs that may send a pure {"evidence": ...} literal: each persists
+# evidence a grader produced. learning/evidence.py::flush_pending is the route
+# persister (spec §5, §13 A16) — grade_answer appends, the route calls it.
 # PKG-12 (a PKG-03 reopen): learning/review.py::grade_review persists the one
 # Evidence dict grade_answer returned with ONE apply_graph_update call, because
 # flush_pending cannot carry the review's retention target (spec §3.2).
@@ -1703,8 +1604,8 @@ SANCTIONED_EVIDENCE_PERSISTERS = frozenset(
         # helper (#866 review A3); still the review's only evidence persister
         ("learning/review.py", "_write_check_evidence"),
         # PKG-14b: ungated after the cutover (spec §11.2), one mc evidence per
-        # question — was a SANCTIONED_EVIDENCE_CALLERS (gated) entry. #118 moved
-        # the submit's body into the quiz package (spec §13 A149).
+        # question. #118 moved the submit's body into the quiz package (spec
+        # §13 A149).
         ("services/quiz/submission.py", "submit_quiz"),
         # main's study-guide redesign: a guide's check question, graded once,
         # is one mc evidence as a quiz question is (PKG-14b: never a delta).
@@ -1713,12 +1614,13 @@ SANCTIONED_EVIDENCE_PERSISTERS = frozenset(
 )
 
 
-def _evidence_persister_calls(source: str) -> list[tuple[int, str]]:
+def _pure_payload_calls(source: str, key: str) -> list[tuple[int, str]]:
     """(line, nearest enclosing def) for each apply_graph_update call — bare or
     `module.apply_graph_update` — whose second positional argument is a dict
-    literal with exactly one key, the constant "evidence". `line` is the
-    callee's line, as _graph_update_payloads reports it. A module-level call
-    has no def and is never returned."""
+    literal with exactly one key, the constant `key` ("evidence" for a graded
+    persister, "void_evidence" for A123's void caller). `line` is the callee's
+    line, as _graph_update_payloads reports it. A module-level call has no def
+    and is never returned."""
     import ast
 
     tree = ast.parse(source)
@@ -1738,7 +1640,7 @@ def _evidence_persister_calls(source: str) -> list[tuple[int, str]]:
             isinstance(payload, ast.Dict)
             and len(payload.keys) == 1
             and isinstance(payload.keys[0], ast.Constant)
-            and payload.keys[0].value == "evidence"
+            and payload.keys[0].value == key
         ):
             continue
         node = parents.get(call)
@@ -1754,56 +1656,21 @@ def _evidence_persister_calls(source: str) -> list[tuple[int, str]]:
 SANCTIONED_VOID_CALLERS = frozenset({("services/check_item_service.py", "retire_course_item")})
 
 
-def _void_calls(source: str) -> list[tuple[int, str]]:
-    """(line, nearest enclosing def) for each apply_graph_update call — bare or
-    `module.apply_graph_update` — whose second positional argument is a dict
-    literal with exactly one key, the constant "void_evidence" (A123). A
-    module-level call has no def and is never returned."""
-    import ast
-
-    tree = ast.parse(source)
-    parents = {c: n for n in ast.walk(tree) for c in ast.iter_child_nodes(n)}
-    found = []
-    for call in ast.walk(tree):
-        if not (isinstance(call, ast.Call) and len(call.args) > 1):
-            continue
-        func = call.func
-        if not (
-            (isinstance(func, ast.Name) and func.id == "apply_graph_update")
-            or (isinstance(func, ast.Attribute) and func.attr == "apply_graph_update")
-        ):
-            continue
-        payload = call.args[1]
-        if not (
-            isinstance(payload, ast.Dict)
-            and len(payload.keys) == 1
-            and isinstance(payload.keys[0], ast.Constant)
-            and payload.keys[0].value == "void_evidence"
-        ):
-            continue
-        node = parents.get(call)
-        while node is not None and not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            node = parents.get(node)
-        if node is not None:
-            found.append((func.lineno, node.name))
-    return found
-
-
 @pytest.mark.parametrize(
     ("source", "expected"),
     [
         ('def retire_course_item(c, q):\n    apply_graph_update(u, {"void_evidence": {"question_hash": q}}, c)',
          ["retire_course_item"]),
         ('def retire_course_item(c, q):\n    apply_graph_update(u, {"void_evidence": v, "evidence": []}, c)', []),
-        ('def retire_course_item(c, q):\n    apply_graph_update(u, payload, c)', []),
-        ('apply_graph_update(u, {"void_evidence": v}, c)', []),
+        ('def retire_course_item(c, q):\n    apply_graph_update(u, {"evidence": v}, c)', []),
     ],
 )
 def test_void_caller_detector(source, expected):
-    """Mutation cases for the A123 excuse in the caller scan below: only a
-    pure void literal whose nearest def is named counts, and the scan excuses
-    it only for a (file, def) in SANCTIONED_VOID_CALLERS."""
-    assert [fn for _, fn in _void_calls(source)] == expected
+    """The merged scanner keyed on "void_evidence": only a pure void literal
+    counts (an evidence literal is not one), and the caller scan excuses it
+    only for a (file, def) in SANCTIONED_VOID_CALLERS. The payload-shape
+    cases live in test_evidence_persister_detector, the same scanner."""
+    assert [fn for _, fn in _pure_payload_calls(source, "void_evidence")] == expected
 
 
 _FLUSH = """
@@ -1842,19 +1709,17 @@ def test_evidence_persister_detector(source, expected):
     """Mutation cases for the PKG-05 excuse in the caller scan below: only a
     pure-evidence literal whose nearest def is named counts, and the scan
     excuses it only for a (file, def) in SANCTIONED_EVIDENCE_PERSISTERS."""
-    assert [fn for _, fn in _evidence_persister_calls(source)] == expected
+    assert [fn for _, fn in _pure_payload_calls(source, "evidence")] == expected
 
 
-def test_no_production_caller_passes_evidence_yet():
-    """PKG-03 adds the path and no caller: every apply_graph_update call in
+def test_only_graded_persisters_send_evidence_to_the_graph():
+    """The graded-only guard on apply_graph_update's callers: every call in
     application code passes a payload that provably carries only the legacy
-    keys. PKG-11 (reopen) excuses exactly the SANCTIONED_EVIDENCE_CALLERS
-    call that _gated_evidence_calls finds behind `if loop_on:`. PKG-05
-    (reopen) excuses exactly the SANCTIONED_EVIDENCE_PERSISTERS call that
-    _evidence_persister_calls finds (learning/evidence.py::flush_pending, the
-    route persister; spec §13 A16 builds no graded_check_tool). The package
-    that adds the first route caller of flush_pending (PKG-07) retires this
-    test and its detectors."""
+    topology keys, except (a) a pure {"evidence": ...} literal inside a
+    SANCTIONED_EVIDENCE_PERSISTERS def, each of which persists evidence a
+    grader produced, and (b) the one A123 void caller. Any other route to the
+    evidence branch (a new caller, a payload built elsewhere, an alias) fails
+    here, so belief and mastery move only on graded evidence."""
     import test_learning_loop_invariants as inv
 
     problems, callers = [], set()
@@ -1864,15 +1729,11 @@ def test_no_production_caller_passes_evidence_yet():
             continue
         excused = {
             line
-            for line, fn in _gated_evidence_calls(text)
-            if (rel, fn) in SANCTIONED_EVIDENCE_CALLERS
-        } | {
-            line
-            for line, fn in _evidence_persister_calls(text)
+            for line, fn in _pure_payload_calls(text, "evidence")
             if (rel, fn) in SANCTIONED_EVIDENCE_PERSISTERS
         } | {
             line
-            for line, fn in _void_calls(text)
+            for line, fn in _pure_payload_calls(text, "void_evidence")
             if (rel, fn) in SANCTIONED_VOID_CALLERS
         }
         for line, problem in _graph_update_payloads(text):
@@ -1904,18 +1765,11 @@ def add_node(u, c, anchor):
     ("source", "offends"),
     [
         ('apply_graph_update(u, {"new_nodes": nodes}, course_id=c)', False),
-        ('asyncio.to_thread(apply_graph_update, u, {"updated_nodes": ups}, c)', False),
         (_ADD_NODE_SHAPE, False),
-        ("from services.graph_service import apply_graph_update", False),
-        ('verdict = {"evidence": "JUDGE ERROR"}', False),
         ('apply_graph_update(u, {"evidence": evs}, c)', True),
         ('apply_graph_update(u, graph_update={"evidence": evs})', True),
         ('upd = {"new_nodes": []}\nupd["evidence"] = evs\napply_graph_update(u, upd)', True),
-        ("apply_graph_update(u, dict(evidence=evs))", True),
-        ('upd = {}\nupd.setdefault("evidence", evs)\napply_graph_update(u, upd)', True),
         ('upd = {"new_nodes": []}\nupd.update(evidence=evs)\napply_graph_update(u, upd)', True),
-        ('K = "evidence"\napply_graph_update(u, {K: evs})', True),
-        ('apply_graph_update(u, {**base, "new_nodes": []})', True),
         ('upd = {"new_nodes": []}\nfill(upd)\napply_graph_update(u, upd)', True),
         ("def persist(u, payload):\n    return apply_graph_update(u, payload)", True),
         ('asyncio.to_thread(apply_graph_update, u, {"evidence": evs}, c)', True),
@@ -1929,9 +1783,10 @@ def add_node(u, c, anchor):
     ],
 )
 def test_legacy_payload_detector(source, offends):
-    """Mutation cases for test_no_production_caller_passes_evidence_yet: its
-    first form matched only a quoted `"evidence":` dict key, and only under
-    routes/, agents/ and services/."""
+    """Mutation cases for test_only_graded_persisters_send_evidence_to_the_graph,
+    one per way the scan resolves (or fails closed on) a payload: its first
+    form matched only a quoted `"evidence":` dict key, and only under routes/,
+    agents/ and services/."""
     problems = [p for _, p in _graph_update_payloads(source) if p]
     assert bool(problems) is offends, problems
 
@@ -1992,44 +1847,22 @@ def test_fsrs_importers_are_sanctioned():
 @pytest.mark.parametrize(
     ("source", "rel", "offends"),
     [
+        # one case per rule: a read passes; a write fails however the handle
+        # is spelled; non-graph tables pass; a sanction is exact on file, def
+        # and table, and the writer file is no blanket exemption (spec §13 A142)
         ('table("graph_nodes").select("id")', "services/x.py", False),
-        ('table("graph_nodes").select_with_count("id")', "services/x.py", False),
-        ('table("graph_nodes").insert({})', "services/x.py", True),
         ("table('graph_edges').upsert({})", "services/x.py", True),
         ('t = table("node_mastery_events")\nt.insert({})', "services/x.py", True),
-        ('table("graph_nodes").delete(filters={})', "routes/x.py", True),
         ('db.connection.table("learner_state").update({}, filters={})', "agents/x.py", True),
         ('table("users").insert({})', "services/x.py", False),
-        ('def write_state(s):\n    table("learner_state").upsert({})', "services/x.py", True),
-        # spec §13 A142: the dead write_state upsert is no longer sanctioned
-        (
-            'def write_state(s):\n    table("learner_state").upsert({})',
-            "learning/learner_state.py",
-            True,
-        ),
-        ('def other(s):\n    table("learner_state").upsert({})', "learning/learner_state.py", True),
         (
             'def write_metrics(u):\n    table("learner_state").update({}, filters={})',
             "learning/learner_state.py",
             False,
         ),
         ('def write_metrics(u):\n    table("learner_state").update({}, filters={})', "services/x.py", True),
-        # spec §13 A142: the writer file is scanned, function by function
-        # #118 (spec §13 A149): the topology upserts sit in the writer's phase helpers
-        ('def _upsert_new_nodes(u, n):\n    table("graph_nodes").upsert({})', "services/graph_service.py", False),
-        ('def _upsert_new_edges(u, e):\n    table("graph_edges").upsert({})', "services/graph_service.py", False),
-        ('def apply_graph_update(u, g):\n    table("graph_nodes").upsert({})', "services/graph_service.py", True),
-        ('def delete_node(u, n):\n    table("graph_edges").delete(filters={})', "services/graph_service.py", False),
-        ('def update_node_color(u, n, c):\n    table("graph_nodes").update({})', "services/graph_service.py", False),
-        ('def add_node(u):\n    table("graph_nodes").insert({})', "services/graph_service.py", True),
+        ('def other(s):\n    table("learner_state").upsert({})', "learning/learner_state.py", True),
         ('def update_node_color(u, n, c):\n    table("graph_edges").update({})', "services/graph_service.py", True),
-        ('def delete_node(u, n):\n    table("learner_state").delete(filters={})', "services/graph_service.py", True),
-        (
-            'def apply_graph_update(u, g):\n    table("node_mastery_events").insert({})',
-            "services/graph_service.py",
-            True,
-        ),
-        ('table("graph_nodes").delete(filters={})', "services/graph_service.py", True),
     ],
 )
 def test_inv_01_write_detector(source, rel, offends):
