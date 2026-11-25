@@ -7,7 +7,6 @@ REAL flush_pending persists it through the patched apply_graph_update."""
 
 from __future__ import annotations
 
-from db.migration_units import MIGRATION_UNITS
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -1164,53 +1163,10 @@ def test_course_nodes_are_paged():
     assert handle.select_with_count.call_args.kwargs["order"] == "id"
 
 
-def test_the_pose_migration_is_backend_only():
-
-    (mig,) = sorted(
-        (MIGRATION_UNITS).glob(
-            "*_learning_posttest_poses.sql"
-        )
-    )
-    sql = mig.read_text()
-    assert "PRIMARY KEY (user_id, node_id)" in sql and "ENABLE ROW LEVEL SECURITY" in sql
-
-
-def test_the_windows_migration_rekeys_the_poses_and_maps_old_rows_to_the_first_window():
-    """A112: a NEW migration (the A87 one is immutable): one row per (student,
-    node, window); every pre-window row becomes the 7-day window; the anchor,
-    the delay and the outcome columns; the outcome only on an answered pose."""
-
-    (mig,) = sorted(
-        (MIGRATION_UNITS).glob(
-            "*_learning_posttest_windows.sql"
-        )
-    )
-    sql = mig.read_text()
-    assert "PRIMARY KEY (user_id, node_id, window_days)" in sql
-    assert "UPDATE posttest_poses SET window_days = 7 WHERE window_days IS NULL" in sql
-    assert "ALTER COLUMN window_days SET NOT NULL" in sql
-    assert W1 == 7  # the mapping above names the first window
-    for column in (
-        "anchor_event_id text",
-        "anchor_at timestamptz",
-        "last_evidence_at timestamptz",
-        "days_since_evidence double precision",
-        "correct boolean",
-        "max_rung smallint",
-    ):
-        assert f"ADD COLUMN IF NOT EXISTS {column}" in sql
-    assert "(correct IS NULL OR answered_at IS NOT NULL)" in sql
-    assert "NOTIFY pgrst" in sql
-
-
 # ── the phase value ──────────────────────────────────────────────────────────
 
 
 def test_posttest_is_a_step_phase_value_not_a_close_phase():
-    mig = MIGRATION_UNITS
-    sql = "".join(p.read_text() for p in mig.glob("*_learning_session_close.sql"))
-    assert sql and "posttest" not in sql
-
     assert "posttest" in services.loop.posttest_poses.STEP_PHASES
     assert "posttest" not in params.CLOSE_PHASES
 

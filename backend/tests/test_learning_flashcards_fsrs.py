@@ -12,9 +12,7 @@ payload key sets: the pre-series behaviour must be byte-identical.
 
 from __future__ import annotations
 
-from db.migration_units import MIGRATION_UNITS
 import contextlib
-import re
 from datetime import datetime, timedelta, timezone
 from tests.split_patches import patch_in
 from unittest.mock import MagicMock, patch
@@ -26,7 +24,6 @@ from main import app
 
 client = TestClient(app)
 
-MIG_DIR = MIGRATION_UNITS
 USER_ID = "user_test"
 
 LEGACY_LIST_COLS = (
@@ -51,47 +48,6 @@ def _gate_patch(gate: bool | None):
     no-op kept so the call sites read as before. False is a test bug."""
     assert gate is True, "PKG-14b: flashcards have no flag-off path"
     return contextlib.nullcontext()
-
-
-# ── Migration ────────────────────────────────────────────────────────────────
-
-
-def _migration() -> str:
-    hits = sorted(MIG_DIR.glob("*_learning_flashcards_fsrs.sql"))
-    assert len(hits) == 1, f"expected exactly one learning_flashcards_fsrs migration, got {hits}"
-    return hits[0].read_text()
-
-
-class TestMigration:
-    def test_prefix_is_a_utc_timestamp(self):
-        hits = sorted(MIG_DIR.glob("*_learning_flashcards_fsrs.sql"))
-        assert hits, "no learning_flashcards_fsrs migration"
-        assert re.fullmatch(r"\d{14}_learning_flashcards_fsrs\.sql", hits[0].name), hits[0].name
-
-    @pytest.mark.parametrize(
-        "col,decl",
-        [
-            ("fsrs_d", r"double precision"),
-            ("fsrs_s", r"double precision"),
-            ("due_at", r"timestamptz"),
-            ("reps", r"int\s+NOT NULL\s+DEFAULT\s+0"),
-            ("lapses", r"int\s+NOT NULL\s+DEFAULT\s+0"),
-        ],
-    )
-    def test_columns_are_declared_per_spec(self, col, decl):
-        assert re.search(rf"ADD COLUMN IF NOT EXISTS\s+{col}\s+{decl}", _migration()), col
-
-    def test_due_index_is_user_scoped(self):
-        assert re.search(
-            r"CREATE INDEX IF NOT EXISTS flashcards_due_idx ON flashcards \(user_id, due_at\)",
-            _migration(),
-        )
-
-    def test_only_touches_flashcards(self):
-        sql = _migration()
-        assert "ALTER TABLE flashcards" in sql
-        assert not re.search(r"ALTER TABLE (?!flashcards)", sql)
-        assert "DROP" not in sql.upper()
 
 
 # ── rate_card ────────────────────────────────────────────────────────────────

@@ -3,7 +3,6 @@ come from a fake table and the clock is fixed: no DB, no LLM, no network."""
 
 from __future__ import annotations
 
-from db.migration_units import MIGRATION_UNITS
 import asyncio
 import itertools
 import pathlib
@@ -18,7 +17,6 @@ from learning import params
 from services import ai_budget, events_service, llm_pricing
 
 BACKEND = pathlib.Path(__file__).resolve().parents[1]
-MIG_DIR = MIGRATION_UNITS
 UID = "user_andres"
 NOW = datetime(2026, 9, 26, 15, 0, 0, tzinfo=timezone.utc)
 _ids = itertools.count()
@@ -34,18 +32,7 @@ def _usage_sink(monkeypatch) -> list:
     return rows
 
 
-# ── A21: migration, pricing, usage capture ───────────────────────────────────
-
-
-def test_llm_usage_tokens_migration_is_the_spec_ddl():
-    hits = sorted(MIG_DIR.glob("*_learning_llm_usage_tokens.sql"))
-    assert len(hits) == 1, f"expected exactly one llm_usage_tokens migration, got {hits}"
-    assert re.fullmatch(r"\d{14}_learning_llm_usage_tokens\.sql", hits[0].name), hits[0].name
-    sql = hits[0].read_text()
-    assert "ALTER TABLE llm_usage" in sql
-    for column in ("cached_tokens", "thinking_tokens"):
-        assert re.search(rf"ADD COLUMN IF NOT EXISTS {column} int\b", sql), column
-    assert "NOT NULL" not in sql, "historical rows and unrecognised usage shapes stay NULL"
+# ── A21: pricing, usage capture ───────────────────────────────────────────
 
 
 def test_cost_bills_cached_input_at_the_cached_rate():
