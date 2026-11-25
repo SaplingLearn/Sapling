@@ -629,7 +629,7 @@ def _write_check_misconception(checkpoint, state: dict, diagnosis) -> None:
         logger.warning("optional misconception rollup unavailable after saved grade")
 
 
-def _check_dwell_ms(c: dict) -> int:
+def _check_dwell_ms(c) -> int:
     """W2.5: high stated confidence + wrong → Continue holds for corrective feedback."""
     verdict = c["verdict"]
     answer = c.get("answer") if isinstance(c.get("answer"), dict) else {}

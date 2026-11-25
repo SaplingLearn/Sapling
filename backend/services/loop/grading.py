@@ -75,15 +75,16 @@ _NO_SUCH_ITEM = "No such check item in this session"
 _NO_GRAPH_NODE = "no graph node for this item"
 
 
-def _require_gradable(state: dict, entry, qh: str) -> None:
-    """409 for an item already graded, being graded or superseded; 404 for one
-    that is not this session's current check."""
+def _require_gradable(state: dict, entry, qh: str) -> dict:
+    """The step of this session's current check `qh`: 409 for an item already
+    graded, being graded or superseded; 404 for one that is not current."""
     if isinstance(entry, dict) and (
         entry.get("graded_at") is not None or entry.get("grading_claim") or entry.get("grading_superseded")
     ):
         raise HTTPException(status_code=409, detail=_ALREADY_GRADED)
     if not isinstance(entry, dict) or state.get("current") != qh:
         raise HTTPException(status_code=404, detail=_NO_SUCH_ITEM)
+    return entry
 
 
 def _stash_reasoning(body: LoopCheckAnswerBody, item):
@@ -200,7 +201,7 @@ async def _grade_submission(
         return await asyncio.to_thread(
             _finish_check_checkpoint, checkpoint, scope, request, loop_on=loop_on
         )
-    _require_gradable(state, entry, qh)
+    entry = _require_gradable(state, entry, qh)
     item = (
         await asyncio.to_thread(get_check_item, entry["check_item_id"])
         if entry.get("check_item_id") else None
