@@ -18,7 +18,10 @@
  * "N of M done".
  */
 import React from "react";
+import { AnimatePresence, motion } from "framer-motion";
 import { Icon } from "../Icon";
+import { useMotionPresets } from "@/lib/motion";
+import styles from "./TodayColumn.module.css";
 import { buildQuizHref } from "@/lib/quiz/source";
 import { planReasonShort } from "@/lib/quiz/proposals";
 import { firstNextIn } from "@/lib/learnerNext";
@@ -211,108 +214,82 @@ const CHIP_CLASS: Record<PlanChip["tone"], string> = {
   info: "chip--info",
 };
 
+/** How far a plan row gives under a press. */
+const PRESS_SCALE = 0.99;
+
 function CheckBox({ done, onDark }: { done: boolean; onDark: boolean }) {
   return (
-    <span
-      aria-hidden
-      style={{
-        width: 18, height: 18, borderRadius: 6, flexShrink: 0,
-        display: "grid", placeItems: "center",
-        background: done ? "var(--state-mastery)" : "transparent",
-        border: `1.5px solid ${done ? "var(--state-mastery)" : onDark ? "rgba(255,255,255,0.6)" : "var(--border-strong)"}`,
-        color: "#fff",
-      }}
-    >
+    <span aria-hidden className={styles.check} data-done={done} data-on-dark={onDark}>
       {done && <Icon name="check" size={11} />}
     </span>
   );
 }
 
+/**
+ * One plan item. A ticked item rises to the top of the list (buildTodayPlan),
+ * so rows glide to their new place (`layout`) instead of jumping; a row that
+ * joins the list later fades up into it. The list's first paint is still.
+ */
 function PlanRow({ item, primary, onSelect }: { item: PlanItem; primary: boolean; onSelect: () => void }) {
+  const m = useMotionPresets();
   return (
-    <button
+    <motion.button
       type="button"
       data-testid={item.testId}
       onClick={onSelect}
-      style={{
-        display: "flex", alignItems: "center", gap: 10, width: "100%", textAlign: "left",
-        padding: item.done ? "7px 4px" : "11px 11px",
-        borderRadius: "var(--r-md)",
-        background: primary ? "var(--brand-forest)" : item.done ? "transparent" : "var(--bg-subtle)",
-        color: primary ? "#fff" : "var(--text)",
-        transition: "filter var(--dur-fast) var(--ease)",
-      }}
-      onMouseEnter={(e) => { e.currentTarget.style.filter = "brightness(0.97)"; }}
-      onMouseLeave={(e) => { e.currentTarget.style.filter = ""; }}
+      className={styles.planRow}
+      data-done={item.done}
+      data-primary={primary}
+      layout="position"
+      {...m.fadeUp}
+      transition={{ ...m.fadeUp.transition, layout: m.transition.spring.gentle }}
+      whileTap={{ scale: PRESS_SCALE }}
     >
       {item.checkable ? (
         <CheckBox done={item.done} onDark={primary} />
       ) : (
-        <span aria-hidden style={{ width: 18, display: "grid", placeItems: "center", flexShrink: 0, color: "var(--warn)" }}>
+        <span aria-hidden className={styles.calMark}>
           <Icon name="cal" size={14} />
         </span>
       )}
-      <span style={{ flex: 1, minWidth: 0 }}>
-        <span
-          style={{
-            display: "block", fontSize: 13, fontWeight: 600,
-            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-            textDecoration: item.done ? "line-through" : undefined,
-            color: item.done ? "var(--text-muted)" : undefined,
-          }}
-        >
-          {item.title}
-        </span>
-        <span
-          style={{
-            display: "block", fontSize: 11,
-            color: primary ? "rgba(255,255,255,0.85)" : "var(--text-muted)",
-            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-          }}
-        >
-          {item.meta}
-        </span>
+      <span className={styles.planText}>
+        <span className={styles.planTitle}>{item.title}</span>
+        <span className={styles.planMeta}>{item.meta}</span>
       </span>
       {item.chip && !item.done && (
-        <span className={`chip ${CHIP_CLASS[item.chip.tone]}`} style={{ flexShrink: 0 }}>{item.chip.label}</span>
+        <span className={`chip ${CHIP_CLASS[item.chip.tone]} ${styles.chip}`}>{item.chip.label}</span>
       )}
       {primary && <Icon name="chev" size={12} />}
-    </button>
+    </motion.button>
   );
 }
 
 /** The dashboard's two header actions. They sit in the greeting row, right-
  *  aligned, so the column below can start flush with the graph card. */
 /** Space between dashboard panels, both across (graph ↔ column) and down
- *  the column, so the gutters read as one grid. */
-export const PANEL_GAP = 16;
+ *  the column, so the gutters read as one grid. A CSS value: the column's
+ *  own gap (TodayColumn.module.css `.column`) is the same token. */
+export const PANEL_GAP = "var(--sp-8)";
 
-/** The plan reserves room for this many items, and the height of one
- *  (11px padding top and bottom around a 13px title and an 11px meta line). */
-const PLAN_SLOTS = 4;
-const PLAN_ROW_H = 58;
-
-/** Tallest a course row's track may grow to fill the mastery card. */
-const COURSE_ROW_MAX = 64;
+/** The plan reserves room for a fixed number of rows (`--plan-slots`), and a
+ *  course row's track may grow to `--course-row-max`: TodayColumn.module.css. */
 
 export function DashboardActions({ navigate }: { navigate: (href: string) => void }) {
   return (
-    <div style={{ display: "flex", gap: 8, flexShrink: 0, alignItems: "center" }}>
+    <div className={styles.actions}>
       <button
         type="button"
-        className="btn btn--sm"
+        className={`btn btn--sm ${styles.actionBtn}`}
         data-testid="dashboard-action-calendar"
         onClick={() => navigate("/calendar")}
-        style={{ height: 40, padding: "0 16px", fontSize: 13 }}
       >
         <Icon name="cal" size={14} /> Calendar
       </button>
       <button
         type="button"
-        className="btn btn--sm btn--primary"
+        className={`btn btn--sm btn--primary ${styles.actionBtn}`}
         data-testid="dashboard-action-start"
         onClick={() => navigate("/learn")}
-        style={{ height: 40, padding: "0 16px", fontSize: 13 }}
       >
         <Icon name="sparkle" size={14} /> Start learning
       </button>
@@ -386,40 +363,29 @@ export function TodayColumn(props: {
   ] as const).filter(([, n]) => n > 0);
 
   return (
-    <div data-testid="dashboard-today-column" style={{ display: "flex", flexDirection: "column", gap: PANEL_GAP, minWidth: 0, minHeight: 0 }}>
+    <div data-testid="dashboard-today-column" className={styles.column}>
       {/* Streak */}
-      <div
-        className="card"
-        data-testid="dashboard-streak"
-        style={{
-          padding: "14px 18px",
-          background: "linear-gradient(170deg, color-mix(in srgb, var(--warn-soft) 55%, var(--bg-panel)), var(--bg-panel) 65%)",
-          borderColor: "color-mix(in srgb, var(--warn-soft) 70%, var(--border))",
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
+      <div className={`card ${styles.streakCard}`} data-testid="dashboard-streak">
+        <div className={styles.streakTop}>
           {/* Flame + count read as one unit: a tight gap, centred on the
               number (the icon's viewBox carries its own side bearing). */}
-          <div data-testid="dashboard-streak-count" style={{ display: "flex", alignItems: "center", gap: 2 }}>
-            <span aria-hidden style={{ color: "var(--alert-warn)", opacity: stats.streak > 0 ? 1 : 0.35, display: "grid", marginLeft: -4 }}>
+          <div data-testid="dashboard-streak-count" className={styles.streakCount}>
+            <span aria-hidden className={styles.flame} data-lit={stats.streak > 0}>
               <Icon name="fire" size={28} />
             </span>
             <div>
-              <span
-                className="h-serif"
-                style={{ fontSize: 34, fontWeight: 600, lineHeight: 1, color: stats.streak > 0 ? "var(--warn)" : "var(--text-dim)" }}
-              >
+              <span className={`h-serif ${styles.streakNumber}`} data-lit={stats.streak > 0}>
                 {stats.streak}
               </span>{" "}
-              <span style={{ fontSize: 13, color: "var(--text-dim)" }}>
+              <span className={styles.streakUnit}>
                 {stats.streak === 1 ? "day" : "days"}{stats.streak > 0 ? " in a row" : ""}
               </span>
             </div>
           </div>
           {/* The message rides the top row (not its own line) to keep the
               card short enough for the plan's reserved slots above it. */}
-          <div style={{ marginLeft: "auto", alignSelf: "center", textAlign: "right", fontSize: 11.5, lineHeight: 1.35, maxWidth: 150 }}>
-            <div style={{ color: "var(--warn)" }}>
+          <div className={styles.streakMessage}>
+            <div className={styles.streakNote}>
               {/* Keyed on the server's streak first: activity alone (a session
                   row, a concept's last_studied_at) doesn't prove it advanced. */}
               {stats.streak > 0
@@ -427,32 +393,27 @@ export function TodayColumn(props: {
                 : todayDone ? "Nice work today." : "One session today starts your streak."}
             </div>
             {!!bestStreak && bestStreak > 0 && (
-              <div style={{ color: "var(--text-muted)" }}>best {bestStreak}</div>
+              <div className={styles.muted}>best {bestStreak}</div>
             )}
           </div>
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4 }}>
+        <div className={styles.week}>
           {weekDays.map((d) => {
             const key = localDayKey(d) as string;
             const isToday = key === todayKey;
             const done = activeDays.has(key);
             const future = d.getTime() > today.getTime();
             return (
-              <div key={key} style={{ textAlign: "center" }}>
-                <div className="label-micro" style={{ fontSize: 9.5, letterSpacing: "0.06em" }}>
+              <div key={key} className={styles.weekCol}>
+                <div className={`label-micro ${styles.weekLabel}`}>
                   {d.toLocaleDateString("en-US", { weekday: "narrow" })}
                 </div>
                 <div
                   aria-label={`${d.toLocaleDateString("en-US", { weekday: "long" })}${done ? ", studied" : ""}`}
-                  style={{
-                    margin: "3px auto 0", width: 24, height: 24, borderRadius: 7,
-                    display: "grid", placeItems: "center", fontSize: 11, fontWeight: 600,
-                    background: done ? "var(--alert-warn)" : isToday ? "transparent" : "var(--bg-subtle)",
-                    color: done ? "#fff" : isToday ? "var(--warn)" : "var(--text-muted)",
-                    border: isToday && !done ? "1.5px dashed var(--alert-warn)" : "none",
-                    boxShadow: isToday && done ? "0 0 0 3px color-mix(in srgb, var(--alert-warn) 30%, transparent)" : undefined,
-                    opacity: future ? 0.7 : 1,
-                  }}
+                  className={styles.day}
+                  data-done={done}
+                  data-today={isToday}
+                  data-future={future}
                 >
                   {d.getDate()}
                 </div>
@@ -466,92 +427,77 @@ export function TodayColumn(props: {
       {/* flex: 1 — this card takes the column's spare height, so the column
           runs the full height of the graph beside it (its course rows spread
           into it). Today's plan sits below it, at its natural height. */}
-      <div
-        className="card"
-        data-testid="dashboard-mastery"
-        style={{ padding: "16px 18px", flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}
-      >
+      <div className={`card ${styles.masteryCard}`} data-testid="dashboard-mastery">
         {/* The course list's own header, like "Upcoming · Calendar →": a
             label on the left so the link never sits alone on its line. */}
-        <div
-          style={{
-            display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
-          }}
-        >
+        <div className={styles.cardHeader}>
           <div className="label-micro">Courses</div>
           <button
             type="button"
-            className="btn btn--ghost btn--sm"
+            className={`btn btn--ghost btn--sm ${styles.linkBtn}`}
             data-testid="dashboard-courses-manage"
             onClick={openCourses}
             title="Add or remove courses, switch semester"
-            style={{ marginRight: -8, fontSize: 12, height: 24, padding: "0 8px" }}
           >
             Manage →
           </button>
         </div>
         {!courseRows && (
-          <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 4 }}>
+          <div className={styles.emptyNote}>
             {hasCourses ? "Nothing enrolled this semester." : "No courses yet."}
           </div>
         )}
         {courseRows && (
-          // basis 0 + grow: the rows take the card's spare height (up to
-          // COURSE_ROW_MAX each, so a tall window doesn't strand them) and
+          // grow: the rows take the card's spare height (up to
+          // --course-row-max each, so a tall window doesn't strand them) and
           // space-between spreads them. minHeight 0 + overflow: a student with
           // many courses scrolls this list instead of stretching the page.
+          // Basis auto, not 0: with no definite card height (mobile stacks the
+          // column) a 0 basis collapsed the rows to nothing.
           <div
             data-testid="dashboard-course-rows"
-            style={{
-              marginTop: 4,
-              // basis auto, not 0: with no definite card height (mobile stacks
-              // the column) a 0 basis collapsed the rows to nothing.
-              flex: "1 1 auto", minHeight: 0, overflowY: "auto",
-              maxHeight: React.Children.count(courseRows) * COURSE_ROW_MAX,
-              display: "flex", flexDirection: "column", justifyContent: "space-between", gap: 4,
-            }}
+            className={styles.courseRows}
+            style={{ "--course-rows": React.Children.count(courseRows) } as React.CSSProperties}
           >
             {courseRows}
           </div>
         )}
         {/* Below the courses: the mastery summary across them, divided off. */}
-        <div
-          style={{
-            display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8,
-            marginTop: 18, paddingTop: 12, borderTop: "1px solid var(--border)",
-          }}
-        >
+        <div className={styles.summary}>
           {stats.total > 0 ? (
-            <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
-              <span className="h-serif" style={{ fontSize: 26, fontWeight: 600, lineHeight: 1 }}>{stats.mastered}</span>
-              <span style={{ fontSize: 13, color: "var(--text-muted)" }}>of {stats.total} concepts mastered</span>
+            <div className={styles.summaryFigure}>
+              <span className={`h-serif ${styles.summaryNumber}`}>{stats.mastered}</span>
+              <span className={styles.summaryText}>of {stats.total} concepts mastered</span>
             </div>
           ) : (
-            <div style={{ fontSize: 12, color: "var(--text-muted)", paddingTop: 3 }}>
+            <div className={styles.summaryEmpty}>
               No concepts yet. They appear as you study and upload course material.
             </div>
           )}
           <button
             type="button"
-            className="btn btn--ghost btn--sm"
+            className={`btn btn--ghost btn--sm ${styles.linkBtn} ${styles.treeBtn}`}
             data-testid="dashboard-mastery-tree"
             onClick={() => navigate("/tree")}
-            style={{ flexShrink: 0, marginRight: -8, marginTop: -2, fontSize: 12, height: 24, padding: "0 8px" }}
           >
             Open Tree →
           </button>
         </div>
         {stats.total > 0 && (
           <>
-            <div style={{ display: "flex", height: 8, borderRadius: 99, overflow: "hidden", gap: 2, marginTop: 8 }}>
+            <div className={styles.legendBar}>
               {legend.map(([label, n, color]) => (
-                <span key={label} style={{ flex: n, background: color }} />
+                <span
+                  key={label}
+                  className={styles.legendSegment}
+                  style={{ "--seg-flex": n, "--seg-color": color } as React.CSSProperties}
+                />
               ))}
             </div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 12px", marginTop: 6, fontSize: 11, color: "var(--text-muted)" }}>
+            <div className={styles.legend}>
               {legend.map(([label, n, color]) => (
-                <span key={label} style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
-                  <span style={{ width: 7, height: 7, borderRadius: "50%", background: color }} />
+                <span key={label} className={styles.legendItem}>
+                  <span className={styles.legendDot} style={{ "--seg-color": color } as React.CSSProperties} />
                   {n} {label}
                 </span>
               ))}
@@ -563,8 +509,8 @@ export function TodayColumn(props: {
       {/* Today's plan */}
       {/* Last card: 28px at the bottom keeps its last item above the floating
           report button, which is pinned over the column's bottom-right corner. */}
-      <div className="card" data-testid="dashboard-plan" style={{ padding: "16px 18px 28px" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "var(--text-muted)" }}>
+      <div className={`card ${styles.planCard}`} data-testid="dashboard-plan">
+        <div className={styles.planHeader}>
           <span data-testid="dashboard-plan-progress">{doneCount} of {checkable.length} done today</span>
           <span>{today.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}</span>
         </div>
@@ -574,22 +520,21 @@ export function TodayColumn(props: {
           aria-valuemin={0}
           aria-valuemax={checkable.length}
           aria-valuenow={doneCount}
-          style={{ height: 4, borderRadius: 99, background: "var(--bg-soft)", overflow: "hidden", margin: "8px 0 10px" }}
+          className={styles.progress}
         >
           <div
-            style={{
-              height: "100%", borderRadius: 99, background: "var(--state-mastery)",
-              width: `${checkable.length ? (doneCount / checkable.length) * 100 : 0}%`,
-              transition: "width var(--dur) var(--ease)",
-            }}
+            className={styles.progressFill}
+            style={{ "--plan-pct": `${checkable.length ? (doneCount / checkable.length) * 100 : 0}%` } as React.CSSProperties}
           />
         </div>
-        {/* Room for PLAN_SLOTS items whatever today's count, so the cards
+        {/* Room for --plan-slots items whatever today's count, so the cards
             below don't jump as the plan fills up. */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 6, minHeight: PLAN_SLOTS * PLAN_ROW_H + (PLAN_SLOTS - 1) * 6 }}>
-          {plan.map((item) => (
-            <PlanRow key={item.key} item={item} primary={item.key === primaryKey} onSelect={() => select(item)} />
-          ))}
+        <div className={styles.planList}>
+          <AnimatePresence initial={false}>
+            {plan.map((item) => (
+              <PlanRow key={item.key} item={item} primary={item.key === primaryKey} onSelect={() => select(item)} />
+            ))}
+          </AnimatePresence>
         </div>
       </div>
     </div>

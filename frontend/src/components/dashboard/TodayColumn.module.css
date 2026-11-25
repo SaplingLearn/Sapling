@@ -1,0 +1,425 @@
+/* The Dashboard's right column (TodayColumn.tsx): streak, courses + mastery,
+   and Today's plan. Sizes that are layout dimensions, not design tokens, are
+   named here; the rest is the token scales. */
+
+.column {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-8); /* PANEL_GAP: the dashboard's one gutter */
+  min-width: 0;
+  min-height: 0;
+}
+
+/* ── header actions ──────────────────────────────────────────────── */
+
+.actions {
+  display: flex;
+  gap: var(--sp-4);
+  flex-shrink: 0;
+  align-items: center;
+}
+
+/* 40px: the greeting row's action height (StudyHub's header matches it).
+   Paired with `.btn` so it outranks `.btn--sm` whatever order the sheets load. */
+:global(.btn).actionBtn {
+  height: 40px;
+  padding: 0 var(--sp-8);
+  font-size: var(--fs-md);
+}
+
+/* A small ghost link-button tucked into a card header ("Manage →"). */
+:global(.btn).linkBtn {
+  margin-right: calc(-1 * var(--sp-4));
+  font-size: var(--fs-sm);
+  height: 24px;
+  padding: 0 var(--sp-4);
+}
+
+/* ── streak ──────────────────────────────────────────────────────── */
+
+.streakCard {
+  padding: var(--sp-7) var(--sp-9);
+  background: linear-gradient(170deg, color-mix(in srgb, var(--warn-soft) 55%, var(--bg-panel)), var(--bg-panel) 65%);
+  border-color: color-mix(in srgb, var(--warn-soft) 70%, var(--border));
+}
+
+.streakTop {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-6);
+  margin-bottom: var(--sp-6);
+}
+
+/* Flame + count read as one unit: a tight gap, centred on the number. */
+.streakCount {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+}
+
+/* The flame icon's viewBox carries its own side bearing: pull it in. */
+.flame {
+  color: var(--alert-warn);
+  display: grid;
+  margin-left: calc(-1 * var(--sp-2));
+  transition: opacity var(--dur) var(--ease-out);
+}
+
+.flame[data-lit="false"] {
+  opacity: 0.35;
+}
+
+/* 34px: the streak figure sits a step above --fs-5xl (32px); no token. */
+.streakNumber {
+  --streak-number-size: 34px;
+  font-size: var(--streak-number-size);
+  font-weight: 600;
+  line-height: 1;
+  color: var(--warn);
+  transition: color var(--dur) var(--ease-out);
+}
+
+.streakNumber[data-lit="false"] {
+  color: var(--text-dim);
+}
+
+.streakUnit {
+  font-size: var(--fs-md);
+  color: var(--text-dim);
+}
+
+/* The message rides the top row to keep the card short. 150px: the widest it
+   may take before squeezing the count. */
+.streakMessage {
+  margin-left: auto;
+  align-self: center;
+  text-align: right;
+  font-size: var(--fs-xs);
+  line-height: 1.35;
+  max-width: 150px;
+}
+
+.streakNote {
+  color: var(--warn);
+}
+
+.muted {
+  color: var(--text-muted);
+}
+
+.week {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: var(--sp-2);
+}
+
+.weekCol {
+  text-align: center;
+}
+
+.weekLabel {
+  font-size: var(--fs-2xs);
+  letter-spacing: 0.06em;
+}
+
+/* 24px day cell; 3px: today's ring once it is done. */
+.day {
+  --day-size: 24px;
+  --day-ring: 3px;
+  margin: var(--sp-1) auto 0;
+  width: var(--day-size);
+  height: var(--day-size);
+  border-radius: var(--r-sm);
+  display: grid;
+  place-items: center;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  background: var(--bg-subtle);
+  color: var(--text-muted);
+  border: none;
+  transition:
+    background-color var(--dur) var(--ease-out),
+    color var(--dur) var(--ease-out),
+    box-shadow var(--dur) var(--ease-out);
+}
+
+.day[data-today="true"] {
+  background: transparent;
+  color: var(--warn);
+  border: 1.5px dashed var(--alert-warn);
+}
+
+.day[data-done="true"] {
+  background: var(--alert-warn);
+  color: var(--text-on-fill);
+  border: none;
+}
+
+.day[data-today="true"][data-done="true"] {
+  box-shadow: 0 0 0 var(--day-ring) color-mix(in srgb, var(--alert-warn) 30%, transparent);
+}
+
+.day[data-future="true"] {
+  opacity: 0.7;
+}
+
+/* ── courses + mastery ───────────────────────────────────────────── */
+
+/* flex: 1 — this card takes the column's spare height. */
+.masteryCard {
+  padding: var(--sp-8) var(--sp-9);
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.cardHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-4);
+}
+
+.emptyNote {
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+  margin-top: var(--sp-2);
+}
+
+/* basis auto + grow: the rows take the card's spare height, up to
+   --course-row-max each (64px), and space-between spreads them. */
+.courseRows {
+  --course-row-max: 64px;
+  margin-top: var(--sp-2);
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  max-height: calc(var(--course-rows, 1) * var(--course-row-max));
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: var(--sp-2);
+}
+
+.summary {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--sp-4);
+  margin-top: var(--sp-9);
+  padding-top: var(--sp-6);
+  border-top: 1px solid var(--border);
+}
+
+.summaryFigure {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-3);
+}
+
+.summaryNumber {
+  font-size: var(--fs-3xl);
+  font-weight: 600;
+  line-height: 1;
+}
+
+.summaryText {
+  font-size: var(--fs-md);
+  color: var(--text-muted);
+}
+
+.summaryEmpty {
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+  padding-top: var(--sp-1);
+}
+
+.treeBtn {
+  flex-shrink: 0;
+  margin-top: calc(-1 * var(--sp-1));
+}
+
+/* 8px: the mastery bar's thickness. */
+.legendBar {
+  display: flex;
+  height: var(--sp-4);
+  border-radius: var(--r-full);
+  overflow: hidden;
+  gap: var(--sp-1);
+  margin-top: var(--sp-4);
+}
+
+.legendSegment {
+  flex: var(--seg-flex) 1 0%;
+  background: var(--seg-color);
+  transition: flex-grow var(--dur-slow) var(--ease-in-out);
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2) var(--sp-6);
+  margin-top: var(--sp-3);
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+}
+
+.legendItem {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+/* 7px: the legend's colour dot. */
+.legendDot {
+  --legend-dot: 7px;
+  width: var(--legend-dot);
+  height: var(--legend-dot);
+  border-radius: 50%;
+  background: var(--seg-color);
+}
+
+/* ── today's plan ────────────────────────────────────────────────── */
+
+/* The bottom inset keeps its last item above the floating report button. */
+.planCard {
+  padding: var(--sp-8) var(--sp-9) var(--sp-14);
+}
+
+.planHeader {
+  display: flex;
+  justify-content: space-between;
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+
+.progress {
+  height: var(--sp-2);
+  border-radius: var(--r-full);
+  background: var(--bg-soft);
+  overflow: hidden;
+  margin: var(--sp-4) 0 var(--sp-5);
+}
+
+.progressFill {
+  height: 100%;
+  border-radius: var(--r-full);
+  background: var(--state-mastery);
+  width: var(--plan-pct, 0%);
+  transition: width var(--dur-slow) var(--ease-out);
+}
+
+/* Room for --plan-slots items whatever today's count, so the cards below
+   don't jump as the plan fills up. 58px is one row: 11px padding top and
+   bottom around a 13px title and an 11px meta line. */
+.planList {
+  --plan-slots: 4;
+  --plan-row-h: 58px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  min-height: calc(var(--plan-slots) * var(--plan-row-h) + (var(--plan-slots) - 1) * var(--sp-3));
+}
+
+/* 11px / 7px: the plan row's insets, which --plan-row-h is built on. */
+.planRow {
+  --plan-row-pad: 11px;
+  --plan-row-pad-done: 7px;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-5);
+  width: 100%;
+  text-align: left;
+  padding: var(--plan-row-pad);
+  border-radius: var(--r-md);
+  background: var(--bg-subtle);
+  color: var(--text);
+  transition:
+    filter var(--dur-fast) var(--ease),
+    background-color var(--dur) var(--ease-out);
+}
+
+.planRow:hover {
+  filter: brightness(0.97);
+}
+
+.planRow[data-done="true"] {
+  padding: var(--plan-row-pad-done) var(--sp-2);
+  background: transparent;
+}
+
+.planRow[data-primary="true"] {
+  background: var(--brand-forest);
+  color: var(--text-on-fill);
+}
+
+/* 18px: the checkbox, and the calendar mark that stands in its column. */
+.check {
+  --check-size: 18px;
+  width: var(--check-size);
+  height: var(--check-size);
+  border-radius: var(--r-sm);
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  background: transparent;
+  border: 1.5px solid var(--border-strong);
+  color: var(--text-on-fill);
+  transition:
+    background-color var(--dur) var(--ease-out),
+    border-color var(--dur) var(--ease-out);
+}
+
+.check[data-on-dark="true"] {
+  border-color: color-mix(in srgb, var(--text-on-fill) 60%, transparent);
+}
+
+.check[data-done="true"] {
+  background: var(--state-mastery);
+  border-color: var(--state-mastery);
+}
+
+.calMark {
+  width: 18px;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  color: var(--warn);
+}
+
+.planText {
+  flex: 1;
+  min-width: 0;
+}
+
+.planTitle {
+  display: block;
+  font-size: var(--fs-md);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.planRow[data-done="true"] .planTitle {
+  text-decoration: line-through;
+  color: var(--text-muted);
+}
+
+.planMeta {
+  display: block;
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.planRow[data-primary="true"] .planMeta {
+  color: color-mix(in srgb, var(--text-on-fill) 85%, transparent);
+}
+
+.chip {
+  flex-shrink: 0;
+}
