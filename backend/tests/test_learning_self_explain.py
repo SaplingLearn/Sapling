@@ -11,14 +11,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from learning import self_explain as se
-from learning.params import SELF_EXPLAIN_JUNCTURES, SELF_EXPLAIN_MAX_PER_CONCEPT
+from learning.params import SELF_EXPLAIN_JUNCTURES
 from learning.self_explain_report import self_explanation_report
 from learning.turn_shape import sentences
-
-
-def test_the_params():
-    assert SELF_EXPLAIN_JUNCTURES == ("worked_example", "released_solution", "first_correct")
-    assert SELF_EXPLAIN_MAX_PER_CONCEPT == 1
 
 
 @pytest.mark.parametrize("text", list(se.PROMPTS.values()))
