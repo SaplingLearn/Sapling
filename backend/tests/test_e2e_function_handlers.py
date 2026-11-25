@@ -57,6 +57,14 @@ def _clean_function_registry(monkeypatch):
     sys.modules.pop("agents.function_handlers_e2e", None)
 
 
+@pytest.fixture
+def e2e_seam(monkeypatch):
+    """The E2E boot: function mode, with the E2E handlers module named for the
+    once-only autoload (the env the browser lane's backend starts under)."""
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
+
+
 def _deps() -> SaplingDeps:
     return SaplingDeps(
         user_id="e2e-user",
@@ -70,14 +78,10 @@ def _deps() -> SaplingDeps:
 # ── SAPLING_FUNCTION_HANDLERS autoload ────────────────────────────────────
 
 
-def test_env_module_registers_chat_tutor_handler_on_dispatch(monkeypatch):
+def test_env_module_registers_chat_tutor_handler_on_dispatch(e2e_seam):
     """The full E2E-boot contract: function mode + the env-named module give a
     real chat_tutor agent run the module's fixed deterministic reply — through
     the real agent wiring, with no handler registered by the test itself."""
-    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
-    monkeypatch.setenv(
-        "SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e"
-    )
 
     with socratic_agent.override(model=model_for("chat_tutor")):
         result = socratic_agent.run_sync("What is recursion?", deps=_deps())
@@ -130,15 +134,11 @@ def test_bad_env_module_path_fails_loudly_on_every_dispatch(monkeypatch):
             )
 
 
-def test_explicit_registration_wins_over_env_module(monkeypatch):
+def test_explicit_registration_wins_over_env_module(e2e_seam):
     """The env module is a dispatch-miss fallback only: a handler registered
     in-process (the pytest pattern) is never shadowed by it."""
     from pydantic_ai.messages import ModelResponse, TextPart
 
-    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
-    monkeypatch.setenv(
-        "SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e"
-    )
     providers.register_function_handler(
         "chat_tutor",
         lambda m, i: ModelResponse(parts=[TextPart(content="explicit wins")]),
@@ -151,7 +151,7 @@ def test_explicit_registration_wins_over_env_module(monkeypatch):
 
 # Spec §11.5 (PKG-14b): the legacy JSON /start-session route is the kill-switch path.
 @pytest.mark.kill_switch
-def test_start_session_json_route_serves_tutor_handler_in_function_mode(monkeypatch):
+def test_start_session_json_route_serves_tutor_handler_in_function_mode(e2e_seam):
     """#151a: the JSON /start-session route now runs chat_tutor_agent (task
     "chat_tutor") — so in function mode the SAME env-registered chat_tutor
     handler covers the session opener by task dispatch, with no new handler
@@ -164,11 +164,6 @@ def test_start_session_json_route_serves_tutor_handler_in_function_mode(monkeypa
 
     from main import app
     from routes.learn import PENDING_SESSIONS
-
-    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
-    monkeypatch.setenv(
-        "SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e"
-    )
 
     PENDING_SESSIONS.clear()
     client = TestClient(app)
@@ -225,14 +220,10 @@ def test_resolve_model_pref_still_builds_override_in_real_mode(monkeypatch):
 # instead of mid-browser-run.
 
 
-def test_env_module_quiz_handler_produces_the_scripted_quiz(monkeypatch):
+def test_env_module_quiz_handler_produces_the_scripted_quiz(e2e_seam):
     """Full E2E-boot contract for the quiz task: function mode + the env-named
     module give a real quiz_agent run the fixed three-question quiz, with no
     handler registered by the test itself."""
-    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
-    monkeypatch.setenv(
-        "SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e"
-    )
 
     with quiz_agent.override(model=model_for("quiz")):
         result = quiz_agent.run_sync("Generate 5 medium questions.", deps=_deps())
@@ -244,15 +235,11 @@ def test_env_module_quiz_handler_produces_the_scripted_quiz(monkeypatch):
     assert all(q.question.startswith("E2E deterministic question") for q in quiz.questions)
 
 
-def test_quiz_handler_wire_labels_match_the_browser_spec(monkeypatch):
+def test_quiz_handler_wire_labels_match_the_browser_spec(e2e_seam):
     """Through the route's real wire mapping, the correct labels are exactly
     E2E_QUIZ_CORRECT_LABELS — the click sequence frontend/e2e/quiz.spec.ts
     hardcodes. Changing the ordering means updating the spec in the same PR
     (testids are API, and so is this sequence)."""
-    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
-    monkeypatch.setenv(
-        "SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e"
-    )
 
     with quiz_agent.override(model=model_for("quiz")):
         result = quiz_agent.run_sync("Generate 5 medium questions.", deps=_deps())
@@ -268,9 +255,7 @@ def test_quiz_handler_wire_labels_match_the_browser_spec(monkeypatch):
 
 
 @pytest.mark.parametrize("format", ["short_answer", "numeric", "symbolic", "mixed"])
-def test_quiz_handler_supports_written_format_browser_journeys(monkeypatch, format):
-    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
-    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
+def test_quiz_handler_supports_written_format_browser_journeys(e2e_seam, format):
     with quiz_agent.override(model=model_for("quiz")):
         result = quiz_agent.run_sync(f"\nquestion_format: {format}.\n", deps=_deps())
     types = [q.type for q in result.output.questions]
@@ -289,7 +274,7 @@ _PLANNED_PROMPT = (
 )
 
 
-def test_the_planned_quiz_handler_writes_one_item_per_plan_line(monkeypatch):
+def test_the_planned_quiz_handler_writes_one_item_per_plan_line(e2e_seam):
     """Spec §13 A144: the planned agent rides the quiz slot, told apart by its
     schema; one item per QUESTION line, the correct option at E2E_QUIZ_CORRECT
     _LABELS' position (cycling), its stem carrying the concept marker the quiz
@@ -299,8 +284,6 @@ def test_the_planned_quiz_handler_writes_one_item_per_plan_line(monkeypatch):
     from agents.quiz_planned import quiz_planned_agent
     from learning import quiz_evidence
 
-    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
-    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
     with quiz_planned_agent.override(model=model_for("quiz")):
         result = quiz_planned_agent.run_sync(_PLANNED_PROMPT.format(fmt="multiple_choice"), deps=_deps())
     items = result.output.questions
@@ -328,14 +311,12 @@ def quiz_planned_to_plain(q):
     )
 
 
-def test_the_planned_quiz_handler_puts_an_unknown_target_on_the_first_distractor(monkeypatch):
+def test_the_planned_quiz_handler_puts_an_unknown_target_on_the_first_distractor(e2e_seam):
     """The seeded loop course's key (`wrong_token`) is no E2E option's: a
     TARGET on it tags the first distractor, option A of slot 1 — the option
     frontend/e2e/quiz-learning.spec.ts picks with "Sure"."""
     from agents.quiz_planned import quiz_planned_agent
 
-    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
-    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
     prompt = (
         "[WRITE QUIZ]\nCONCEPT: Binary\nFORMAT: multiple_choice\n"
         "QUESTION 1: difficulty medium. TARGET: wrong_token\nQUESTION 2: difficulty medium.\n"
@@ -348,12 +329,10 @@ def test_the_planned_quiz_handler_puts_an_unknown_target_on_the_first_distractor
     assert second.option_misconceptions == ["", "", "", ""]
 
 
-def test_the_planned_quiz_handler_writes_short_answers_the_solve_agrees_with(monkeypatch):
+def test_the_planned_quiz_handler_writes_short_answers_the_solve_agrees_with(e2e_seam):
     from agents.function_handlers_e2e import E2E_CHECK_ITEM_FINAL_ANSWER
     from agents.quiz_planned import quiz_planned_agent
 
-    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
-    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
     with quiz_planned_agent.override(model=model_for("quiz")):
         mixed = quiz_planned_agent.run_sync(_PLANNED_PROMPT.format(fmt="mixed"), deps=_deps()).output.questions
     assert [q.type for q in mixed] == ["multiple_choice", "short_answer", "multiple_choice", "short_answer"]
@@ -363,7 +342,7 @@ def test_the_planned_quiz_handler_writes_short_answers_the_solve_agrees_with(mon
     assert _agent_question_to_wire(quiz_planned_to_plain(written), 1) is not None
 
 
-def test_the_planned_quiz_handler_emits_kit_sort_when_prompted(monkeypatch):
+def test_the_planned_quiz_handler_emits_kit_sort_when_prompted(e2e_seam):
     """W7: `KIT: sort` stamps Sort interaction on the first written slot only."""
     from agents.function_handlers_e2e import (
         E2E_KIT_SORT_ANSWER,
@@ -374,8 +353,6 @@ def test_the_planned_quiz_handler_emits_kit_sort_when_prompted(monkeypatch):
     from agents.quiz_planned import quiz_planned_agent
     from services.quiz.interaction import attach_interaction
 
-    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
-    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
     prompt = (
         "[WRITE QUIZ]\nCONCEPT: Cells\nFORMAT: short_answer\nKIT: sort\n"
         "QUESTION 1: difficulty medium.\nQUESTION 2: difficulty medium.\n"
@@ -423,7 +400,7 @@ def test_quiz_check_solve_returns_kit_sort_answer():
     assert row["answer"] == E2E_KIT_SORT_ANSWER
 
 
-def test_the_quiz_check_handler_answers_the_checks_and_aligns_an_unmarked_question(monkeypatch):
+def test_the_quiz_check_handler_answers_the_checks_and_aligns_an_unmarked_question(e2e_seam):
     """Spec §13 A145: one handler for the quiz_check slot — the concept check
     (a marked question tests its marker's concept, an unmarked one the first
     listed: the quizzed concept) and the blind solve."""
@@ -431,8 +408,6 @@ def test_the_quiz_check_handler_answers_the_checks_and_aligns_an_unmarked_questi
     from agents.check_items_verify import VerifyItem, build_verify_prompt, check_items_verify_agent
     from agents.function_handlers_e2e import E2E_CHECK_ITEM_FINAL_ANSWER
 
-    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
-    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
     items = [
         VerifyItem("q1", "mc_reason", "Plain question?", "x", ("y", "z", "w"), ()),
         VerifyItem("q2", "mc_reason", "[e2e-function-model][Loops] Marked?", "x", ("y",), ()),
@@ -474,16 +449,12 @@ def test_quiz_resolve_model_pref_still_builds_override_in_real_mode(monkeypatch)
 # ── Upload-pipeline handlers (#387) ───────────────────────────────────────
 
 
-def test_env_module_registers_upload_pipeline_handlers_on_dispatch(monkeypatch):
+def test_env_module_registers_upload_pipeline_handlers_on_dispatch(e2e_seam):
     """#387's boot contract on the same once-per-process autoload: a real
     classifier run gets the module's scripted structured output — emitted
     through the agent's REAL output tool, so the DocumentClassification
     schema validated it — and that single import also registered the
     parallel workers (summary, concepts) and the post-roll course_summary."""
-    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
-    monkeypatch.setenv(
-        "SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e"
-    )
 
     with classifier_agent.override(model=model_for("classifier")):
         result = classifier_agent.run_sync("week 3 lecture notes", deps=_deps())
@@ -501,15 +472,11 @@ def test_env_module_registers_upload_pipeline_handlers_on_dispatch(monkeypatch):
         assert task in providers._FUNCTION_HANDLERS
 
 
-def test_env_module_summary_handler_passes_real_output_schema(monkeypatch):
+def test_env_module_summary_handler_passes_real_output_schema(e2e_seam):
     """The scripted summary payload must satisfy the Summary output tool's
     real schema (headline <= 140 chars, 3-8 key points): drift between the
     module constants and the schema fails here, in the hermetic lane, not
     three phases into a browser run."""
-    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
-    monkeypatch.setenv(
-        "SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e"
-    )
 
     with summary_agent.override(model=model_for("summary")):
         result = summary_agent.run_sync("some document text", deps=_deps())
@@ -521,7 +488,7 @@ def test_env_module_summary_handler_passes_real_output_schema(monkeypatch):
     assert 3 <= len(result.output.key_points) <= 8
 
 
-def test_env_module_concepts_handler_carries_resolvable_prerequisites(monkeypatch):
+def test_env_module_concepts_handler_carries_resolvable_prerequisites(e2e_seam):
     """Spec §13 A118: one scripted concepts payload serves both extraction
     variants. Flag off, the pre-A118 schema reads the concepts and ignores the
     relations. Flag on, the relations come through the REAL ConceptList schema
@@ -530,11 +497,6 @@ def test_env_module_concepts_handler_carries_resolvable_prerequisites(monkeypatc
     (frontend/e2e/upload.spec.ts asserts that edge, and none with the flag off)
     and logs no drop warning."""
     from services.concept_prereqs import resolve_prerequisites
-
-    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
-    monkeypatch.setenv(
-        "SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e"
-    )
 
     with concept_extraction_agent.override(model=model_for("concepts")):
         off = concept_extraction_agent.run_sync(
@@ -570,15 +532,11 @@ def test_env_module_concepts_handler_carries_resolvable_prerequisites(monkeypatc
 # E2E_CONCEPT_DESCRIPTION verbatim.
 
 
-def test_env_module_registers_concept_describe_handler_on_dispatch(monkeypatch):
+def test_env_module_registers_concept_describe_handler_on_dispatch(e2e_seam):
     """Full E2E-boot contract for concept_describe: function mode + the
     env-named module give a real concept_describe_agent run the module's
     fixed description — through the REAL structured output tool, with no
     handler registered by the test itself."""
-    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
-    monkeypatch.setenv(
-        "SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e"
-    )
 
     with concept_describe_agent.override(model=model_for("concept_describe")):
         result = concept_describe_agent.run_sync(
@@ -591,14 +549,10 @@ def test_env_module_registers_concept_describe_handler_on_dispatch(monkeypatch):
     assert "concept_describe" in providers._FUNCTION_HANDLERS
 
 
-def test_concept_describe_handler_passes_real_output_schema(monkeypatch):
+def test_concept_describe_handler_passes_real_output_schema(e2e_seam):
     """The scripted description must satisfy ConceptDescription's real schema
     (max_length=400) — drift between the module constant and the schema fails
     here, in the hermetic lane, not mid-browser-run."""
-    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
-    monkeypatch.setenv(
-        "SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e"
-    )
 
     with concept_describe_agent.override(model=model_for("concept_describe")):
         result = concept_describe_agent.run_sync(
@@ -623,15 +577,11 @@ def test_concept_describe_handler_passes_real_output_schema(monkeypatch):
 # real scan coverage from the browser lane.
 
 
-def test_env_module_registers_concept_scan_handler_on_dispatch(monkeypatch):
+def test_env_module_registers_concept_scan_handler_on_dispatch(e2e_seam):
     """Full E2E-boot contract for concept_scan: function mode + the env-named
     module give a real concept_scan_agent run the module's fixed new-concept
     names — through the REAL structured output tool (NewConcepts caps the
     list at 15), with no handler registered by the test itself."""
-    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
-    monkeypatch.setenv(
-        "SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e"
-    )
 
     with concept_scan_agent.override(model=model_for("concept_scan")):
         result = concept_scan_agent.run_sync(
@@ -654,17 +604,11 @@ def test_env_module_registers_concept_scan_handler_on_dispatch(monkeypatch):
 # Flashcards page now generates on arriving with `start=1`.
 
 
-def _function_mode(monkeypatch, module="agents.function_handlers_e2e"):
-    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
-    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", module)
-
-
-def test_env_module_registers_flashcard_handler_on_dispatch(monkeypatch):
+def test_env_module_registers_flashcard_handler_on_dispatch(e2e_seam):
     """Function mode + the env-named module give a real flashcard_agent run
     the module's fixed cards, through the REAL `Flashcards` output tool."""
     from agents.flashcard import flashcard_agent
 
-    _function_mode(monkeypatch)
     with flashcard_agent.override(model=model_for("flashcard")):
         result = flashcard_agent.run_sync("Generate exactly 5 flashcards about recursion.")
 
@@ -676,14 +620,13 @@ def test_env_module_registers_flashcard_handler_on_dispatch(monkeypatch):
     assert "flashcard" in providers._FUNCTION_HANDLERS
 
 
-def test_every_flashcard_model_call_is_served_by_the_one_handler(monkeypatch):
+def test_every_flashcard_model_call_is_served_by_the_one_handler(e2e_seam, monkeypatch):
     """Generate, import-generate, cleanup, cloze and the photo split all run
     the same agent with the same output model, so the one constant must come
     back from each of the functions the routes call."""
     from agents.flashcard import flashcard_agent
     from services.flashcards import importing
 
-    _function_mode(monkeypatch)
     monkeypatch.setattr(importing.extraction_service, "extract_text_from_file",
                         lambda *_a, **_k: "Q: what is recursion? A: a function calling itself")
     with flashcard_agent.override(model=model_for("flashcard")):
@@ -700,7 +643,7 @@ def test_every_flashcard_model_call_is_served_by_the_one_handler(monkeypatch):
     assert answers == {name: E2E_FLASHCARDS for name in answers}
 
 
-def test_generate_route_stores_the_scripted_cards_in_function_mode(monkeypatch):
+def test_generate_route_stores_the_scripted_cards_in_function_mode(e2e_seam):
     """`POST /api/flashcards/generate` end to end on the seam: 200 with the
     scripted cards (it was a 502), filed and returned as the route does."""
     from fastapi.testclient import TestClient
@@ -710,7 +653,6 @@ def test_generate_route_stores_the_scripted_cards_in_function_mode(monkeypatch):
     from main import app
     from tests.split_patches import patch_flashcards
 
-    _function_mode(monkeypatch)
     sys.modules.pop("agents.function_handlers_e2e", None)  # the import above registered early
     clear_function_handlers()
     with flashcard_agent.override(model=model_for("flashcard")), \
@@ -734,7 +676,8 @@ def test_showcase_module_registers_a_flashcard_handler_too(monkeypatch):
     #484 lesson: the second module is the one that gets missed)."""
     from agents.flashcard import flashcard_agent
 
-    _function_mode(monkeypatch, "agents.function_handlers_showcase")
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_showcase")
     sys.modules.pop("agents.function_handlers_showcase", None)
     try:
         with flashcard_agent.override(model=model_for("flashcard")):
@@ -757,14 +700,10 @@ def test_showcase_module_registers_a_flashcard_handler_too(monkeypatch):
 # REAL structured output tools, note_chat through a plain-text response.
 
 
-def test_env_module_registers_note_summary_handler_on_dispatch(monkeypatch):
+def test_env_module_registers_note_summary_handler_on_dispatch(e2e_seam):
     """note_summary has a structured output (NoteSummary.summary): a real agent
     run gets the module's fixed summary through the REAL output tool, with no
     handler registered by the test itself."""
-    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
-    monkeypatch.setenv(
-        "SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e"
-    )
 
     with note_summary_agent.override(model=model_for("note_summary")):
         result = note_summary_agent.run_sync(
@@ -778,14 +717,10 @@ def test_env_module_registers_note_summary_handler_on_dispatch(monkeypatch):
     assert "note_summary" in providers._FUNCTION_HANDLERS
 
 
-def test_env_module_registers_note_concepts_handler_on_dispatch(monkeypatch):
+def test_env_module_registers_note_concepts_handler_on_dispatch(e2e_seam):
     """note_concepts has a structured output (NoteConcepts.concepts, a list of
     Title-Case names, 0–15 entries): the real agent returns the module's fixed
     list through the REAL output tool, and it satisfies that schema bound."""
-    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
-    monkeypatch.setenv(
-        "SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e"
-    )
 
     with note_concepts_agent.override(model=model_for("note_concepts")):
         result = note_concepts_agent.run_sync(
@@ -801,14 +736,10 @@ def test_env_module_registers_note_concepts_handler_on_dispatch(monkeypatch):
     assert "note_concepts" in providers._FUNCTION_HANDLERS
 
 
-def test_env_module_registers_note_chat_handler_on_dispatch(monkeypatch):
+def test_env_module_registers_note_chat_handler_on_dispatch(e2e_seam):
     """note_chat returns plain str, so its handler emits a text ModelResponse
     (like chat_tutor): the real agent run yields the module's fixed reply with
     none of its function tools (read_active_note, ...) fired."""
-    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
-    monkeypatch.setenv(
-        "SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e"
-    )
 
     with note_chat_agent.override(model=model_for("note_chat")):
         result = note_chat_agent.run_sync("What is a base case?", deps=_deps())
@@ -822,16 +753,12 @@ def test_env_module_registers_note_chat_handler_on_dispatch(monkeypatch):
 # ── #149 guard: the e2e tutor handler stays tool-free ─────────────────────
 
 
-def test_e2e_tutor_handler_makes_no_tool_calls_and_no_graph_writes(monkeypatch):
+def test_e2e_tutor_handler_makes_no_tool_calls_and_no_graph_writes(e2e_seam):
     """The chat tutor grew two read tools (#149), but the deterministic E2E
     handler must keep answering in ONE text response: zero ToolCallParts in
     the transcript, and the deps write accumulators (graph_updates /
     mastery_changes) stay empty — the browser journeys' graph oracles
     depend on tutor turns not mutating the graph."""
-    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
-    monkeypatch.setenv(
-        "SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e"
-    )
 
     deps = _deps()
     with socratic_agent.override(model=model_for("chat_tutor")):
@@ -860,13 +787,9 @@ def test_e2e_tutor_handler_makes_no_tool_calls_and_no_graph_writes(monkeypatch):
 # E2E_TUTOR_REPLY byte-for-byte: tutor.spec.ts asserts it verbatim.
 
 
-def test_env_module_slow_trigger_returns_slow_reply(monkeypatch):
+def test_env_module_slow_trigger_returns_slow_reply(e2e_seam):
     """A tutor turn whose message carries the trigger gets the long slow-lane
     constant — through the real agent wiring via the env-autoloaded module."""
-    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
-    monkeypatch.setenv(
-        "SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e"
-    )
 
     with socratic_agent.override(model=model_for("chat_tutor")):
         result = socratic_agent.run_sync(
@@ -878,13 +801,9 @@ def test_env_module_slow_trigger_returns_slow_reply(monkeypatch):
     assert result.output == E2E_TUTOR_SLOW_REPLY
 
 
-def test_env_module_default_reply_unchanged_by_trigger_support(monkeypatch):
+def test_env_module_default_reply_unchanged_by_trigger_support(e2e_seam):
     """Regression guard: a normal message (no trigger) still gets the fixed
     E2E_TUTOR_REPLY — the slow lane must never hijack the default journey."""
-    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
-    monkeypatch.setenv(
-        "SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e"
-    )
 
     with socratic_agent.override(model=model_for("chat_tutor")):
         result = socratic_agent.run_sync("What is recursion?", deps=_deps())
@@ -894,15 +813,11 @@ def test_env_module_default_reply_unchanged_by_trigger_support(monkeypatch):
     assert result.output == E2E_TUTOR_REPLY
 
 
-def test_env_module_import_sets_stream_pacing(monkeypatch):
+def test_env_module_import_sets_stream_pacing(e2e_seam):
     """Importing the module opts the lane into streamed-replay pacing (150ms
     between chunked deltas) so mid-stream journeys have a window to act in.
     In-process tests stay unpaced: the autouse registry reset
     (clear_function_handlers) zeroes the knob again after each case."""
-    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
-    monkeypatch.setenv(
-        "SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e"
-    )
 
     with socratic_agent.override(model=model_for("chat_tutor")):
         socratic_agent.run_sync("What is recursion?", deps=_deps())
@@ -915,15 +830,13 @@ def test_env_module_import_sets_stream_pacing(monkeypatch):
 # ── Check items (learning loop PKG-04) ────────────────────────────────────
 
 
-def test_env_module_registers_check_items_handler_on_dispatch(monkeypatch):
+def test_env_module_registers_check_items_handler_on_dispatch(e2e_seam):
     """PKG-04: the check_items generator is a REQUEST-PATH agent in function
     mode (the upload hook runs it synchronously there), so it must have a
     handler that passes the real flat output schema and code validation —
     one free and one teachback item for each function-mode upload concept,
     and CHECK_ITEM_MC_MIN_PER_CONCEPT mc_reason items, so a function-mode pass
     leaves no concept below the A37 floor and makes no top-up call."""
-    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
-    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
     from agents.check_items import check_items_agent
     from learning.checks import validate_draft
     from learning.params import CHECK_ITEM_FORMATS
@@ -998,13 +911,11 @@ def test_env_module_registers_check_items_handler_on_dispatch(monkeypatch):
     assert "check_items" in providers._FUNCTION_HANDLERS
 
 
-def test_the_mc_reason_top_up_rides_the_check_items_handler(monkeypatch):
+def test_the_mc_reason_top_up_rides_the_check_items_handler(e2e_seam):
     """A37 (coordinator's ruling, 2026-09-28): the top-up is its own agent on
     the check_items model slot, so function mode answers it with the
     check_items handler — no handler of its own, no UnregisteredHandlerError.
     Code keeps only the concept's mc_reason drafts (check_item_service)."""
-    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
-    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
     from agents.check_items_topup import check_items_topup_agent
     from agents.function_handlers_e2e import E2E_DOC_CONCEPTS
 
@@ -1014,15 +925,13 @@ def test_the_mc_reason_top_up_rides_the_check_items_handler(monkeypatch):
     assert concepts == {name for name, _, _ in E2E_DOC_CONCEPTS}
 
 
-def test_env_module_alignment_check_keeps_every_e2e_item_as_drafted(monkeypatch):
+def test_env_module_alignment_check_keeps_every_e2e_item_as_drafted(e2e_seam):
     """Spec §13 A119: in function mode the alignment check runs on the upload's
     request path after the drafting call, and an unavailable check stores
     nothing — so the lane registers a handler, and it must leave every item
     the check_items handler drafts exactly as drafted: every criterion asked,
     each item testing the concept it was drafted for. Run through the REAL
     agent, schema, prompt builder, parse and rules."""
-    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
-    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
     from agents.check_items import check_items_agent
     from agents.check_items_verify import (
         VerifyItem,
@@ -1065,11 +974,9 @@ def test_env_module_alignment_check_keeps_every_e2e_item_as_drafted(monkeypatch)
     assert "check_items_verify" in providers._FUNCTION_HANDLERS
 
 
-def test_e2e_alignment_handler_answers_none_for_an_unmarked_item(monkeypatch):
+def test_e2e_alignment_handler_answers_none_for_an_unmarked_item(e2e_seam):
     """An item without the E2E marker: the handler cannot tell what it tests,
     so it says none (the check then rejects it) — it never guesses a concept."""
-    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
-    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
     from agents.check_items_verify import (
         VerifyItem,
         build_verify_prompt,
@@ -1086,7 +993,7 @@ def test_e2e_alignment_handler_answers_none_for_an_unmarked_item(monkeypatch):
     assert dict(verdicts(out)["1"].asked) == {"c1": True, "c2": True}
 
 
-def test_env_module_key_check_verifies_every_e2e_item(monkeypatch):
+def test_env_module_key_check_verifies_every_e2e_item(e2e_seam):
     """Spec §13 A124: in function mode the key check runs on the upload's
     request path after the alignment check, and an unavailable check stores
     nothing — so the lane registers a handler on the check_items_solve slot,
@@ -1094,8 +1001,6 @@ def test_env_module_key_check_verifies_every_e2e_item(monkeypatch):
     drafts: each is stored VERIFIED, no free-text pair needs the key match, and
     no E2E item is ever held. Run through the REAL agents, schema, prompt
     builder, letters (the server's slot key), parse and comparison rules."""
-    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
-    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
     from agents.check_items import check_items_agent
     from agents.check_items_solve import (
         SolveItem,
@@ -1125,13 +1030,11 @@ def test_env_module_key_check_verifies_every_e2e_item(monkeypatch):
     assert "check_items_solve" in providers._FUNCTION_HANDLERS
 
 
-def test_e2e_key_check_handler_never_guesses(monkeypatch):
+def test_e2e_key_check_handler_never_guesses(e2e_seam):
     """An item without the E2E marker, an option list without the E2E answer
     or a number to compute: the handler cannot tell, so it says unsolvable
     (the item is then held) — never a guess. The key match on the same slot
     agrees only on the same text."""
-    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
-    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
     from agents.check_items_key_match import (
         MatchItem,
         build_match_prompt,
@@ -1168,12 +1071,10 @@ def test_e2e_key_check_handler_never_guesses(monkeypatch):
 # ── Decision seam (learning loop PKG-05b) ─────────────────────────────────
 
 
-def test_env_module_registers_decision_handler_on_dispatch(monkeypatch):
+def test_env_module_registers_decision_handler_on_dispatch(e2e_seam):
     """PKG-05b: the decision agent's E2E handler serves BOTH per-run output
     types off the real schema — the token → "yes" / the first OPTION key,
     else "no" / "none" — at the fixed E2E_DECISION_CONFIDENCE."""
-    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
-    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
     from agents.learning_decision import DecisionPickOutput, build_decision_message, learning_decision_agent
     from agents.function_handlers_e2e import E2E_DECISION_CONFIDENCE, E2E_DECISION_YES_TOKEN
 
@@ -1189,60 +1090,16 @@ def test_env_module_registers_decision_handler_on_dispatch(monkeypatch):
     assert [p.choice for p in picks] == ["w_loop", "none"]
     assert (yes.answer, no.answer) == ("yes", "no")
     assert yes.confidence == picks[1].confidence == E2E_DECISION_CONFIDENCE
-    # Request-path from PKG-10 on (match_wrong_reason without a prior grade);
-    # until then services/decisions.py is its only runner, and no route calls it.
+    # On the request path: the loop's check tool (agents/tools/check.py) grades
+    # through services/learning_decisions.py, which runs this agent (e.g.
+    # match_wrong_reason without a prior grade), so the E2E lane needs it.
     assert "learning_decision" in providers._FUNCTION_HANDLERS
 
 
-@pytest.mark.parametrize("slot", ["loop_tutor_lite", "loop_tutor", "loop_tutor_deep"])
-def test_env_module_registers_loop_tutor_handler_on_dispatch(monkeypatch, slot):
-    """PKG-07: one loop_tutor_agent, three tier slots picked per run (spec §3.5, A15);
-    the E2E module serves every slot the same fixed reply, with no tool call."""
-    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
-    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
-    from agents.loop_tutor import loop_tutor_agent
-
-    deps = _deps()
-    result = loop_tutor_agent.run_sync("What is a base case?", deps=deps, model=model_for(slot))
-
-    from agents.function_handlers_e2e import E2E_LOOP_TUTOR_REPLY, E2E_LOOP_TUTOR_TURN
-    from learning.turn_shape import render_turn
-
-    assert result.output == E2E_LOOP_TUTOR_TURN
-    assert render_turn(result.output) == E2E_LOOP_TUTOR_REPLY
-    assert not deps.pending_evidence  # the handler scripts no tool call; the loop has no grader tool
-
-
-@pytest.mark.parametrize("slot", ["loop_tutor_lite", "loop_tutor", "loop_tutor_deep"])
-@pytest.mark.parametrize("phase,ceiling,released", [
-    ("teach", 0, False), ("teach", 3, False), ("hint", 1, False), ("feedback", 6, True),
-])
-def test_e2e_loop_handler_returns_valid_turn(monkeypatch, slot, phase, ceiling, released):
-    """PKG-07 unblock S1: the E2E seam answers the structured output type with a
-    turn that passes the output validator at the TIGHTEST limits (a 1-sentence body
-    at H0/H1), so no E2E loop turn ever burns an output retry."""
-    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
-    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
-    from agents.function_handlers_e2e import E2E_LOOP_TUTOR_TURN
-    from agents.loop_tutor import loop_tutor_agent
-    from learning.turn_shape import turn_limits, validate_turn
-
-    limits = turn_limits(phase, ceiling, released)
-    assert validate_turn(E2E_LOOP_TUTOR_TURN, limits) == []
-    deps = _deps()
-    deps.loop_turn = limits
-    result = loop_tutor_agent.run_sync("What is a base case?", deps=deps, model=model_for(slot))
-    assert result.output == E2E_LOOP_TUTOR_TURN
-    assert result.usage().requests == 1  # no output retry
-
-
-def test_env_module_serves_session_close(monkeypatch):
+def test_env_module_serves_session_close(e2e_seam):
     """PKG-09: the close agent is on the request path (POST /api/learn/loop/close
     and the loop end_session), so the E2E lane needs its handler."""
     from agents.session_close import session_close_agent
-
-    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
-    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
 
     with session_close_agent.override(model=model_for("session_close")):
         result = session_close_agent.run_sync("close this session", deps=_deps())
@@ -1265,7 +1122,7 @@ def test_env_module_serves_session_close(monkeypatch):
 # ── PKG-10: the misconception path on the E2E lane ─────────────────────────
 
 
-def test_e2e_grader_wrong_reason_token_matches_the_first_listed_key(monkeypatch):
+def test_e2e_grader_wrong_reason_token_matches_the_first_listed_key(e2e_seam):
     """PKG-10 wires decisions.match_wrong_reason on the request path (with the
     grader's result as `prior`, so no decision-agent run). The E2E lane makes
     the matched key deterministic: an answer holding
@@ -1281,8 +1138,6 @@ def test_e2e_grader_wrong_reason_token_matches_the_first_listed_key(monkeypatch)
     from learning.policy import LoopState
     from services import learning_decisions as decisions
 
-    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
-    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
     from agents.function_handlers_e2e import (
         E2E_GRADER_CORRECT_TOKEN,
         E2E_GRADER_WRONG_REASON_TOKEN,
@@ -1356,7 +1211,6 @@ def test_e2e_grader_wrong_reason_token_matches_the_first_listed_key(monkeypatch)
 # pattern values are copied from agents/loop_tutor.py's phase rules, so a
 # prompt rewrite that drops them fails these tests, not the browser lane.
 
-_LOOP_SLOTS = ["loop_tutor_lite", "loop_tutor", "loop_tutor_deep"]
 #: (phase, ceiling, answer_released, verdict) — one real prefix per model phase.
 _LOOP_PHASE_CASES = {
     "teach": ("teach", 1, False, None),
@@ -1396,14 +1250,15 @@ def _loop_turn_for(phase_key: str) -> dict:
     }[phase_key]
 
 
-@pytest.mark.parametrize("slot", _LOOP_SLOTS)
-@pytest.mark.parametrize("phase_key", ["teach", "hint", "feedback"])
-def test_loop_tutor_handler_answers_by_phase_on_every_tier_slot(monkeypatch, slot, phase_key):
+@pytest.mark.parametrize(
+    "phase_key,slot",
+    [("teach", "loop_tutor"), ("hint", "loop_tutor_deep"), ("feedback", "loop_tutor_lite")],
+)
+def test_loop_tutor_handler_answers_by_phase_on_every_tier_slot(e2e_seam, slot, phase_key):
     """Spec §13 A15: code picks the tier slot per run (feedback after a correct
     answer runs on loop_tutor_lite), so the scripted reply depends on the PHASE
-    of the real prefix, never on the slot — and no turn burns an output retry."""
-    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
-    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
+    of the real prefix, never on the slot — and no turn burns an output retry.
+    One slot per phase: the module registers one handler for all three slots."""
     from agents.loop_tutor import loop_tutor_agent
     from learning.turn_shape import render_turn
 
@@ -1426,11 +1281,9 @@ def test_loop_tutor_handler_answers_by_phase_on_every_tier_slot(monkeypatch, slo
     assert render_turn(result.output) == reply
 
 
-def test_loop_tutor_handler_reads_this_runs_prompt_not_the_history(monkeypatch):
+def test_loop_tutor_handler_reads_this_runs_prompt_not_the_history(e2e_seam):
     """A teach turn after a hint turn carries the hint prefix in its HISTORY;
     the handler must still answer it with the teach reply."""
-    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
-    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
     from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
 
     from agents.function_handlers_e2e import E2E_LOOP_HINT_REPLY, E2E_LOOP_TUTOR_TURN
@@ -1534,13 +1387,11 @@ def test_a_v2_plan_focus_never_steers_the_seams_phase_patterns():
         assert not [p for p in patterns if p in text], reason
 
 
-@pytest.mark.parametrize("slot", _LOOP_SLOTS)
-def test_loop_tutor_handler_judges_a_reply_by_the_chat_answer_token(monkeypatch, slot):
+def test_loop_tutor_handler_judges_a_reply_by_the_chat_answer_token(e2e_seam):
     """A reply carrying E2E_LOOP_CHAT_ANSWER_TOKEN is judged correct, any other
-    reply not_an_answer (a follow-up question — the quiz sheet's), on every tier
-    slot, and the turn passes the answer-check validator with no retry."""
-    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
-    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
+    reply not_an_answer (a follow-up question — the quiz sheet's), and the turn
+    passes the answer-check validator with no retry. The slot does not matter:
+    the module registers one handler for all three."""
     import agents.function_handlers_e2e as m
     from agents.loop_tutor import loop_tutor_agent, variant_run_args
 
@@ -1552,7 +1403,7 @@ def test_loop_tutor_handler_judges_a_reply_by_the_chat_answer_token(monkeypatch,
         deps = _deps()
         deps.loop_turn = limits
         result = loop_tutor_agent.run_sync(
-            message, deps=deps, model=model_for(slot), **variant_run_args(True)
+            message, deps=deps, model=model_for("loop_tutor"), **variant_run_args(True)
         )
         assert result.output == want
         assert result.usage().requests == 1  # no output retry
@@ -1700,15 +1551,6 @@ def test_support_ask_panel_constants_match_the_handlers():
         sys.modules.pop("agents.function_handlers_e2e", None)
 
 
-def test_support_lane_parse_is_the_spec_7_post_launch_parse():
-    import pathlib
-
-    src = (pathlib.Path(__file__).resolve().parents[2] / "frontend/e2e/support/lane.ts").read_text()
-    assert 'export const killSwitchLane = ["false", "0", "off", "no"].includes(' in src
-    assert '(process.env.LEARNING_LOOP_ENABLED ?? "").trim().toLowerCase()' in src
-    fixtures = (pathlib.Path(__file__).resolve().parents[2] / "frontend/e2e/support/fixtures.ts").read_text()
-    assert 'export { killSwitchLane, loopOffLane } from "./lane";' in fixtures
-
 # ── Typed decision seam / tutor router (#640, ADR 0027) ───────────────────
 #
 # Function mode turns the decision seam on automatically, and the tutor router
@@ -1733,10 +1575,7 @@ def _run_router_decision():
         ))
 
 
-def test_env_module_decision_handler_answers_every_router_key(monkeypatch):
-    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
-    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
-
+def test_env_module_decision_handler_answers_every_router_key(e2e_seam):
     result = _run_router_decision()
 
     from agents.function_handlers_e2e import E2E_DECISION_ANSWERS
@@ -1749,7 +1588,7 @@ def test_env_module_decision_handler_answers_every_router_key(monkeypatch):
     assert result.value("needs_retrieval") is True
 
 
-def test_flashcard_set_suggest_runs_on_the_decision_handler_in_function_mode(monkeypatch):
+def test_flashcard_set_suggest_runs_on_the_decision_handler_in_function_mode(e2e_seam, monkeypatch):
     """Describe-a-set (services/flashcards/suggest.py) asks the same seam about
     its own keys (c0, c1, ...), which the scripted answers do not cover: each
     falls to its safe default (not included). So the lane gets the concepts
@@ -1759,9 +1598,6 @@ def test_flashcard_set_suggest_runs_on_the_decision_handler_in_function_mode(mon
 
     from agents.decision import decision_agent
     from services.flashcards import suggest
-
-    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
-    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
 
     class _Graph:
         async def aselect(self, *_a, **_k):
@@ -1837,11 +1673,7 @@ def test_e2e_decision_answers_are_the_shared_fixture():
 # validate_evidence) run on its output rather than being bypassed.
 
 
-def test_topic_checklist_handler_cites_request_evidence(monkeypatch):
-    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
-    monkeypatch.setenv(
-        "SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e"
-    )
+def test_topic_checklist_handler_cites_request_evidence(e2e_seam):
     import json
 
     from agents.topic_checklist import topic_checklist_agent
@@ -1876,15 +1708,8 @@ def test_topic_checklist_handler_cites_request_evidence(monkeypatch):
 # the real markup parser.
 
 
-def _study_guide_env(monkeypatch):
-    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
-    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
-
-
-def test_study_guide_outline_agent_gets_the_scripted_outline(monkeypatch):
+def test_study_guide_outline_agent_gets_the_scripted_outline(e2e_seam):
     from agents.study_guide import study_guide_outline_agent
-
-    _study_guide_env(monkeypatch)
 
     with study_guide_outline_agent.override(model=model_for("study_guide")):
         result = study_guide_outline_agent.run_sync("SCOPE: Midterm Exam", deps=_deps())
@@ -1912,10 +1737,8 @@ def test_study_guide_outline_concepts_are_the_rich_seeds_cs101_nodes():
     assert set(concepts) <= seeded
 
 
-def test_study_guide_section_agent_gets_the_scripted_section(monkeypatch):
+def test_study_guide_section_agent_gets_the_scripted_section(e2e_seam):
     from agents.study_guide import study_guide_section_agent
-
-    _study_guide_env(monkeypatch)
 
     with study_guide_section_agent.override(model=model_for("study_guide")):
         result = study_guide_section_agent.run_sync("SECTION: Recursion", deps=_deps())
@@ -1925,14 +1748,13 @@ def test_study_guide_section_agent_gets_the_scripted_section(monkeypatch):
     assert result.output == E2E_STUDY_GUIDE_SECTION_TEXT
 
 
-def _rewrite(monkeypatch, block_text: str) -> str:
+def _rewrite(block_text: str) -> str:
     """The block agent's reply, through the seam, to the message
     services/study_guides/prompts.py writes for `block_text`."""
     from agents.study_guide import study_guide_block_agent
     from models.study_guide import GuideContent, Section
     from services.study_guides import prompts
 
-    _study_guide_env(monkeypatch)
     section = Section(id="s1", title="Recursion", one_line="A function calls itself.")
     brief = prompts.Brief(
         scope_kind="course", scope_label="Whole course", goal="review", depth="standard",
@@ -1946,7 +1768,7 @@ def _rewrite(monkeypatch, block_text: str) -> str:
         return study_guide_block_agent.run_sync(message, deps=_deps()).output
 
 
-def test_study_guide_block_agent_gets_the_scripted_block(monkeypatch):
+def test_study_guide_block_agent_gets_the_scripted_block(e2e_seam):
     """Both text agents share the task; only the block agent's message carries
     BLOCK_REWRITE_MARKER, and that is what picks the reply."""
     from agents.function_handlers_e2e import (
@@ -1955,7 +1777,7 @@ def test_study_guide_block_agent_gets_the_scripted_block(monkeypatch):
     )
     from services.study_guides.markup import parse_block
 
-    output = _rewrite(monkeypatch, json.dumps(_E2E_STUDY_GUIDE_BLOCKS["key_terms"]))
+    output = _rewrite(json.dumps(_E2E_STUDY_GUIDE_BLOCKS["key_terms"]))
 
     # Byte for byte: the journey asserts this title and these terms.
     assert output == E2E_STUDY_GUIDE_BLOCK_TEXT
@@ -1967,7 +1789,7 @@ def test_study_guide_block_agent_gets_the_scripted_block(monkeypatch):
 
 
 @pytest.mark.parametrize("kind", ["formula", "worked_example", "comparison", "concept_map"])
-def test_study_guide_block_rewrite_answers_with_the_type_it_was_asked_for(monkeypatch, kind):
+def test_study_guide_block_rewrite_answers_with_the_type_it_was_asked_for(e2e_seam, kind):
     """The route refuses a rewrite of another type (502), so regenerating any
     block of the E2E section has to get its own type back, visibly changed."""
     from agents.function_handlers_e2e import _E2E_STUDY_GUIDE_BLOCKS
@@ -1976,7 +1798,7 @@ def test_study_guide_block_rewrite_answers_with_the_type_it_was_asked_for(monkey
     written = _E2E_STUDY_GUIDE_BLOCKS[kind]
     name = "name" if kind == "formula" else "title"
 
-    output = _rewrite(monkeypatch, json.dumps(written))
+    output = _rewrite(json.dumps(written))
 
     block = parse_block(output, block_id="s1-i2", sources={"S1": "document:d1"})
     assert block is not None and block.type == kind
@@ -1994,15 +1816,15 @@ def test_study_guide_block_rewrite_answers_with_the_type_it_was_asked_for(monkey
         "{}",
     ],
 )
-def test_study_guide_block_rewrite_falls_back_to_key_terms(monkeypatch, block_text):
+def test_study_guide_block_rewrite_falls_back_to_key_terms(e2e_seam, block_text):
     from agents.function_handlers_e2e import E2E_STUDY_GUIDE_BLOCK_TEXT
 
-    assert _rewrite(monkeypatch, block_text) == E2E_STUDY_GUIDE_BLOCK_TEXT
+    assert _rewrite(block_text) == E2E_STUDY_GUIDE_BLOCK_TEXT
 
 
-def test_study_guide_block_rewrite_reads_the_type_of_a_block_that_is_not_json(monkeypatch):
+def test_study_guide_block_rewrite_reads_the_type_of_a_block_that_is_not_json(e2e_seam):
     """A rejected block reaches the rewriter as the model wrote it."""
-    output = _rewrite(monkeypatch, '{"type": "formula", "name": "Cut off')
+    output = _rewrite('{"type": "formula", "name": "Cut off')
 
     assert '"type": "formula"' in output and ", rewritten" in output
 
