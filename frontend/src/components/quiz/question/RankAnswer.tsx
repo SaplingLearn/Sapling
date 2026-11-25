@@ -13,6 +13,7 @@ import {
   placeRankItem,
   type RankAssignment,
 } from "@/lib/quiz/rankInteraction";
+import { KitPiece, useKitMotion, type KitTone } from "./kitMotion";
 
 export interface RankAnswerProps {
   interaction: RankInteraction;
@@ -29,7 +30,7 @@ function cardTone(
   expected: RankAssignment | null,
   verdict: "correct" | "incorrect" | null | undefined,
   selected: boolean,
-): "plain" | "lift" | "right" | "wrong" {
+): KitTone {
   if (verdict && expected) {
     const got = assign[itemId];
     const want = expected[itemId];
@@ -56,6 +57,7 @@ export function RankAnswer({
     [interaction, expected],
   );
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const kit = useKitMotion();
   const complete = isRankComplete(interaction, value);
   const tray = interaction.items.filter(it => assign[it.id] == null);
   const done = Boolean(verdict);
@@ -123,15 +125,18 @@ export function RankAnswer({
                 )}
               </button>
               {placed && (
-                <button
-                  type="button"
-                  className={`quiz-rank__card quiz-rank__card--${cardTone(placed.id, assign, expectedAssign, verdict, false)}`}
+                <KitPiece
+                  kit={kit}
+                  pieceId={placed.id}
+                  block="quiz-rank__card"
+                  tone={cardTone(placed.id, assign, expectedAssign, verdict, false)}
+                  movable={!done}
                   data-testid={`quiz-rank-item-${placed.id}`}
                   disabled={disabled || done}
                   onClick={() => selectOrReturn(placed.id)}
                 >
                   {placed.label}
-                </button>
+                </KitPiece>
               )}
             </div>
           );
@@ -149,16 +154,19 @@ export function RankAnswer({
             <ul className="quiz-rank__cards">
               {tray.map(it => (
                 <li key={it.id}>
-                  <button
-                    type="button"
-                    className={`quiz-rank__card quiz-rank__card--${cardTone(it.id, assign, expectedAssign, verdict, selectedId === it.id)}`}
+                  <KitPiece
+                    kit={kit}
+                    pieceId={it.id}
+                    block="quiz-rank__card"
+                    tone={cardTone(it.id, assign, expectedAssign, verdict, selectedId === it.id)}
+                    movable={!done}
                     data-testid={`quiz-rank-item-${it.id}`}
                     aria-pressed={selectedId === it.id}
                     disabled={disabled}
                     onClick={() => selectOrReturn(it.id)}
                   >
                     {it.label}
-                  </button>
+                  </KitPiece>
                 </li>
               ))}
             </ul>

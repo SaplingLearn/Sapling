@@ -14,12 +14,14 @@
  */
 
 import React, { useMemo } from "react";
+import { motion } from "framer-motion";
 import type { CompareInteraction } from "@/lib/quiz/types";
 import {
   decodeCompareAnswer,
   encodeCompareAnswer,
   isCompareComplete,
 } from "@/lib/quiz/compareInteraction";
+import { useKitMotion, type KitTone } from "./kitMotion";
 
 export interface CompareAnswerProps {
   interaction: CompareInteraction;
@@ -36,7 +38,7 @@ function optionTone(
   chosen: string | null,
   expected: string | null,
   verdict: "correct" | "incorrect" | null | undefined,
-): "plain" | "lift" | "right" | "wrong" {
+): KitTone {
   if (verdict && expected) {
     if (optionId === expected && optionId === chosen) return "right";
     if (optionId === chosen && optionId !== expected) return "wrong";
@@ -64,6 +66,7 @@ export function CompareAnswer({
   );
   const complete = isCompareComplete(interaction, value);
   const done = Boolean(verdict);
+  const kit = useKitMotion();
 
   const select = (optionId: string) => {
     if (disabled || done) return;
@@ -102,19 +105,23 @@ export function CompareAnswer({
         role="group"
         aria-label="How do they compare?"
       >
-        {interaction.options.map(opt => (
-          <button
-            key={opt.id}
-            type="button"
-            className={`quiz-compare__option quiz-compare__option--${optionTone(opt.id, chosen, expectedId, verdict)}`}
-            data-testid={`quiz-compare-option-${opt.id}`}
-            aria-pressed={chosen === opt.id}
-            disabled={disabled || done}
-            onClick={() => select(opt.id)}
-          >
-            {opt.label}
-          </button>
-        ))}
+        {interaction.options.map(opt => {
+          const tone = optionTone(opt.id, chosen, expectedId, verdict);
+          return (
+            <motion.button
+              {...kit.mark(tone)}
+              key={opt.id}
+              type="button"
+              className={`quiz-compare__option quiz-compare__option--${tone}`}
+              data-testid={`quiz-compare-option-${opt.id}`}
+              aria-pressed={chosen === opt.id}
+              disabled={disabled || done}
+              onClick={() => select(opt.id)}
+            >
+              {opt.label}
+            </motion.button>
+          );
+        })}
       </div>
     </div>
   );

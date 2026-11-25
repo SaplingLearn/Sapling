@@ -24,6 +24,10 @@ import {
   placeLabelItem,
   type LabelAssignment,
 } from "@/lib/quiz/labelInteraction";
+import { KitPiece, useKitMotion, type KitTone } from "./kitMotion";
+
+/** More spots than this wrap onto a second row. */
+const MAX_SPOT_COLUMNS = 4;
 
 export interface LabelAnswerProps {
   interaction: LabelInteraction;
@@ -41,7 +45,7 @@ function cardTone(
   expected: LabelAssignment | null,
   verdict: "correct" | "incorrect" | null | undefined,
   selected: boolean,
-): "plain" | "lift" | "right" | "wrong" {
+): KitTone {
   if (verdict && expected) {
     const got = assign[labelId];
     const want = expected[labelId];
@@ -68,6 +72,7 @@ export function LabelAnswer({
     [interaction, expected],
   );
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const kit = useKitMotion();
   const complete = isLabelComplete(interaction, assign);
   const tray = interaction.labels.filter(it => assign[it.id] == null);
   const done = Boolean(verdict);
@@ -101,7 +106,7 @@ export function LabelAnswer({
     >
       <div
         className="quiz-label__spots"
-        style={{ gridTemplateColumns: `repeat(${Math.min(interaction.spots.length, 4)}, minmax(0, 1fr))` }}
+        style={{ "--quiz-kit-cols": Math.min(interaction.spots.length, MAX_SPOT_COLUMNS) } as React.CSSProperties}
         data-testid="quiz-label-spots"
         aria-label="Regions to label"
       >
@@ -132,15 +137,18 @@ export function LabelAnswer({
                 )}
               </button>
               {placed && (
-                <button
-                  type="button"
-                  className={`quiz-label__card quiz-label__card--${cardTone(placed.id, assign, expectedAssign, verdict, false)}`}
+                <KitPiece
+                  kit={kit}
+                  pieceId={placed.id}
+                  block="quiz-label__card"
+                  tone={cardTone(placed.id, assign, expectedAssign, verdict, false)}
+                  movable={!done}
                   data-testid={`quiz-label-item-${placed.id}`}
                   disabled={disabled || done}
                   onClick={() => selectOrReturn(placed.id)}
                 >
                   {placed.label}
-                </button>
+                </KitPiece>
               )}
             </div>
           );
@@ -158,16 +166,19 @@ export function LabelAnswer({
             <ul className="quiz-label__cards">
               {tray.map(it => (
                 <li key={it.id}>
-                  <button
-                    type="button"
-                    className={`quiz-label__card quiz-label__card--${cardTone(it.id, assign, expectedAssign, verdict, selectedId === it.id)}`}
+                  <KitPiece
+                    kit={kit}
+                    pieceId={it.id}
+                    block="quiz-label__card"
+                    tone={cardTone(it.id, assign, expectedAssign, verdict, selectedId === it.id)}
+                    movable={!done}
                     data-testid={`quiz-label-item-${it.id}`}
                     aria-pressed={selectedId === it.id}
                     disabled={disabled}
                     onClick={() => selectOrReturn(it.id)}
                   >
                     {it.label}
-                  </button>
+                  </KitPiece>
                 </li>
               ))}
             </ul>

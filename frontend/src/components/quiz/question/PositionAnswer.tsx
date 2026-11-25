@@ -13,6 +13,7 @@ import {
   placePositionMarker,
   type PositionAssignment,
 } from "@/lib/quiz/positionInteraction";
+import { KitPiece, useKitMotion, type KitTone } from "./kitMotion";
 
 export interface PositionAnswerProps {
   interaction: PositionInteraction;
@@ -29,7 +30,7 @@ function cardTone(
   expected: PositionAssignment | null,
   verdict: "correct" | "incorrect" | null | undefined,
   selected: boolean,
-): "plain" | "lift" | "right" | "wrong" {
+): KitTone {
   if (verdict && expected) {
     const got = assign[markerId];
     const want = expected[markerId];
@@ -56,6 +57,7 @@ export function PositionAnswer({
     [interaction, expected],
   );
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const kit = useKitMotion();
   const complete = isPositionComplete(interaction, assign);
   const tray = interaction.markers.filter(m => assign[m.id] == null);
   const done = Boolean(verdict);
@@ -122,15 +124,18 @@ export function PositionAnswer({
                 )}
               </button>
               {placed && (
-                <button
-                  type="button"
-                  className={`quiz-position__card quiz-position__card--${cardTone(placed.id, assign, expectedAssign, verdict, false)}`}
+                <KitPiece
+                  kit={kit}
+                  pieceId={placed.id}
+                  block="quiz-position__card"
+                  tone={cardTone(placed.id, assign, expectedAssign, verdict, false)}
+                  movable={!done}
                   data-testid={`quiz-position-item-${placed.id}`}
                   disabled={disabled || done}
                   onClick={() => selectOrReturn(placed.id)}
                 >
                   {placed.label}
-                </button>
+                </KitPiece>
               )}
             </div>
           );
@@ -148,16 +153,19 @@ export function PositionAnswer({
             <ul className="quiz-position__cards">
               {tray.map(m => (
                 <li key={m.id}>
-                  <button
-                    type="button"
-                    className={`quiz-position__card quiz-position__card--${cardTone(m.id, assign, expectedAssign, verdict, selectedId === m.id)}`}
+                  <KitPiece
+                    kit={kit}
+                    pieceId={m.id}
+                    block="quiz-position__card"
+                    tone={cardTone(m.id, assign, expectedAssign, verdict, selectedId === m.id)}
+                    movable={!done}
                     data-testid={`quiz-position-item-${m.id}`}
                     aria-pressed={selectedId === m.id}
                     disabled={disabled}
                     onClick={() => selectOrReturn(m.id)}
                   >
                     {m.label}
-                  </button>
+                  </KitPiece>
                 </li>
               ))}
             </ul>

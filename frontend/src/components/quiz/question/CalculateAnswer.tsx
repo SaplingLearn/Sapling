@@ -5,12 +5,14 @@
  */
 
 import React, { useMemo } from "react";
+import { motion } from "framer-motion";
 import type { CalculateInteraction } from "@/lib/quiz/types";
 import {
   decodeCalculateAnswer,
   encodeCalculateAnswer,
   isCalculateComplete,
 } from "@/lib/quiz/calculateInteraction";
+import { toneOfVerdict, useKitMotion } from "./kitMotion";
 
 export interface CalculateAnswerProps {
   interaction: CalculateInteraction;
@@ -32,6 +34,7 @@ export function CalculateAnswer({
   const complete = isCalculateComplete(value);
   const done = Boolean(verdict);
   const locked = disabled || done;
+  const kit = useKitMotion();
   const valuePh = interaction.placeholder?.trim() || "Your answer";
   const unitPh = interaction.unitLabel?.trim() || "Units";
   const stepsPh = interaction.stepsPlaceholder?.trim() || "Show your working (optional)";
@@ -52,7 +55,7 @@ export function CalculateAnswer({
       data-complete={complete ? "true" : "false"}
       data-verdict={verdict || undefined}
     >
-      <div className="quiz-calculate__fields">
+      <motion.div {...kit.mark(toneOfVerdict(verdict))} className="quiz-calculate__fields">
         <input
           className="quiz-calculate__value field"
           data-testid="quiz-calculate-value"
@@ -74,7 +77,7 @@ export function CalculateAnswer({
           aria-label={unitPh}
           onChange={e => commit({ unit: e.target.value })}
         />
-      </div>
+      </motion.div>
       <label className="quiz-calculate__steps-label label-micro" htmlFor="quiz-calculate-steps">
         Working
       </label>

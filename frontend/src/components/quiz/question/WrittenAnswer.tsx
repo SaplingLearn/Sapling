@@ -76,6 +76,9 @@ const SYMBOLIC_KEYS: Key[] = [
   { id: "divide", label: "÷", insert: "/", ariaLabel: "Insert division sign" },
 ];
 
+/** The longest written answer the field takes (the grader's budget, not a design value). */
+const MAX_ANSWER_CHARS = 2000;
+
 /** Behind the "123" toggle: what the text keyboard keeps on another layer. */
 const SYMBOLIC_MORE: Key[] = [
   ..."1234567890".split("").map(d => ({ id: `digit-${d}`, label: d, insert: d, ariaLabel: `Insert ${d}` })),
@@ -328,7 +331,7 @@ export function WrittenAnswer({
           aria-invalid={reading?.ok === false ? true : undefined}
           inputMode={type === "numeric" ? "decimal" : "text"}
           placeholder={PLACEHOLDER[type]}
-          maxLength={2000}
+          maxLength={MAX_ANSWER_CHARS}
           value={shown}
           disabled={disabled}
           onChange={event => {

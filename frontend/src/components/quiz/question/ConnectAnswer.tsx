@@ -5,6 +5,7 @@
  */
 
 import React, { useMemo, useState } from "react";
+import { motion } from "framer-motion";
 import type { ConnectInteraction } from "@/lib/quiz/types";
 import {
   decodeConnectAnswer,
@@ -19,6 +20,7 @@ import {
   type ConnectAssignment,
   type ConnectMapEdge,
 } from "@/lib/quiz/connectInteraction";
+import { useKitMotion, type KitTone } from "./kitMotion";
 
 export interface ConnectAnswerProps {
   interaction: ConnectInteraction;
@@ -35,7 +37,7 @@ function leftTone(
   expected: ConnectAssignment | null,
   verdict: "correct" | "incorrect" | null | undefined,
   selected: boolean,
-): "plain" | "lift" | "right" | "wrong" {
+): KitTone {
   if (verdict && expected) {
     const got = assign[leftId];
     const want = expected[leftId];
@@ -62,6 +64,11 @@ function MatchConnect({
     [interaction, expected],
   );
   const [selectedLeft, setSelectedLeft] = useState<string | null>(null);
+  const kit = useKitMotion();
+  // Pairings already made when the kit appeared: those don't animate in.
+  const [pairedAtMount] = useState(
+    () => new Set(Object.keys(assign).filter(id => assign[id] != null)),
+  );
   const complete = isConnectComplete(interaction, assign);
   const done = Boolean(verdict);
   const usedRight = new Set(
@@ -110,7 +117,8 @@ function MatchConnect({
       <div className="quiz-connect__columns" data-testid="quiz-connect-columns">
         <div className="quiz-connect__col" data-testid="quiz-connect-left" aria-label="Left items">
           {interaction.left.map(n => (
-            <button
+            <motion.button
+              {...kit.mark(leftTone(n.id, assign, expectedAssign, verdict, selectedLeft === n.id))}
               key={n.id}
               type="button"
               className={`quiz-connect__node quiz-connect__node--${leftTone(n.id, assign, expectedAssign, verdict, selectedLeft === n.id)}`}
@@ -122,11 +130,15 @@ function MatchConnect({
             >
               <span className="quiz-connect__node-label">{n.label}</span>
               {assign[n.id] ? (
-                <span className="quiz-connect__pair label-micro">
+                <motion.span
+                  {...kit.arrive(!pairedAtMount.has(n.id))}
+                  key={assign[n.id]}
+                  className="quiz-connect__pair label-micro"
+                >
                   → {partnerLabel(assign[n.id])}
-                </span>
+                </motion.span>
               ) : null}
-            </button>
+            </motion.button>
           ))}
         </div>
 
@@ -172,6 +184,9 @@ function MapConnect({
     [interaction, expected],
   );
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const kit = useKitMotion();
+  // Links already drawn when the kit appeared: those don't animate in.
+  const [edgesAtMount] = useState(() => new Set(edges.map(e => `${e.a}-${e.b}`)));
   const complete = isConnectMapComplete(interaction, edges);
   const done = Boolean(verdict);
 
@@ -200,7 +215,7 @@ function MapConnect({
     commit(toggleConnectMapEdge(edges, a, b));
   };
 
-  const edgeTone = (e: ConnectMapEdge): "plain" | "right" | "wrong" => {
+  const edgeTone = (e: ConnectMapEdge): KitTone => {
     if (!verdict || !expectedEdges) return "plain";
     const k = `${e.a}=${e.b}`;
     const ok = expectedEdges.some(x => `${x.a}=${x.b}` === k);
@@ -246,7 +261,8 @@ function MapConnect({
           <li className="quiz-connect__map-empty label-micro">No links yet.</li>
         ) : (
           edges.map(e => (
-            <li
+            <motion.li
+              {...(verdict ? kit.mark(edgeTone(e)) : kit.arrive(!edgesAtMount.has(`${e.a}-${e.b}`)))}
               key={`${e.a}-${e.b}`}
               className={`quiz-connect__map-edge quiz-connect__map-edge--${edgeTone(e)}`}
               data-testid={`quiz-connect-edge-${e.a}-${e.b}`}
@@ -265,7 +281,7 @@ function MapConnect({
                   Remove
                 </button>
               ) : null}
-            </li>
+            </motion.li>
           ))
         )}
       </ul>

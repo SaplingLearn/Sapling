@@ -13,6 +13,8 @@ import { FEEDBACK_LABELS, FEEDBACK_MODES, loadPrefs, savePrefs } from "@/lib/qui
 import type { QuizPrefs } from "@/lib/quiz/types";
 import { useQuizConfig } from "@/lib/quiz/useQuizConfig";
 
+import s from "./QuizPrefsSection.module.css";
+
 const FORMAT_LABELS: Record<string, string> = {
   multiple_choice: "Multiple choice",
   short_answer: "Short answer",
@@ -30,15 +32,6 @@ function storedFrom(cfg: SessionConfig): QuizPrefs {
     ...(cfg.questionFormat ? { questionFormat: cfg.questionFormat } : {}),
   };
 }
-
-const rowStyle: React.CSSProperties = {
-  display: "flex",
-  justifyContent: "space-between",
-  alignItems: "center",
-  padding: "16px 0",
-  borderBottom: "1px solid var(--border)",
-  gap: 20,
-};
 
 export function QuizPrefsSection() {
   const quizShown = useFlag("hide_quiz") !== "on";
@@ -68,20 +61,20 @@ export function QuizPrefsSection() {
   };
 
   return (
-    <div data-testid="settings-quiz-prefs" style={{ marginTop: 28 }}>
-      <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Quiz</div>
-      <div style={{ fontSize: 11, color: "var(--text-dim)", marginBottom: 8 }}>
+    <div data-testid="settings-quiz-prefs" className={s.section}>
+      <div className={s.title}>Quiz</div>
+      <div className={s.lead}>
         Defaults for new quizzes on this device. Same choices as Adjust on Quiz home.
       </div>
 
-      <div style={rowStyle}>
+      <div className={s.row}>
         <div>
-          <div style={{ fontSize: 13, fontWeight: 500 }}>Length</div>
-          <div style={{ fontSize: 11, color: "var(--text-dim)", marginTop: 2 }}>
+          <div className={s.label}>Length</div>
+          <div className={s.help}>
             How many questions a new quiz starts with.
           </div>
         </div>
-        <div style={{ minWidth: 180 }}>
+        <div className={s.control}>
           <CustomSelect
             ariaLabel="Quiz length"
             size="sm"
@@ -96,11 +89,11 @@ export function QuizPrefsSection() {
         </div>
       </div>
 
-      <div style={rowStyle}>
+      <div className={s.row}>
         <div>
-          <div style={{ fontSize: 13, fontWeight: 500 }}>Difficulty</div>
+          <div className={s.label}>Difficulty</div>
         </div>
-        <div style={{ minWidth: 180 }}>
+        <div className={s.control}>
           <CustomSelect
             ariaLabel="Quiz difficulty"
             size="sm"
@@ -115,14 +108,14 @@ export function QuizPrefsSection() {
         </div>
       </div>
 
-      <div style={rowStyle}>
+      <div className={s.row}>
         <div>
-          <div style={{ fontSize: 13, fontWeight: 500 }}>Answers</div>
-          <div style={{ fontSize: 11, color: "var(--text-dim)", marginTop: 2 }}>
+          <div className={s.label}>Answers</div>
+          <div className={s.help}>
             When you see whether each answer was right.
           </div>
         </div>
-        <div style={{ minWidth: 180 }}>
+        <div className={s.control}>
           <CustomSelect
             ariaLabel="Quiz answers"
             size="sm"
@@ -135,14 +128,14 @@ export function QuizPrefsSection() {
       </div>
 
       {config && config.question_types.length > 1 && (
-        <div style={rowStyle}>
+        <div className={s.row}>
           <div>
-            <div style={{ fontSize: 13, fontWeight: 500 }}>Format</div>
-            <div style={{ fontSize: 11, color: "var(--text-dim)", marginTop: 2 }}>
+            <div className={s.label}>Format</div>
+            <div className={s.help}>
               Answer format mix — Mixed is question types, not a content style.
             </div>
           </div>
-          <div style={{ minWidth: 180 }}>
+          <div className={s.control}>
             <CustomSelect
               ariaLabel="Quiz format"
               size="sm"

@@ -12,6 +12,9 @@ import type { Candidate } from "@/lib/quiz/proposals";
 import type { GraphEdge, GraphNode } from "@/lib/data";
 import { LiveNeighbourhood } from "./LiveNeighbourhood";
 
+/** A placeholder line's height: the definition paragraph's line of text. */
+const DEFINITION_LINE_H = 13;
+
 interface CardTextProps {
   /** Show "← Back to the suggestion" (a topic is picked). */
   showReset: boolean;
@@ -63,9 +66,9 @@ function CardText({
           moment later fades in rather than snapping. */}
       {definitionPending && (
         <div className="quiz-home__definition-pending" data-testid="quiz-definition-pending" aria-hidden>
-          <Skeleton width="100%" height={13} />
-          <Skeleton width="92%" height={13} />
-          <Skeleton width="60%" height={13} />
+          <Skeleton width="100%" height={DEFINITION_LINE_H} />
+          <Skeleton width="92%" height={DEFINITION_LINE_H} />
+          <Skeleton width="60%" height={DEFINITION_LINE_H} />
         </div>
       )}
       {definition && (

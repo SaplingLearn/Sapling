@@ -13,23 +13,26 @@
 
 .quiz-results {
   /* Vertical rhythm, read off the prototype's RESULTS section. */
-  --quiz-results-gap-name: 18px;
-  --quiz-results-gap-delta: 8px;
-  --quiz-results-gap-rule: 26px;
+  --quiz-results-gap-name: var(--sp-9);
+  --quiz-results-gap-delta: var(--sp-4);
+  --quiz-results-gap-rule: var(--sp-13);
   --quiz-results-rule-pad-y: 13px;
-  --quiz-results-rule-pad-x: 4px;
-  --quiz-results-gap-block: 26px;
+  --quiz-results-rule-pad-x: var(--sp-2);
+  --quiz-results-gap-block: var(--sp-13);
   --quiz-results-gap-perfect: 34px;
-  --quiz-results-gap-divider: 30px;
-  --quiz-results-gap-exits: 18px;
-  --quiz-results-exits-gap: 10px;
+  --quiz-results-gap-divider: var(--sp-15);
+  --quiz-results-gap-exits: var(--sp-9);
+  --quiz-results-exits-gap: var(--sp-5);
+
+  /* The step between one block's arrival and the next (see "Arriving"). */
+  --quiz-results-stagger: var(--dur-instant);
 
   /* The missed item: a 2px accent bar, its text inset past it. */
   --quiz-results-bar: 2px;
-  --quiz-results-item-inset: 16px;
-  --quiz-results-item-pad-y: 2px;
-  --quiz-results-item-gap: 12px;
-  --quiz-results-line-gap: 6px;
+  --quiz-results-item-inset: var(--sp-8);
+  --quiz-results-item-pad-y: var(--sp-1);
+  --quiz-results-item-gap: var(--sp-6);
+  --quiz-results-line-gap: var(--sp-3);
 
   /* The missed stem sits between --fs-xl (18) and --fs-lg (16); the design's
      17px/1.45 is its own step, so it is a token rather than a rounded token. */
@@ -240,17 +243,17 @@
    its growth), then the mastery line, the score, and the way on. Mounted
    fresh on each result, so it plays once; a re-render never replays it. */
 .quiz-results > * {
-  animation: quiz-results-in 380ms var(--ease) both;
+  animation: quiz-results-in var(--dur-slow) var(--ease-out) both;
 }
 
-.quiz-results > :nth-child(2) { animation-delay: 60ms; }
-.quiz-results > :nth-child(3) { animation-delay: 120ms; }
-.quiz-results > :nth-child(4) { animation-delay: 180ms; }
-.quiz-results > :nth-child(5) { animation-delay: 240ms; }
-.quiz-results > :nth-child(n + 6) { animation-delay: 300ms; }
+.quiz-results > :nth-child(2) { animation-delay: var(--quiz-results-stagger); }
+.quiz-results > :nth-child(3) { animation-delay: calc(2 * var(--quiz-results-stagger)); }
+.quiz-results > :nth-child(4) { animation-delay: calc(3 * var(--quiz-results-stagger)); }
+.quiz-results > :nth-child(5) { animation-delay: calc(4 * var(--quiz-results-stagger)); }
+.quiz-results > :nth-child(n + 6) { animation-delay: calc(5 * var(--quiz-results-stagger)); }
 
 @keyframes quiz-results-in {
-  from { opacity: 0; transform: translateY(8px); }
+  from { opacity: 0; transform: translateY(var(--sp-4)); }
 }
 
 @media (prefers-reduced-motion: reduce) {

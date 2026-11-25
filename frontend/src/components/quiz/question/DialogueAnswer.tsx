@@ -10,6 +10,7 @@
  */
 
 import React, { useMemo, useState } from "react";
+import { motion } from "framer-motion";
 import type { DialogueInteraction } from "@/lib/quiz/types";
 import {
   appendDialogueReply,
@@ -19,6 +20,10 @@ import {
   encodeDialogueAnswer,
   isDialogueComplete,
 } from "@/lib/quiz/dialogueInteraction";
+import { toneOfVerdict, useKitMotion } from "./kitMotion";
+
+/** The partner's follow-up lands one stagger step after the reply it answers. */
+const PARTNER_REPLY_STEP = 1;
 
 export interface DialogueAnswerProps {
   interaction: DialogueInteraction;
@@ -39,6 +44,9 @@ export function DialogueAnswer({
 }: DialogueAnswerProps) {
   const replies = useMemo(() => decodeDialogueAnswer(value), [value]);
   const [draft, setDraft] = useState("");
+  const kit = useKitMotion();
+  // Replies already sent when the kit appeared: those don't animate in.
+  const [repliesAtMount] = useState(replies.length);
   const complete = isDialogueComplete(interaction, value);
   const done = Boolean(verdict);
   const max = dialogueMaxReplies(interaction);
@@ -91,21 +99,23 @@ export function DialogueAnswer({
 
         {replies.map((text, i) => (
           <React.Fragment key={`r-${i}`}>
-            <div
+            <motion.div
+              {...(verdict ? kit.mark(toneOfVerdict(verdict)) : kit.arrive(i >= repliesAtMount))}
               className="quiz-dialogue__bubble quiz-dialogue__bubble--me"
               data-testid={`quiz-dialogue-reply-${i}`}
               data-from="me"
             >
               {text}
-            </div>
+            </motion.div>
             {i === 0 ? (
-              <div
+              <motion.div
+                {...kit.arrive(i >= repliesAtMount, PARTNER_REPLY_STEP)}
                 className="quiz-dialogue__bubble quiz-dialogue__bubble--partner"
                 data-testid="quiz-dialogue-follow"
                 data-from="partner"
               >
                 {interaction.follow}
-              </div>
+              </motion.div>
             ) : null}
           </React.Fragment>
         ))}

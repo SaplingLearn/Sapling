@@ -39,38 +39,38 @@
   --quiz-home-config-fs: 15px;
 
   /* ── The two columns ──────────────────────────────────────────────── */
-  --quiz-home-grid-gap: 56px;
+  --quiz-home-grid-gap: var(--sp-28);
   /* The narrowest the topic list may be beside the proposal: its toolbar (the
      course pills and a search no narrower than --quiz-home-search-min) and a
      row's name and meta line. Below lead + gaps + this, the columns stack
      (the container query further down). */
   --quiz-home-topics-min-w: 320px;
   /* Stacked: the proposal first, the list under it. */
-  --quiz-home-stack-gap: 32px;
+  --quiz-home-stack-gap: var(--sp-16);
 
   /* ── The proposal's rhythm ────────────────────────────────────────── */
-  --quiz-home-head-gap: 16px;
-  --quiz-home-name-top: 14px;
-  --quiz-home-meta-top: 6px;
-  --quiz-home-rationale-top: 2px;
-  --quiz-home-def-top: 16px;
+  --quiz-home-head-gap: var(--sp-8);
+  --quiz-home-name-top: var(--sp-7);
+  --quiz-home-meta-top: var(--sp-3);
+  --quiz-home-rationale-top: var(--sp-1);
+  --quiz-home-def-top: var(--sp-8);
   /* The placeholder's lines sit where the paragraph's will (15px at 1.55). */
-  --quiz-home-def-line-gap: 10px;
-  --quiz-home-def-line-pad: 4px;
-  --quiz-home-config-top: 32px;
-  --quiz-home-frame-top: 14px;
+  --quiz-home-def-line-gap: var(--sp-5);
+  --quiz-home-def-line-pad: var(--sp-2);
+  --quiz-home-config-top: var(--sp-16);
+  --quiz-home-frame-top: var(--sp-7);
   --quiz-home-frame-border: 3px;
   /* The live neighbourhood window. The graph fills it and is measured. */
   --quiz-home-graph-h: 340px;
-  --quiz-home-actions-gap: 18px;
-  --quiz-home-actions-top: 28px;
-  --quiz-home-skeleton-gap: 12px;
+  --quiz-home-actions-gap: var(--sp-9);
+  --quiz-home-actions-top: var(--sp-14);
+  --quiz-home-skeleton-gap: var(--sp-6);
 
   /* ── The topic list ───────────────────────────────────────────────── */
-  --quiz-home-topics-top: 18px;
-  --quiz-home-toolbar-top: 14px;
-  --quiz-home-toolbar-gap: 12px;
-  --quiz-home-pill-gap: 6px;
+  --quiz-home-topics-top: var(--sp-9);
+  --quiz-home-toolbar-top: var(--sp-7);
+  --quiz-home-toolbar-gap: var(--sp-6);
+  --quiz-home-pill-gap: var(--sp-3);
   /* The search pill copies the course pills' box (`Pill size="md"`: 7px 15px,
      14px text) so the two sit at one height whatever the line metrics. */
   --quiz-home-pill-pad: 7px 15px;
@@ -81,17 +81,19 @@
   --quiz-home-search-w: 240px;
   --quiz-home-search-min: 160px;
   --quiz-home-course-dot: 8px;
-  --quiz-home-due-top: 16px;
+  --quiz-home-due-top: var(--sp-8);
 
   /* ── The swap (a picked concept becoming the card) ────────────────── */
-  --quiz-home-fade-dur: 280ms;
-  --quiz-home-enter-dur: 320ms;
-  --quiz-home-enter-rise: 6px;
+  --quiz-home-fade-dur: var(--dur);
+  --quiz-home-enter-dur: var(--dur-slow);
+  --quiz-home-enter-rise: var(--sp-3);
+  /* How long the returned row's tint lingers: a cue to find, not a
+     transition. useHomeCard.ts's RETURNED_TINT_MS clears it at the same time. */
   --quiz-home-returned-dur: 1400ms;
-  --quiz-home-enter-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --quiz-home-enter-ease: var(--ease-emphasized);
   /* The fade over the list's last rows, saying there is more below. */
-  --quiz-home-scroll-fade: 28px;
-  --quiz-home-scroll-top: 18px;
+  --quiz-home-scroll-fade: var(--sp-14);
+  --quiz-home-scroll-top: var(--sp-9);
   /* The list never shrinks below this, however short the proposal is; when
      the columns stack it is capped here instead of at the proposal. */
   --quiz-home-topics-min: 360px;
@@ -99,23 +101,23 @@
   /* Map pane (W7.10): fills the side column; stacked gets a bounded height. */
   --quiz-home-map-min: 280px;
   --quiz-home-map-stacked-max: 420px;
-  --quiz-home-row-pad: 14px 8px;
-  --quiz-home-row-bleed: -8px;
-  --quiz-home-row-gap: 14px;
-  --quiz-home-group-gap: 8px;
-  --quiz-home-group-top: 26px;
-  --quiz-home-group-bottom: 2px;
+  --quiz-home-row-pad: var(--sp-7) var(--sp-4);
+  --quiz-home-row-bleed: calc(-1 * var(--sp-4));
+  --quiz-home-row-gap: var(--sp-7);
+  --quiz-home-group-gap: var(--sp-4);
+  --quiz-home-group-top: var(--sp-13);
+  --quiz-home-group-bottom: var(--sp-1);
 
   /* ── The dialogs ──────────────────────────────────────────────────── */
-  --quiz-home-dialog-subtitle-top: 4px;
-  --quiz-home-dialog-subtitle-gap: 18px;
-  --quiz-home-settings-top: 20px;
-  --quiz-home-setting-gap: 8px;
-  --quiz-home-setting-pad: 12px 0 4px;
+  --quiz-home-dialog-subtitle-top: var(--sp-2);
+  --quiz-home-dialog-subtitle-gap: var(--sp-9);
+  --quiz-home-settings-top: var(--sp-10);
+  --quiz-home-setting-gap: var(--sp-4);
+  --quiz-home-setting-pad: var(--sp-6) 0 var(--sp-2);
   --quiz-home-note-min: 34px;
-  --quiz-home-note-top: 8px;
-  --quiz-home-footer-top: 20px;
-  --quiz-home-footer-pad: 18px;
+  --quiz-home-note-top: var(--sp-4);
+  --quiz-home-footer-top: var(--sp-10);
+  --quiz-home-footer-pad: var(--sp-9);
 
   /* The topic rows' dot (`TopicList`'s ROW_DOT); a stacked row's meta line
      indents past it. */
@@ -196,6 +198,8 @@
   width: var(--quiz-home-course-dot);
   height: var(--quiz-home-course-dot);
   border-radius: var(--r-full);
+  /* --quiz-home-course-tint: the course's colour, set per pill. */
+  background: var(--quiz-home-course-tint);
   flex-shrink: 0;
 }
 
@@ -214,12 +218,16 @@
   border: 1px solid var(--border);
   border-radius: var(--r-full);
   color: var(--text-muted);
-  transition: border-color var(--dur-fast) var(--ease);
+  transition:
+    border-color var(--dur-fast) var(--ease),
+    box-shadow var(--dur-fast) var(--ease);
+  /* The focus halo's width, matching `.field:focus`. */
+  --quiz-home-halo-w: 3px;
 }
 
 .quiz-home__search:focus-within {
   border-color: var(--accent-border);
-  box-shadow: 0 0 0 3px var(--accent-soft);
+  box-shadow: 0 0 0 var(--quiz-home-halo-w) var(--focus-halo);
 }
 
 .quiz-home__search-input {
@@ -264,7 +272,8 @@
      final row scroll clear of it. */
   padding-bottom: var(--quiz-home-scroll-fade);
   scrollbar-width: none;
-  mask-image: linear-gradient(to bottom, #000 calc(100% - var(--quiz-home-scroll-fade)), transparent);
+  /* A mask reads alpha only: any opaque colour keeps the rows, transparent fades them. */
+  mask-image: linear-gradient(to bottom, var(--bg) calc(100% - var(--quiz-home-scroll-fade)), transparent);
 }
 
 .quiz-home__topics-scroll::-webkit-scrollbar {
@@ -459,7 +468,7 @@
 @media (max-width: 560px) {
   .quiz-home__row {
     flex-wrap: wrap;
-    row-gap: 2px;
+    row-gap: var(--sp-1);
   }
 
   .quiz-home__row-spacer {
@@ -476,7 +485,7 @@
 /* A course heading, drawn only when the list spans more than one course. */
 .quiz-home__pick-group {
   margin: var(--quiz-home-group-top) 0 var(--quiz-home-group-bottom);
-  padding-left: 2px;
+  padding-left: var(--sp-1);
 }
 
 .quiz-home__topics > section:first-child .quiz-home__pick-group {
@@ -603,7 +612,7 @@
 }
 
 .quiz-home__definition {
-  animation: quiz-home-fade-in var(--quiz-home-fade-dur) ease-out;
+  animation: quiz-home-fade-in var(--quiz-home-fade-dur) var(--ease-out);
 }
 
 /* The row a swapped-out concept returned to: a tint that fades, so the eye
@@ -615,7 +624,7 @@
 }
 
 .quiz-home__row[data-returned="true"] {
-  animation: quiz-home-returned var(--quiz-home-returned-dur) ease-out;
+  animation: quiz-home-returned var(--quiz-home-returned-dur) var(--ease-out);
 }
 
 /* A row answers the press before the swap starts. */

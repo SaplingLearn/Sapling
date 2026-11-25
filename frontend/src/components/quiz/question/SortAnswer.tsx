@@ -22,6 +22,7 @@ import {
   placeSortItem,
   type SortAssignment,
 } from "@/lib/quiz/sortInteraction";
+import { KitPiece, useKitMotion, type KitTone } from "./kitMotion";
 
 export interface SortAnswerProps {
   interaction: SortInteraction;
@@ -39,7 +40,7 @@ function cardTone(
   expected: SortAssignment | null,
   verdict: "correct" | "incorrect" | null | undefined,
   selected: boolean,
-): "plain" | "lift" | "right" | "wrong" {
+): KitTone {
   if (verdict && expected) {
     const got = assign[itemId];
     const want = expected[itemId];
@@ -66,6 +67,7 @@ export function SortAnswer({
     [interaction, expected],
   );
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const kit = useKitMotion();
   const complete = isSortComplete(interaction, assign);
   const tray = interaction.items.filter(it => assign[it.id] == null);
   const done = Boolean(verdict);
@@ -109,16 +111,19 @@ export function SortAnswer({
             <ul className="quiz-sort__cards">
               {tray.map(it => (
                 <li key={it.id}>
-                  <button
-                    type="button"
-                    className={`quiz-sort__card quiz-sort__card--${cardTone(it.id, assign, expectedAssign, verdict, selectedId === it.id)}`}
+                  <KitPiece
+                    kit={kit}
+                    pieceId={it.id}
+                    block="quiz-sort__card"
+                    tone={cardTone(it.id, assign, expectedAssign, verdict, selectedId === it.id)}
+                    movable={!done}
                     data-testid={`quiz-sort-item-${it.id}`}
                     aria-pressed={selectedId === it.id}
                     disabled={disabled}
                     onClick={() => selectOrReturn(it.id)}
                   >
                     {it.label}
-                  </button>
+                  </KitPiece>
                 </li>
               ))}
             </ul>
@@ -128,7 +133,7 @@ export function SortAnswer({
 
       <div
         className="quiz-sort__buckets"
-        style={{ gridTemplateColumns: `repeat(${interaction.buckets.length}, minmax(0, 1fr))` }}
+        style={{ "--quiz-kit-cols": interaction.buckets.length } as React.CSSProperties}
         data-testid="quiz-sort-buckets"
       >
         {interaction.buckets.map((name, bucket) => {
@@ -158,15 +163,18 @@ export function SortAnswer({
               <ul className="quiz-sort__cards">
                 {inBucket.map(it => (
                   <li key={it.id}>
-                    <button
-                      type="button"
-                      className={`quiz-sort__card quiz-sort__card--${cardTone(it.id, assign, expectedAssign, verdict, false)}`}
+                    <KitPiece
+                      kit={kit}
+                      pieceId={it.id}
+                      block="quiz-sort__card"
+                      tone={cardTone(it.id, assign, expectedAssign, verdict, false)}
+                      movable={!done}
                       data-testid={`quiz-sort-item-${it.id}`}
                       disabled={disabled || done}
                       onClick={() => selectOrReturn(it.id)}
                     >
                       {it.label}
-                    </button>
+                    </KitPiece>
                   </li>
                 ))}
               </ul>

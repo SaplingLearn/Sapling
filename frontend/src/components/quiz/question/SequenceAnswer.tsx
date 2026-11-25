@@ -23,6 +23,7 @@ import {
   placeSequenceItem,
   type SequenceAssignment,
 } from "@/lib/quiz/sequenceInteraction";
+import { KitPiece, useKitMotion, type KitTone } from "./kitMotion";
 
 export interface SequenceAnswerProps {
   interaction: SequenceInteraction;
@@ -40,7 +41,7 @@ function cardTone(
   expected: SequenceAssignment | null,
   verdict: "correct" | "incorrect" | null | undefined,
   selected: boolean,
-): "plain" | "lift" | "right" | "wrong" {
+): KitTone {
   if (verdict && expected) {
     const got = assign[stepId];
     const want = expected[stepId];
@@ -67,6 +68,7 @@ export function SequenceAnswer({
     [interaction, expected],
   );
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const kit = useKitMotion();
   const complete = isSequenceComplete(interaction, assign);
   const tray = interaction.steps.filter(it => assign[it.id] == null);
   const done = Boolean(verdict);
@@ -131,21 +133,18 @@ export function SequenceAnswer({
                 )}
               </button>
               {placed && (
-                <button
-                  type="button"
-                  className={`quiz-sequence__card quiz-sequence__card--${cardTone(
-                    placed.id,
-                    assign,
-                    expectedAssign,
-                    verdict,
-                    false,
-                  )}`}
+                <KitPiece
+                  kit={kit}
+                  pieceId={placed.id}
+                  block="quiz-sequence__card"
+                  tone={cardTone(placed.id, assign, expectedAssign, verdict, false)}
+                  movable={!done}
                   data-testid={`quiz-sequence-item-${placed.id}`}
                   disabled={disabled || done}
                   onClick={() => selectOrReturn(placed.id)}
                 >
                   {placed.label}
-                </button>
+                </KitPiece>
               )}
             </li>
           );
@@ -163,22 +162,19 @@ export function SequenceAnswer({
             <ul className="quiz-sequence__cards">
               {tray.map(it => (
                 <li key={it.id}>
-                  <button
-                    type="button"
-                    className={`quiz-sequence__card quiz-sequence__card--${cardTone(
-                      it.id,
-                      assign,
-                      expectedAssign,
-                      verdict,
-                      selectedId === it.id,
-                    )}`}
+                  <KitPiece
+                    kit={kit}
+                    pieceId={it.id}
+                    block="quiz-sequence__card"
+                    tone={cardTone(it.id, assign, expectedAssign, verdict, selectedId === it.id)}
+                    movable={!done}
                     data-testid={`quiz-sequence-item-${it.id}`}
                     aria-pressed={selectedId === it.id}
                     disabled={disabled}
                     onClick={() => selectOrReturn(it.id)}
                   >
                     {it.label}
-                  </button>
+                  </KitPiece>
                 </li>
               ))}
             </ul>
