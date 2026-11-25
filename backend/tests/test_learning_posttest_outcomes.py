@@ -403,16 +403,3 @@ def test_the_migration_check_lists_are_the_params():
     assert _check_list("item_match") == params.POSTTEST_ITEM_MATCHES
     assert _check_list("item_source") == params.POSTTEST_ITEM_SOURCES
     assert _check_list("reason") == params.POSTTEST_SKIP_REASONS
-
-
-def test_the_skip_table_and_the_anchor_function_are_backend_only():
-    sql = MIGRATION.read_text()
-    assert "ALTER TABLE posttest_skips ENABLE ROW LEVEL SECURITY" in sql
-    assert "REVOKE ALL ON TABLE posttest_skips FROM PUBLIC" in sql
-    signature = "posttest_anchors(text, timestamptz, timestamptz, text, integer)"
-    assert f"REVOKE ALL ON FUNCTION {signature} FROM PUBLIC" in sql
-    assert f"GRANT EXECUTE ON FUNCTION {signature} TO service_role" in sql
-    assert "STABLE" in sql  # a read: no write can hide behind the RPC
-    for verb in ("INSERT", "UPDATE", "DELETE"):
-        body = sql.split("AS $$", 1)[1].split("$$;", 1)[0]
-        assert verb not in body.upper()

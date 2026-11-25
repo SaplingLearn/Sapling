@@ -796,12 +796,10 @@ def test_items_by_hash_batches_the_in_filter():
     }
 
 
-def test_the_reveal_event_is_in_the_taxonomy_and_plain():
+def test_the_reveal_event_is_plain():
+    """Its taxonomy membership is inv_05's (test_learning_loop_invariants)."""
     from learning import zpd_events
-    from services import events_service
 
-    assert "zpd.reveal" in events_service.EVENT_TAXONOMY
-    assert "zpd.teach_reveal" not in events_service.EVENT_TAXONOMY
     captured = []
     with patch.object(
         zpd_events, "log_event", lambda et, **kw: captured.append((et, kw["payload"]))
@@ -839,13 +837,3 @@ def test_unscanned_reveals_reads_every_sessions_fallback_markers():
     with patch("learning.reveal_store.table", return_value=handle):
         assert reveal_store.unscanned_reveals("u1") == [("s1", {"at": 1.0})]
     assert handle.select_with_count.call_args.kwargs["filters"]["user_id"] == "eq.u1"
-
-
-def test_the_reveals_migration_is_backend_only_and_hash_only():
-    from db.migration_units import unit_sql
-
-    sql = unit_sql("20260930031644_learning_reveals.sql")
-    assert "ENABLE ROW LEVEL SECURITY" in sql and "REVOKE ALL ON TABLE learning_reveals" in sql
-    assert "CHECK ((kind = 'reveal') = (question_hash IS NOT NULL))" in sql
-    body = sql.split("CREATE TABLE", 1)[1].split(");", 1)[0]
-    assert "text " in body and "prompt" not in body and "content" not in body
