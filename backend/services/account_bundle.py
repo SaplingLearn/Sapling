@@ -259,6 +259,10 @@ SPECS: tuple[_Spec, ...] = (
     _Spec("graph_nodes"),
     _Spec("graph_edges"),
     _Spec("node_mastery_events", key="node_id", parent="graph_nodes"),
+    # Before documents: documents.folder_id references document_folders.
+    # No 🔒 column (`name` is a plaintext label, like flashcard_sets.name);
+    # `course_id` is remapped (_COURSE_TABLES).
+    _Spec("document_folders"),
     # Before enrollments: enrollments.syllabus_doc_id references documents.
     _Spec("documents"),
     _Spec("enrollments"),
@@ -291,7 +295,7 @@ SPECS: tuple[_Spec, ...] = (
 _OFFERING_TABLES = ("documents", "enrollments", "notes", "flashcards", "sessions", "study_guides")
 
 # Tables whose rows carry an abstract `course_id` to remap (by course_code).
-_COURSE_TABLES = ("graph_nodes", "flashcard_sets")
+_COURSE_TABLES = ("graph_nodes", "flashcard_sets", "document_folders")
 
 USER_COUNTERS = (
     "total_xp", "level", "streak_count", "longest_streak", "onboarding_completed",
