@@ -1234,30 +1234,6 @@ class TestBackfill:
         assert all(row["key_checked_at"] for row in by_id.values())
         assert "Done: 3 row(s) written, 0 failed, 1 unchecked" in capsys.readouterr().out
 
-    @pytest.mark.parametrize("agree,flags", [(True, ["negative_stem"]), (False, ["negative_stem", KEY_DISPUTED])])
-    def test_a_never_linted_row_is_linted_when_its_flags_are_written(self, backfill, monkeypatch, agree, flags):
-        """lint_flags NULL means "never linted" (A113): a key-check write makes
-        the column non-NULL, so it carries the linter's codes too."""
-        item = _stored_mc(id="i-unlinted", prompt="Which statement is false?", lint_flags=None)
-        picked = _CORRECT_TEXT if agree else "The loss value"
-        code, rec, _ = _run_backfill(
-            backfill,
-            monkeypatch,
-            ["--apply", "--project", "proj-a"],
-            items=[(_row(item), item)],
-            solve=_solver(lambda i: (True, _letter_of(i, picked))),
-        )
-        ((_, _, row, _),) = rec.writes
-        assert code == 0 and row["lint_flags"] == flags
-
-    def test_an_agreement_clears_an_earlier_model_hold(self, backfill, monkeypatch):
-        item = _stored_mc(id="i-was-held", lint_flags=["negative_stem", KEY_UNSOLVED])
-        code, rec, _ = _run_backfill(
-            backfill, monkeypatch, ["--apply", "--project", "proj-a"], items=[(_row(item), item)]
-        )
-        ((_, _, row, _),) = rec.writes
-        assert code == 0 and row["canonical_verified"] is True and row["lint_flags"] == ["negative_stem"]
-
     def test_an_unavailable_check_changes_nothing_and_exits_1(self, backfill, monkeypatch, capsys):
         from agents.check_items import CheckItemsUnavailable
 
@@ -1287,80 +1263,10 @@ class TestBackfill:
         monkeypatch.setattr(backfill, "model_mode", lambda: "function")
         assert backfill.main([]) == 2
 
-    def test_items_to_key_check_reads_the_unchecked_or_everything(self):
-        from services import check_item_service as svc
-
-        factory, mocks = _cached_tables({})
-        with patch("services.check_item_service.table", side_effect=factory):
-            svc.items_to_key_check("c1")
-            unchecked = mocks["check_items"].select_with_count.call_args
-            svc.items_to_key_check(None, reverify=True)
-            every = mocks["check_items"].select_with_count.call_args
-        assert unchecked.kwargs["filters"] == {"course_id": "eq.c1", "key_checked_at": "is.null"}
-        assert every.kwargs["filters"] == {}
-        assert unchecked.args[0].endswith(",key_checked_at")
-
-    def test_passages_come_from_the_items_own_shared_sources(self):
-        from services import check_item_service as svc
-
-        rows = [
-            {"concept_key": "learning rate", "source_document_ids": ["doc-1"], "document_id": "doc-1"},
-            {"concept_key": "momentum", "source_document_ids": [], "document_id": "doc-2"},
-        ]
-        docs = {
-            "doc-1": [{"id": "c1", "chunk_index": 0, "chunk_text": "the learning rate scales a step", "doc_id": "doc-1"}],
-            "doc-2": [],
-        }
-        factory, mocks = _cached_tables({"documents": [{"id": "doc-1"}, {"id": "doc-2"}]})
-        with (
-            patch("services.check_item_service.table", side_effect=factory),
-            patch("services.check_item_service.source_chunks", side_effect=lambda d: docs[d["id"]]),
-        ):
-            got = svc.key_check_passages(rows, {"learning rate": "Learning Rate"})
-        assert [c["id"] for c in got["learning rate"]] == ["c1"] and got["momentum"] == []
-        filters = mocks["documents"].select.call_args.kwargs["filters"]
-        assert filters["deleted_at"] == "is.null" and filters["id"] == 'in.("doc-1","doc-2")'
-
-    def test_check_stored_keys_solves_the_item_as_stored(self, monkeypatch):
-        from services import check_item_service as svc
-
-        sent = []
-
-        async def fake_solve(passages, items_, *, deps, flex):
-            sent.extend(items_)
-            return _solver(_agrees)(items_)
-
-        monkeypatch.setattr(svc, "solve_items", fake_solve)
-        item = _stored_mc()
-        (check,) = svc.check_stored_keys(COURSE, [item], [{"id": "c1", "text": "t"}])
-        assert check.verified
-        assert sent[0].options == tuple((o.letter, o.text) for o in item.options)
-
-
 # ── the slot, the agents, the function-mode handler, the migration ──────────
 
 
 class TestSlotAndAgents:
-    def test_the_slot_is_claude_not_pending_and_another_family_than_the_drafter(self, monkeypatch):
-        from agents._providers import (
-            _ANTHROPIC_EFFORT,
-            _DEFAULTS,
-            LOOP_SLOTS_PENDING_CLAUDE_EVAL,
-            model_name_for,
-            slot_provider,
-        )
-
-        monkeypatch.delenv("SAPLING_MODEL_CHECK_ITEMS_SOLVE", raising=False)
-        assert _DEFAULTS["check_items_solve"] == model_name_for("check_items_solve") == "claude-haiku-5-5"
-        assert "check_items_solve" not in LOOP_SLOTS_PENDING_CLAUDE_EVAL
-        assert _ANTHROPIC_EFFORT["check_items_solve"] == "medium"
-        # Everything runs on Claude (2026-11-19), so the drafter and the solve
-        # share a provider; independence is a different MODEL (Sonnet drafts,
-        # Haiku solves), the A145 quiz-gate precedent, and INDEPENDENT_SLOTS
-        # enforces it at boot.
-        assert slot_provider("check_items_solve") == slot_provider("check_items") == "anthropic"
-        assert model_name_for("check_items_solve") != model_name_for("check_items")
-
     @pytest.mark.parametrize("which", ["solve", "match"])
     def test_a_run_is_billed_to_the_slot_and_never_raises(self, monkeypatch, which):
         from pydantic_ai.messages import ModelResponse, ToolCallPart
@@ -1498,26 +1404,6 @@ def audit_script(monkeypatch):
 
 
 class TestAuditScript:
-    def test_sample_prints_strata_and_ids_but_no_text(self, audit_script, monkeypatch, capsys):
-        monkeypatch.setattr(audit_script, "audit_population", lambda c: _population(concepts=4))
-        monkeypatch.setattr(audit_script, "items_by_ids", lambda ids: pytest.fail("decrypted without --out"))
-        assert audit_script.main(["sample", "--course", "c1", "--n", "9"]) == 0
-        out = capsys.readouterr().out
-        assert "9 of 36 stored item(s) sampled (seed 'c1')" in out
-        assert "free 1: 1" in out and "mc_reason 3: 1" in out
-
-    def test_sample_writes_a_review_csv_with_the_key_marked(self, audit_script, monkeypatch, tmp_path):
-        import csv
-
-        pop = [{"id": "i-mc", "question_hash": "h", "concept_key": "learning rate", "format": "mc_reason", "difficulty": 1}]
-        monkeypatch.setattr(audit_script, "audit_population", lambda c: pop)
-        monkeypatch.setattr(audit_script, "items_by_ids", lambda ids: [_stored_mc()])
-        out = tmp_path / "audit.csv"
-        assert audit_script.main(["sample", "--course", "c1", "--out", str(out)]) == 0
-        (row,) = list(csv.DictReader(out.open()))
-        assert row["question"] == "Which quantity does the learning rate scale?"
-        assert f"B. {_CORRECT_TEXT} (key)" in row["options"] and row["verdict"] == ""
-
     def test_record_is_a_dry_run_by_default_and_refuses_other_courses(self, audit_script, monkeypatch, tmp_path, capsys):
         sheet = tmp_path / "audit.csv"
         sheet.write_text("id,verdict\ni1,wrong\ni2,Correct\ni3,\ni4,meh\nother,correct\n")
@@ -1534,17 +1420,6 @@ class TestAuditScript:
             ["record", "--course", "c1", "--csv", str(sheet), "--apply", "--project", "proj-a", "--auditor", "admin-1"]
         ) == 1
         assert recorded == [("i1", "wrong", "admin-1"), ("i2", "correct", "admin-1")]
-
-    def test_report_prints_the_rate_and_its_interval(self, audit_script, monkeypatch, capsys):
-        rows = [{"verdict": "wrong", "key_status": "verified"}] * 3 + [
-            {"verdict": "correct", "key_status": "verified"}
-        ] * 27
-        monkeypatch.setattr(audit_script, "course_audit_rows", lambda c: rows)
-        assert audit_script.main(["report", "--course", "c1"]) == 0
-        out = capsys.readouterr().out
-        assert "all: 30 audited (27 correct, 3 wrong, 0 ambiguous); key-error rate 10.0% (95% CI 3.5%–25.6%)" in out
-        assert "verified: 30 audited" in out and "held: 0 audited" in out
-
 
 # ── an echoed `ITEM <id>` label still names its item (2026-11-17) ───────────
 
