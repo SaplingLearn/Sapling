@@ -26,6 +26,7 @@ from agents.quiz_planned import (
     planned_kit,
     quiz_planned_agent,
 )
+from agents._providers import _DEFAULTS as _DEFAULT_MODELS
 from agents.deps import SaplingDeps
 from agents.usage import record_agent_usage, served_model_name
 from db.connection import table
@@ -82,6 +83,12 @@ from services.quiz.wire import (
 # Log records keep the name they had in routes/quiz.py before the #118 split:
 # the move must not change what an operator (or a caplog test) filters on.
 logger = logging.getLogger("routes.quiz")
+
+_QUIZ_TASK = "quiz"  # the generation's model slot, usage feature and task
+_ADAPTIVE = "adaptive"  # the requested difficulty that lets the agent pick the mix (#540 A1)
+_MIXED = "mixed"  # the question format that accepts every type
+_MULTIPLE_CHOICE = "multiple_choice"  # the default question format
+_NODES_TABLE = "graph_nodes"
 
 
 def _log_generation_failed(body, request_id: str | None, reason: str) -> None:
@@ -171,9 +178,11 @@ def _record_answer_key_flag(
 # fast/smart toggle so quiz body's `model_pref` resolves to the same
 # model strings as Learn. None falls through to the agent's
 # task-default model from agents/_providers.py::model_for("quiz").
+# The model ids live in agents/_providers.py: fast is the quiz slot's
+# default model, smart the chat tutor's step-up model.
 _PREF_MODEL_NAMES: dict[str, str] = {
-    "fast": "claude-haiku-5-5",
-    "smart": "claude-sonnet-5-5",
+    "fast": _DEFAULT_MODELS["quiz"],
+    "smart": _DEFAULT_MODELS["chat_tutor"],
 }
 
 
@@ -203,7 +212,7 @@ def _resolve_model_pref(model_pref: str | None):
     name = _PREF_MODEL_NAMES.get(model_pref)
     if not name:
         return None
-    return override_model(name, "quiz")
+    return override_model(name, _QUIZ_TASK)
 
 
 def _writer_model_name(model_pref: str | None) -> str:
@@ -216,7 +225,7 @@ def _writer_model_name(model_pref: str | None) -> str:
     name = _PREF_MODEL_NAMES.get(model_pref) if model_pref else None
     if name and _model_mode() == "real":
         return name
-    return model_name_for("quiz")
+    return model_name_for(_QUIZ_TASK)
 
 
 class GeneratedQuiz(NamedTuple):
@@ -249,7 +258,7 @@ def _topup_format_rule(question_format: str) -> str:
     """The format contract the top-up retry restates — the one that applies
     to the requested format, so a written quiz is never told to put its
     answer in options it must not have."""
-    if question_format == "multiple_choice":
+    if question_format == _MULTIPLE_CHOICE:
         return _MCQ_TOPUP_RULE
     if question_format in WRITTEN_TYPES:
         return f"{question_format} only; {_WRITTEN_TOPUP_RULE}"
@@ -327,7 +336,7 @@ def _topup_message(*, user_message: str, plan, missing: int, question_format: st
 
 def _difficulty_clause(difficulty: str, num_questions: int) -> str:
     """The run message's difficulty sentence."""
-    if difficulty == "adaptive":
+    if difficulty == _ADAPTIVE:
         # #540 A1: no target difficulty — the agent picks the whole mix
         # from mastery + recent accuracy (ADAPTIVE MODE in the system
         # prompt). Every emitted question still carries a concrete
@@ -342,105 +351,52 @@ def _difficulty_clause(difficulty: str, num_questions: int) -> str:
     return f"Generate {num_questions} {difficulty} questions for the student."
 
 
-async def _quiz_via_agent(
-    *,
-    user_id: str,
-    course_id: str | None,
-    concept_node_id: str,
-    concept_name: str,
-    num_questions: int,
-    difficulty: str,
-    use_shared_context: bool,
-    request_id: str,
-    model_pref: str | None = None,
-    question_format: str = "multiple_choice",
-    times_studied: int | None = None,
-    has_graph: bool | None = None,
-    plan: GenerationPlan | None = None,
-    gate=None,
-) -> GeneratedQuiz:
-    """Run quiz_agent and return questions in the legacy wire shape.
+async def _stored_share_consent(user_id: str, use_shared_context: bool) -> bool:
+    """M8: class-derived data follows the STORED consent
+    (`user_settings.share_class_context`), not only the request body's
+    `use_shared_context`, which defaults to True on the wire: a student who
+    opted out in settings never gets classmates' aggregates because a client
+    sent the default. A read failure counts as opted out."""
+    if not use_shared_context:
+        return use_shared_context
+    from services.chunk_visibility import shares_class_context
+    return await asyncio.to_thread(shares_class_context, user_id)
 
-    Learning-loop spec §13 A144/A145, both None while their flags are off
-    (and then nothing below changes): `plan` runs the planned agent
-    (agents/quiz_planned.py) on the learner model's question specs instead of
-    quiz_agent, and `gate` — an async `(questions, material) -> GateRun`
-    (services/quiz_learning.py::gate_questions) — checks each run's new
-    questions before they are kept; a dropped question counts toward the
-    bounded top-up like a drifted one.
 
-    `has_graph` is what the CALLER knows about this student's knowledge graph
-    in this course, for the F5 dark-scope report in `quiz_signals`. Left None
-    on purpose: the request path (`generate_quiz` → `_generate_or_502`) read
-    an owner-scoped `graph_nodes` row on its way here and passes True, but
-    `scripts/benchmark_quiz.py` calls this same function with a fixture user
-    that has none — so asserting the fact in here would make every benchmark
-    run write a false `quiz.tool_empty`.
+async def _course_resolution(course_id: str | None):
+    """ONE resolution of the two things the generation's context legs share:
+    (the course row, its offering ids), each degraded on its own.
 
-    The agent's tools (read_concepts_for_user, read_misconceptions_for_course)
-    pull weak-area + class misconception data themselves, replacing the
-    manual prompt-string augmentation that used to live in generate_quiz.
+    Four legs want the same two answers — grounding wants this course's
+    `course_code`, the H4 flashcard signal wants its `course_name` (same row),
+    and both exam proximity and the H4 tutor signal want this course's
+    offerings. Because those legs run CONCURRENTLY they cannot share by
+    accident, so resolving here is what stops one generation from asking the
+    same questions twice.
 
-    `model_pref` ("fast" or "smart") overrides the agent's default model
-    on this single run. Anything else (None, unknown string) falls
-    through to model_for("quiz") at agent-construction time.
-    """
-    if use_shared_context:
-        # M8: class-derived data follows the STORED consent
-        # (`user_settings.share_class_context`), not only the request body's
-        # `use_shared_context`, which defaults to True on the wire: a student
-        # who opted out in settings never gets classmates' aggregates because
-        # a client sent the default. A read failure counts as opted out.
-        from services.chunk_visibility import shares_class_context
-        use_shared_context = await asyncio.to_thread(shares_class_context, user_id)
-    deps = SaplingDeps(
-        user_id=user_id,
-        course_id=course_id,
-        supabase=None,
-        request_id=request_id,
-        feature="quiz",
-        # The Class-intel opt-out reaches the misconceptions tool through
-        # deps, not through the prompt: the tool is registered on the agent
-        # unconditionally and step 2 of the system prompt tells the model to
-        # call it every run, so the routing sentence below can only ever ADD
-        # emphasis — it cannot withhold the data (#553 review).
-        share_class_context=use_shared_context,
-    )
-    # Keep this message routing-only; the workflow + adaptive rules
-    # live in the system prompt. We just hand the agent the inputs it
-    # needs and trust the prompt to drive tool calls.
-    difficulty_clause = _difficulty_clause(difficulty, num_questions)
+    These two are themselves independent, so they run concurrently with each
+    other: the pair costs the LONGER of them — one `courses` read or one
+    `course_offerings` read — ahead of the gather, and removes three from
+    inside it.
 
-    # ONE resolution of the two things the legs below share. Four of them want
-    # the same two answers — grounding wants this course's `course_code`, the
-    # H4 flashcard signal wants its `course_name` (same row), and both exam
-    # proximity and the H4 tutor signal want this course's offerings. Because
-    # those legs run CONCURRENTLY they cannot share by accident, so resolving
-    # here is what stops one generation from asking the same questions twice.
-    #
-    # These two are themselves independent, so they run concurrently with each
-    # other: the pair costs the LONGER of them — one `courses` read or one
-    # `course_offerings` read — ahead of the gather, and removes three from
-    # inside it.
-    #
-    # The trade, stated plainly (#592 review C15): this is a serial PREFIX. It
-    # cuts three round-trips out of a healthy request, but under a degraded
-    # Supabase it adds up to one client timeout (30s, db/connection.py) ahead
-    # of the gather and outside QUIZ_GENERATION_TIMEOUT_SEC, which bounds only
-    # the agent runs. Handing each leg a future to await instead would recover
-    # that — but the recovery is small: `_course_material` cannot start
-    # without the `courses` row and both the exam and signal legs need the
-    # offerings, so the only leg that could genuinely start early is the
-    # recently-asked read. One cheap read's worth of overlap is not worth
-    # three awaited tasks with hand-rolled per-leg degradation in the hottest
-    # function in this file.
-    #
-    # return_exceptions=True for the same reason the gather below uses it:
-    # both helpers already degrade internally, so this is the backstop for the
-    # failure they cannot catch — a raise from the to_thread machinery itself,
-    # or on the way in or out. Without it that raise leaves `_quiz_via_agent`
-    # for the generic handler and 502s a generation that only needed to run
-    # ungrounded.
+    The trade, stated plainly (#592 review C15): this is a serial PREFIX. It
+    cuts three round-trips out of a healthy request, but under a degraded
+    Supabase it adds up to one client timeout (30s, db/connection.py) ahead
+    of the gather and outside QUIZ_GENERATION_TIMEOUT_SEC, which bounds only
+    the agent runs. Handing each leg a future to await instead would recover
+    that — but the recovery is small: `_course_material` cannot start
+    without the `courses` row and both the exam and signal legs need the
+    offerings, so the only leg that could genuinely start early is the
+    recently-asked read. One cheap read's worth of overlap is not worth
+    three awaited tasks with hand-rolled per-leg degradation in the hottest
+    function in this file.
+
+    return_exceptions=True for the same reason the context gather uses it:
+    both helpers already degrade internally, so this is the backstop for the
+    failure they cannot catch — a raise from the to_thread machinery itself,
+    or on the way in or out. Without it that raise leaves `_quiz_via_agent`
+    for the generic handler and 502s a generation that only needed to run
+    ungrounded."""
     course_row, offering_ids = await asyncio.gather(
         asyncio.to_thread(_course_row, course_id),
         asyncio.to_thread(course_offering_ids, course_id),
@@ -473,30 +429,42 @@ async def _quiz_via_agent(
         # course has no offering at all, tripping the F5 dark-scope report on
         # what is really a transport failure.
         offering_ids = None
-    course_scope = CourseScope(
-        offering_ids=offering_ids,
-        course_name=course_row.name,
-        name_failed=course_row.failed,
-    )
+    return course_row, offering_ids
 
-    # Course-material grounding does blocking network I/O (a Gemini
-    # embedding call, bounded at 60s) plus sync Supabase reads. Run it in a
-    # worker thread so a slow/stalled retrieval can't freeze this worker's
-    # event loop for every other in-flight request. Matches the
-    # asyncio.to_thread pattern used by the agent read tools.
-    #
-    # E6's recently-asked read and H3's exam-proximity lookup are independent
-    # Supabase reads, so all three run CONCURRENTLY rather than in sequence —
-    # they have nothing to say to each other, and serializing them would add
-    # every one of their latencies to every generation. Proximity costs
-    # several round-trips on its own, so running it before this block made it
-    # fully additive.
-    #
-    # return_exceptions=True because ALL THREE are best-effort context, and a
-    # bare gather propagates the first failure straight out of generation: an
-    # unreadable past attempt would 502 a quiz that needed no history at all.
-    # Each helper already degrades internally; this is the backstop for the
-    # failure they cannot catch (an unexpected raise on the way in or out).
+
+async def _generation_context(
+    *,
+    user_id: str,
+    course_id: str | None,
+    concept_node_id: str,
+    concept_name: str,
+    course_row,
+    offering_ids,
+    course_scope: CourseScope,
+    times_studied: int | None,
+    has_graph: bool | None,
+):
+    """The generation's best-effort context, (material, recently asked, exam
+    days away, signals), each degraded on its own.
+
+    Course-material grounding does blocking network I/O (a Gemini
+    embedding call, bounded at 60s) plus sync Supabase reads. Run it in a
+    worker thread so a slow/stalled retrieval can't freeze this worker's
+    event loop for every other in-flight request. Matches the
+    asyncio.to_thread pattern used by the agent read tools.
+
+    E6's recently-asked read and H3's exam-proximity lookup are independent
+    Supabase reads, so all three run CONCURRENTLY rather than in sequence —
+    they have nothing to say to each other, and serializing them would add
+    every one of their latencies to every generation. Proximity costs
+    several round-trips on its own, so running it before this block made it
+    fully additive.
+
+    return_exceptions=True because ALL THREE are best-effort context, and a
+    bare gather propagates the first failure straight out of generation: an
+    unreadable past attempt would 502 a quiz that needed no history at all.
+    Each helper already degrades internally; this is the backstop for the
+    failure they cannot catch (an unexpected raise on the way in or out)."""
     material, recent, exam_days_away, signals = await asyncio.gather(
         asyncio.to_thread(
             _course_material, course_id, concept_name,
@@ -525,6 +493,12 @@ async def _quiz_via_agent(
         ),
         return_exceptions=True,
     )
+    return _degraded_context(material, recent, exam_days_away, signals)
+
+
+def _degraded_context(material, recent, exam_days_away, signals):
+    """`_generation_context`'s legs with each raised one replaced by its
+    degraded answer (logged)."""
     if isinstance(signals, BaseException):
         logger.warning(
             "quiz: student-signal gather failed (%s); generating without them",
@@ -552,7 +526,25 @@ async def _quiz_via_agent(
             "do-not-repeat list", type(recent).__name__, exc_info=recent,
         )
         recent = []
+    return material, recent, exam_days_away, signals
 
+
+def _routing_message(
+    difficulty_clause: str,
+    *,
+    concept_name: str,
+    concept_node_id: str,
+    use_shared_context: bool,
+    exam_days_away,
+    signals,
+    material,
+    recent,
+    user_id: str,
+    request_id: str,
+    question_format: str,
+) -> str:
+    """The run's routing message. Records the signals' prompt dimensions and
+    logs RAG coverage on the way, in that order."""
     routing_msg = (
         f"{difficulty_clause} "
         # The concept name is the student's graph text: a short scalar, so
@@ -587,17 +579,17 @@ async def _quiz_via_agent(
     )
     routing_msg += _do_not_repeat_block(recent)
     routing_msg += f"\nquestion_format: {question_format}. Only generate the requested format; mixed uses a useful variety.\n"
+    return routing_msg
 
-    user_message = _quiz_user_message(
-        concept_name=concept_name, material=material, routing_msg=routing_msg,
-        plan=plan, question_format=question_format, recent=recent,
-    )
 
-    # F6: what this prompt is made of, so `llm_usage.prompt_tokens` (same
-    # request_id) becomes attributable to sections instead of estimated.
-    # Recorded BEFORE the run so a failed generation still reports its
-    # composition — an ungrounded timeout is a different diagnosis from a
-    # grounded one.
+def _record_prompt_composition(
+    material, recent, *, use_shared_context: bool, routing_msg: str, difficulty: str
+) -> None:
+    """F6: what this prompt is made of, so `llm_usage.prompt_tokens` (same
+    request_id) becomes attributable to sections instead of estimated.
+    Recorded BEFORE the run so a failed generation still reports its
+    composition — an ungrounded timeout is a different diagnosis from a
+    grounded one."""
     prompt_dimensions.record(
         blocks=sorted(
             b for b, present in (
@@ -611,15 +603,15 @@ async def _quiz_via_agent(
         material_chars=len(material.block),
         recent_asked=len(recent),
         routing_chars=len(routing_msg),
-        adaptive=difficulty == "adaptive",
+        adaptive=difficulty == _ADAPTIVE,
     )
-    quiz_learning.record_generation_dimensions(plan, gate)
 
-    model_override = _resolve_model_pref(model_pref)
+
+def _agent_runner(agent, deps: SaplingDeps, model_override):
+    """One bounded, billed agent run: `run(message, limits) -> (Quiz, model)`."""
     run_kwargs: dict = {"deps": deps}
     if model_override is not None:
         run_kwargs["model"] = model_override
-    agent = quiz_agent if plan is None else quiz_planned_agent
 
     async def _run(message: str, limits) -> tuple[Quiz, str]:
         # #544 F2: bound EACH agent run rather than the whole function.
@@ -633,109 +625,290 @@ async def _quiz_via_agent(
                 agent.run(message, usage_limits=limits, **run_kwargs),
                 timeout=QUIZ_GENERATION_TIMEOUT_SEC,
             ),
-            feature="quiz", task="quiz", user_id=deps.user_id,
+            feature=_QUIZ_TASK, task=_QUIZ_TASK, user_id=deps.user_id,
         )
         # Returned per-run, not resolved once for the function: a top-up is
         # a SEPARATE model call and can be served by a different model than
         # the first run (a provider-side reroute, or a future retry that
         # escalates tiers). Stamping one model over all of them would make
         # provenance quietly wrong in exactly the case it exists to record.
-        return result.output, served_model_name(result, "quiz")
+        return result.output, served_model_name(result, _QUIZ_TASK)
 
-    # Filter out questions the agent got wrong (correct_answer not among
-    # the options, duplicate/insufficient options, no single correct
-    # answer) and duplicate stems within this attempt —
-    # _agent_question_to_wire returns None for the former,
-    # _validate_wire_question backs it. Survivors are re-numbered so
-    # question ids stay 1-based and contiguous.
-    #
-    # `dropped` counts questions we REJECTED, which is a different thing
-    # from "fewer than requested": the Quiz schema lets a run return any
-    # count, and the E2E seam always returns 3 no matter what was asked.
-    # Keying the top-up on under-delivery therefore fired a second full
-    # generation on perfectly good responses.
-    wire_questions: list[dict] = []
-    seen_stems: set[str] = set()
-    seen_hashes: set[str] = set()
-    dropped = 0
+    return _run
 
-    # E5 provenance shared by every question this generation produces. The
-    # chunk ids are attempt-level, not per-item: they are the sources that
-    # were in the prompt when the question was written, which is the honest
-    # claim — the model never tells us which chunk it drew any single
-    # question from.
-    provenance_base = {
-        "prompt_version": PROMPT_VERSION if plan is None else PLANNED_PROMPT_VERSION,
-        "chunk_ids": list(material.chunk_ids),
-        # Two separate facts, not one fuzzy one: whether retrieved document
-        # chunks grounded the question, and whether the official catalog
-        # block was present. Collapsing them into a single `grounded` made
-        # a catalog-only course record every question as ungrounded.
-        "rag_grounded": material.rag_grounded,
-        "catalog": material.has_catalog,
-    }
 
-    # A144: the plan slots a kept planned question answers (a slot is written
-    # once; a dropped one is asked again by the top-up).
-    filled_slots: set[int] = set()
+class _QuestionCollector:
+    """The questions a generation keeps, across its runs.
 
-    def _absorb(quiz: Quiz, model: str) -> None:
-        nonlocal dropped
+    Filters out questions the agent got wrong (correct_answer not among the
+    options, duplicate/insufficient options, no single correct answer) and
+    duplicate stems within this attempt — _agent_question_to_wire returns None
+    for the former, _validate_wire_question backs it. Survivors are
+    re-numbered so question ids stay 1-based and contiguous.
+
+    `dropped` counts questions we REJECTED, which is a different thing from
+    "fewer than requested": the Quiz schema lets a run return any count, and
+    the E2E seam always returns 3 no matter what was asked. Keying the top-up
+    on under-delivery therefore fired a second full generation on perfectly
+    good responses."""
+
+    def __init__(self, *, plan, concept_name: str, question_format: str, material) -> None:
+        self.plan = plan
+        self.concept_name = concept_name
+        self.question_format = question_format
+        self.material = material
+        self.wire_questions: list[dict] = []
+        self.seen_stems: set[str] = set()
+        self.seen_hashes: set[str] = set()
+        self.dropped = 0
+        # A144: the plan slots a kept planned question answers (a slot is
+        # written once; a dropped one is asked again by the top-up).
+        self.filled_slots: set[int] = set()
+        # E5 provenance shared by every question this generation produces. The
+        # chunk ids are attempt-level, not per-item: they are the sources that
+        # were in the prompt when the question was written, which is the honest
+        # claim — the model never tells us which chunk it drew any single
+        # question from.
+        self.provenance_base = {
+            "prompt_version": PROMPT_VERSION if plan is None else PLANNED_PROMPT_VERSION,
+            "chunk_ids": list(material.chunk_ids),
+            # Two separate facts, not one fuzzy one: whether retrieved document
+            # chunks grounded the question, and whether the official catalog
+            # block was present. Collapsing them into a single `grounded` made
+            # a catalog-only course record every question as ungrounded.
+            "rag_grounded": material.rag_grounded,
+            "catalog": material.has_catalog,
+        }
+
+    def absorb(self, quiz: Quiz, model: str) -> None:
+        """Keep each of a run's questions that passes, counting the rest dropped."""
         for q in quiz.questions:
-            spec = tags = None
-            kit = None
-            if plan is not None:
-                planned = quiz_learning.planned_question(
-                    q, plan, filled_slots, concept_name, kit=planned_kit(quiz, q),
-                )
-                if planned is None:
-                    dropped += 1
-                    continue
-                q, spec, tags, kit = planned
-            if question_format != "mixed" and q.type != question_format:
-                dropped += 1
-                continue
-            # E5: identity is the dedupe key now. The stem check is kept
-            # alongside it and is the COARSER of the two — a hash covers the
-            # stem AND the options, so a model re-emitting one stem with
-            # reworded options passes the hash check and is caught here.
-            # Dropping it would have narrowed #543's duplicate-question
-            # guard, which is not a trade E5 needs to make.
-            stem = normalize_text(q.question)
-            qhash = question_hash(q.question, [q.type] if q.type in WRITTEN_TYPES else q.options)
-            if qhash in seen_hashes or stem in seen_stems:
-                logger.warning(
-                    "quiz: dropping duplicate question (hash=%s, stem_len=%d)",
-                    qhash, len(stem),
-                )
-                dropped += 1
-                continue
-            mapped = _agent_question_to_wire(q, len(wire_questions) + 1)
-            if mapped is None:
-                dropped += 1
-                continue
-            # W7: planned kit interaction (Sort…) — sanitize + attach; never mastery.
-            if kit is not None:
-                from services.quiz.interaction import attach_interaction
-                attach_interaction(mapped, kit)
-            mapped["provenance"] = {**provenance_base, "model": model}
-            mapped["material_context"] = (
-                "course_material" if material.rag_grounded else "catalog" if material.has_catalog else "general"
-            )
-            if spec is not None:
-                _record_plan(mapped, spec, tags, plan)
-                filled_slots.add(spec.slot)
-            seen_stems.add(stem)
-            seen_hashes.add(qhash)
-            wire_questions.append(mapped)
+            if not self._keep(quiz, q, model):
+                self.dropped += 1
 
+    def _keep(self, quiz: Quiz, q, model: str) -> bool:
+        spec = tags = None
+        kit = None
+        if self.plan is not None:
+            planned = quiz_learning.planned_question(
+                q, self.plan, self.filled_slots, self.concept_name, kit=planned_kit(quiz, q),
+            )
+            if planned is None:
+                return False
+            q, spec, tags, kit = planned
+        if self.question_format != _MIXED and q.type != self.question_format:
+            return False
+        # E5: identity is the dedupe key now. The stem check is kept
+        # alongside it and is the COARSER of the two — a hash covers the
+        # stem AND the options, so a model re-emitting one stem with
+        # reworded options passes the hash check and is caught here.
+        # Dropping it would have narrowed #543's duplicate-question
+        # guard, which is not a trade E5 needs to make.
+        stem = normalize_text(q.question)
+        qhash = question_hash(q.question, [q.type] if q.type in WRITTEN_TYPES else q.options)
+        if qhash in self.seen_hashes or stem in self.seen_stems:
+            logger.warning(
+                "quiz: dropping duplicate question (hash=%s, stem_len=%d)",
+                qhash, len(stem),
+            )
+            return False
+        mapped = _agent_question_to_wire(q, len(self.wire_questions) + 1)
+        if mapped is None:
+            return False
+        # W7: planned kit interaction (Sort…) — sanitize + attach; never mastery.
+        if kit is not None:
+            from services.quiz.interaction import attach_interaction
+            attach_interaction(mapped, kit)
+        mapped["provenance"] = {**self.provenance_base, "model": model}
+        mapped["material_context"] = _material_context(self.material)
+        if spec is not None:
+            _record_plan(mapped, spec, tags, self.plan)
+            self.filled_slots.add(spec.slot)
+        self.seen_stems.add(stem)
+        self.seen_hashes.add(qhash)
+        self.wire_questions.append(mapped)
+        return True
+
+
+def _material_context(material) -> str:
+    """What grounded a question: retrieved course material, the catalog, or neither."""
+    if material.rag_grounded:
+        return "course_material"
+    return "catalog" if material.has_catalog else "general"
+
+
+async def _top_up(
+    collector: _QuestionCollector,
+    run,
+    gate,
+    *,
+    user_message: str,
+    plan,
+    num_questions: int,
+    question_format: str,
+    concept_name: str,
+    material,
+    recent,
+) -> None:
+    """#543 E2's bounded top-up: at most QUIZ_TOPUP_MAX_RETRIES runs, stopping
+    once the quiz is full or a run fails (then serving what we have)."""
+    for _ in range(QUIZ_TOPUP_MAX_RETRIES):
+        wire_questions = collector.wire_questions
+        missing = max(1, num_questions - len(wire_questions))
+        logger.info(
+            "quiz: topping up after drift (have=%d, dropped=%d, requested=%d)",
+            len(wire_questions), collector.dropped, num_questions,
+        )
+        # Name the stems to avoid: "different from the ones already
+        # asked" is unactionable otherwise, and a deterministic model
+        # re-emits the same questions, which the dedupe above then
+        # discards — a full generation for nothing.
+        already = "\n".join(f"- {q['question']}" for q in wire_questions)
+        topup_msg = _topup_message(
+            user_message=user_message, plan=plan, missing=missing,
+            question_format=question_format, concept_name=concept_name,
+            filled_slots=collector.filled_slots, material=material, recent=recent,
+            already=already,
+        )
+        try:
+            start, began = len(wire_questions), _clock()
+            collector.absorb(*await run(topup_msg, TOPUP_LIMITS))
+            collector.dropped += await quiz_learning.keep_gated(
+                gate, wire_questions, start, material, collector.filled_slots,
+                within_s=_time_left(began),
+            )
+        except (Exception, asyncio.TimeoutError) as e:
+            # The request deliberately SUCCEEDS from here — serve the
+            # short quiz with an honest count. No traceback: the E2E
+            # logscan oracle reports those as findings, and this path
+            # is a handled degradation, not a bug (same rule the
+            # quiz_context seam skip follows).
+            # safe_exception_text: a validation failure's text quotes
+            # the model output (services/log_privacy.py).
+            logger.warning(
+                "quiz: top-up run failed (%s: %s); serving what we have",
+                type(e).__name__, safe_exception_text(e),
+            )
+            break
+        if len(wire_questions) >= num_questions:
+            break
+
+
+async def _quiz_via_agent(
+    *,
+    user_id: str,
+    course_id: str | None,
+    concept_node_id: str,
+    concept_name: str,
+    num_questions: int,
+    difficulty: str,
+    use_shared_context: bool,
+    request_id: str,
+    model_pref: str | None = None,
+    question_format: str = _MULTIPLE_CHOICE,
+    times_studied: int | None = None,
+    has_graph: bool | None = None,
+    plan: GenerationPlan | None = None,
+    gate=None,
+) -> GeneratedQuiz:
+    """Run quiz_agent and return questions in the legacy wire shape.
+
+    Learning-loop spec §13 A144/A145, both None while their flags are off
+    (and then nothing below changes): `plan` runs the planned agent
+    (agents/quiz_planned.py) on the learner model's question specs instead of
+    quiz_agent, and `gate` — an async `(questions, material) -> GateRun`
+    (services/quiz_learning.py::gate_questions) — checks each run's new
+    questions before they are kept; a dropped question counts toward the
+    bounded top-up like a drifted one.
+
+    `has_graph` is what the CALLER knows about this student's knowledge graph
+    in this course, for the F5 dark-scope report in `quiz_signals`. Left None
+    on purpose: the request path (`generate_quiz` → `_generate_or_502`) read
+    an owner-scoped `graph_nodes` row on its way here and passes True, but
+    `scripts/benchmark_quiz.py` calls this same function with a fixture user
+    that has none — so asserting the fact in here would make every benchmark
+    run write a false `quiz.tool_empty`.
+
+    The agent's tools (read_concepts_for_user, read_misconceptions_for_course)
+    pull weak-area + class misconception data themselves, replacing the
+    manual prompt-string augmentation that used to live in generate_quiz.
+
+    `model_pref` ("fast" or "smart") overrides the agent's default model
+    on this single run. Anything else (None, unknown string) falls
+    through to model_for("quiz") at agent-construction time.
+    """
+    use_shared_context = await _stored_share_consent(user_id, use_shared_context)
+    deps = SaplingDeps(
+        user_id=user_id,
+        course_id=course_id,
+        supabase=None,
+        request_id=request_id,
+        feature=_QUIZ_TASK,
+        # The Class-intel opt-out reaches the misconceptions tool through
+        # deps, not through the prompt: the tool is registered on the agent
+        # unconditionally and step 2 of the system prompt tells the model to
+        # call it every run, so the routing sentence below can only ever ADD
+        # emphasis — it cannot withhold the data (#553 review).
+        share_class_context=use_shared_context,
+    )
+    # Keep this message routing-only; the workflow + adaptive rules
+    # live in the system prompt. We just hand the agent the inputs it
+    # needs and trust the prompt to drive tool calls.
+    difficulty_clause = _difficulty_clause(difficulty, num_questions)
+    course_row, offering_ids = await _course_resolution(course_id)
+    course_scope = CourseScope(
+        offering_ids=offering_ids,
+        course_name=course_row.name,
+        name_failed=course_row.failed,
+    )
+    material, recent, exam_days_away, signals = await _generation_context(
+        user_id=user_id,
+        course_id=course_id,
+        concept_node_id=concept_node_id,
+        concept_name=concept_name,
+        course_row=course_row,
+        offering_ids=offering_ids,
+        course_scope=course_scope,
+        times_studied=times_studied,
+        has_graph=has_graph,
+    )
+    routing_msg = _routing_message(
+        difficulty_clause,
+        concept_name=concept_name,
+        concept_node_id=concept_node_id,
+        use_shared_context=use_shared_context,
+        exam_days_away=exam_days_away,
+        signals=signals,
+        material=material,
+        recent=recent,
+        user_id=user_id,
+        request_id=request_id,
+        question_format=question_format,
+    )
+    user_message = _quiz_user_message(
+        concept_name=concept_name, material=material, routing_msg=routing_msg,
+        plan=plan, question_format=question_format, recent=recent,
+    )
+    _record_prompt_composition(
+        material, recent, use_shared_context=use_shared_context,
+        routing_msg=routing_msg, difficulty=difficulty,
+    )
+    quiz_learning.record_generation_dimensions(plan, gate)
+
+    run = _agent_runner(
+        quiz_agent if plan is None else quiz_planned_agent, deps, _resolve_model_pref(model_pref)
+    )
+    collector = _QuestionCollector(
+        plan=plan, concept_name=concept_name, question_format=question_format, material=material,
+    )
     began = _clock()
-    _absorb(*await _run(user_message, ORCHESTRATOR_LIMITS))
+    collector.absorb(*await run(user_message, ORCHESTRATOR_LIMITS))
     # A145: check the questions each run adds; a dropped one counts as a drop
     # (the top-up asks again) and frees its plan slot. The checks run inside
     # the run's own time bound (#866 Z13, `_time_left`).
-    dropped += await quiz_learning.keep_gated(
-        gate, wire_questions, 0, material, filled_slots, within_s=_time_left(began)
+    collector.dropped += await quiz_learning.keep_gated(
+        gate, collector.wire_questions, 0, material, collector.filled_slots,
+        within_s=_time_left(began),
     )
 
     # #543 E2: one bounded top-up when DRIFT cost us a big share of the
@@ -744,47 +917,15 @@ async def _quiz_via_agent(
     # retry most obviously helps, and the old `wire_questions and` guard
     # made it the only case that never retried. Bounded because a retry
     # loop against a drifting model burns tokens without converging.
-    if dropped and dropped >= num_questions * QUIZ_TOPUP_DROP_RATIO:
-        for _ in range(QUIZ_TOPUP_MAX_RETRIES):
-            missing = max(1, num_questions - len(wire_questions))
-            logger.info(
-                "quiz: topping up after drift (have=%d, dropped=%d, requested=%d)",
-                len(wire_questions), dropped, num_questions,
-            )
-            # Name the stems to avoid: "different from the ones already
-            # asked" is unactionable otherwise, and a deterministic model
-            # re-emits the same questions, which the dedupe above then
-            # discards — a full generation for nothing.
-            already = "\n".join(f"- {q['question']}" for q in wire_questions)
-            topup_msg = _topup_message(
-                user_message=user_message, plan=plan, missing=missing,
-                question_format=question_format, concept_name=concept_name,
-                filled_slots=filled_slots, material=material, recent=recent,
-                already=already,
-            )
-            try:
-                start, began = len(wire_questions), _clock()
-                _absorb(*await _run(topup_msg, TOPUP_LIMITS))
-                dropped += await quiz_learning.keep_gated(
-                    gate, wire_questions, start, material, filled_slots, within_s=_time_left(began)
-                )
-            except (Exception, asyncio.TimeoutError) as e:
-                # The request deliberately SUCCEEDS from here — serve the
-                # short quiz with an honest count. No traceback: the E2E
-                # logscan oracle reports those as findings, and this path
-                # is a handled degradation, not a bug (same rule the
-                # quiz_context seam skip follows).
-                # safe_exception_text: a validation failure's text quotes
-                # the model output (services/log_privacy.py).
-                logger.warning(
-                    "quiz: top-up run failed (%s: %s); serving what we have",
-                    type(e).__name__, safe_exception_text(e),
-                )
-                break
-            if len(wire_questions) >= num_questions:
-                break
+    if collector.dropped and collector.dropped >= num_questions * QUIZ_TOPUP_DROP_RATIO:
+        await _top_up(
+            collector, run, gate,
+            user_message=user_message, plan=plan, num_questions=num_questions,
+            question_format=question_format, concept_name=concept_name,
+            material=material, recent=recent,
+        )
 
-    if not wire_questions:
+    if not collector.wire_questions:
         # All questions dropped — raise so generate_quiz's bare-Exception
         # catch degrades to HTTP 502 (the raw-Gemini legacy fallback was
         # retired in #145) rather than serving an empty quiz.
@@ -793,7 +934,7 @@ async def _quiz_via_agent(
         )
     # Never serve more than asked for (a generous top-up run can overshoot).
     return GeneratedQuiz(
-        questions=wire_questions[:num_questions],
+        questions=collector.wire_questions[:num_questions],
         exam_days_away=exam_days_away,
     )
 
@@ -977,7 +1118,7 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
             ),
         )
     # #117: on the event loop: reads are `a*` calls, sync helpers hop off it.
-    node_rows = await table("graph_nodes").aselect(
+    node_rows = await table(_NODES_TABLE).aselect(
         "*",
         filters={"id": f"eq.{body.concept_node_id}", "user_id": f"eq.{body.user_id}"},
     )
@@ -1100,7 +1241,7 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
             course_id,
         )
         if guidance is not None and guidance.pose_node_id != concept_node_id:
-            pose_rows = await table("graph_nodes").aselect(
+            pose_rows = await table(_NODES_TABLE).aselect(
                 "*",
                 filters={
                     "id": f"eq.{guidance.pose_node_id}",
