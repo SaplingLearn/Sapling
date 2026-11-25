@@ -2,19 +2,20 @@
    The textarea inside draws none of its own — a second ring inside the box
    read as a stray rectangle. The box's ring is the AA focus indicator. */
 .composer {
+  --composer-halo-w: 3px; /* the focus halo's spread, as globals.css .field */
   display: flex;
-  gap: 10px;
+  gap: var(--sp-5);
   align-items: flex-end;
   background: var(--bg-subtle);
   border: 1px solid var(--border);
   border-radius: var(--r-lg);
-  padding: 10px 14px;
-  transition: border-color var(--dur-fast, 0.14s) var(--ease, ease), box-shadow var(--dur-fast, 0.14s) var(--ease, ease);
+  padding: var(--sp-5) var(--sp-7);
+  transition: border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
 }
 
 .composer:focus-within {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-soft);
+  border-color: var(--focus-ring);
+  box-shadow: 0 0 0 var(--composer-halo-w) var(--focus-halo);
 }
 
 .composer textarea:focus,
@@ -26,23 +27,24 @@
    the tutor's mark (24px) and name over its text. The text keeps a readable
    measure however wide the conversation is. */
 .pageTurn {
+  --turn-mark-size: 24px; /* the tutor's mark, and the name line beside it */
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--sp-3);
   min-width: 0;
 }
 
 .turnMark {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font: 600 13px/24px var(--font-sans);
+  gap: var(--sp-4);
+  font: 600 var(--fs-md) / var(--turn-mark-size) var(--font-sans);
   color: var(--text);
 }
 
 .turnAvatar {
-  width: 24px;
-  height: 24px;
+  width: var(--turn-mark-size);
+  height: var(--turn-mark-size);
   border-radius: 50%;
   background: var(--accent-soft);
   color: var(--accent);
@@ -54,11 +56,241 @@
 .turnText {
   max-width: 72ch;
   min-width: 0;
-  font: 400 14px/1.6 var(--font-serif);
+  font: 400 var(--fs-base) / 1.6 var(--font-serif);
   color: var(--text);
   overflow-wrap: break-word;
 }
 
 .turnPlain {
   white-space: pre-wrap;
+}
+
+/* ── the panel ───────────────────────────────────────────────────── */
+
+/* --chat-gutter: the conversation's side inset, shared by the log, the
+   footer and the composer bar so their edges line up. */
+.panel {
+  --chat-gutter: clamp(var(--sp-8), 4vw, var(--sp-28));
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+/* With a footer the log only takes the height it needs, so the footer's
+   actions sit right under the latest turn; a long conversation still
+   scrolls and the footer stays above the composer. */
+.log {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--sp-12) var(--chat-gutter);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-8);
+}
+
+.log[data-has-footer="true"] {
+  flex: 0 1 auto;
+}
+
+.footer {
+  padding: 0 var(--chat-gutter) var(--sp-8);
+  max-height: 65%;
+  overflow-y: auto;
+  flex-shrink: 0;
+}
+
+.spacer {
+  flex: 1;
+}
+
+/* ── the composer bar ────────────────────────────────────────────── */
+
+.bar {
+  padding: var(--sp-6) var(--chat-gutter) var(--sp-10);
+  border-top: 1px solid var(--border);
+  background: var(--bg-panel);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-5);
+}
+
+.actions {
+  display: flex;
+  gap: var(--sp-3);
+}
+
+/* 36px / 160px: one line of text plus its inset, and the most the box grows
+   before it scrolls. */
+.input {
+  --input-min-h: 36px;
+  --input-max-h: 160px;
+  flex: 1;
+  resize: none;
+  border: 0;
+  background: transparent;
+  font-size: var(--fs-base);
+  line-height: 1.5;
+  padding: var(--sp-3) 0;
+  font-family: var(--font-sans);
+  max-height: var(--input-max-h);
+  min-height: var(--input-min-h);
+}
+
+/* The composer's controls share one 32px square (Attach, Send; Stop is 32
+   tall, Send 40 wide). Paired with `.btn` to outrank `.btn--sm`. */
+:global(.btn).control {
+  --control-size: 32px;
+  height: var(--control-size);
+  align-self: flex-end;
+}
+
+:global(.btn).iconControl {
+  width: var(--control-size);
+  padding: 0;
+  display: inline-grid;
+  place-items: center;
+  box-sizing: border-box;
+}
+
+:global(.btn).sendControl {
+  width: 40px;
+}
+
+/* A press gives a little under the finger (`.btn` already transitions all). */
+@media (prefers-reduced-motion: no-preference) {
+  .pressable:active:not(:disabled) {
+    transform: scale(0.96);
+  }
+}
+
+/* ── a message ───────────────────────────────────────────────────── */
+
+/* 640px: the crisis card's measure. */
+.crisisRow {
+  align-self: stretch;
+  max-width: 640px;
+  width: 100%;
+}
+
+.pageRow {
+  align-self: stretch;
+  min-width: 0;
+}
+
+.bubbleRow {
+  display: flex;
+  gap: var(--sp-6);
+  max-width: 85%;
+  align-self: flex-start;
+}
+
+.bubbleRow[data-role="user"] {
+  max-width: 70%;
+  align-self: flex-end;
+}
+
+/* 32px: the tutor's avatar beside a bubble. */
+.bubbleAvatar {
+  --bubble-avatar: 32px;
+  width: var(--bubble-avatar);
+  height: var(--bubble-avatar);
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+/* Assistant voice is the body serif ("serif for soul, sans for function");
+   the student's messages keep the sans UI voice. */
+.bubble {
+  background: var(--bg-panel);
+  color: var(--text);
+  padding: var(--sp-6) var(--sp-8);
+  border-radius: var(--r-lg);
+  border: 1px solid var(--border);
+  font-size: var(--fs-base);
+  line-height: 1.6;
+  font-family: var(--font-serif);
+  word-break: break-word;
+  overflow-wrap: break-word;
+  position: relative;
+}
+
+.bubble[data-role="user"] {
+  background: var(--accent);
+  color: var(--accent-fg);
+  border: none;
+  font-family: var(--font-sans);
+}
+
+.thinking {
+  opacity: 0.6;
+  font-family: var(--font-sans);
+}
+
+.userText {
+  white-space: pre-wrap;
+}
+
+/* ADR 0020: an interrupted turn keeps its partial text, just dimmed. */
+.dimmed {
+  opacity: 0.7;
+}
+
+/* The key-idea block: a label over the idea, an accent rule beside it. */
+.keyIdea {
+  border-left: 3px solid var(--accent);
+  padding: var(--sp-1) 0 var(--sp-1) var(--sp-6);
+  margin: var(--sp-4) 0;
+}
+
+.keyIdea[data-first="true"] {
+  margin: 0 0 var(--sp-4);
+}
+
+.keyIdeaLabel {
+  display: block;
+  color: var(--accent);
+  margin-bottom: var(--sp-1);
+}
+
+/* Trust chrome under a turn (lib/loopTrustChrome.ts TRUST_CHROME_STYLE). */
+.trust {
+  font-family: var(--font-sans);
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+
+.trust[data-after-text="true"] {
+  margin-top: var(--sp-4);
+}
+
+.interrupted {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-5);
+}
+
+.interruptedLabel {
+  font-style: italic;
+}
+
+/* The standard visually-hidden recipe: kept in the accessibility tree,
+   painted nowhere. Last in the sheet, so it wins over a row's own layout. */
+.visuallyHidden {
+  --vh-size: 1px; /* one pixel, pulled back by its own margin: no footprint */
+  position: absolute;
+  width: var(--vh-size);
+  height: var(--vh-size);
+  margin: calc(-1 * var(--vh-size));
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
 }

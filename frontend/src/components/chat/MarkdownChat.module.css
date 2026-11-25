@@ -1,0 +1,193 @@
+/* The tutor's markdown elements (MarkdownChat.tsx COMPONENTS). Streamed text
+   renders through these as it arrives, so nothing here animates. */
+
+.p {
+  margin: 0 0 var(--sp-4);
+}
+
+.strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.em {
+  font-style: italic;
+}
+
+.del {
+  text-decoration: line-through;
+  color: var(--text-dim);
+}
+
+.ul,
+.ol {
+  padding: 0;
+}
+
+.ul {
+  margin: var(--sp-2) 0 var(--sp-5) var(--sp-9);
+}
+
+.ol {
+  margin: var(--sp-2) 0 var(--sp-5) var(--sp-10);
+}
+
+.li {
+  margin: var(--sp-1) 0;
+}
+
+/* A task item hangs its checkbox in the list's own indent. */
+.taskItem {
+  list-style: none;
+  margin-left: calc(-1 * var(--sp-9));
+}
+
+.checkbox {
+  margin-right: var(--sp-3);
+  vertical-align: middle;
+}
+
+.link {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.img {
+  max-width: 100%;
+  height: auto;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--border);
+  margin: var(--sp-3) 0;
+  display: block;
+}
+
+/* 1px 5px: half steps, so inline code sits in the line without growing it. */
+.code {
+  padding: calc(var(--sp-1) / 2) calc(var(--sp-5) / 2);
+  border-radius: var(--r-xs);
+  background: var(--bg-soft);
+  font-size: 0.9em;
+}
+
+.pre {
+  padding: var(--sp-5) var(--sp-6);
+  border-radius: var(--r-sm);
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  overflow-x: auto;
+  font-size: var(--fs-sm);
+  margin: var(--sp-3) 0 var(--sp-5);
+}
+
+/* Italic body-serif, not a side-tab accent border: hierarchy from type. */
+.blockquote {
+  margin: var(--sp-3) 0 var(--sp-6);
+  padding: var(--sp-1) 0 var(--sp-1) var(--sp-6);
+  color: var(--text-dim);
+  font-style: italic;
+}
+
+.h1 {
+  font-size: var(--fs-xl);
+  margin: var(--sp-4) 0 var(--sp-3);
+}
+
+.h2 {
+  font-size: var(--fs-lg);
+  margin: var(--sp-4) 0 var(--sp-3);
+}
+
+.h3 {
+  font-size: var(--fs-base);
+  margin: var(--sp-3) 0 var(--sp-2);
+}
+
+.hr {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: var(--sp-6) 0;
+}
+
+.tableWrap {
+  overflow-x: auto;
+  margin: var(--sp-4) 0 var(--sp-6);
+}
+
+.table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: var(--fs-md);
+  font-family: var(--font-sans);
+}
+
+.thead {
+  background: var(--bg-subtle);
+}
+
+.th,
+.td {
+  padding: var(--sp-3) var(--sp-5);
+}
+
+.th {
+  text-align: left;
+  border-bottom: 1px solid var(--border-strong);
+  font-weight: 600;
+}
+
+.td {
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+.callout {
+  margin: var(--sp-5) 0 var(--sp-7);
+  padding: var(--sp-5) var(--sp-7);
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+}
+
+.callout[data-callout="warning"] {
+  background: var(--warn-soft);
+  border-color: var(--warn);
+}
+
+.callout[data-callout="proof"] {
+  background: transparent;
+  border-style: dashed;
+}
+
+.calloutLabel {
+  font-family: var(--font-sans);
+  font-size: var(--fs-xs);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent);
+  font-weight: 700;
+  margin-bottom: var(--sp-2);
+}
+
+.callout[data-callout="warning"] .calloutLabel {
+  color: var(--warn);
+}
+
+.calloutTitle {
+  font-family: var(--font-sans);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: var(--sp-2);
+  font-style: italic;
+}
+
+.iframe {
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  max-width: 100%;
+  display: block;
+}
+
+.iframe[data-geogebra="true"] {
+  margin: var(--sp-5) 0 var(--sp-7);
+}

@@ -16,6 +16,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, cleanup, fireEvent } from "@testing-library/react";
 
 import { ChatPanel, tutorStepLabel, type ChatMsg } from "./ChatPanel";
+import styles from "./ChatPanel.module.css";
 import crisisFixture from "@/test-utils/crisisSupport.json";
 import { crisisSupportOf } from "@/lib/crisisSupport";
 import { MATERIALS_GROUNDED_HINT, MATERIALS_GROUNDED_LABEL } from "@/lib/loopTrustChrome";
@@ -218,7 +219,7 @@ describe("ChatPanel — keyboard and screen reader (spec §13 A135)", () => {
     const row = screen.getByText("Why does it stop?");
     const wrapper = row.closest("[data-visually-hidden]") as HTMLElement;
     expect(wrapper).not.toBeNull();
-    expect(wrapper.style.position).toBe("absolute");
+    expect(wrapper.className).toContain(styles.visuallyHidden);
     expect(screen.getByRole("log")).toContainElement(row);
     rerender(<ChatPanel messages={[msg("p", "Why does it stop?")]} onSend={noop} />);
     expect(screen.getByText("Why does it stop?")).toBe(row);
