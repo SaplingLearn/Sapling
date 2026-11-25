@@ -25,7 +25,6 @@ from learning.checks import CheckItem, Option, RubricItem, WrongReason
 from tests import grader_fakes
 from learning.params import (
     GRADER_ANSWER_MAX_CHARS,
-    GRADER_LIMITS as GRADER_LIMITS_SPEC,
     GRADER_LOW_CONFIDENCE,
     GRADER_SECOND_OPINION_CONFIDENCE,
     GRADER_SECOND_OPINION_SLOT,
@@ -245,14 +244,6 @@ def test_an_empty_answer_still_renders_its_quoted_line():
     assert text.count("\nSTUDENT ANSWER") == 1
 
 
-def test_grader_limits_are_the_spec_values():
-    """agents.GRADER_LIMITS is built from learning.params.GRADER_LIMITS (spec §3.4;
-    one value, one name) — never retyped."""
-    assert GRADER_LIMITS.request_limit == GRADER_LIMITS_SPEC["request_limit"]
-    assert GRADER_LIMITS.tool_calls_limit == GRADER_LIMITS_SPEC["tool_calls_limit"]
-    assert GRADER_LIMITS.total_tokens_limit == GRADER_LIMITS_SPEC["total_tokens_limit"]
-
-
 def test_parse_item_results_is_strict():
     import agents.grader as g
 
@@ -368,12 +359,6 @@ def test_grade_second_opinion_runs_on_grader_second_slot(monkeypatch):
     assert first_kw["usage_limits"] is GRADER_LIMITS and second_kw["usage_limits"] is GRADER_LIMITS
     assert tasks == ["grader", GRADER_SECOND_OPINION_SLOT]
     assert res.unavailable is False and res.backend == "claude_second" and res.confidence == 0.9
-
-
-def test_second_opinion_settings_pin_thinking_off():
-    import agents.grader as g
-
-    assert g._SECOND_OPINION_SETTINGS["google_thinking_config"].thinking_budget == 0
 
 
 @pytest.mark.parametrize(

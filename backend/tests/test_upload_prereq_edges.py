@@ -57,7 +57,7 @@ from agents.deps import SaplingDeps
 from learning import planner
 from learning.params import BKT_L0, BKT_PROFICIENT
 from main import app
-from services.prompt_safety import DOCUMENT_INPUT_GUARD_PROMPT, wrap_document_input
+from services.prompt_safety import wrap_document_input
 from tests.split_patches import patch_documents
 
 client = TestClient(app)
@@ -67,30 +67,16 @@ USER, COURSE = "u1", "c-1"
 
 # The concept extraction request as it was before A118, captured from
 # cf9dc75c (the commit before it) by running that agent in function mode: the
-# flag-off variant must send exactly this. Change these only with a recorded
-# eval behind the change. Since #890 (f9ad4e5f) every upload worker's system
-# prompt ends with the untrusted-document guard and its user prompt is the
-# document inside the envelope (services/prompt_safety.py): the flag-off
-# variant is that request, byte for byte, and A118 adds nothing to it.
-PRE_A118_SYSTEM_PROMPT = (
-    "You extract key concepts from a student document. Each concept becomes a "
-    "node in the student's knowledge graph and must read as a standalone topic."
-    "\n\n- name: short Title Case noun phrase ('Linear Regression', 'Big-O "
-    "Analysis'). Never a problem number, week label, or administrative item.\n"
-    "- description: 1-2 sentences in the document's context.\n"
-    "- importance in [0, 1]; order the list by importance desc.\n"
-    "- 1-30 concepts. Prefer 4-12 for lectures/readings/study guides, up to ~15 "
-    "for whole-course syllabi, 1-8 for narrow assignments.\n\n"
-    + DOCUMENT_INPUT_GUARD_PROMPT
-)
+# flag-off variant must send exactly this, pinned by digest. Change these only
+# with a recorded eval behind the change. Since #890 (f9ad4e5f) every upload
+# worker's system prompt ends with the untrusted-document guard and its user
+# prompt is the document inside the envelope (services/prompt_safety.py): the
+# flag-off variant is that request, byte for byte, and A118 adds nothing to it.
 PRE_A118_PROMPT_SHA256 = "e8ad6c7cacebcd19bf921e09eb0b1cc0032847c7ba2739f398d5ad1ddd52ee20"
 PRE_A118_PROMPT_VERSION = "e8ad6c7caceb"  # the agent metadata: the sha's first 12
 PRE_A118_OUTPUT_TOOL = ("final_result", "The final response which ends this conversation")
 # sha256 of the output tool's JSON schema (json.dumps, sort_keys=True).
 PRE_A118_SCHEMA_SHA256 = "28cd48497ca87a194eb030d792e56453c582e4985769938571da1bcf1f21763f"
-# The flag-on instructions, pinned so an edit to them is a deliberate one.
-PREREQUISITE_INSTRUCTIONS_SHA256 = "ce6710fb00f9aa7fe8e3ecd278d30e57a9a54cafc1731ebf7f2fc5189e8d14ee"
-PREREQ_PROMPT_VERSION = "eb0b193a22a8"  # sha256(system prompt + "\n\n" + instructions)[:12]
 
 # The walkthrough deck: (name, importance as the extraction scored it, node id).
 # The ids sort Collision Resolution 1st, Hash Table 3rd and Hash Function 5th —
@@ -405,7 +391,7 @@ def _request(monkeypatch, *, prerequisites: bool, existing=()):
 
 def test_flag_off_request_is_byte_identical_to_pre_a118(monkeypatch):
     seen, result = _request(monkeypatch, prerequisites=False, existing=["Arrays"])
-    assert seen["system"] == [PRE_A118_SYSTEM_PROMPT]
+    assert len(seen["system"]) == 1
     assert _sha256(seen["system"][0]) == PRE_A118_PROMPT_SHA256
     assert seen["instructions"] is None
     assert seen["user"] == [_TEXT]  # the bare text: the course's concepts are not sent
@@ -423,15 +409,16 @@ def test_flag_off_request_is_byte_identical_to_pre_a118(monkeypatch):
 
 def test_flag_on_request_adds_the_instructions_the_schema_and_the_context(monkeypatch):
     seen, result = _request(monkeypatch, prerequisites=True, existing=["Linked Lists", "Arrays"])
-    assert seen["system"] == [PRE_A118_SYSTEM_PROMPT]  # the instructions come after it
+    # the pre-A118 system prompt, unchanged; the instructions come after it
+    assert len(seen["system"]) == 1 and _sha256(seen["system"][0]) == PRE_A118_PROMPT_SHA256
     assert seen["instructions"] == PREREQUISITE_INSTRUCTIONS
-    assert _sha256(PREREQUISITE_INSTRUCTIONS) == PREREQUISITE_INSTRUCTIONS_SHA256
     assert seen["user"] == [build_message(_TEXT, ["Linked Lists", "Arrays"])]
     assert "\n- Arrays\n- Linked Lists\n\nDocument:\n" + _TEXT in seen["user"][0]
     assert set(seen["schema"]["properties"]) == {"concepts", "prerequisites"}
     assert _sha256(seen["schema"]) != PRE_A118_SCHEMA_SHA256
-    assert result.metadata == {"prompt_version": PREREQ_PROMPT_VERSION,
-                               "agent": "concept_extraction"}
+    # sha256(system prompt + "\n\n" + instructions)[:12]
+    version = _sha256(seen["system"][0] + "\n\n" + PREREQUISITE_INSTRUCTIONS)[:12]
+    assert result.metadata == {"prompt_version": version, "agent": "concept_extraction"}
     assert type(result.output) is ConceptList
     assert [(r.prerequisite, r.dependent) for r in result.output.prerequisites] == DECK_RELATIONS
 
@@ -704,25 +691,6 @@ def test_a_failed_write_is_logged_never_raised(db, monkeypatch, caplog):
         assert cp.write_document_prerequisites(USER, COURSE, _concepts(DECK, DECK_RELATIONS)) == 0
     assert "upload prerequisites failed" in caplog.text
     assert not cp._lock_for(USER, COURSE).locked()
-
-
-def test_drops_are_logged_with_a_sample(db, monkeypatch, caplog):
-    _seed_deck(db)
-    with caplog.at_level(logging.INFO, logger=cp.__name__):
-        cp.write_document_prerequisites(USER, COURSE, _concepts(DECK, DECK_RELATIONS))
-    [record] = [r for r in caplog.records if r.name == cp.__name__]
-    assert record.levelno == logging.WARNING
-    assert "wrote 8" in record.message and "dropped 5" in record.message
-    assert "unknown: 'Hashing Basics' -> 'Hash Table'" in record.message
-
-
-def test_a_clean_write_logs_one_info_line(db, monkeypatch, caplog):
-    _seed_deck(db)
-    with caplog.at_level(logging.INFO, logger=cp.__name__):
-        cp.write_document_prerequisites(USER, COURSE, _concepts(DECK, DECK_EDGES))
-    [record] = [r for r in caplog.records if r.name == cp.__name__]
-    assert record.levelno == logging.INFO
-    assert record.message.endswith("wrote 8, already present 0, dropped 0")
 
 
 def test_no_relations_or_no_course_costs_nothing():

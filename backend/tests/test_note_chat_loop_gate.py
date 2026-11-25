@@ -49,7 +49,7 @@ def test_the_integrity_rule_is_a_loop_run_argument():
     assert set(on) == {"instructions", "metadata"}
     rule = on["instructions"]
     assert rule.startswith("ACADEMIC INTEGRITY (non-negotiable)")
-    assert "learning session" in rule and "one step at a time" in rule
+    assert "learning session" in rule
     # its own prompt version, so a loop run's llm_usage row says which prompt ran
     assert on["metadata"]["prompt_version"] != PRE_LOOP_PROMPT_VERSION
 

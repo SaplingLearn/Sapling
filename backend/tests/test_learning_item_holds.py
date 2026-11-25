@@ -4,18 +4,14 @@ staff retire are HOLDS — reason codes in check_items.lint_flags
 the one predicate (learning/checks.py held_flags / is_servable) — not a second
 "never served" state. Here: the predicate, the student reads, the flag
 rewrites that must keep the codes, the queue's read of them, the approval's
-re-lint, and the migration's derivation and trigger as SQL text. What the
-database decides with them (the report/decision functions, the trigger, the
-races) is tests/integration/test_check_item_reports_db.py's, on the real
-database."""
+re-lint. The migration's derivation and what the database decides with it
+(the report/decision functions, the trigger, the races) is
+tests/integration/test_check_item_reports_db.py's, on the real database."""
 
 from __future__ import annotations
 
-from db.migration_units import MIGRATION_UNITS
-import re
 from unittest.mock import patch
 
-import pytest
 
 from learning.checks import (
     HOLD_FLAGS,
@@ -32,13 +28,6 @@ from learning.checks import (
 )
 from tests.test_learning_check_items import _cached_tables, _item
 from tests.test_learning_item_keys import _row
-
-MIG_DIR = MIGRATION_UNITS
-
-
-def _migration() -> str:
-    (path,) = sorted(MIG_DIR.glob("*_learning_evidence_void.sql"))
-    return path.read_text()
 
 
 class TestThePredicate:
@@ -169,46 +158,3 @@ class TestRelint:
 
     def _tables(self, *items):
         return _cached_tables({"check_items": [_row(i) for i in items]})
-
-
-class TestTheMigration:
-    """The derivation and its trigger, as SQL text (their behaviour on a real
-    database: tests/integration/test_check_item_reports_db.py)."""
-
-    def test_the_codes_match_the_python_ones(self):
-        sql = _migration()
-        derive = sql.split("FUNCTION check_item_hold_flags(", 1)[1].split("$$;", 1)[0]
-        assert f"'{REPORTS_THRESHOLD}'" in derive and f"'{STAFF_RETIRED}'" in derive
-        assert "WHEN 'quarantined' THEN" in derive and "WHEN 'retired' THEN" in derive
-        assert "IMMUTABLE" in derive
-
-    def test_the_trigger_rederives_on_every_insert_and_flag_write(self):
-        sql = _migration()
-        assert (
-            "BEFORE INSERT OR UPDATE OF lint_flags, course_id, question_hash ON check_items\n"
-            "  FOR EACH ROW EXECUTE FUNCTION check_items_staff_hold();"
-        ) in sql
-        body = sql.split("FUNCTION check_items_staff_hold()", 1)[1].split("$$;", 1)[0]
-        # a row joining a course item waits for a decision in flight (shared vs exclusive)
-        lock = "pg_advisory_xact_lock_shared(\n      hashtextextended('check-item-review:' || NEW.course_id"
-        assert lock in body
-        assert "IF TG_OP = 'INSERT' OR NEW.course_id IS DISTINCT FROM OLD.course_id" in body
-        assert "NEW.lint_flags := check_item_hold_flags(NEW.lint_flags, v_status);" in body
-
-    @pytest.mark.parametrize(
-        "function,status",
-        [("check_item_report_quarantine(", "'quarantined'"), ("check_item_review_decide(", "p_status")],
-    )
-    def test_the_decision_holds_its_rows_in_its_own_transaction(self, function, status):
-        body = _migration().split(f"FUNCTION {function}", 1)[1].split("$$;", 1)[0]
-        update = re.search(r"UPDATE check_items c\s+SET lint_flags = check_item_hold_flags\(c\.lint_flags, (\S+)\)", body)
-        assert update and update.group(1) == status
-        assert body.index("pg_advisory_xact_lock(") < body.index("UPDATE check_items")
-
-    def test_the_backfill_rederives_every_decided_row(self):
-        sql = _migration()
-        assert (
-            "UPDATE check_items c\n   SET lint_flags = check_item_hold_flags(c.lint_flags, r.status)\n"
-            "  FROM check_item_reviews r"
-        ) in sql
-        assert sql.index("CREATE TRIGGER check_items_staff_hold") < sql.index("FROM check_item_reviews r\n WHERE r.course_id = c.course_id")

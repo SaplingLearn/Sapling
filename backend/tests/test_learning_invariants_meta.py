@@ -1,7 +1,5 @@
-"""PKG-00 review fixes: tests for the helpers that the gate tests and the
-invariants module rely on. The counts other packages pin
-(`test_learning_gate.py` 13, invariants `4 passed, 8 skipped`) stay the same,
-so these checks live in their own module.
+"""PKG-00 review fixes: tests for the helpers that the invariants module (and
+its inv_11 gate truth table) rely on, kept in their own module.
 
 - config.py calls load_dotenv() at import time, so reloading config re-reads
   backend/.env. A .env that turns the loop on would put back the variable an
@@ -19,7 +17,6 @@ import os
 
 import dotenv
 import pytest
-import test_learning_gate as gate_tests
 import test_learning_loop_invariants as inv
 
 
@@ -53,7 +50,7 @@ def dotenv_turns_loop_off(monkeypatch):
 
 def test_gate_reload_ignores_a_dotenv_that_turns_the_loop_off(monkeypatch, dotenv_turns_loop_off):
     """(Formerly ..._turns_the_loop_on: the build-phase default was OFF.)"""
-    gate = gate_tests._reload(monkeypatch, None)
+    gate = inv.reload_gate(monkeypatch, None)
     assert gate.config.LEARNING_LOOP_ENABLED is True
 
 
@@ -68,7 +65,7 @@ def test_gate_reload_restores_the_flag_afterwards(monkeypatch):
     monkeypatch.delenv("LEARNING_LOOP_ENABLED", raising=False)
     monkeypatch.setattr(config, "LEARNING_LOOP_ENABLED", True)
     with pytest.MonkeyPatch.context() as mp:
-        gate_tests._reload(mp, "false")
+        inv.reload_gate(mp, "false")
     assert config.LEARNING_LOOP_ENABLED is True, "a 'false' case left the flag OFF"
 
 

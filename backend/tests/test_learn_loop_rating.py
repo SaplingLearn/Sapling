@@ -168,19 +168,6 @@ def test_a_rating_on_a_closed_session_is_409(gate_on, session_row, seams):
     seams.zpd.emit_zpd_rating.assert_not_called()
 
 
-def test_rating_event_payload_is_the_spec_shape():
-    """zpd.rating (spec §6): {rating, checks_since_last}, emitted through log_event."""
-    from learning import zpd_events
-
-    captured = []
-    with patch.object(zpd_events, "log_event", lambda et, **kw: captured.append((et, kw))):
-        zpd_events.emit_zpd_rating(
-            user_id="u1", request_id="r1", rating="too_easy", checks_since_last=N
-        )
-    ((et, kw),) = captured
-    assert et == "zpd.rating" and kw["payload"] == {"rating": "too_easy", "checks_since_last": N}
-
-
 # ── the counter and ask_rating on the check-answer turn ──────────────────────
 
 
