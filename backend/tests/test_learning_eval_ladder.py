@@ -53,11 +53,11 @@ def test_every_tier_slot_runs_every_case():
     from agents.loop_tutor import LOOP_TIER_SLOTS
 
     mod = _loop_eval_module()
-    slots = set(LOOP_TIER_SLOTS.values())
-    # every tier slot runs CASES; replay_variants also adds each RECORDED
-    # namespace of a tier (#866 Z25: `<slot>__v2` runs CASES too, the
-    # flag-path `__flags` and W1 `__pedagogy` datasets their own case lists),
-    # so CI keeps scoring them once they exist
+    slots = {LOOP_TIER_SLOTS[t] for t in mod.EVAL_TIERS}
+    # every evaluated tier slot (the ones production serves) runs CASES;
+    # replay_variants also adds each RECORDED namespace of a tier (#866 Z25:
+    # `<slot>__v2` runs CASES too, the flag-path `__flags` and W1 `__pedagogy`
+    # datasets their own case lists), so CI keeps scoring them once they exist
     assert slots <= set(mod.VARIANTS)
     for name, (make, _run) in mod.VARIANTS.items():
         assert name.split("__")[0] in slots, name

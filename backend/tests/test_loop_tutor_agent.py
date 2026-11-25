@@ -472,8 +472,9 @@ def test_loop_eval_serves_through_the_production_path():
 
 def test_loop_tutor_cassettes_match_the_current_prompt_schema_and_model():
     """A stale recording can never justify routing: every committed tutor
-    cassette was recorded under the agent's CURRENT system prompt, output
-    schema, slot model and the exact assembled case message."""
+    cassette of an evaluated tier was recorded under the agent's CURRENT
+    system prompt, output schema, slot model and the exact assembled case
+    message."""
     import json
     from pathlib import Path
 
@@ -482,7 +483,7 @@ def test_loop_tutor_cassettes_match_the_current_prompt_schema_and_model():
 
     mod = _loop_eval_module()
     root = Path(__file__).parent / "evals" / "cassettes"
-    for slot in LOOP_TIER_SLOTS.values():
+    for slot in (LOOP_TIER_SLOTS[t] for t in mod.EVAL_TIERS):
         for case in mod.CASES:
             path = root / slot / f"{case.name}.json"
             assert path.exists(), f"missing cassette {slot}/{case.name}"
@@ -520,7 +521,11 @@ def test_loop_routable_tiers_match_baselines():
     recordings (baselines.json `loop_tutor_routing`, one score block per run)
     ALL score 1.0 on EVERY served gate with no case raised — min-of-N, PKG-14's
     floor direction (PKG-07 fix round 2; spec §13 A49). Diagnostics
-    (RawAnswerLeak, RetriesUsed) never route; at least one tier routes."""
+    (RawAnswerLeak, RetriesUsed) never route; at least one tier routes.
+
+    Only the evaluated tiers (the eval's EVAL_TIERS: the ones production
+    serves) have routing evidence; a tier without recordings never routes, so
+    lite and standard (unrecorded, #866 trim) route up to deep."""
     import json
     from pathlib import Path
 
@@ -530,8 +535,14 @@ def test_loop_routable_tiers_match_baselines():
     baselines = json.loads((Path(__file__).parent / "evals" / "baselines.json").read_text())
     routing = baselines["loop_tutor_routing"]
     assert routing["runs"] == LOOP_ROUTING_RUNS >= 3
+    evaluated = {LOOP_TIER_SLOTS[t] for t in mod.EVAL_TIERS}
+    # the routing block holds evidence for exactly the evaluated slots: no
+    # leftover runs of an unrecorded tier, no evaluated tier without runs
+    assert {k for k, v in routing.items() if isinstance(v, list)} == evaluated
+    assert set(routing["recorded_under"]) == evaluated
     passing = set()
-    for tier, slot in LOOP_TIER_SLOTS.items():
+    for tier in mod.EVAL_TIERS:
+        slot = LOOP_TIER_SLOTS[tier]
         assert set(baselines[slot]) == set(mod.SERVED_GATES) | set(mod.DIAGNOSTICS), slot
         runs = routing.get(slot) or []
         for run in runs:
@@ -549,7 +560,8 @@ def test_loop_routing_runs_were_recorded_under_the_current_prompt_and_model():
     """D6: the routing block names what its runs were recorded under (floors.py
     writes it from the run log), and that is the CURRENT prompt hash, schema
     hash and slot model — evidence from another prompt or model never routes.
-    Fails until the loop datasets are re-recorded, like the cassette pins."""
+    Fails until the loop datasets are re-recorded, like the cassette pins.
+    Iterates the recorded (evaluated) tiers only."""
     import json
     from pathlib import Path
 
@@ -559,7 +571,7 @@ def test_loop_routing_runs_were_recorded_under_the_current_prompt_and_model():
     mod = _loop_eval_module()
     baselines = json.loads((Path(__file__).parent / "evals" / "baselines.json").read_text())
     recorded = baselines["loop_tutor_routing"]["recorded_under"]
-    for slot in LOOP_TIER_SLOTS.values():
+    for slot in (LOOP_TIER_SLOTS[t] for t in mod.EVAL_TIERS):
         assert recorded[slot] == mod.routing_identity(slot), slot
         assert recorded[slot]["prompt_hash"] == _PROMPT_HASH, f"{slot}: stale prompt"
         assert recorded[slot]["model"] == model_name_for(slot), f"{slot}: other model"

@@ -1240,7 +1240,9 @@ def test_confront_tiers_match_the_eval_baselines():
     """routes.learn_loop.CONFRONT_TIERS is exactly the tiers whose fresh
     recordings (baselines.json `misconception_confront_routing`, one score
     block per run, >= 3 runs) ALL score 1.0 on every served gate with no case
-    raised — A49's min-of-N direction; diagnostics never route."""
+    raised — A49's min-of-N direction; diagnostics never route. Only the
+    evaluated slots (CONFRONT_SLOTS: deep, the one a confronting turn is
+    served on) carry evidence; an unrecorded tier never confronts."""
     import json
 
     from agents.loop_tutor import LOOP_ROUTABLE_TIERS, LOOP_TIER_SLOTS
@@ -1250,6 +1252,9 @@ def test_confront_tiers_match_the_eval_baselines():
     baselines = json.loads((BACKEND / "tests" / "evals" / "baselines.json").read_text())
     routing = baselines["misconception_confront_routing"]
     assert routing["runs"] >= 3
+    evaluated = {mod.dataset_name(slot) for slot in mod.CONFRONT_SLOTS}
+    assert {k for k, v in routing.items() if isinstance(v, list)} == evaluated
+    assert set(routing["recorded_under"]) == evaluated
     passing = set()
     for tier, slot in LOOP_TIER_SLOTS.items():
         if slot not in mod.CONFRONT_SLOTS:
@@ -1270,7 +1275,8 @@ def test_confront_tiers_match_the_eval_baselines():
 def test_confront_routing_runs_were_recorded_under_the_current_prompt_and_model():
     """D6: the routing block names what its runs were recorded under, and that
     is the CURRENT loop prompt hash, schema hash and slot model. Fails until
-    the confront datasets are re-recorded, like the cassette pins."""
+    the confront datasets are re-recorded, like the cassette pins. Iterates
+    the recorded (evaluated) slots only."""
     import json
 
     from agents._providers import model_name_for

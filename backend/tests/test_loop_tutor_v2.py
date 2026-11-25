@@ -281,7 +281,8 @@ def test_every_default_served_text_keeps_its_recorded_judgements(monkeypatch):
 
     monkeypatch.setenv("SAPLING_EVAL_MODE", "replay")
     loop, confront = _eval_modules()
-    for mod, slots in ((loop, list(lt.LOOP_TIER_SLOTS.values())), (confront, list(confront.CONFRONT_SLOTS))):
+    evaluated = [lt.LOOP_TIER_SLOTS[t] for t in loop.EVAL_TIERS]
+    for mod, slots in ((loop, evaluated), (confront, list(confront.CONFRONT_SLOTS))):
         monkeypatch.setattr(mod, "MODE", "replay")
         for slot in slots:
             run = mod._run_for(slot, False)
@@ -360,16 +361,15 @@ def _eval_modules():
 
 
 def test_the_flag_on_eval_records_into_its_own_namespace():
-    """A flag-on recording can never land on, or pass for, a default one."""
+    """A flag-on recording can never land on, or pass for, a default one.
+    `__v2` is not recorded today (its prompt fix is pending): replay skips it
+    until it is, then scores it like any default dataset."""
     loop, confront = _eval_modules()
     assert loop.V2 is False, "the committed datasets are the flag-off contract"
-    for slot in ("loop_tutor_lite", "loop_tutor", "loop_tutor_deep"):
+    for slot in (lt.LOOP_TIER_SLOTS[t] for t in loop.EVAL_TIERS):
         assert loop.variant_namespace(slot, False) == slot
         assert loop.variant_namespace(slot, True) == f"{slot}__v2"
         assert slot in loop.VARIANTS
-        # Once W0.3 recorded `__v2`, default VARIANTS also replays those namespaces
-        # (never collides with the default slot key).
-        assert f"{slot}__v2" in loop.VARIANTS
         assert loop.variant_namespace(slot, True) != slot
     for slot in confront.CONFRONT_SLOTS:
         assert confront._cassette_dataset(slot, True) != confront._cassette_dataset(slot, False)
@@ -379,8 +379,8 @@ def test_the_flag_on_eval_records_into_its_own_namespace():
     assert loop.prompt_hash_for(True) == V2_PROMPT_VERSION != loop.prompt_hash_for(False)
     assert loop.schema_hash_for(True) != loop.schema_hash_for(False) == loop.OUTPUT_SCHEMA_HASH
     feedback = next(c for c in loop.CASES if c.inputs[0] == "feedback")
-    assert loop.input_sha256("loop_tutor", feedback.inputs, True) != loop.input_sha256(
-        "loop_tutor", feedback.inputs, False
+    assert loop.input_sha256("loop_tutor_deep", feedback.inputs, True) != loop.input_sha256(
+        "loop_tutor_deep", feedback.inputs, False
     )
     # a v2 teach case carries the route's plan focus; its default message does not
     for mod, assembled in ((loop, loop._assembled), (confront, confront.assembled)):
@@ -390,16 +390,9 @@ def test_the_flag_on_eval_records_into_its_own_namespace():
             assert lt.plan_focus_line(reason) in on and lt.plan_focus_block(concept) in on
             assert "[PLAN FOCUS]" not in off and "plan_concept" not in off
     case = loop.CASES[0]
-    from pathlib import Path
-
-    body = loop.load_cassette("loop_tutor", case.name)
+    body = loop.load_cassette("loop_tutor_deep", case.name)
     assert body is not None
     rec = loop.LoopRecording.model_validate(body)
-    loop.check_fresh(rec, "loop_tutor", case.inputs, False)  # the default recording is fresh
+    loop.check_fresh(rec, "loop_tutor_deep", case.inputs, False)  # the default recording is fresh
     with pytest.raises(loop.StaleRecordingError, match="system prompt"):
-        loop.check_fresh(rec, "loop_tutor", case.inputs, True)  # never a flag-on one
-    root = Path(__file__).parent / "evals" / "cassettes"
-    # W0.3 recorded `__v2` into its own namespace (never overwrites default).
-    assert (root / "loop_tutor__v2").is_dir()
-    assert (root / "loop_tutor").is_dir()
-    assert (root / "loop_tutor__v2") != (root / "loop_tutor")
+        loop.check_fresh(rec, "loop_tutor_deep", case.inputs, True)  # never a flag-on one

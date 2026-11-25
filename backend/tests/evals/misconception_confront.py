@@ -1,7 +1,8 @@
 """pydantic-evals cases for the PKG-10 confronting turn, scored on the SERVED
-path, per routable tier slot a confronting turn can land on: `loop_tutor_deep`
-(A15: misconception_active routes deep) and `loop_tutor` (the §3.5 soft-level
-and deep-cap downgrade of that deep turn).
+path, on the one tier slot a confronting turn is served on: `loop_tutor_deep`
+(A15: misconception_active routes deep; services.loop.guard.CONFRONT_TIERS is
+{"deep"}, and every tier is routed through agents.loop_tutor.routable_tier,
+whose LOOP_ROUTABLE_TIERS is deep only — so no standard turn confronts).
 
     cd backend                                   # SAPLING_MODEL_MODE unset
     SAPLING_EVAL_MODE=record python tests/evals/misconception_confront.py
@@ -103,10 +104,10 @@ from loop_tutor import (  # noqa: E402
 )
 
 DATASET = "misconception_confront"
-#: The slots a confronting turn is served on: deep (A15) and standard (the §3.5
-#: soft-level / deep-cap downgrade). Lite never confronts (feedback_correct and
-#: an H0 profic hint carry no line).
-CONFRONT_SLOTS: tuple[str, ...] = ("loop_tutor_deep", "loop_tutor")
+#: The slots a confronting turn is served on: deep only (A15; CONFRONT_TIERS).
+#: Standard and lite route up to deep (LOOP_ROUTABLE_TIERS), so their slots
+#: are intentionally unrecorded (#866 trim).
+CONFRONT_SLOTS: tuple[str, ...] = ("loop_tutor_deep",)
 
 SERVED_GATES: tuple[str, ...] = (
     "ServedAnswerLeak",

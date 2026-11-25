@@ -1,13 +1,18 @@
-"""pydantic-evals cases for loop_tutor_agent, run PER TIER SLOT on the SERVED
-path (PKG-07 Task 9; spec §10 rung 1, A15): each of loop_tutor_lite /
-loop_tutor / loop_tutor_deep must score 1.0 on every served gate before
-learning.policy.model_tier may route to it (agents/loop_tutor.LOOP_ROUTABLE_TIERS,
-pinned by tests/test_loop_tutor_agent.py::test_loop_routable_tiers_match_baselines).
+"""pydantic-evals cases for loop_tutor_agent, run PER EVALUATED TIER SLOT on
+the SERVED path (PKG-07 Task 9; spec §10 rung 1, A15): a tier slot must score
+1.0 on every served gate before learning.policy.model_tier may route to it
+(agents/loop_tutor.LOOP_ROUTABLE_TIERS, pinned by
+tests/test_loop_tutor_agent.py::test_loop_routable_tiers_match_baselines).
+
+Only the tiers production serves are evaluated (EVAL_TIERS: deep, i.e.
+`loop_tutor_deep`): `routable_tier` sends every lite and standard turn up to
+deep, so their slots write no served turn and are intentionally unrecorded.
+To route another tier again, add it to EVAL_TIERS and record it (README).
 
     cd backend                                   # SAPLING_MODEL_MODE unset
     SAPLING_EVAL_MODE=record python tests/evals/loop_tutor.py
     SAPLING_EVAL_MODE=replay python tests/evals/loop_tutor.py
-    LOOP_EVAL_SLOTS=loop_tutor_lite ...          # one slot only
+    LOOP_EVAL_SLOTS=loop_tutor_deep ...          # one dataset only
 
 Case input = (phase, band, ceiling, message). The case's check item (reference,
 final answer) lives in METADATA only — it is scored against, never sent to the
@@ -122,6 +127,13 @@ from learning.turn_shape import (  # noqa: E402
 
 __all__ = ["RungJudgement"]  # re-exported for tests/test_loop_tutor_agent.py
 
+#: The tiers whose slots are evaluated (recorded, replayed, routed on): the
+#: ones production serves. agents.loop_tutor.LOOP_ROUTABLE_TIERS is {"deep"},
+#: and services.loop.turn sends every tier through routable_tier, so only
+#: `loop_tutor_deep` ever writes a served loop turn; lite and standard are
+#: intentionally unrecorded (#866 trim).
+EVAL_TIERS: tuple[str, ...] = ("deep",)
+
 LoopInput = tuple[str, str, int, str]  # (phase, band, ceiling, message)
 
 SERVED_GATES: tuple[str, ...] = (
@@ -149,7 +161,8 @@ OUTPUT_SCHEMA_HASH = hashlib.sha256(
 #: own run arguments (agents.loop_tutor.variant_run_args), prompt and schema
 #: hashes, and its own namespace for cassettes, rung/confront judgements and
 #: baselines (`<slot>__v2`), so recording it never stales a default
-#: recording. It joins run_all.py only once it is recorded:
+#: recording. It joins run_all.py only once it is recorded, and is not
+#: recorded today (its prompt fix is pending; README "Unrecorded variants"):
 #:   LOOP_EVAL_VARIANT=v2 SAPLING_EVAL_MODE=record python tests/evals/loop_tutor.py
 V2_VARIANT = "v2"
 _VARIANT = os.getenv("LOOP_EVAL_VARIANT", "default")
@@ -1424,13 +1437,13 @@ def make_flags_dataset_for(tier: str, v2: bool = V2) -> Dataset[LoopInput, LoopR
 
 
 def flag_variants(v2: bool = V2) -> dict:
-    """Every tier's flag-path dataset in the variant (what LOOP_EVAL_FLAGS=1 records)."""
+    """Every evaluated tier's flag-path dataset in the variant (what LOOP_EVAL_FLAGS=1 records)."""
     return {
         flags_namespace(LOOP_TIER_SLOTS[t], v2): (
             partial(make_flags_dataset_for, t, v2),
             _run_for(LOOP_TIER_SLOTS[t], v2, space=flags_namespace(LOOP_TIER_SLOTS[t], v2)),
         )
-        for t in ("lite", "standard", "deep")
+        for t in EVAL_TIERS
     }
 
 
@@ -1455,7 +1468,7 @@ def make_pedagogy_dataset_for(tier: str, v2: bool = V2) -> Dataset[LoopInput, Lo
 
 
 def pedagogy_variants(v2: bool = V2) -> dict:
-    """Every tier's W1 pedagogy dataset (what LOOP_EVAL_PEDAGOGY=1 records)."""
+    """Every evaluated tier's W1 pedagogy dataset (what LOOP_EVAL_PEDAGOGY=1 records)."""
     return {
         pedagogy_namespace(LOOP_TIER_SLOTS[t], v2): (
             partial(make_pedagogy_dataset_for, t, v2),
@@ -1463,7 +1476,7 @@ def pedagogy_variants(v2: bool = V2) -> dict:
                 LOOP_TIER_SLOTS[t], v2, space=pedagogy_namespace(LOOP_TIER_SLOTS[t], v2)
             ),
         )
-        for t in ("lite", "standard", "deep")
+        for t in EVAL_TIERS
     }
 
 
@@ -1482,12 +1495,14 @@ def recorded(space: str) -> bool:
 
 
 def replay_variants(*, v2: bool = V2, recorded=recorded) -> dict:
-    """One dataset per tier slot in the run's variant (baselines key on the
-    slot name — `<slot>__v2` under LOOP_EVAL_VARIANT=v2). A default run also
-    replays every tier whose v2 namespace is recorded (#866 Z25): once
-    `loop_tutor_v2` is recorded, run_all.py and CI keep scoring its prompt
-    lines, so a later edit to them fails like any other regression."""
-    tiers = ("lite", "standard", "deep")
+    """One dataset per evaluated tier slot (EVAL_TIERS) in the run's variant
+    (baselines key on the slot name — `<slot>__v2` under LOOP_EVAL_VARIANT=v2).
+    A default run also replays every tier whose v2 namespace is recorded (#866
+    Z25): once `loop_tutor_v2` is recorded, run_all.py and CI keep scoring its
+    prompt lines, so a later edit to them fails like any other regression. An
+    unrecorded namespace (v2 today, the flag and pedagogy paths until recorded)
+    is skipped, never a missing-cassette failure."""
+    tiers = EVAL_TIERS
     out = {
         variant_namespace(LOOP_TIER_SLOTS[t], v2): (
             partial(make_dataset_for, t, v2),

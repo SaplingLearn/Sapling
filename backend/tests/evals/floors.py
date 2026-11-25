@@ -6,7 +6,7 @@ _replay.RUNS_LOG_ENV), then:
 
     cd backend
     python tests/evals/floors.py --log <log> --runs 3 \\
-        --datasets loop_tutor_lite,loop_tutor,loop_tutor_deep --routing loop_tutor_routing
+        --datasets loop_tutor_deep --routing loop_tutor_routing
 
 For every named dataset it takes the LAST `--runs` recorded runs in the log
 (mode `record`), and writes to baselines.json:

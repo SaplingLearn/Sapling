@@ -61,7 +61,7 @@ def _fresh(judge, path, served, item) -> str | None:
 
 
 def test_every_rung_and_confront_judgement_judged_the_text_served_today(evals):
-    """loop_tutor (every tier slot) and misconception_confront (every slot):
+    """loop_tutor (every evaluated tier slot) and misconception_confront (every slot):
     the judged served text is what today's served path makes of the committed
     recording. The recording's own hashes are NOT checked here (the cassette
     pins do that); this pins the served code and the judges."""
@@ -70,7 +70,7 @@ def test_every_rung_and_confront_judgement_judged_the_text_served_today(evals):
     lt, mc = evals["loop_tutor"], evals["misconception_confront"]
     rj, cj, replay = evals["_rung_judge"], evals["_confront_judge"], evals["_replay"]
     problems, checked = [], 0
-    for slot in LOOP_TIER_SLOTS.values():
+    for slot in (LOOP_TIER_SLOTS[t] for t in lt.EVAL_TIERS):
         for case in lt.CASES:
             meta = dict(case.metadata or {})
             rec = lt.LoopRecording.model_validate(replay.load_cassette(slot, case.name))
@@ -101,7 +101,7 @@ def test_every_rung_and_confront_judgement_judged_the_text_served_today(evals):
             )
             problems.append(_fresh(cj, cj.cassette_path(slot, case.name), turn, confront))
             checked += 2
-    assert checked >= 50, checked
+    assert checked >= 28, checked  # deep: 10 loop cases (+2 confronts), 8 confront cases (x2)
     assert [p for p in problems if p] == []
 
 

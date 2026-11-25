@@ -49,7 +49,7 @@ def test_a_recorded_v2_namespace_joins_the_default_replay(ev):
     lt, mc = ev.lt, ev.mc
     assert not any(name.endswith("__v2") for name in lt.replay_variants(recorded=lambda s: False))
     v2 = {n for n in lt.replay_variants(recorded=lambda s: s.endswith("__v2")) if n.endswith("__v2")}
-    assert v2 == {lt.variant_namespace(slot, True) for slot in ("loop_tutor_lite", "loop_tutor", "loop_tutor_deep")}
+    assert v2 == {lt.variant_namespace(lt.LOOP_TIER_SLOTS[t], True) for t in lt.EVAL_TIERS}
     assert {n for n in mc.replay_variants(recorded=lambda slot: True) if n.endswith("__v2")} == {
         mc.dataset_name(slot, True) for slot in mc.CONFRONT_SLOTS
     }
@@ -61,7 +61,7 @@ def test_a_recorded_v2_namespace_joins_the_default_replay(ev):
 def test_the_prequestion_and_self_explanation_paths_have_their_own_datasets(ev):
     lt = ev.lt
     flags = lt.flag_variants(False)
-    assert set(flags) == {lt.flags_namespace(s, False) for s in ("loop_tutor_lite", "loop_tutor", "loop_tutor_deep")}
+    assert set(flags) == {lt.flags_namespace(lt.LOOP_TIER_SLOTS[t], False) for t in lt.EVAL_TIERS}
     by_name = {c.name: c for c in lt.FLAG_CASES}
     pq = lt._assembled(by_name["teach_explains_prequestion"].inputs)
     assert PREQUESTION_LINE in pq and "[PREQUESTION ANSWER]" in pq
