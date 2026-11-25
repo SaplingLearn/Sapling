@@ -20,6 +20,11 @@ import {
 import { MermaidBlock } from "./MermaidBlock";
 import { FunctionPlot } from "./FunctionPlot";
 import { INERT_COMPONENTS, type MarkdownProfile } from "./inertMarkdown";
+import { GEOGEBRA_ORIGIN } from "@/lib/securityHeaders";
+import styles from "./MarkdownChat.module.css";
+
+/** A GeoGebra applet's frame size (the `::geogebra` directive), px. */
+const GEOGEBRA_FRAME = { width: 480, height: 360 } as const;
 
 // Castel-style shortcuts. Tutor can write `\R` instead of `\mathbb{R}`.
 // Frozen and never handed to KaTeX itself: KaTeX writes every \gdef / \global
@@ -117,9 +122,10 @@ function remarkSaplingDirectives() {
         const data = n.data || (n.data = {});
         data.hName = "iframe";
         data.hProperties = {
-          src: `https://www.geogebra.org/material/iframe/id/${id}`,
-          width: 480,
-          height: 360,
+          // The CSP's frame-src names the same origin (lib/securityHeaders.ts).
+          src: `${GEOGEBRA_ORIGIN}/material/iframe/id/${id}`,
+          width: GEOGEBRA_FRAME.width,
+          height: GEOGEBRA_FRAME.height,
           frameBorder: 0,
           allowFullScreen: true,
           loading: "lazy",
@@ -171,29 +177,15 @@ function rehypeExtractDiagramBlocks() {
 }
 
 const COMPONENTS: Components = {
-  p: ({ children }) => <p style={{ margin: "0 0 8px" }}>{children}</p>,
-  strong: ({ children }) => (
-    <strong style={{ color: "var(--text)", fontWeight: 600 }}>{children}</strong>
-  ),
-  em: ({ children }) => <em style={{ fontStyle: "italic" }}>{children}</em>,
-  del: ({ children }) => (
-    <del style={{ textDecoration: "line-through", color: "var(--text-dim)" }}>{children}</del>
-  ),
-  ul: ({ children }) => <ul style={{ margin: "4px 0 10px 18px", padding: 0 }}>{children}</ul>,
-  ol: ({ children }) => <ol style={{ margin: "4px 0 10px 20px", padding: 0 }}>{children}</ol>,
+  p: ({ children }) => <p className={styles.p}>{children}</p>,
+  strong: ({ children }) => <strong className={styles.strong}>{children}</strong>,
+  em: ({ children }) => <em className={styles.em}>{children}</em>,
+  del: ({ children }) => <del className={styles.del}>{children}</del>,
+  ul: ({ children }) => <ul className={styles.ul}>{children}</ul>,
+  ol: ({ children }) => <ol className={styles.ol}>{children}</ol>,
   li: ({ children, className }) => {
     const isTask = className?.includes("task-list-item");
-    return (
-      <li
-        style={{
-          margin: "2px 0",
-          listStyle: isTask ? "none" : undefined,
-          marginLeft: isTask ? -18 : undefined,
-        }}
-      >
-        {children}
-      </li>
-    );
+    return <li className={isTask ? `${styles.li} ${styles.taskItem}` : styles.li}>{children}</li>;
   },
   input: ({ type, checked, disabled }) => {
     if (type !== "checkbox") return null;
@@ -203,12 +195,12 @@ const COMPONENTS: Components = {
         checked={!!checked}
         disabled={disabled}
         readOnly
-        style={{ marginRight: 6, verticalAlign: "middle" }}
+        className={styles.checkbox}
       />
     );
   },
   a: ({ children, href }) => (
-    <a href={href} target="_blank" rel="noreferrer" style={{ color: "var(--accent)", textDecoration: "underline" }}>
+    <a href={href} target="_blank" rel="noreferrer" className={styles.link}>
       {children}
     </a>
   ),
@@ -223,14 +215,7 @@ const COMPONENTS: Components = {
           src={url}
           alt={alt || ""}
           loading="lazy"
-          style={{
-            maxWidth: "100%",
-            height: "auto",
-            borderRadius: "var(--r-sm)",
-            border: "1px solid var(--border)",
-            margin: "6px 0",
-            display: "block",
-          }}
+          className={styles.img}
         />
       );
     }
@@ -244,7 +229,7 @@ const COMPONENTS: Components = {
         target="_blank"
         rel="noopener noreferrer nofollow"
         referrerPolicy="no-referrer"
-        style={{ color: "var(--accent)", textDecoration: "underline" }}
+        className={styles.link}
       >
         {label}
       </a>
@@ -254,15 +239,7 @@ const COMPONENTS: Components = {
     const inline = !className;
     if (inline) {
       return (
-        <code
-          className="mono"
-          style={{
-            padding: "1px 5px",
-            borderRadius: "var(--r-xs)",
-            background: "var(--bg-soft)",
-            fontSize: "0.9em",
-          }}
-        >
+        <code className={`mono ${styles.code}`}>
           {children}
         </code>
       );
@@ -270,77 +247,35 @@ const COMPONENTS: Components = {
     return <code className={className}>{children}</code>;
   },
   pre: ({ children }) => (
-    <pre
-      className="mono"
-      style={{
-        padding: "10px 12px",
-        borderRadius: "var(--r-sm)",
-        background: "var(--bg-inset)",
-        border: "1px solid var(--border)",
-        overflowX: "auto",
-        fontSize: 12,
-        margin: "6px 0 10px",
-      }}
-    >
+    <pre className={`mono ${styles.pre}`}>
       {children}
     </pre>
   ),
   blockquote: ({ children }) => (
     // Italic body-serif instead of a side-tab accent border (which is the
     // #1 AI-dashboard tell). The brand's hierarchy should come from type.
-    <blockquote
-      className="body-serif"
-      style={{
-        margin: "6px 0 12px",
-        padding: "2px 0 2px 12px",
-        color: "var(--text-dim)",
-        fontStyle: "italic",
-      }}
-    >
+    <blockquote className={`body-serif ${styles.blockquote}`}>
       {children}
     </blockquote>
   ),
-  h1: ({ children }) => <h1 className="h-serif" style={{ fontSize: 18, margin: "8px 0 6px" }}>{children}</h1>,
-  h2: ({ children }) => <h2 className="h-serif" style={{ fontSize: 16, margin: "8px 0 6px" }}>{children}</h2>,
-  h3: ({ children }) => <h3 className="h-serif" style={{ fontSize: 14, margin: "6px 0 4px" }}>{children}</h3>,
-  hr: () => <hr style={{ border: 0, borderTop: "1px solid var(--border)", margin: "12px 0" }} />,
+  h1: ({ children }) => <h1 className={`h-serif ${styles.h1}`}>{children}</h1>,
+  h2: ({ children }) => <h2 className={`h-serif ${styles.h2}`}>{children}</h2>,
+  h3: ({ children }) => <h3 className={`h-serif ${styles.h3}`}>{children}</h3>,
+  hr: () => <hr className={styles.hr} />,
   table: ({ children }) => (
-    <div style={{ overflowX: "auto", margin: "8px 0 12px" }}>
-      <table
-        style={{
-          borderCollapse: "collapse",
-          width: "100%",
-          fontSize: 13,
-          fontFamily: "var(--font-sans)",
-        }}
-      >
-        {children}
-      </table>
+    <div className={styles.tableWrap}>
+      <table className={styles.table}>{children}</table>
     </div>
   ),
-  thead: ({ children }) => <thead style={{ background: "var(--bg-subtle)" }}>{children}</thead>,
+  thead: ({ children }) => <thead className={styles.thead}>{children}</thead>,
+  // `style`: a GFM column's alignment, from the markdown itself.
   th: ({ children, style }) => (
-    <th
-      style={{
-        textAlign: "left",
-        padding: "6px 10px",
-        borderBottom: "1px solid var(--border-strong)",
-        fontWeight: 600,
-        ...style,
-      }}
-    >
+    <th className={styles.th} style={style}>
       {children}
     </th>
   ),
   td: ({ children, style }) => (
-    <td
-      style={{
-        padding: "6px 10px",
-        borderBottom: "1px solid var(--border)",
-        verticalAlign: "top",
-        ...style,
-      }}
-    >
+    <td className={styles.td} style={style}>
       {children}
     </td>
   ),
@@ -349,30 +284,11 @@ const COMPONENTS: Components = {
     if (classes.includes("sap-callout")) {
       const name = (rest as Record<string, unknown>)["data-callout"] as string | undefined;
       const label = (name && CALLOUT_LABEL[name]) || "";
-      const isWarn = name === "warning";
-      const isProof = name === "proof";
+      // `data-callout` picks the warning / proof treatment in the module.
       return (
-        <div
-          style={{
-            margin: "10px 0 14px",
-            padding: "10px 14px",
-            background: isWarn ? "var(--warn-soft)" : isProof ? "transparent" : "var(--bg-subtle)",
-            border: `1px ${isProof ? "dashed" : "solid"} ${isWarn ? "var(--warn)" : "var(--border)"}`,
-            borderRadius: "var(--r-sm)",
-          }}
-        >
+        <div className={styles.callout} data-callout={name}>
           {!classes.includes("sap-callout__rendered-title") && label ? (
-            <div
-              style={{
-                fontFamily: "var(--font-sans)",
-                fontSize: 11,
-                letterSpacing: "0.08em",
-                textTransform: "uppercase",
-                color: isWarn ? "var(--warn)" : "var(--accent)",
-                fontWeight: 700,
-                marginBottom: 4,
-              }}
-            >
+            <div className={styles.calloutLabel}>
               {label}
             </div>
           ) : null}
@@ -382,16 +298,7 @@ const COMPONENTS: Components = {
     }
     if (classes.includes("sap-callout__title")) {
       return (
-        <div
-          style={{
-            fontFamily: "var(--font-sans)",
-            fontSize: 12,
-            fontWeight: 600,
-            color: "var(--text)",
-            marginBottom: 4,
-            fontStyle: "italic",
-          }}
-        >
+        <div className={styles.calloutTitle}>
           {children}
         </div>
       );
@@ -408,13 +315,8 @@ const COMPONENTS: Components = {
         height={height}
         loading="lazy"
         allowFullScreen
-        style={{
-          border: "1px solid var(--border)",
-          borderRadius: "var(--r-sm)",
-          maxWidth: "100%",
-          margin: isGeo ? "10px 0 14px" : undefined,
-          display: "block",
-        }}
+        className={styles.iframe}
+        data-geogebra={isGeo}
       />
     );
   },

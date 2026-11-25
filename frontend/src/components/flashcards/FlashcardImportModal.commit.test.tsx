@@ -280,7 +280,7 @@ describe("FlashcardImportModal layout", () => {
     expect(within(dialog).getAllByRole("button")[0]).toBe(screen.getByRole("button", { name: "Close dialog" }));
   });
 
-  // The modal asks Dialog for min(980px, calc(100vw - 32px)). jsdom's CSSOM
+  // The modal asks Dialog for min(980px, calc(100vw - 2 * var(--sp-8))). jsdom's CSSOM
   // drops min(), so the modal's own value cannot be read back here; what can
   // be pinned is the prop it relies on, with a length jsdom keeps.
   it("Dialog's width prop replaces the size preset, and presets are untouched without it", () => {

@@ -8,6 +8,7 @@ import { Icon } from "./Icon";
 import { ReportIssueFlow } from "./ReportIssueFlow";
 import { Tooltip } from "./ui/Tooltip";
 import { useCornerDodge } from "./useCornerDodge";
+import styles from "./ShellActions.module.css";
 
 /** `showSettings={false}` drops the gear: in the sidebar layout Settings
  *  lives in the rail's account footer, so only Report remains.
@@ -52,7 +53,7 @@ export function ShellCornerActions() {
   const pathname = usePathname() ?? "";
   useCornerDodge(ref, pathname);
   return (
-    <div ref={ref} className="shell-corner-actions" data-testid="shell-corner-actions" style={{ transition: "transform var(--dur-fast) var(--ease)" }}>
+    <div ref={ref} className={`shell-corner-actions ${styles.corner}`} data-testid="shell-corner-actions">
       <ShellActions showSettings={false} tooltipPlacement="top" />
     </div>
   );

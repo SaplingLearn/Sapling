@@ -1,0 +1,53 @@
+/* The course topic checklist above the notetaker (TopicChecklistPanel.tsx). */
+
+.root {
+  border-bottom: 1px solid var(--border);
+  padding: var(--sp-5) var(--sp-8);
+  flex-shrink: 0;
+}
+
+/* The open checklist scrolls inside a third of the viewport. */
+.content {
+  --checklist-max-h: 35vh;
+  max-height: var(--checklist-max-h);
+  overflow-y: auto;
+  padding-top: var(--sp-5);
+}
+
+.note {
+  font-size: var(--fs-md);
+}
+
+.controls {
+  display: flex;
+  gap: var(--sp-6);
+  flex-wrap: wrap;
+  align-items: center;
+  margin: var(--sp-5) 0;
+}
+
+.list {
+  list-style: none;
+  padding: 0;
+}
+
+.topic {
+  border-top: 1px solid var(--border);
+  padding: var(--sp-5) 0;
+}
+
+.topicHead {
+  display: flex;
+  gap: var(--sp-5);
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+
+.meta {
+  font-size: var(--fs-sm);
+}
+
+.description {
+  font-size: var(--fs-md);
+  margin: var(--sp-3) 0;
+}

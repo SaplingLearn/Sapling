@@ -12,6 +12,7 @@ import type { NavItem } from "@/lib/navFeatures";
 import { useVisibleNavSections } from "@/lib/useNavSections";
 import { RETENTION_NAV_HREF, RetentionDueDot } from "./RetentionDueDot";
 import { STUDY_TOOL_PATHS } from "@/lib/toolHrefs";
+import styles from "./SideNav.module.css";
 
 type Entry = NavItem;
 
@@ -23,14 +24,8 @@ const COLLAPSE_KEY = "sapling_sidenav_collapsed";
    but a desktop-only sidebar carrying 12 destinations reads as a wall at that
    pitch. 38px is the dense-desktop value: still above the 36px floor we hold
    ourselves to on a pointer-first surface, and ~15% tighter per row once the
-   1px gap is counted. Never take NAV_ITEM_MIN_HEIGHT below 36. */
+   1px gap (SideNav.module.css) is counted. Never take NAV_ITEM_MIN_HEIGHT below 36. */
 const NAV_ITEM_MIN_HEIGHT = 38;
-const NAV_GAP = 1;
-
-/* Horizontal inset shared by every horizontal rule in the rail — the collapsed
-   group separators and the Settings/Admin rule — so they read as one line
-   family instead of three different indents. */
-const RULE_INSET = 8;
 
 /* Collapse/expand geometry.
  *
@@ -58,17 +53,27 @@ const ROW = {
    space below it before the first row. Kept tight so the groups read as one
    list with light dividers, not as separate blocks. */
 const HEADER = { above: 12, line: 14, below: 6 };
+/* Narrow-rail header slot: room for the group hairline (drawn at --sp-9,
+   18px, in SideNav.module.css) with even space around it. */
+const RULE_SLOT_HEIGHT = 29;
+/* The rail's and each row's vertical padding: not part of the tween. */
+const RAIL_PAD_Y = "var(--sp-8)";
+const ROW_PAD_Y = "var(--sp-3)";
+/* The profile block's avatar, px; the narrow rail centres it like an icon. */
+const AVATAR_SIZE = 30;
+/* A fade in waits this beat (see `fade`); a fade out never waits. */
+const FADE_IN_DELAY = "var(--dur-instant)";
+const NO_DELAY = "0s";
 
-const GEOMETRY_TRANSITION =
-  "margin var(--dur) var(--ease), padding var(--dur) var(--ease), height var(--dur) var(--ease)";
-
-function rowGeometry(collapsed: boolean): React.CSSProperties {
+function rowGeometry(collapsed: boolean, padX = (collapsed ? ROW.narrow : ROW.wide).padX): React.CSSProperties {
   const r = collapsed ? ROW.narrow : ROW.wide;
   return {
     marginLeft: r.inset,
     marginRight: r.inset,
-    padding: `6px ${r.padX}px`,
-    overflow: "hidden",
+    paddingTop: ROW_PAD_Y,
+    paddingBottom: ROW_PAD_Y,
+    paddingLeft: padX,
+    paddingRight: padX,
   };
 }
 
@@ -79,22 +84,9 @@ function fade(collapsed: boolean): React.CSSProperties {
   return {
     opacity: collapsed ? 0 : 1,
     whiteSpace: "nowrap",
-    transition: `opacity var(--dur-fast) var(--ease) ${collapsed ? "0ms" : "90ms"}`,
+    transition: `opacity var(--dur-fast) var(--ease) ${collapsed ? NO_DELAY : FADE_IN_DELAY}`,
   };
 }
-
-/* Active/hover surfaces.
- *
- * A plain neutral highlight. The selected row is a flat `--bg-soft` fill,
- * which inside the olive rail resolves to a translucent dark wash (see
- * [data-app-sidenav] in globals.css; a cream wash failed AA under the white
- * label), with the label in bold cream.
- * No rail, no hue on the label: the fill IS the treatment.
- *
- * Hover is the same colour at half strength, so it is unmistakably the
- * weaker, transient state and never reads as a second selection. */
-const NAV_ACTIVE_BG = "var(--bg-soft)";
-const NAV_HOVER_BG = "color-mix(in srgb, var(--bg-soft) 50%, transparent)";
 
 function isActive(pathname: string, href: string): boolean {
   if (href === "/dashboard") return pathname === "/" || pathname.startsWith("/dashboard");
@@ -119,15 +111,6 @@ function useCollapsed(): [boolean, (v: boolean) => void] {
    icon rail whatever the stored preference, and opens over the page (no
    layout shift) while the pointer is on it or focus is inside it. Arriving
    at the Tutor closes it at once, even with the pointer still on the rail. */
-/** On the Tutor the rail floats over its fixed 64px slot (so a hover-open
- *  never pushes the chat); elsewhere it sits in the flow as before. */
-function railPlacement(onTutor: boolean, peek: boolean): React.CSSProperties {
-  if (!onTutor) return { position: "relative", zIndex: 1, boxShadow: "none" };
-  return {
-    position: "absolute", top: 0, left: 0, bottom: 0, zIndex: 40,
-    boxShadow: peek ? "var(--shadow-lg)" : "none",
-  };
-}
 function useTutorPeek(onTutor: boolean) {
   const [peek, setPeek] = React.useState(false);
   React.useEffect(() => { if (!onTutor) setPeek(false); }, [onTutor]);
@@ -166,21 +149,15 @@ export function SideNav() {
       aria-label="Primary"
       // Hook for the pre-hydration mobile guard in globals.css (#110).
       data-app-sidenav=""
+      data-peek={peek}
+      className={`${styles.rail} ${onTutor ? styles.railFloating : styles.railInFlow}`}
       style={{
         width,
         minWidth: width,
-        height: "100%",
-        background: "var(--sidenav-bg)",
-        borderRadius: "0 var(--r-lg) var(--r-lg) 0",
-        ...railPlacement(onTutor, peek),
-        padding: `16px ${collapsed ? RAIL_PAD_X.narrow : RAIL_PAD_X.wide}px`,
-        display: "flex",
-        flexDirection: "column",
-        gap: NAV_GAP,
-        // The rail itself never scrolls: only the destinations region below
-        // does, so the account footer stays pinned at the bottom.
-        overflow: "hidden",
-        transition: "width var(--dur) var(--ease), min-width var(--dur) var(--ease), padding var(--dur) var(--ease), box-shadow var(--dur) var(--ease)",
+        paddingTop: RAIL_PAD_Y,
+        paddingBottom: RAIL_PAD_Y,
+        paddingLeft: collapsed ? RAIL_PAD_X.narrow : RAIL_PAD_X.wide,
+        paddingRight: collapsed ? RAIL_PAD_X.narrow : RAIL_PAD_X.wide,
       }}
     >
       {/* Wide: the wordmark. Narrow: the Sapling symbol, centred. The two
@@ -190,23 +167,15 @@ export function SideNav() {
         href="/dashboard"
         aria-label="Sapling — home"
         data-sidenav-logo=""
-        style={{
-          position: "relative",
-          display: "block",
-          height: LOGO_SLOT_HEIGHT,
-          paddingBottom: 14,
-          boxSizing: "content-box",
-          overflow: "hidden",
-          borderBottom: "1px solid var(--border)",
-          marginBottom: 8,
-          textDecoration: "none",
-        }}
+        className={styles.logo}
+        style={{ height: LOGO_SLOT_HEIGHT }}
       >
         <SaplingWordmark
           width={112}
           decorative
           tone="light"
-          style={{ position: "absolute", left: 6, top: 0, ...fade(collapsed) }}
+          className={styles.wordmark}
+          style={fade(collapsed)}
         />
         <img
           src={SAPLING_SYMBOL_SRC}
@@ -216,41 +185,21 @@ export function SideNav() {
           width={SYMBOL_WIDTH}
           height={LOGO_SLOT_HEIGHT}
           draggable={false}
+          className={styles.symbol}
           style={{
-            position: "absolute",
-            top: 0,
             left: (RAIL_INNER_NARROW - SYMBOL_WIDTH) / 2,
             width: SYMBOL_WIDTH,
             height: LOGO_SLOT_HEIGHT,
-            // The source is brand green; the rail is olive, so render it in
-            // cream like the wordmark.
-            filter: "brightness(0) invert(1)",
             // Inverse of `fade`: in once the rail is narrow, out at once when it widens.
             opacity: collapsed ? 1 : 0,
-            transition: `opacity var(--dur-fast) var(--ease) ${collapsed ? "90ms" : "0ms"}`,
+            transition: `opacity var(--dur-fast) var(--ease) ${collapsed ? FADE_IN_DELAY : NO_DELAY}`,
           }}
         />
       </Link>
 
       {/* The destinations scroll on their own when the viewport is too short
-          for them, with the scrollbar hidden (`scrollbarWidth` here, the
-          WebKit pseudo-element in globals.css) — a 10px gutter in a 200px
-          rail read as clutter, and wheel/trackpad/keyboard scrolling all
-          still work. `minHeight: 0` is what lets a flex child shrink below
-          its content and scroll at all. */}
-      <div
-        data-sidenav-scroll=""
-        style={{
-          flex: 1,
-          minHeight: 0,
-          overflowY: "auto",
-          overflowX: "hidden",
-          scrollbarWidth: "none",
-          display: "flex",
-          flexDirection: "column",
-          gap: NAV_GAP,
-        }}
-      >
+          for them, scrollbar hidden (SideNav.module.css `.scroll`). */}
+      <div data-sidenav-scroll="" className={styles.scroll}>
       {sections.map((section, i) => (
         <React.Fragment key={section.label}>
           {/* Header slot. Wide: the group label. Narrow: a hairline (none
@@ -260,17 +209,14 @@ export function SideNav() {
               Spacing lives in HEADER. */}
           <div
             aria-hidden={collapsed || undefined}
+            className={styles.header}
             style={{
-              position: "relative",
-              flexShrink: 0,
-              overflow: "hidden",
-              height: collapsed ? (i === 0 ? 0 : 29) : HEADER.above + HEADER.line + HEADER.below,
-              transition: GEOMETRY_TRANSITION,
+              height: collapsed ? (i === 0 ? 0 : RULE_SLOT_HEIGHT) : HEADER.above + HEADER.line + HEADER.below,
             }}
           >
             <div
-              className="label-micro"
-              style={{ position: "absolute", left: 10, bottom: HEADER.below, lineHeight: `${HEADER.line}px`, ...fade(collapsed) }}
+              className={`label-micro ${styles.groupLabel}`}
+              style={{ bottom: HEADER.below, lineHeight: `${HEADER.line}px`, ...fade(collapsed) }}
             >
               {section.label}
             </div>
@@ -278,16 +224,8 @@ export function SideNav() {
               <div
                 data-sidenav-group-rule=""
                 aria-hidden
-                style={{
-                  position: "absolute",
-                  left: RULE_INSET,
-                  right: RULE_INSET,
-                  top: 18,
-                  height: 1,
-                  background: "var(--border)",
-                  opacity: collapsed ? 1 : 0,
-                  transition: "opacity var(--dur-fast) var(--ease)",
-                }}
+                className={styles.groupRule}
+                style={{ opacity: collapsed ? 1 : 0 }}
               />
             )}
           </div>
@@ -310,18 +248,7 @@ export function SideNav() {
           under one full-width rule, the same line as the logo's, so the pair
           frames the rail top and bottom and the account cluster reads as split
           off from the main nav. Pinned: it never scrolls with the list above. */}
-      <div
-        data-sidenav-footer=""
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          gap: NAV_GAP,
-          flexShrink: 0,
-          marginTop: 4,
-          paddingTop: 10,
-          borderTop: "1px solid var(--border)",
-        }}
-      >
+      <div data-sidenav-footer="" className={styles.footer}>
       {/* Collapse/expand opens the footer, just under its rule and above the
           account block, and is built like a nav row: panel icon + "Collapse" in the wide rail, the
           bare icon in the narrow one — the usual sidebar toggle.
@@ -332,30 +259,11 @@ export function SideNav() {
         aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
         title={collapsed ? "Expand sidebar" : undefined}
         onClick={() => setCollapsed(!collapsed)}
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 10,
-          flexShrink: 0,
-          minHeight: NAV_ITEM_MIN_HEIGHT,
-          ...rowGeometry(collapsed),
-          borderRadius: "var(--r-xs)",
-          color: "var(--text-dim)",
-          fontSize: 13,
-          textAlign: "left",
-          transition: `background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease), ${GEOMETRY_TRANSITION}`,
-        }}
-        onMouseEnter={(e) => {
-          e.currentTarget.style.background = NAV_HOVER_BG;
-          e.currentTarget.style.color = "var(--text)";
-        }}
-        onMouseLeave={(e) => {
-          e.currentTarget.style.background = "transparent";
-          e.currentTarget.style.color = "var(--text-dim)";
-        }}
+        className={styles.row}
+        style={{ minHeight: NAV_ITEM_MIN_HEIGHT, ...rowGeometry(collapsed) }}
       >
         <PanelToggleIcon collapsed={collapsed} />
-        <span aria-hidden style={{ flex: 1, ...fade(collapsed) }}>Collapse</span>
+        <span aria-hidden className={styles.label} style={fade(collapsed)}>Collapse</span>
       </button>}
 
       {isAdmin && (
@@ -371,64 +279,27 @@ export function SideNav() {
           avatar in. The whole block is the Settings button: avatar + name +
           a trailing gear, one link to /settings. */}
       {isAuthenticated && (
-        <div style={{ padding: "10px 0 4px" }}>
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              width: "100%",
-            }}
-          >
+        <div className={styles.profile}>
+          <div className={styles.profileRow}>
             <Link
               href="/settings"
               data-testid="nav-link-settings"
               aria-label="Settings"
               aria-current={settingsActive ? "page" : undefined}
               title={collapsed ? "Settings" : undefined}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 10,
-                flex: 1,
-                minWidth: 0,
-                // Wide: 12px in. Narrow: centred (computed, so it tweens).
-                padding: `6px ${collapsed ? (RAIL_INNER_NARROW - 30) / 2 : 12}px`,
-                borderRadius: "var(--r-sm)",
-                textAlign: "left",
-                overflow: "hidden",
-                textDecoration: "none",
-                color: settingsActive ? "var(--text)" : "var(--text-dim)",
-                background: settingsActive ? NAV_ACTIVE_BG : "transparent",
-                transition: `background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease), ${GEOMETRY_TRANSITION}`,
-              }}
-              onMouseEnter={(e) => {
-                if (settingsActive) return;
-                e.currentTarget.style.background = NAV_HOVER_BG;
-                e.currentTarget.style.color = "var(--text)";
-              }}
-              onMouseLeave={(e) => {
-                if (settingsActive) return;
-                e.currentTarget.style.background = "transparent";
-                e.currentTarget.style.color = "var(--text-dim)";
-              }}
+              data-active={settingsActive}
+              className={`${styles.row} ${styles.settings}`}
+              // Wide: 12px in. Narrow: centred (computed, so it tweens).
+              style={rowGeometry(collapsed, collapsed ? (RAIL_INNER_NARROW - AVATAR_SIZE) / 2 : ROW.wide.padX)}
             >
-              <Avatar name={userName || "?"} size={30} img={avatarUrl || undefined} />
-                <div aria-hidden={collapsed || undefined} style={{ minWidth: 0, flex: 1, ...fade(collapsed) }}>
-                  <div
-                    style={{
-                      fontSize: 13,
-                      fontWeight: 600,
-                      color: "var(--text)",
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
+              <Avatar name={userName || "?"} size={AVATAR_SIZE} img={avatarUrl || undefined} />
+                <div aria-hidden={collapsed || undefined} className={styles.who} style={fade(collapsed)}>
+                  <div className={styles.userName}>
                     {userName || "You"}
                   </div>
-                  <div style={{ fontSize: 11, color: "var(--text-muted)" }}>Account</div>
+                  <div className={styles.userSub}>Account</div>
                 </div>
-                <span aria-hidden style={{ display: "inline-flex", flexShrink: 0, ...fade(collapsed) }}>
+                <span aria-hidden className={styles.gear} style={fade(collapsed)}>
                   <Icon name="setting" size={ICON_SIZE} />
                 </span>
             </Link>
@@ -445,7 +316,8 @@ export function SideNav() {
     <div
       data-app-sidenav-slot=""
       {...peekHandlers}
-      style={{ width: SIDE_NAV_COLLAPSED, minWidth: SIDE_NAV_COLLAPSED, height: "100%", position: "relative", zIndex: 40, flexShrink: 0 }}
+      className={styles.slot}
+      style={{ width: SIDE_NAV_COLLAPSED, minWidth: SIDE_NAV_COLLAPSED }}
     >
       {rail}
     </div>
@@ -462,10 +334,9 @@ function NavLink({ entry, active, collapsed, retentionDue = false }: {
       data-testid={`nav-link-${entry.href.slice(1)}`}
       title={collapsed ? label : undefined}
       aria-label={collapsed || retentionDue ? label : undefined}
+      data-active={active}
+      className={styles.row}
       style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 10,
         // No explicit width: the rail is a flex column, so a row stretches to
         // the content box on its own and the margins below actually inset it.
         // `width: 100%` would have added to them and overflowed instead.
@@ -474,31 +345,14 @@ function NavLink({ entry, active, collapsed, retentionDue = false }: {
         // inside it, on the same line as the avatar below. Narrow: the icon
         // is centred. See ROW.
         ...rowGeometry(collapsed),
-        borderRadius: "var(--r-xs)",
-        background: active ? NAV_ACTIVE_BG : "transparent",
-        color: active ? "var(--text)" : "var(--text-dim)",
-        fontWeight: active ? 600 : 400,
-        fontSize: 13,
-        transition: `background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease), ${GEOMETRY_TRANSITION}`,
-        textDecoration: "none",
-      }}
-      onMouseEnter={(e) => {
-        if (active) return;
-        e.currentTarget.style.background = NAV_HOVER_BG;
-        e.currentTarget.style.color = "var(--text)";
-      }}
-      onMouseLeave={(e) => {
-        if (active) return;
-        e.currentTarget.style.background = "transparent";
-        e.currentTarget.style.color = "var(--text-dim)";
       }}
     >
       {/* A126: the dot rides the icon, so the narrow rail shows it too. */}
-      <span style={{ display: "inline-flex", flexShrink: 0, position: "relative" }}>
+      <span className={styles.iconWrap}>
         <Icon name={entry.icon} size={ICON_SIZE} />
         {retentionDue && <RetentionDueDot testid="nav-retention-due" overlay />}
       </span>
-      <span aria-hidden={collapsed || undefined} style={{ flex: 1, ...fade(collapsed) }}>
+      <span aria-hidden={collapsed || undefined} className={styles.label} style={fade(collapsed)}>
         {entry.label}
       </span>
     </Link>
@@ -509,7 +363,7 @@ function NavLink({ entry, active, collapsed, retentionDue = false }: {
    chevron in the open area. Only the chevron moves — it points in (close)
    when the rail is wide and flips to point out (open) when narrow, turning
    about its own centre on the rail's duration so it animates with the
-   collapse. Stroke weight and caps match `Icon`. */
+   collapse (SideNav.module.css). Stroke weight and caps match `Icon`. */
 function PanelToggleIcon({ collapsed }: { collapsed: boolean }) {
   return (
     <svg
@@ -522,19 +376,12 @@ function PanelToggleIcon({ collapsed }: { collapsed: boolean }) {
       strokeLinecap="round"
       strokeLinejoin="round"
       aria-hidden
-      style={{ flexShrink: 0 }}
+      data-collapsed={collapsed}
+      className={styles.toggleIcon}
     >
       <rect x="3" y="3" width="18" height="18" rx="2.5" />
       <path d="M9 3v18" />
-      <path
-        d="M16 9l-3 3 3 3"
-        style={{
-          transformBox: "fill-box",
-          transformOrigin: "center",
-          transform: collapsed ? "rotate(180deg)" : "none",
-          transition: "transform var(--dur) var(--ease)",
-        }}
-      />
+      <path d="M16 9l-3 3 3 3" className={styles.toggleChevron} />
     </svg>
   );
 }

@@ -1,0 +1,31 @@
+/* The "retention check due" mark (RetentionDueDot.tsx). */
+.dot {
+  /* A 7px mark: smaller than any spacing step, sized to sit beside a nav label. */
+  --due-dot-size: 7px;
+  /* The overlay's offset onto an icon's corner; 3px has no spacing step. */
+  --due-dot-overlay-right: -3px;
+
+  display: inline-block;
+  flex-shrink: 0;
+  width: var(--due-dot-size);
+  height: var(--due-dot-size);
+  border-radius: var(--r-full);
+  background: var(--alert-warn);
+  /* A ring in the rail's fill, so the dot reads cut out of whatever it overlaps. */
+  box-shadow: 0 0 0 var(--sp-1) var(--sidenav-bg, var(--bg-panel));
+  /* The dot only mounts when a check falls due (after the nav has loaded),
+     so its arrival is the change it marks. The global reduced-motion reset
+     collapses it. */
+  animation: due-dot-in var(--dur-slow) var(--ease-emphasized) both;
+}
+
+.overlay {
+  position: absolute;
+  top: calc(-1 * var(--sp-1));
+  right: var(--due-dot-overlay-right);
+}
+
+@keyframes due-dot-in {
+  from { opacity: 0; transform: scale(0.4); }
+  to { opacity: 1; transform: none; }
+}

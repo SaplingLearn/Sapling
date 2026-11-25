@@ -16,11 +16,13 @@
  */
 import React from "react";
 import dynamic from "next/dynamic";
+import { motion, type Target } from "framer-motion";
 import Link from "next/link";
 import { useUser } from "@/context/UserContext";
 import { deleteFlashcard, rateFlashcard } from "@/lib/api";
 import { humanizeError } from "@/lib/errorMessage";
 import { HANDOFF_COPY } from "@/lib/learningHandoffs";
+import { useMotionPresets } from "@/lib/motion";
 import { Icon } from "../../Icon";
 import { useToast } from "../../ToastProvider";
 import { REVIEW_DONE_NOTE } from "../flashcardsCopy";
@@ -100,6 +102,10 @@ export function Review({ deck, accent, fromHome, onRated, onDeleted, onAllSets, 
   }, [active.length, idx]);
 
   const card = active[idx];
+  // Whether a card has been on screen yet: the first one is there with the
+  // page; every card after it (next, previous, a new pass) rises in.
+  const entered = React.useRef(false);
+  React.useEffect(() => { if (card) entered.current = true; }, [card]);
 
   const rate = React.useCallback(async (r: number) => {
     if (!card || ratingRef.current || deletingRef.current) return;
@@ -195,9 +201,9 @@ export function Review({ deck, accent, fromHome, onRated, onDeleted, onAllSets, 
     return (
       <div className={rv.stage}>
         <div className={rv.message}>
-          <div className="h-serif" style={{ fontSize: "var(--fs-2xl)", color: "var(--text)" }}>No cards left here</div>
-          <div style={{ marginTop: 6 }}>Every card in this deck was deleted.</div>
-          <button type="button" className="btn btn--primary" style={{ marginTop: 16 }} onClick={onAllSets}>Back to all sets</button>
+          <div className={`h-serif ${rv.messageTitle}`}>No cards left here</div>
+          <div className={rv.messageNote}>Every card in this deck was deleted.</div>
+          <button type="button" className={`btn btn--primary ${rv.messageAction}`} onClick={onAllSets}>Back to all sets</button>
         </div>
       </div>
     );
@@ -216,6 +222,7 @@ export function Review({ deck, accent, fromHome, onRated, onDeleted, onAllSets, 
           onMissed={ids => begin(ids)}
           onAllSets={fromHome ? onAllSets : undefined}
           studyHref={studyHref}
+          enter={entered.current}
         />
       </div>
     );
@@ -224,7 +231,7 @@ export function Review({ deck, accent, fromHome, onRated, onDeleted, onAllSets, 
   return (
     <div className={rv.stage} style={stage}>
       <Progress deck={active} ratings={ratings} idx={idx} />
-      <FlipCard flipped={flipped} onFlip={() => setFlipped(f => !f)} card={card} />
+      <FlipCard flipped={flipped} onFlip={() => setFlipped(f => !f)} card={card} enter={entered.current} />
       <div className={rv.rates}>
         {RATING_OPTIONS.map(r => (
           <button key={r.n} type="button" className={rv.rate} data-kind={r.kind} onClick={() => rate(r.n)}
@@ -285,7 +292,7 @@ function Progress({ deck, ratings, idx }: { deck: Card[]; ratings: Ratings; idx:
         </div>
       ) : (
         <div {...strip} className={rv.progress} data-testid="flashcards-progress-bar">
-          <div className={rv.progressFill} style={{ transform: `scaleX(${(idx + 1) / deck.length})` }} />
+          <div className={rv.progressFill} style={{ "--progress": (idx + 1) / deck.length } as React.CSSProperties} />
         </div>
       )}
     </div>
@@ -294,10 +301,21 @@ function Progress({ deck, ratings, idx }: { deck: Card[]; ratings: Ratings; idx:
 
 // ── the card ─────────────────────────────────────────────────────────────────
 
-function FlipCard({ flipped, onFlip, card }: { flipped: boolean; onFlip: () => void; card: Card }) {
+/** `enter`: the card arrives (rises in) — false for the first card of the
+ *  review, which is there with the page. Keyed by card, so the next card is
+ *  a new element and plays the entrance. */
+function FlipCard({ flipped, onFlip, card, enter }: { flipped: boolean; onFlip: () => void; card: Card; enter: boolean }) {
+  const m = useMotionPresets();
   const topic = (card.topic ?? "").trim();
   return (
-    <div className={rv.card} onClick={onFlip}>
+    <motion.div
+      key={card.id}
+      className={rv.card}
+      onClick={onFlip}
+      initial={enter ? (m.fadeUp.initial as Target) : false}
+      animate={m.fadeUp.animate}
+      transition={m.fadeUp.transition}
+    >
       <div className={rv.cardInner} data-flipped={flipped} data-testid="flashcards-card">
         <div className={rv.face}>
           {topic && (
@@ -316,7 +334,7 @@ function FlipCard({ flipped, onFlip, card }: { flipped: boolean; onFlip: () => v
           </div>
         </div>
       </div>
-    </div>
+    </motion.div>
   );
 }
 
@@ -325,7 +343,7 @@ function FlipCard({ flipped, onFlip, card }: { flipped: boolean; onFlip: () => v
 /** How the session went, and what next. Ratings schedule cards; they do not
  *  establish concept mastery (W8.4). */
 function Summary({
-  counts, missedIds, onAgain, onMissed, onAllSets, studyHref,
+  counts, missedIds, onAgain, onMissed, onAllSets, studyHref, enter,
 }: {
   counts: Tally;
   missedIds: string[];
@@ -334,10 +352,19 @@ function Summary({
   /** Absent when the review was not started from the home. */
   onAllSets?: () => void;
   studyHref?: string | null;
+  /** The deck was just finished here (not reopened finished after a reload). */
+  enter: boolean;
 }) {
+  const m = useMotionPresets();
   const shown = TALLY_ORDER.filter(kind => counts[kind] > 0);
   return (
-    <div className={rv.summary} data-testid="flashcards-summary">
+    <motion.div
+      className={rv.summary}
+      data-testid="flashcards-summary"
+      initial={enter ? (m.fadeUp.initial as Target) : false}
+      animate={m.fadeUp.animate}
+      transition={m.fadeUp.transition}
+    >
       <div className={`h-serif ${rv.summaryTitle}`}>Deck complete</div>
       <p className={rv.summaryNote} data-testid="flashcards-review-note">{REVIEW_DONE_NOTE}</p>
       <div className={rv.stack} role="img" aria-label={`This session: ${tallyLabel(counts)}`}>
@@ -364,6 +391,6 @@ function Summary({
           </button>
         )}
       </div>
-    </div>
+    </motion.div>
   );
 }

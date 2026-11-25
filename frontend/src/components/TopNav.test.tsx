@@ -89,19 +89,19 @@ describe("TopNav — desktop group labels", () => {
     mockedUsePathname.mockReturnValue("/dashboard");
     render(<TopNav />);
     const learn = screen.getByRole("button", { name: /^Learn/ });
-    // Active state = font-weight 700 inline. The button's style
-    // attribute is the source of truth for the active styling.
-    expect(learn.getAttribute("style") || "").toMatch(/font-weight:\s*700/);
+    // Active state = data-active, which TopNav.module.css styles (weight
+    // 700, full ink). The attribute is the source of truth for the state.
+    expect(learn).toHaveAttribute("data-active", "true");
   });
 
   it("highlights the Organize group when on /library", () => {
     mockedUsePathname.mockReturnValue("/library");
     render(<TopNav />);
     const organize = screen.getByRole("button", { name: /^Organize/ });
-    expect(organize.getAttribute("style") || "").toMatch(/font-weight:\s*700/);
+    expect(organize).toHaveAttribute("data-active", "true");
     // And Learn should NOT be active in this case.
     const learn = screen.getByRole("button", { name: /^Learn/ });
-    expect(learn.getAttribute("style") || "").toMatch(/font-weight:\s*500/);
+    expect(learn).toHaveAttribute("data-active", "false");
   });
 
   it.each(["/flashcards", "/study/guide", "/quiz"])(
@@ -110,7 +110,7 @@ describe("TopNav — desktop group labels", () => {
       mockedUsePathname.mockReturnValue(path);
       render(<TopNav />);
       const learn = screen.getByRole("button", { name: /^Learn/ });
-      expect(learn.getAttribute("style") || "").toMatch(/font-weight:\s*700/);
+      expect(learn).toHaveAttribute("data-active", "true");
     },
   );
 
@@ -118,7 +118,7 @@ describe("TopNav — desktop group labels", () => {
     mockedUsePathname.mockReturnValue("/gradebook");
     render(<TopNav />);
     const tools = screen.getByRole("button", { name: /^Tools/ });
-    expect(tools.getAttribute("style") || "").toMatch(/font-weight:\s*700/);
+    expect(tools).toHaveAttribute("data-active", "true");
   });
 });
 

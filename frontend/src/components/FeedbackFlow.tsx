@@ -16,6 +16,7 @@ import {
 } from "@/lib/feedbackPacing";
 import { useToast } from "./ToastProvider";
 import { LONG_TEXT_MAX } from "@/lib/inputLimits";
+import styles from "./FeedbackFlow.module.css";
 
 /** How long a page is open before the pulse comes due. */
 export const PULSE_DELAY_MS = 2 * 60_000;
@@ -147,108 +148,56 @@ export function FeedbackFlow({ passive = true, open: openProp, onClose }: Feedba
   if (!open) return null;
 
   return (
-    <div
-      style={{
-        position: "fixed",
-        inset: 0,
-        background: "rgba(0,0,0,0.4)",
-        zIndex: 200,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-      }}
-      onClick={() => !submitting && close()}
-    >
-      <div
-        onClick={e => e.stopPropagation()}
-        style={{
-          width: 440,
-          maxWidth: "calc(100vw - 32px)",
-          background: "var(--bg-panel)",
-          borderRadius: "var(--r-lg)",
-          padding: 28,
-          boxShadow: "var(--shadow-lg)",
-        }}
-      >
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-          <div className="h-serif" style={{ fontSize: 24 }}>What's clicking?</div>
+    <div className={styles.backdrop} onClick={() => !submitting && close()}>
+      <div onClick={e => e.stopPropagation()} className={styles.card}>
+        <div className={styles.header}>
+          <div className={`h-serif ${styles.pulseTitle}`}>What's clicking?</div>
           <button className="btn btn--ghost btn--sm" onClick={() => close()} aria-label="Close">×</button>
         </div>
-        <div className="body-serif" style={{ fontSize: 14, color: "var(--text-dim)", marginBottom: 16 }}>
+        <div className={`body-serif ${styles.lede}`}>
           A quick pulse. Nothing is a wrong answer.
         </div>
 
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 6, marginBottom: 20 }}>
-          {RATINGS.map(r => {
-            const selectedRating = rating === r.value;
-            return (
-              <button
-                key={r.value}
-                onClick={() => setRating(r.value)}
-                aria-label={r.label}
-                title={r.label}
-                className="h-serif"
-                style={{
-                  flex: 1,
-                  padding: "14px 4px",
-                  fontSize: 22,
-                  fontWeight: 500,
-                  color: selectedRating ? "var(--accent)" : "var(--text-dim)",
-                  borderRadius: "var(--r-md)",
-                  border: `1px solid ${selectedRating ? "var(--accent-border)" : "var(--border)"}`,
-                  background: selectedRating ? "var(--accent-soft)" : "var(--bg-panel)",
-                  transition: "background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease)",
-                }}
-              >
-                {r.value}
-              </button>
-            );
-          })}
+        <div className={styles.ratings}>
+          {RATINGS.map(r => (
+            <button
+              key={r.value}
+              onClick={() => setRating(r.value)}
+              aria-label={r.label}
+              title={r.label}
+              data-selected={rating === r.value}
+              className={`h-serif ${styles.rating}`}
+            >
+              {r.value}
+            </button>
+          ))}
         </div>
 
-        <div className="label-micro" style={{ marginBottom: 6 }}>What stood out?</div>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 14 }}>
-          {OPTIONS.map(o => {
-            const isSel = selected.includes(o);
-            return (
-              <button
-                key={o}
-                onClick={() => toggleOption(o)}
-                style={{
-                  padding: "5px 11px",
-                  fontSize: 12,
-                  borderRadius: "var(--r-full)",
-                  background: isSel ? "var(--accent-soft)" : "transparent",
-                  color: isSel ? "var(--accent)" : "var(--text-dim)",
-                  border: `1px solid ${isSel ? "var(--accent-border)" : "var(--border)"}`,
-                }}
-              >
-                {o}
-              </button>
-            );
-          })}
+        <div className={`label-micro ${styles.fieldLabel}`}>What stood out?</div>
+        <div className={styles.chips}>
+          {OPTIONS.map(o => (
+            <button
+              key={o}
+              onClick={() => toggleOption(o)}
+              data-selected={selected.includes(o)}
+              className={styles.chip}
+            >
+              {o}
+            </button>
+          ))}
         </div>
 
-        <div className="label-micro" style={{ marginBottom: 6 }}>Anything else? (optional)</div>
+        <div className={`label-micro ${styles.fieldLabel}`}>Anything else? (optional)</div>
         <textarea
           value={comment}
           maxLength={LONG_TEXT_MAX}
           onChange={e => setComment(e.target.value)}
           placeholder="Share a thought…"
           rows={3}
-          style={{
-            width: "100%",
-            padding: "10px 14px",
-            fontSize: 13,
-            border: "1px solid var(--border)",
-            borderRadius: "var(--r-sm)",
-            background: "var(--bg-input)",
-            fontFamily: "inherit",
-            resize: "vertical",
-          }}
+          className={styles.textarea}
         />
 
-        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 16 }}>
+        <div className={styles.footer}>
           <button className="btn" onClick={() => close()} disabled={submitting}>Not now</button>
           <button className="btn btn--primary" onClick={submit} disabled={rating === null || submitting}>
             {submitting ? "Sending…" : "Submit"}

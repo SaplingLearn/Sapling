@@ -9,31 +9,31 @@
  */
 import React from "react";
 import Link from "next/link";
-import { INHERIT_FONT } from "@/lib/inheritFont";
 import { Icon } from "../Icon";
 import { tileActionsHint, tileCardsLabel, type RoadmapTile as Tile, type TileRelation } from "./hubModel";
-import { Glyph, MONO, POPOVER, TOOL, WarnIcon, shownTools } from "./hubUi";
+import { Glyph, TOOL, WarnIcon, shownTools } from "./hubUi";
+import rm from "./Roadmap.module.css";
 import s from "./StudyHub.module.css";
 import { SC, ST_LABEL, TC, ring, type Concept } from "./studyModel";
 import type { SetHub } from "./useHubState";
 import type { ToolKey, ToolNav } from "./useToolNav";
 
-/* The small tags that ride a tile's top edge: the `.chip` voice, tile-sized. */
-const TAG: React.CSSProperties = { position: "absolute", top: -7, right: 8, height: 15, padding: "0 6px", borderRadius: "var(--r-full)", fontFamily: MONO, fontSize: 9, letterSpacing: "0.06em", textTransform: "uppercase", fontWeight: 600, display: "inline-flex", alignItems: "center", boxShadow: "0 0 0 2px var(--bg)" };
-const NEXT_TAG: React.CSSProperties = { ...TAG, background: "var(--brand-forest)", color: "#FFFFFF" };
-const RELATION_TAG: Record<Exclude<TileRelation, "">, React.CSSProperties> = {
-  "Needed First": { ...TAG, background: "var(--warn-soft)", color: "var(--warn)" },
-  Unlocks: { ...TAG, background: "var(--info-soft)", color: "var(--info)" },
+/* The small tags that ride a tile's top edge (Roadmap.module.css `.tag`). */
+const NEXT_TAG = `${rm.tag} ${rm.tagNext}`;
+const RELATION_TAG: Record<Exclude<TileRelation, "">, string> = {
+  "Needed First": `${rm.tag} ${rm.tagNeeded}`,
+  Unlocks: `${rm.tag} ${rm.tagUnlocks}`,
 };
 
 /* A dimmed tile (the legend's filter, or a concept the highlighted one does not
    rest on or unlock) recedes without its words losing AA (spec §13 A135: never
    an opacity dim on text; the whole tile at 30% put them near 1.5:1). Its fill
    drops to the page (.tileDim), its ring and gap mark fade, and its name and
-   status go to --text-muted, AA on every tile fill and on the page. */
-const DIM_OPACITY = 0.3;
+   status go to --text-muted, AA on every tile fill and on the page. The fade
+   itself (`.faded`, and the transitions) is Roadmap.module.css's. */
 const DIM_TEXT = "var(--text-muted)";
-const DIM_FADE = "opacity var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease)";
+/** The mastery ring's geometry, in its 28px box's units. */
+const RING = { box: 28, r: 11.5, stroke: 3, core: 7.5 } as const;
 
 /**
  * The open tile menu closes on Esc (focus returns to its "..." button) or on a
@@ -72,13 +72,13 @@ function useMenuDismiss(open: boolean, owner: React.RefObject<HTMLDivElement | n
 function TileRing({ concept, faded }: { concept: Concept; faded: boolean }) {
   const color = TC[concept.st];
   return (
-    <span style={{ position: "relative", width: 28, height: 28, flexShrink: 0, opacity: faded ? DIM_OPACITY : 1, transition: DIM_FADE }}>
-      <svg width="28" height="28" viewBox="0 0 28 28" aria-hidden="true" style={{ display: "block", transform: "rotate(-90deg)" }}>
-        <circle cx="14" cy="14" r="11.5" fill="none" stroke="var(--bg-soft)" strokeWidth="3" />
-        <circle cx="14" cy="14" r="11.5" fill="none" stroke={color} strokeWidth="3" strokeLinecap="round" strokeDasharray={ring(concept.m, 11.5)} />
-        <circle cx="14" cy="14" r="7.5" fill={concept.st === "new" ? "transparent" : color} />
+    <span className={faded ? `${rm.ring} ${rm.faded}` : rm.ring}>
+      <svg width={RING.box} height={RING.box} viewBox={`0 0 ${RING.box} ${RING.box}`} aria-hidden="true" className={rm.ringSvg}>
+        <circle cx={RING.box / 2} cy={RING.box / 2} r={RING.r} fill="none" stroke="var(--bg-soft)" strokeWidth={RING.stroke} />
+        <circle cx={RING.box / 2} cy={RING.box / 2} r={RING.r} fill="none" stroke={color} strokeWidth={RING.stroke} strokeLinecap="round" strokeDasharray={ring(concept.m, RING.r)} className={s.ring} />
+        <circle cx={RING.box / 2} cy={RING.box / 2} r={RING.core} fill={concept.st === "new" ? "transparent" : color} />
       </svg>
-      <span style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", color: "#FFFFFF" }}>
+      <span className={rm.ringCheck}>
         {concept.st === "mastered" && <Icon name="check" size={10} />}
       </span>
     </span>
@@ -91,9 +91,9 @@ function TileMarks({ tile }: { tile: Tile }) {
   const { t, isSel, isNext, rel, dim } = tile;
   return (
     <>
-      {isNext && !isSel && <span style={NEXT_TAG}>Next</span>}
-      {rel && <span style={RELATION_TAG[rel]}>{rel}</span>}
-      {!!t.gap && !rel && <span title={t.gap} style={{ display: "block", lineHeight: 0, flexShrink: 0, opacity: dim ? DIM_OPACITY : 1, transition: DIM_FADE }}><WarnIcon size={14} /></span>}
+      {isNext && !isSel && <span className={NEXT_TAG}>Next</span>}
+      {rel && <span className={RELATION_TAG[rel]}>{rel}</span>}
+      {!!t.gap && !rel && <span title={t.gap} className={dim ? `${rm.gapMark} ${rm.faded}` : rm.gapMark}><WarnIcon size={14} /></span>}
     </>
   );
 }
@@ -119,12 +119,10 @@ function TileMenu({ concept, cardCount, quizShown, nav, onClose }: {
   };
   return (
     // A press on an item follows the link; it must not also reach the tile's select.
-    <div role="menu" aria-label={`${concept.name} actions`} className={s.pop} onClick={e => e.stopPropagation()}
-      style={{ position: "absolute", left: 0, right: 0, top: "calc(100% + 6px)", zIndex: 21, minWidth: 200, ...POPOVER, borderRadius: "var(--r-md)", padding: 4, display: "flex", flexDirection: "column", gap: 2, cursor: "default" }}>
+    <div role="menu" aria-label={`${concept.name} actions`} className={`${s.pop} ${s.popover} ${rm.menu}`} onClick={e => e.stopPropagation()}>
       {shownTools(actions, quizShown).map(ac => (
-        <Link key={ac.label} role="menuitem" href={ac.href} className={s.hoverOption} onClick={follow(ac.href)}
-          style={{ display: "flex", alignItems: "center", gap: 8, height: 32, padding: "0 6px", border: 0, borderRadius: "var(--r-sm)", background: "transparent", ...INHERIT_FONT, fontSize: "var(--fs-md)", fontWeight: 600, color: "var(--text)", textAlign: "left", textDecoration: "none", cursor: "pointer" }}>
-          <span style={{ width: 24, height: 24, borderRadius: 6, background: TOOL[ac.key].bg, color: TOOL[ac.key].fg, display: "flex", alignItems: "center", justifyContent: "center" }}><Glyph name={TOOL[ac.key].icon} size={12} /></span>
+        <Link key={ac.label} role="menuitem" href={ac.href} className={`${rm.menuItem} ${s.hoverOption}`} onClick={follow(ac.href)}>
+          <span className={rm.menuGlyph} style={{ background: TOOL[ac.key].bg, color: TOOL[ac.key].fg }}><Glyph name={TOOL[ac.key].icon} size={12} /></span>
           {ac.label}
         </Link>
       ))}
@@ -159,17 +157,16 @@ export function RoadmapTile({ tile, menuOpen, cardCount, quizShown, nav, set, cl
     // Every press on the tile that a control inside it does not keep (the
     // "..." and its menu stop theirs) selects: the select button's click,
     // Enter or Space on it (its own click), or a click on the padding or marks.
-    <div ref={owner} data-testid={`tile-${t.id}`} data-flip={`tile:${t.id}`} data-dim={dim || undefined} className={tileClass(isSel, isNext, dim)}
+    // The tile that owns the open menu is lifted above its siblings, or the next tile paints over the menu.
+    <div ref={owner} data-testid={`tile-${t.id}`} data-flip={`tile:${t.id}`} data-dim={dim || undefined} className={`${tileClass(isSel, isNext, dim)} ${rm.tileBox}${menuOpen ? ` ${s.lifted}` : ""}`}
       onClick={toggle}
-      onMouseEnter={() => set({ hover: t.id })} onMouseLeave={() => set({ hover: null })}
-      // The tile that owns the open menu is lifted above its siblings, or the next tile paints over the menu.
-      style={{ position: "relative", zIndex: menuOpen ? 2 : undefined, display: "flex", alignItems: "center", gap: 10, padding: "9px 11px", borderRadius: "var(--r-md)", cursor: "pointer" }}>
+      onMouseEnter={() => set({ hover: t.id })} onMouseLeave={() => set({ hover: null })}>
       {/* No handler of its own: its click bubbles to the tile's. */}
       <button type="button" aria-pressed={isSel} className={s.tileSelect} data-testid={`study-tile-select-${t.id}`}>
         <TileRing concept={t} faded={dim} />
-        <span style={{ flex: 1, minWidth: 0, overflow: "hidden", display: "flex", flexDirection: "column" }}>
-          <span style={{ fontSize: "var(--fs-md)", fontWeight: 600, lineHeight: 1.25, textWrap: "pretty", color: dim ? DIM_TEXT : undefined, transition: DIM_FADE } as React.CSSProperties}>{t.name}</span>
-          <span style={{ fontSize: "var(--fs-xs)", color: dim ? DIM_TEXT : SC[t.st], whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", transition: DIM_FADE }}>{statusLine(t)}</span>
+        <span className={rm.tileText}>
+          <span className={rm.tileName} style={{ color: dim ? DIM_TEXT : undefined }}>{t.name}</span>
+          <span className={rm.tileStatus} style={{ color: dim ? DIM_TEXT : SC[t.st] }}>{statusLine(t)}</span>
         </span>
       </button>
       <TileMarks tile={tile} />

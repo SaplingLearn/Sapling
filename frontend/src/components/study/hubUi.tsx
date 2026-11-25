@@ -33,9 +33,10 @@ export const POPOVER: React.CSSProperties = {
 
 /** Each tool's name, glyph and tint, wherever the hub shows it. */
 export const TOOL: Record<ToolKey, { title: string; icon: GlyphName; bg: string; fg: string }> = {
-  quiz: { title: "Quiz", icon: "bulb", bg: "#EBDDEE", fg: "#7A4A78" },
+  quiz: { title: "Quiz", icon: "bulb", bg: "var(--tool-quiz-soft)", fg: "var(--tool-quiz)" },
   cards: { title: "Flashcards", icon: "cards", bg: "var(--sap-100)", fg: "var(--brand-forest)" },
-  guide: { title: "Study Guide", icon: "file", bg: "#F1E3C4", fg: "var(--warn)" },
+  // No Study Guide tint token: a cream built from the amber, under --warn.
+  guide: { title: "Study Guide", icon: "file", bg: "color-mix(in srgb, var(--c-amber) 20%, var(--bg-panel))", fg: "var(--warn)" },
 };
 /** The order the tools are offered in. */
 export const TOOL_ORDER: ToolKey[] = ["quiz", "cards", "guide"];

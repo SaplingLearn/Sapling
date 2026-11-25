@@ -1,0 +1,23 @@
+/* The (shell) route-transition fallback (loading.tsx): the page column's
+   shape, one header line over a hero block and two cards. */
+
+.root {
+  min-height: 100%;
+  background: var(--bg);
+  padding: var(--sp-12);
+}
+
+.column {
+  /* The app's widest content column. */
+  --loading-column-max: 1080px;
+  max-width: var(--loading-column-max);
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-7);
+}
+
+.row {
+  display: flex;
+  gap: var(--sp-7);
+}

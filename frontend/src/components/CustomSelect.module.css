@@ -1,0 +1,133 @@
+/* CustomSelect.tsx: a button that opens a listbox. Callers' `style` and
+   `triggerStyle` props stay inline, so they still override these. */
+
+.root {
+  position: relative;
+  display: inline-block;
+  /* The trigger's and options' insets have no step on the spacing scale. */
+  --select-pad-sm: 5px var(--sp-5);
+  --select-pad-md: var(--sp-4) var(--sp-6);
+  --select-option-pad: 7px var(--sp-5);
+}
+
+.trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-4);
+  width: 100%;
+  padding: var(--select-pad-md);
+  font-size: var(--fs-md);
+  border-radius: var(--r-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-input);
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color var(--dur-fast) var(--ease);
+}
+
+.sm .trigger {
+  padding: var(--select-pad-sm);
+  font-size: var(--fs-sm);
+}
+
+.trigger:hover:not(:disabled) {
+  border-color: var(--border-strong);
+}
+
+.placeholder {
+  color: var(--text-muted);
+}
+
+.trigger:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chevron {
+  font-size: var(--fs-2xs);
+  color: var(--text-muted);
+  transition: transform var(--dur-fast) var(--ease);
+}
+
+.chevronOpen {
+  transform: rotate(180deg);
+}
+
+.list {
+  position: absolute;
+  z-index: var(--z-popover);
+  top: calc(100% + var(--sp-2));
+  bottom: auto;
+  left: 0;
+  right: auto;
+  min-width: 100%;
+  margin: 0;
+  padding: var(--sp-2);
+  list-style: none;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-lg);
+  max-height: var(--select-list-max);
+  overflow-y: auto;
+}
+
+.listUp {
+  top: auto;
+  bottom: calc(100% + var(--sp-2));
+}
+
+.listRight {
+  left: auto;
+  right: 0;
+}
+
+.option {
+  padding: var(--select-option-pad);
+  font-size: var(--fs-md);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  color: var(--text);
+  background: transparent;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  transition: background-color var(--dur-instant) var(--ease);
+}
+
+.sm .option {
+  font-size: var(--fs-sm);
+}
+
+.optionActive {
+  background: var(--bg-subtle);
+}
+
+.optionDisabled {
+  cursor: not-allowed;
+  color: var(--text-muted);
+}
+
+.optionBody {
+  flex: 1;
+  min-width: 0;
+}
+
+.description {
+  display: block;
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+}
+
+.check {
+  color: var(--accent);
+  font-size: var(--fs-sm);
+}

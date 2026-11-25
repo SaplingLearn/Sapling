@@ -2,6 +2,7 @@
 
 import React from "react";
 import type { Components } from "react-markdown";
+import styles from "./inertMarkdown.module.css";
 
 /**
  * Which markdown a message may use (Z08).
@@ -57,21 +58,11 @@ function InertImage({ alt }: { alt?: string }) {
   return <span>{alt ? `[image: ${alt}]` : "[image]"}</span>;
 }
 
-const FENCE_STYLE: React.CSSProperties = {
-  padding: "10px 12px",
-  borderRadius: "var(--r-sm)",
-  background: "var(--bg-inset)",
-  border: "1px solid var(--border)",
-  overflowX: "auto",
-  fontSize: 12,
-  margin: "6px 0 10px",
-};
-
 /** A ```mermaid or ```plot fence as the code it is: a drawn diagram can fetch
  *  what its text names. */
 function FenceAsCode({ "data-content": code }: { "data-content"?: string }) {
   return (
-    <pre className="mono" style={FENCE_STYLE}>
+    <pre className={`mono ${styles.fence}`}>
       <code>{code ?? ""}</code>
     </pre>
   );

@@ -3,17 +3,15 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
+import { AnimatePresence, motion } from "framer-motion";
 import styles from "./ChatPanel.module.css";
+import { useMotionPresets } from "@/lib/motion";
 import { Icon } from "../Icon";
 import { CHAT_MESSAGE_MAX } from "@/lib/inputLimits";
 import { CrisisSupportCard } from "../safety/CrisisSupportCard";
 import type { CrisisSupport } from "@/lib/crisisSupport";
 import type { MarkdownProfile } from "./inertMarkdown";
-import {
-  MATERIALS_GROUNDED_HINT,
-  MATERIALS_GROUNDED_LABEL,
-  TRUST_CHROME_STYLE,
-} from "@/lib/loopTrustChrome";
+import { MATERIALS_GROUNDED_HINT, MATERIALS_GROUNDED_LABEL } from "@/lib/loopTrustChrome";
 
 // MarkdownChat statically imports mermaid, katex, highlight.js, and the
 // remark/rehype stack. Static-importing it from a client component still
@@ -77,18 +75,8 @@ export interface ChatMsg {
   materialsGrounded?: boolean;
 }
 
-/** The standard visually-hidden recipe: kept in the accessibility tree, painted nowhere. */
-const VISUALLY_HIDDEN: React.CSSProperties = {
-  position: "absolute",
-  width: 1,
-  height: 1,
-  margin: -1,
-  padding: 0,
-  overflow: "hidden",
-  clipPath: "inset(50%)",
-  whiteSpace: "nowrap",
-  border: 0,
-};
+/** Kept in the accessibility tree, painted nowhere (ChatPanel.module.css). */
+const VISUALLY_HIDDEN = styles.visuallyHidden;
 
 interface ChatPanelProps {
   messages: ChatMsg[];
@@ -164,6 +152,7 @@ export function ChatPanel({
     el.scrollTop = el.scrollHeight;
     pinned.current = true;
   }, [messages, streamingText]);
+  const m = useMotionPresets();
   useEffect(() => {
     const el = scrollRef.current;
     if (!el || typeof ResizeObserver === "undefined") return;
@@ -175,7 +164,7 @@ export function ChatPanel({
   }, []);
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
+    <div className={styles.panel}>
       {header && <div>{header}</div>}
       {/* Focusable (tabIndex 0): the log scrolls on its own, and a scrolling
           region must be reachable from the keyboard (WCAG 2.1.1) — the arrow
@@ -193,20 +182,11 @@ export function ChatPanel({
         aria-label="Conversation"
         data-testid="tutor-messages"
         tabIndex={0}
-        style={{
-          // With a footer the log only takes the height it needs, so the
-          // footer's actions sit right under the latest turn; a long
-          // conversation still scrolls and the footer stays above the composer.
-          flex: footer ? "0 1 auto" : 1,
-          minHeight: 0,
-          overflowY: "auto",
-          padding: "24px clamp(16px, 4vw, 56px)",
-          display: "flex",
-          flexDirection: "column",
-          gap: 16,
-        }}
+        // With a footer the log only takes the height it needs (.log).
+        className={styles.log}
+        data-has-footer={!!footer}
       >
-        {messages.map(m => <Message key={m.id} m={m} onRetry={onRetry} onPage={onPage} markdown={markdown} />)}
+        {messages.map(msg => <Message key={msg.id} m={msg} onRetry={onRetry} onPage={onPage} markdown={markdown} />)}
         {streamingText !== null && streamingText !== undefined && (
           // Reuse Message/MarkdownChat exactly as settled assistant messages
           // do, so a streaming reply never styles differently from a
@@ -232,15 +212,23 @@ export function ChatPanel({
         )}
       </div>
 
-      {footer && (
-        <div
-          data-testid="chat-footer"
-          style={{ padding: "0 clamp(16px, 4vw, 56px) 16px", maxHeight: "65%", overflowY: "auto", flexShrink: 0 }}
-        >
-          {footer}
-        </div>
-      )}
-      {footer && <div aria-hidden style={{ flex: 1 }} />}
+      {/* The footer (the loop's check card and next steps) rises in under
+          the latest turn when it appears; it is there at once on first paint. */}
+      <AnimatePresence initial={false}>
+        {footer && (
+          <motion.div
+            key="chat-footer"
+            data-testid="chat-footer"
+            className={styles.footer}
+            initial={m.fadeUp.initial}
+            animate={m.fadeUp.animate}
+            transition={m.fadeUp.transition}
+          >
+            {footer}
+          </motion.div>
+        )}
+      </AnimatePresence>
+      {footer && <div aria-hidden className={styles.spacer} />}
       <ChatInputBar
         onSend={onSend}
         onAction={onAction}
@@ -270,16 +258,9 @@ interface ChatInputBarProps {
   attachHref?: string;
 }
 
-/** The composer's controls share one 32px square (Attach, Send; Stop is 32 tall). */
-const COMPOSER_ICON: React.CSSProperties = {
-  width: 32,
-  height: 32,
-  padding: 0,
-  display: "inline-grid",
-  placeItems: "center",
-  alignSelf: "flex-end",
-  boxSizing: "border-box",
-};
+/** The composer's controls share one 32px square (Attach, Send; Stop is 32
+ *  tall): ChatPanel.module.css `.control` + `.iconControl`. */
+const COMPOSER_ICON = `${styles.control} ${styles.iconControl} ${styles.pressable}`;
 
 const ChatInputBar = React.memo(function ChatInputBar({
   onSend,
@@ -302,6 +283,7 @@ const ChatInputBar = React.memo(function ChatInputBar({
   // textarea or Send) puts focus back in the textarea when the reply ends —
   // unless something else (a posed check, a dialog) has taken focus by then.
   const refocus = useRef(false);
+  const m = useMotionPresets();
 
   // Apply the seed when the parent bumps the key (e.g. after a mode switch) —
   // never on mount: useState already starts from it, and a mount-time reset
@@ -330,26 +312,16 @@ const ChatInputBar = React.memo(function ChatInputBar({
   };
 
   return (
-    <div
-      ref={barRef}
-      style={{
-        padding: "12px clamp(16px, 4vw, 56px) 20px",
-        borderTop: "1px solid var(--border)",
-        background: "var(--bg-panel)",
-        display: "flex",
-        flexDirection: "column",
-        gap: 10,
-      }}
-    >
+    <div ref={barRef} className={styles.bar}>
       {onAction && (
-        <div style={{ display: "flex", gap: 6 }}>
-          <button data-testid="tutor-action-hint" className="btn btn--sm" onClick={() => onAction("hint")} disabled={disabled} title="Ask for a small nudge">
+        <div className={styles.actions}>
+          <button data-testid="tutor-action-hint" className={`btn btn--sm ${styles.pressable}`} onClick={() => onAction("hint")} disabled={disabled} title="Ask for a small nudge">
             <Icon name="sparkle" size={12} /> Hint
           </button>
-          <button data-testid="tutor-action-confused" className="btn btn--sm" onClick={() => onAction("confused")} disabled={disabled} title="Say you're stuck">
+          <button data-testid="tutor-action-confused" className={`btn btn--sm ${styles.pressable}`} onClick={() => onAction("confused")} disabled={disabled} title="Say you're stuck">
             <Icon name="bolt" size={12} /> I&apos;m confused
           </button>
-          <button data-testid="tutor-action-skip" className="btn btn--sm" onClick={() => onAction("skip")} disabled={disabled} title="Skip this concept">
+          <button data-testid="tutor-action-skip" className={`btn btn--sm ${styles.pressable}`} onClick={() => onAction("skip")} disabled={disabled} title="Skip this concept">
             <Icon name="chev" size={12} /> Skip
           </button>
         </div>
@@ -372,30 +344,23 @@ const ChatInputBar = React.memo(function ChatInputBar({
           }}
           disabled={disabled}
           placeholder={placeholder}
-          style={{
-            flex: 1,
-            resize: "none",
-            border: 0,
-            background: "transparent",
-            fontSize: 14,
-            lineHeight: 1.5,
-            padding: "6px 0",
-            fontFamily: "var(--font-sans)",
-            maxHeight: 160,
-            minHeight: 36,
-          }}
+          className={styles.input}
           rows={1}
         />
+        {/* Stop scales in as a reply starts streaming (no exit: it leaves
+            the moment the reply ends, as before). */}
         {streaming && onStop && (
-          <button
+          <motion.button
             data-testid="tutor-stop"
-            className="btn btn--sm"
-            style={{ height: 32, alignSelf: "flex-end" }}
+            className={`btn btn--sm ${styles.control} ${styles.pressable}`}
             onClick={onStop}
             aria-label="Stop response"
+            initial={m.scaleIn.initial}
+            animate={m.scaleIn.animate}
+            transition={m.scaleIn.transition}
           >
             Stop
-          </button>
+          </motion.button>
         )}
         {attachHref && (
           // Attach sits next to Send (wireframe T6): material is added in the
@@ -405,16 +370,14 @@ const ChatInputBar = React.memo(function ChatInputBar({
             data-testid="tutor-attach"
             aria-label="Attach material"
             title="Attach material"
-            className="btn btn--sm btn--ghost"
-            style={COMPOSER_ICON}
+            className={`btn btn--sm btn--ghost ${COMPOSER_ICON}`}
           >
             <Icon name="plus" size={15} />
           </Link>
         )}
         <button
           data-testid="tutor-send"
-          className="btn btn--primary btn--sm"
-          style={{ ...COMPOSER_ICON, width: 40 }}
+          className={`btn btn--primary btn--sm ${COMPOSER_ICON} ${styles.sendControl}`}
           onClick={submit}
           disabled={disabled || !text.trim()}
           aria-label="Send"
@@ -461,9 +424,9 @@ function AssistantBody({ content, profile }: { content: string; profile: Markdow
   return (
     <>
       {parts.map((p, i) => p.kind === "key" ? (
-        <div key={i} data-testid="tutor-key-idea" style={{ borderLeft: "3px solid var(--accent)", padding: "2px 0 2px 12px", margin: i === 0 ? "0 0 8px" : "8px 0" }}>
-          <span className="label-micro" style={{ display: "block", color: "var(--accent)", marginBottom: 2 }}>
-            Key idea<span style={VISUALLY_HIDDEN}>: </span>
+        <div key={i} data-testid="tutor-key-idea" className={styles.keyIdea} data-first={i === 0}>
+          <span className={`label-micro ${styles.keyIdeaLabel}`}>
+            Key idea<span className={VISUALLY_HIDDEN}>: </span>
           </span>
           <MarkdownChat profile={profile}>{p.text}</MarkdownChat>
         </div>
@@ -487,7 +450,7 @@ export function PageTurn({ children, testId, plain = false }: { children: React.
         <span className={styles.turnAvatar} aria-hidden>
           <Icon name="sparkle" size={12} />
         </span>
-        Tutor<span style={VISUALLY_HIDDEN}>:</span>
+        Tutor<span className={VISUALLY_HIDDEN}>:</span>
       </div>
       <div className={plain ? `${styles.turnText} ${styles.turnPlain}` : styles.turnText} data-testid={testId}>
         {children}
@@ -503,33 +466,29 @@ function renderMessageBody(m: ChatMsg, isUser: boolean, markdown: MarkdownProfil
   return (
     <>
       {m.loading ? (
-        <span style={{ opacity: 0.6, fontFamily: "var(--font-sans)" }}>{m.loadingLabel || "Thinking…"}</span>
+        <span className={styles.thinking}>{m.loadingLabel || "Thinking…"}</span>
       ) : isUser ? (
-        <div style={{ whiteSpace: "pre-wrap" }}>{m.content}</div>
+        <div className={styles.userText}>{m.content}</div>
       ) : (
         // The tutor speaks in Spectral; the per-session DisclaimerModal
         // covers AI disclosure once up front so each message stays clean
         // (no "AI-Powered" pill — that anti-pattern is off the table).
         // ADR 0020: an interrupted turn keeps its partial text visible,
         // just dimmed — never blanked.
-        <div style={m.interrupted ? { opacity: 0.7 } : undefined}>
+        <div className={m.interrupted ? styles.dimmed : undefined}>
           {m.content ? <AssistantBody content={m.content} profile={markdown} /> : null}
         </div>
       )}
       {m.interrupted && !isUser && (
-        <div
+        // The marker fades in where the reply stopped (enter only).
+        <motion.div
           data-testid="tutor-interrupted"
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 10,
-            marginTop: m.content ? 8 : 0,
-            fontFamily: "var(--font-sans)",
-            fontSize: 12,
-            color: "var(--text-muted)",
-          }}
+          className={`${styles.trust} ${styles.interrupted}`}
+          data-after-text={!!m.content}
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
         >
-          <span style={{ fontStyle: "italic" }}>Interrupted</span>
+          <span className={styles.interruptedLabel}>Interrupted</span>
           {onRetry && m.retryText && (
             <button
               data-testid="tutor-retry"
@@ -540,7 +499,7 @@ function renderMessageBody(m: ChatMsg, isUser: boolean, markdown: MarkdownProfil
               Retry
             </button>
           )}
-        </div>
+        </motion.div>
       )}
       {m.materialsGrounded && !isUser && !m.interrupted && (
         <div
@@ -548,10 +507,8 @@ function renderMessageBody(m: ChatMsg, isUser: boolean, markdown: MarkdownProfil
           role="status"
           title={MATERIALS_GROUNDED_HINT}
           aria-label={`${MATERIALS_GROUNDED_LABEL}. ${MATERIALS_GROUNDED_HINT}`}
-          style={{
-            marginTop: m.content ? 8 : 0,
-            ...TRUST_CHROME_STYLE,
-          }}
+          className={styles.trust}
+          data-after-text={!!m.content}
         >
           {MATERIALS_GROUNDED_LABEL}
         </div>
@@ -577,21 +534,20 @@ const Message = React.memo(function Message({
   if (m.crisisSupport && !isUser) {
     // Sapling speaking, not the tutor: no tutor avatar, no serif bubble.
     return (
-      <div className="fade-in" style={{ alignSelf: "stretch", maxWidth: 640, width: "100%" }}>
+      <div className={`fade-in ${styles.crisisRow}`}>
         <CrisisSupportCard support={m.crisisSupport} />
       </div>
     );
   }
   const body = renderMessageBody(m, isUser, markdown, onRetry);
   // In the log but not painted (`visuallyHidden`): the row's own attributes.
-  const hidden = m.visuallyHidden ? { attr: "true", style: VISUALLY_HIDDEN } : { attr: undefined, style: null };
+  const hidden = m.visuallyHidden ? { attr: "true", cls: ` ${VISUALLY_HIDDEN}` } : { attr: undefined, cls: "" };
   if (onPage && !isUser) {
     return (
       <div
-        className="fade-in"
+        className={`fade-in ${styles.pageRow}${hidden.cls}`}
         data-testid="tutor-turn"
         data-visually-hidden={hidden.attr}
-        style={{ alignSelf: "stretch", minWidth: 0, ...hidden.style }}
       >
         <PageTurn>{body}</PageTurn>
       </div>
@@ -599,50 +555,17 @@ const Message = React.memo(function Message({
   }
   return (
     <div
-      className="fade-in"
+      className={`fade-in ${styles.bubbleRow}${hidden.cls}`}
+      data-role={m.role}
       data-visually-hidden={hidden.attr}
-      style={{
-        display: "flex",
-        gap: 12,
-        maxWidth: isUser ? "70%" : "85%",
-        alignSelf: isUser ? "flex-end" : "flex-start",
-        ...hidden.style,
-      }}
     >
       {!isUser && (
-        <div
-          style={{
-            width: 32,
-            height: 32,
-            borderRadius: "50%",
-            background: "var(--accent-soft)",
-            color: "var(--accent)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            flexShrink: 0,
-          }}
-        >
+        <div className={styles.bubbleAvatar}>
           <Icon name="sparkle" size={14} />
         </div>
       )}
-      <div
-        style={{
-          background: isUser ? "var(--accent)" : "var(--bg-panel)",
-          color: isUser ? "var(--accent-fg)" : "var(--text)",
-          padding: "12px 16px",
-          borderRadius: "var(--r-lg)",
-          border: isUser ? "none" : "1px solid var(--border)",
-          fontSize: 14,
-          lineHeight: 1.6,
-          // Assistant voice is Spectral (body-serif) — "serif for soul,
-          // sans for function". User messages keep the sans UI voice.
-          fontFamily: isUser ? "var(--font-sans)" : "var(--font-serif)",
-          wordBreak: "break-word",
-          overflowWrap: "break-word",
-          position: "relative",
-        }}
-      >
+      {/* The tutor speaks in the body serif, the student in the sans UI voice. */}
+      <div className={styles.bubble} data-role={m.role}>
         {body}
       </div>
     </div>

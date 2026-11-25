@@ -26,6 +26,7 @@
 
 import React from "react";
 import type { GraphEdge, GraphNode } from "@/lib/data";
+import styles from "./graph.module.css";
 import {
   MASTERY_PALETTE,
   TIER_LABEL,
@@ -114,20 +115,10 @@ type Props = {
 
 const TIERS: MasteryTier[] = ["mastered", "learning", "struggling", "unexplored"];
 
-const PANEL: React.CSSProperties = {
-  position: "absolute",
-  left: 12,
-  background: "var(--bg-panel)",
-  border: "1px solid var(--border)",
-  borderRadius: "var(--r-sm)",
-  boxShadow: "var(--shadow-sm)",
-  zIndex: 5,
-};
-
 /** Four overlapping tier dots — the toggle's glyph. */
 function PaletteGlyph() {
   return (
-    <svg width={22} height={12} viewBox="0 0 22 12" aria-hidden="true" style={{ display: "block" }}>
+    <svg width={22} height={12} viewBox="0 0 22 12" aria-hidden="true" className={styles.glyph}>
       {TIERS.map((t, i) => (
         <circle key={t} cx={5 + i * 4} cy={6} r={4.5} fill={MASTERY_PALETTE[t]} />
       ))}
@@ -154,16 +145,7 @@ function GraphCrashFallback({ error, reset }: { error: Error; reset: () => void 
     <div
       role="status"
       data-testid="graph-crash-fallback"
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        gap: 10,
-        alignItems: "center",
-        justifyContent: "center",
-        height: "100%",
-        color: "var(--text-dim)",
-        fontSize: 13,
-      }}
+      className={styles.crash}
     >
       <span>The graph couldn&apos;t render here.</span>
       <button
@@ -184,8 +166,10 @@ export function KnowledgeGraph(props: Props) {
   const fixed = props.colorMode !== undefined;
   const colorMode = props.colorMode ?? storedMode;
   const mastery = colorMode === "mastery";
+  // The key fades in when the student flips the colours, not on first paint.
+  const [switched, setSwitched] = React.useState(false);
   return (
-    <div data-testid="graph-container" style={{ position: "relative", width, height }}>
+    <div data-testid="graph-container" className={styles.container} style={{ width, height }}>
       <ErrorBoundary fallback={(error, reset) => <GraphCrashFallback error={error} reset={reset} />}>
         <KnowledgeGraph2D {...props} colorMode={colorMode} />
       </ErrorBoundary>
@@ -193,24 +177,16 @@ export function KnowledgeGraph(props: Props) {
         <button
           type="button"
           data-testid="graph-color-toggle"
-          className="btn btn--ghost btn--sm"
+          className={`btn btn--ghost btn--sm ${styles.toggle}${mastery ? ` ${styles.toggleOn}` : ""}`}
           // Constant name + aria-pressed: the label says what the switch
           // turns on, the pressed state says whether it is on.
           aria-pressed={mastery}
           title={mastery ? "Back to course colors" : "Color nodes by mastery"}
-          onClick={() => setColorMode(mastery ? "course" : "mastery")}
-          style={{
-            ...PANEL,
-            top: 12,
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-            padding: "3px 8px",
-            fontSize: 11,
-            ...(mastery
-              ? { borderColor: MASTERY_PALETTE.hub, color: MASTERY_PALETTE.hub, fontWeight: 600 }
-              : null),
+          onClick={() => {
+            setSwitched(true);
+            setColorMode(mastery ? "course" : "mastery");
           }}
+          style={{ "--toggle-on": MASTERY_PALETTE.hub } as React.CSSProperties}
         >
           <PaletteGlyph />
           <span>Mastery colors</span>
@@ -223,28 +199,15 @@ export function KnowledgeGraph(props: Props) {
         <ul
           data-testid={mastery ? "graph-color-legend" : "graph-tier-legend"}
           aria-label={mastery ? "Mastery colors" : "Mastery shown as how solid a node is"}
-          style={{
-            ...PANEL,
-            bottom: 12,
-            listStyle: "none",
-            margin: 0,
-            padding: "6px 10px",
-            display: "flex",
-            flexWrap: "wrap",
-            gap: "4px 12px",
-            fontSize: 11,
-            color: "var(--text-dim)",
-            maxWidth: width - 24,
-          }}
+          key={mastery ? "mastery" : "tiers"}
+          className={`${styles.panel} ${styles.legend}${switched ? ` ${styles.legendEnter}` : ""}`}
         >
           {TIERS.map((t) => (
-            <li key={t} style={{ display: "flex", alignItems: "center", gap: 5 }}>
+            <li key={t} className={styles.legendItem}>
               <span
                 aria-hidden="true"
+                className={styles.legendDot}
                 style={{
-                  width: 9,
-                  height: 9,
-                  borderRadius: "50%",
                   background: mastery ? MASTERY_PALETTE[t] : "var(--text)",
                   opacity: mastery ? 1 : TIER_OPACITY[t],
                 }}

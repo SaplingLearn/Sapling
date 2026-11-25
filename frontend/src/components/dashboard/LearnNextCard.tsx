@@ -1,5 +1,8 @@
 "use client";
+import { motion } from "framer-motion";
 import { Icon } from "../Icon";
+import { useMotionPresets } from "@/lib/motion";
+import styles from "./LearnNextCard.module.css";
 import { useUser } from "@/context/UserContext";
 import { useLoopStatus } from "@/components/learn/useLoopStatus";
 import { learnHrefForNode } from "@/lib/data";
@@ -32,37 +35,39 @@ export function LearnNextCard({ recommendations, navigate }: {
   const { userId, userReady } = useUser();
   const named = recommendations.some((r) => r.node_id && r.course_id);
   const { status: loop } = useLoopStatus(userId, userReady && named);
+  const m = useMotionPresets();
   return (
-    <div className="card" style={{ padding: "var(--pad-lg)" }} data-testid="dashboard-learn-next">
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+    <div className={`card ${styles.card}`} data-testid="dashboard-learn-next">
+      <div className={styles.header}>
         <div className="label-micro">Learn next</div>
         <button className="btn btn--ghost btn--sm" data-testid="dashboard-learn-next-tree" onClick={() => navigate("/tree")}>Tree →</button>
       </div>
       {recommendations.length === 0 && (
-        <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Nothing suggested yet — start a session.</div>
+        <div className={styles.empty}>Nothing suggested yet — start a session.</div>
       )}
-      {recommendations.slice(0, 3).map((r, i) => (
-        <button
-          key={`${r.concept_name}-${i}`}
-          data-testid="dashboard-learn-next-item"
-          data-node-id={r.node_id ?? undefined}
-          onClick={() => navigate(recommendationHref(r, loop === true))}
-          style={{
-            display: "flex", alignItems: "flex-start", gap: 10, width: "100%",
-            padding: "10px 12px", borderRadius: "var(--r-md)",
-            background: "var(--bg-subtle)", marginBottom: 6, textAlign: "left",
-          }}
-        >
-          <Icon name="sparkle" size={14} />
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 13, fontWeight: 600 }}>{r.concept_name}</div>
-            {r.reason && <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{r.reason}</div>}
-          </div>
-          <Icon name="chev" size={12} />
-        </button>
-      ))}
-      <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
-        <button className="btn btn--sm" style={{ flex: 1 }} data-testid="dashboard-study-room" onClick={() => navigate("/social")}>
+      {/* The recommendations arrive after the dashboard's first paint: they
+          stagger in, so the student sees the list land. */}
+      <motion.div variants={m.list.container} initial="hidden" animate="shown">
+        {recommendations.slice(0, 3).map((r, i) => (
+          <motion.button
+            key={`${r.concept_name}-${i}`}
+            variants={m.list.item}
+            data-testid="dashboard-learn-next-item"
+            data-node-id={r.node_id ?? undefined}
+            onClick={() => navigate(recommendationHref(r, loop === true))}
+            className={styles.item}
+          >
+            <Icon name="sparkle" size={14} />
+            <div className={styles.itemText}>
+              <div className={styles.itemTitle}>{r.concept_name}</div>
+              {r.reason && <div className={styles.itemReason}>{r.reason}</div>}
+            </div>
+            <Icon name="chev" size={12} />
+          </motion.button>
+        ))}
+      </motion.div>
+      <div className={styles.footer}>
+        <button className={`btn btn--sm ${styles.footerBtn}`} data-testid="dashboard-study-room" onClick={() => navigate("/social")}>
           <Icon name="users" size={12} /> Study room
         </button>
       </div>

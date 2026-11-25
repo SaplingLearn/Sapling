@@ -24,6 +24,9 @@ function documentPlaceholder(loading: boolean, count: number): string {
   return loading ? "Loading your documents…" : "No library documents yet";
 }
 
+/** How many cards a run asks for unless the student picks a number ("Auto" too). */
+const DEFAULT_CARD_COUNT = 25;
+
 const COUNT_OPTIONS = [
   { value: "10", label: "10 cards" },
   { value: "25", label: "25 cards" },
@@ -45,11 +48,11 @@ export function AiTab({ documents, documentsLoading = false, onCards }: Props) {
   const [mode, setMode] = React.useState<"paste" | "library_doc">("paste");
   const [text, setText] = React.useState("");
   const [docId, setDocId] = React.useState("");
-  const [count, setCount] = React.useState<string>("25");
+  const [count, setCount] = React.useState<string>(String(DEFAULT_CARD_COUNT));
   const [difficulty, setDifficulty] = React.useState<"recall" | "application" | "conceptual">("recall");
   const [busy, setBusy] = React.useState(false);
 
-  const numericCount = count === "auto" ? 25 : parseInt(count, 10);
+  const numericCount = count === "auto" ? DEFAULT_CARD_COUNT : parseInt(count, 10);
 
   const generate = async () => {
     if (!userId) return;

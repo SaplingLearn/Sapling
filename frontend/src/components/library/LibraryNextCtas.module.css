@@ -1,0 +1,31 @@
+/* Library → Tree / Quiz CTAs (LibraryNextCtas.tsx). */
+.card {
+  margin-top: var(--sp-5);
+  padding: var(--sp-6);
+  border-radius: var(--r-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-panel);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  /* Shown when a document is opened or an upload finishes: a change, so it
+     settles in (collapsed by the global reduced-motion reset). */
+  animation: next-ctas-in var(--dur) var(--ease-out) both;
+}
+
+.status {
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-4);
+}
+
+@keyframes next-ctas-in {
+  from { opacity: 0; transform: translateY(var(--sp-2)); }
+  to { opacity: 1; transform: none; }
+}

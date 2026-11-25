@@ -1,0 +1,208 @@
+/* The two feedback dialogs: the global pulse (FeedbackFlow.tsx) and the
+   session follow-up (SessionFeedbackFlow.tsx). Enter-only motion: a close
+   unmounts at once, so nothing waits on an exit. The global reduced-motion
+   reset collapses every animation here. */
+
+.backdrop {
+  position: fixed;
+  inset: 0;
+  background: var(--scrim);
+  z-index: var(--z-modal);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: feedback-backdrop-in var(--dur) var(--ease-out) both;
+}
+
+.card {
+  /* The dialog's width: a reading measure, not a spacing step. */
+  --feedback-card-w: 440px;
+
+  width: var(--feedback-card-w);
+  max-width: calc(100vw - 2 * var(--sp-16));
+  background: var(--bg-panel);
+  border-radius: var(--r-lg);
+  padding: var(--sp-14);
+  box-shadow: var(--shadow-lg);
+  animation: feedback-card-in var(--dur) var(--ease-out) both;
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--sp-6);
+}
+
+/* The pulse's question. 24px sits between --fs-2xl (22) and --fs-3xl (26). */
+.pulseTitle {
+  --feedback-pulse-title: 24px;
+  font-size: var(--feedback-pulse-title);
+}
+
+.sessionTitle {
+  font-size: var(--fs-2xl);
+}
+
+.lede {
+  font-size: var(--fs-base);
+  color: var(--text-dim);
+  margin-bottom: var(--sp-8);
+}
+
+.ratings {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-10);
+}
+
+.rating {
+  flex: 1;
+  padding: var(--sp-7) var(--sp-2);
+  font-size: var(--fs-2xl);
+  font-weight: 500;
+  color: var(--text-dim);
+  border-radius: var(--r-md);
+  border: 1px solid var(--border);
+  background: var(--bg-panel);
+  transition:
+    background var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease),
+    transform var(--dur-instant) var(--ease-out);
+}
+
+.rating:hover:not([data-selected="true"]) {
+  background: var(--bg-subtle);
+  border-color: var(--border-strong);
+}
+
+.rating:active {
+  transform: scale(0.96);
+}
+
+.rating[data-selected="true"] {
+  color: var(--accent);
+  border-color: var(--accent-border);
+  background: var(--accent-soft);
+}
+
+.fieldLabel {
+  margin-bottom: var(--sp-3);
+}
+
+.stepLabel {
+  margin-bottom: var(--sp-4);
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-7);
+}
+
+.chip {
+  padding: var(--sp-3) var(--sp-6);
+  font-size: var(--fs-sm);
+  border-radius: var(--r-full);
+  background: transparent;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  transition:
+    background var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease),
+    transform var(--dur-instant) var(--ease-out);
+}
+
+.chip:hover:not([data-selected="true"]) {
+  background: var(--bg-subtle);
+  border-color: var(--border-strong);
+}
+
+.chip:active {
+  transform: scale(0.96);
+}
+
+.chip[data-selected="true"] {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: var(--accent-border);
+}
+
+.textarea {
+  width: 100%;
+  padding: var(--sp-5) var(--sp-7);
+  font-size: var(--fs-md);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--bg-input);
+  font-family: inherit;
+  resize: vertical;
+}
+
+.footer {
+  display: flex;
+  gap: var(--sp-4);
+  justify-content: flex-end;
+  margin-top: var(--sp-8);
+}
+
+.footerSplit {
+  justify-content: space-between;
+  margin-top: var(--sp-9);
+}
+
+/* Session follow-up: the topic line and the four-step progress. */
+.topic {
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+  margin-bottom: var(--sp-8);
+}
+
+.topicName {
+  color: var(--text-dim);
+}
+
+.steps {
+  display: flex;
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-10);
+}
+
+.stepSegment {
+  /* A hairline progress segment; its height is not a spacing step. */
+  --feedback-step-h: 4px;
+
+  flex: 1;
+  height: var(--feedback-step-h);
+  border-radius: var(--r-full);
+  background: var(--bg-soft);
+  transition: background var(--dur) var(--ease-out);
+}
+
+.stepSegment[data-done="true"] {
+  background: var(--accent);
+}
+
+/* Re-keyed per step, so each step's question settles in as the last leaves. */
+.stepBody {
+  animation: feedback-step-in var(--dur) var(--ease-out) both;
+}
+
+@keyframes feedback-backdrop-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes feedback-card-in {
+  from { opacity: 0; transform: translateY(var(--sp-4)) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes feedback-step-in {
+  from { opacity: 0; transform: translateX(var(--sp-4)); }
+  to { opacity: 1; transform: none; }
+}

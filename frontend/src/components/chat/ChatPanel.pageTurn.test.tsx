@@ -24,11 +24,11 @@ const MESSAGES: ChatMsg[] = [
   { id: "u1", role: "user", content: "It never stops?" },
 ];
 
-/** The element that would paint a bubble: a background or a border of its own. */
+/** Whether an element sits in a bubble: the module's `.bubble` (its own
+ *  background and border) between it and the log. */
 function hasBubble(el: HTMLElement): boolean {
   for (let node: HTMLElement | null = el; node && node.dataset.testid !== "tutor-messages"; node = node.parentElement) {
-    const { background, border } = node.style;
-    if ((background && background !== "transparent") || (border && border !== "none")) return true;
+    if (node.classList.contains(styles.bubble)) return true;
   }
   return false;
 }
@@ -55,8 +55,11 @@ describe("ChatPanel turnStyle=page", () => {
     render(<ChatPanel messages={MESSAGES} onSend={() => {}} turnStyle="page" />);
     const mine = screen.getByText("It never stops?");
     const row = mine.parentElement!.parentElement!;
-    expect(row.style.alignSelf).toBe("flex-end");
-    expect(mine.parentElement!.style.background).toBe("var(--accent)");
+    // the right-hand row and the accent bubble (ChatPanel.module.css [data-role="user"])
+    expect(row.className).toContain(styles.bubbleRow);
+    expect(row.dataset.role).toBe("user");
+    expect(mine.parentElement!.className).toContain(styles.bubble);
+    expect(mine.parentElement!.dataset.role).toBe("user");
   });
 
   it("draws a streaming reply on the page too", () => {
@@ -70,7 +73,7 @@ describe("ChatPanel turnStyle=page", () => {
     render(<ChatPanel messages={[{ ...MESSAGES[0], visuallyHidden: true }]} onSend={() => {}} turnStyle="page" />);
     const turn = screen.getByTestId("tutor-turn");
     expect(turn.dataset.visuallyHidden).toBe("true");
-    expect(turn.style.position).toBe("absolute");
+    expect(turn.className).toContain(styles.visuallyHidden);
   });
 
   it("leaves the default bubble as it was", () => {

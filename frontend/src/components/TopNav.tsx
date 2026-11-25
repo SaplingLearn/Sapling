@@ -36,10 +36,16 @@ import { useIsMobile } from "@/lib/useIsMobile";
 import type { NavSection } from "@/lib/navFeatures";
 import { useVisibleNavSections } from "@/lib/useNavSections";
 import { STUDY_TOOL_PATHS } from "@/lib/toolHrefs";
+import styles from "./TopNav.module.css";
 
 type NavGroup = NavSection;
 
+/** The bar's height, px: `--sp-28`, which TopNav.module.css sets it to. */
 export const TOP_NAV_HEIGHT = 56;
+/** How long a hovered group's panel stays open after the cursor leaves the row, ms. */
+const HOVER_CLOSE_DELAY_MS = 140;
+/** The wordmark's rendered width, px, by layout. */
+const WORDMARK_WIDTH = { mobile: 88, desktop: 104 } as const;
 
 function isActiveItem(pathname: string, href: string): boolean {
   if (href === "/dashboard") return pathname === "/" || pathname.startsWith("/dashboard");
@@ -85,50 +91,22 @@ export function TopNav() {
     <nav
       role="navigation"
       aria-label="Primary"
-      style={{
-        height: TOP_NAV_HEIGHT,
-        minHeight: TOP_NAV_HEIGHT,
-        // --bg-topbar from the pre-revamp palette is a deliberately
-        // greener tint than --bg-subtle so the nav reads as its own
-        // surface without needing a border or shadow to announce it.
-        background: "var(--bg-topbar)",
-        borderBottom: "1px solid var(--border)",
-        display: "flex",
-        alignItems: "center",
-        gap: isMobile ? 8 : 20,
-        padding: isMobile ? "0 12px" : "0 20px",
-        position: "sticky",
-        top: 0,
-        zIndex: 20,
-      }}
+      className={isMobile ? `${styles.nav} ${styles.navMobile}` : styles.nav}
     >
       {/* Mobile hamburger */}
       {isMobile && (
-        <div ref={mobileRef} style={{ position: "relative" }}>
+        <div ref={mobileRef} className={styles.menuWrap}>
           <button
             aria-label={retentionDue ? "Navigation menu, retention check due" : "Navigation menu"}
             aria-expanded={mobileOpen}
             onClick={() => setMobileOpen((o) => !o)}
-            style={{
-              padding: 6, display: "flex", flexDirection: "column", justifyContent: "center", gap: 4,
-              minWidth: 44, minHeight: 44, alignItems: "center", position: "relative",
-            }}
+            className={styles.burger}
           >
             {/* A126: the closed menu hides the Study row, so the button carries the dot */}
             {retentionDue && !mobileOpen && <RetentionDueDot testid="topnav-menu-retention-due" overlay />}
-            {[0, 1, 2].map((i) => (
-              <span
-                key={i}
-                style={{
-                  width: 18, height: 2, borderRadius: 1,
-                  background: "var(--text-dim)",
-                  transition: "transform var(--dur-fast) var(--ease), opacity var(--dur-fast) var(--ease)",
-                  transform:
-                    mobileOpen && i === 0 ? "rotate(45deg) translateY(4px)" :
-                    mobileOpen && i === 2 ? "rotate(-45deg) translateY(-4px)" : "none",
-                  opacity: mobileOpen && i === 1 ? 0 : 1,
-                }}
-              />
+            {/* Three bars that cross into an X while open (aria-expanded). */}
+            {[styles.barTop, styles.barMid, styles.barBottom].map((bar, i) => (
+              <span key={i} className={`${styles.burgerBar} ${bar}`} />
             ))}
           </button>
           {mobileOpen && <MobilePanel pathname={pathname} groups={groups} />}
@@ -136,14 +114,14 @@ export function TopNav() {
       )}
 
       {/* Logo — the approved wordmark (#728). */}
-      <Link href="/dashboard" aria-label="Sapling — home" style={{ display: "flex", alignItems: "center", textDecoration: "none" }}>
-        <SaplingWordmark width={isMobile ? 88 : 104} decorative />
+      <Link href="/dashboard" aria-label="Sapling — home" className={styles.logo}>
+        <SaplingWordmark width={isMobile ? WORDMARK_WIDTH.mobile : WORDMARK_WIDTH.desktop} decorative />
       </Link>
 
       {/* Desktop group row — hover/focus reveals each group's items */}
       {!isMobile && <DesktopGroups pathname={pathname} groups={groups} />}
 
-      <div style={{ marginLeft: isMobile ? "auto" : 0, display: "flex", alignItems: "center", gap: 8 }}>
+      <div className={isMobile ? `${styles.right} ${styles.rightMobile}` : styles.right}>
         {isAuthenticated && (
           <>
             <ShellActions />
@@ -152,14 +130,8 @@ export function TopNav() {
                 href="/admin"
                 aria-label="Admin"
                 title="Admin"
-                style={{
-                  display: "inline-flex", alignItems: "center", justifyContent: "center",
-                  width: 44, height: 44, borderRadius: "var(--r-sm)",
-                  color: pathname.startsWith("/admin") ? "var(--text)" : "var(--text-muted)",
-                  transition: "background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease)",
-                }}
-                onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-soft)"; e.currentTarget.style.color = "var(--text)"; }}
-                onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = pathname.startsWith("/admin") ? "var(--text)" : "var(--text-muted)"; }}
+                data-active={pathname.startsWith("/admin")}
+                className={styles.admin}
               >
                 <Icon name="shield" size={16} />
               </Link>
@@ -167,10 +139,7 @@ export function TopNav() {
             <div
               aria-label={userName || "Account"}
               title={userName || "Account"}
-              style={{
-                display: "flex", alignItems: "center", gap: 8,
-                padding: 3, borderRadius: "var(--r-full)",
-              }}
+              className={styles.account}
             >
               <Avatar name={userName || "?"} size={30} img={avatarUrl || undefined} />
             </div>
@@ -223,7 +192,7 @@ function DesktopGroups({ pathname, groups }: { pathname: string; groups: NavGrou
   };
   const scheduleClose = () => {
     cancelClose();
-    closeTimer.current = window.setTimeout(() => setOpenIndex(null), 140);
+    closeTimer.current = window.setTimeout(() => setOpenIndex(null), HOVER_CLOSE_DELAY_MS);
   };
 
   // Cancel any pending close-timer on unmount (e.g. route change while
@@ -260,7 +229,7 @@ function DesktopGroups({ pathname, groups }: { pathname: string; groups: NavGrou
   }, [openIndex]);
 
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 4, flex: 1, minWidth: 0 }}>
+    <div className={styles.groups}>
       {groups.map((g, i) => (
         <NavGroupTrigger
           key={g.label}
@@ -321,7 +290,7 @@ function NavGroupTrigger({
           onClose();
         }
       }}
-      style={{ position: "relative" }}
+      className={styles.groupWrap}
     >
       <button
         type="button"
@@ -329,41 +298,12 @@ function NavGroupTrigger({
         aria-expanded={open}
         onClick={() => (open ? onClose() : onOpen())}
         onFocus={onOpen}
-        style={{
-          display: "inline-flex",
-          alignItems: "center",
-          gap: 4,
-          padding: "6px 10px",
-          borderRadius: "var(--r-sm)",
-          fontSize: 13,
-          fontWeight: active ? 700 : 500,
-          color: active || open ? "var(--text)" : "var(--text-muted)",
-          whiteSpace: "nowrap",
-          transition: "color var(--dur-fast) var(--ease)",
-          cursor: "pointer",
-          background: "transparent",
-          border: "none",
-        }}
-        onMouseEnter={(e) => {
-          if (!active) e.currentTarget.style.color = "var(--text-dim)";
-        }}
-        onMouseLeave={(e) => {
-          if (!active && !open) e.currentTarget.style.color = "var(--text-muted)";
-        }}
+        data-active={active}
+        className={styles.trigger}
       >
         {group.label}
         {groupDue && <RetentionDueDot testid="topnav-group-retention-due" />}
-        <span
-          aria-hidden
-          style={{
-            display: "inline-flex",
-            transition: "transform var(--dur-fast) var(--ease)",
-            transform: open ? "rotate(180deg)" : "rotate(90deg)",
-            color: "currentColor",
-            opacity: 0.6,
-            marginTop: 1,
-          }}
-        >
+        <span aria-hidden className={styles.chev}>
           <Icon name="chev" size={10} />
         </span>
       </button>
@@ -380,21 +320,7 @@ function NavGroupTrigger({
           // navigation between items, which we don't implement. Linear
           // tab order through Links is the actual UX, so we leave the
           // semantics as "nav with links" rather than over-claim.
-          style={{
-            position: "absolute",
-            top: "100%",
-            left: 0,
-            minWidth: 200,
-            padding: 6,
-            background: "var(--bg-panel)",
-            border: "1px solid var(--border)",
-            borderRadius: "var(--r-md)",
-            boxShadow: "var(--shadow-md)",
-            display: "flex",
-            flexDirection: "column",
-            gap: 2,
-            zIndex: 100,
-          }}
+          className={styles.panel}
         >
           {group.items.map((item) => {
             const itemActive = isActiveItem(pathname, item.href);
@@ -402,30 +328,11 @@ function NavGroupTrigger({
               <Link
                 key={item.href}
                 href={item.href}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 10,
-                  padding: "8px 10px",
-                  borderRadius: "var(--r-sm)",
-                  background: itemActive ? "var(--bg-soft)" : "transparent",
-                  color: itemActive ? "var(--text)" : "var(--text-dim)",
-                  fontSize: 13,
-                  fontWeight: itemActive ? 600 : 400,
-                  textDecoration: "none",
-                  transition: "background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease)",
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.background = "var(--bg-soft)";
-                  e.currentTarget.style.color = "var(--text)";
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = itemActive ? "var(--bg-soft)" : "transparent";
-                  e.currentTarget.style.color = itemActive ? "var(--text)" : "var(--text-dim)";
-                }}
+                data-active={itemActive}
+                className={styles.item}
               >
                 <Icon name={item.icon} size={15} />
-                <span style={{ flex: 1 }}>{item.label}</span>
+                <span className={styles.itemLabel}>{item.label}</span>
                 {groupDue && item.href === RETENTION_NAV_HREF && (
                   <RetentionDueDot testid="topnav-retention-due" />
                 )}
@@ -441,22 +348,11 @@ function NavGroupTrigger({
 function MobilePanel({ pathname, groups }: { pathname: string; groups: NavGroup[] }) {
   const { due: retentionDue } = useRetentionNavDue();
   return (
-    <div
-      style={{
-        position: "absolute", top: "calc(100% + 6px)", left: 0,
-        minWidth: 240, padding: "6px 0",
-        background: "var(--bg-panel)", border: "1px solid var(--border)",
-        borderRadius: "var(--r-md)", boxShadow: "var(--shadow-md)",
-        zIndex: 100,
-      }}
-    >
+    <div className={styles.mobilePanel}>
       {groups.map((g, i) => (
         <React.Fragment key={g.label}>
-          {i > 0 && <div style={{ height: 1, background: "var(--border)", margin: "6px 8px" }} aria-hidden />}
-          <div
-            className="label-micro"
-            style={{ padding: "8px 14px 4px" }}
-          >
+          {i > 0 && <div className={styles.divider} aria-hidden />}
+          <div className={`label-micro ${styles.mobileHeading}`}>
             {g.label}
           </div>
           {g.items.map((item) => {
@@ -465,16 +361,8 @@ function MobilePanel({ pathname, groups }: { pathname: string; groups: NavGroup[
               <Link
                 key={item.href}
                 href={item.href}
-                style={{
-                  display: "flex", alignItems: "center", gap: 10,
-                  padding: "10px 14px", minHeight: 44, boxSizing: "border-box",
-                  fontSize: 14, fontWeight: itemActive ? 700 : 500,
-                  color: itemActive ? "var(--text)" : "var(--text-dim)",
-                  textDecoration: "none",
-                  transition: "background var(--dur-fast) var(--ease)",
-                }}
-                onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-soft)"; }}
-                onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+                data-active={itemActive}
+                className={styles.mobileItem}
               >
                 <Icon name={item.icon} size={15} />
                 {item.label}

@@ -1,0 +1,68 @@
+/* The end-of-session summary dialog (SessionSummary.tsx). */
+
+.backdrop {
+  position: fixed;
+  inset: 0;
+  background: var(--scrim);
+  z-index: var(--z-modal);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--sp-8);
+}
+
+/* 560px: the dialog's measure. */
+.dialog {
+  --summary-w: 560px;
+  width: min(var(--summary-w), 100%);
+  max-height: calc(100vh - var(--sp-32));
+  overflow-y: auto;
+  padding: var(--sp-14);
+  box-shadow: var(--shadow-lg);
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--sp-3);
+}
+
+/* 28px: between --fs-3xl (26) and --fs-4xl (30); no token. */
+.title {
+  --summary-title-size: 28px;
+  font-size: var(--summary-title-size);
+  margin-bottom: var(--sp-2);
+}
+
+.time {
+  font-size: var(--fs-md);
+  color: var(--text-dim);
+  margin-bottom: var(--sp-10);
+}
+
+.section {
+  margin-bottom: var(--sp-9);
+}
+
+.sectionLabel {
+  margin-bottom: var(--sp-4);
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-3);
+}
+
+.concept {
+  text-transform: none;
+  font-family: var(--font-sans);
+}
+
+.footer {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: var(--sp-10);
+  gap: var(--sp-4);
+}

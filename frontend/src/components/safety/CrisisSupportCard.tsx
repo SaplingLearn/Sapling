@@ -21,40 +21,31 @@ import React, { useCallback, useId, useRef, useState } from "react";
 import Dialog from "../Dialog";
 import { useFeedbackHold } from "@/lib/feedbackPacing";
 import { crisisSupportIn, type CrisisSupport, type CrisisSupportAction } from "@/lib/crisisSupport";
+import styles from "./CrisisSupportCard.module.css";
 
-const CARD: React.CSSProperties = {
-  background: "var(--info-soft)",
-  border: "1px solid rgba(62, 111, 138, 0.28)",
-  borderRadius: "var(--r-lg)",
-  padding: "18px 20px",
-  color: "var(--text)",
-  fontFamily: "var(--font-sans)",
-  fontSize: 14,
-  lineHeight: 1.6,
-};
+/**
+ * A resource link opens in a new tab when it is a web page; tel:/sms: links
+ * hand off to the phone app instead. The hrefs are the payload's (the copy
+ * lives in backend/services/crisis_support_copy.py), never configuration.
+ */
+const WEB_PROTOCOL = "https:";
 
-const ACTION: React.CSSProperties = {
-  display: "inline-flex",
-  alignItems: "center",
-  minHeight: 32,
-  padding: "4px 12px",
-  borderRadius: 999,
-  border: "1px solid rgba(62, 111, 138, 0.35)",
-  background: "var(--bg-panel)",
-  color: "var(--info)",
-  fontWeight: 600,
-  fontSize: 13,
-  textDecoration: "none",
-};
+function isWebPage(href: string): boolean {
+  try {
+    return new URL(href).protocol === WEB_PROTOCOL;
+  } catch {
+    return false;
+  }
+}
 
 function ActionLink({ action }: { action: CrisisSupportAction }) {
-  // https pages open in a new tab without a referrer; tel:/sms: hand off to
+  // Web pages open in a new tab without a referrer; tel:/sms: hand off to
   // the phone app and never navigate away from the student's work.
-  const external = action.href.toLowerCase().startsWith("https://");
+  const external = isWebPage(action.href);
   return (
     <a
       href={action.href}
-      style={ACTION}
+      className={styles.action}
       data-testid="crisis-support-action"
       {...(external ? { target: "_blank", rel: "noopener noreferrer" } : {})}
     >
@@ -67,13 +58,14 @@ export function CrisisSupportCard({
   support,
   onDismiss,
   titleId,
-  style,
+  bare = false,
 }: {
   support: CrisisSupport;
   /** Renders the payload's dismiss button (the dialog's way back). */
   onDismiss?: () => void;
   titleId?: string;
-  style?: React.CSSProperties;
+  /** No border of its own: a dialog frames it. */
+  bare?: boolean;
 }) {
   const autoId = useId();
   const headingId = titleId ?? autoId;
@@ -83,26 +75,26 @@ export function CrisisSupportCard({
     <section
       data-testid="crisis-support-card"
       aria-labelledby={headingId}
-      style={{ ...CARD, ...style }}
+      className={bare ? `${styles.card} ${styles.bare}` : styles.card}
     >
-      <h3 id={headingId} style={{ margin: "0 0 8px", fontSize: 16, fontWeight: 700, color: "var(--text)" }}>
+      <h3 id={headingId} className={styles.title}>
         {support.title}
       </h3>
       {support.intro.map((p, i) => (
-        <p key={i} style={{ margin: "0 0 8px" }}>{p}</p>
+        <p key={i} className={styles.para}>{p}</p>
       ))}
       {support.resources_heading && (
-        <p style={{ margin: "12px 0 6px", fontSize: 12, fontWeight: 600, color: "var(--info)", textTransform: "uppercase", letterSpacing: "0.04em" }}>
+        <p className={styles.resourcesHeading}>
           {support.resources_heading}
         </p>
       )}
-      <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 10 }}>
+      <ul className={styles.resources}>
         {support.resources.map((r) => (
           <li key={r.id} data-testid={`crisis-support-resource-${r.id}`}>
-            <div style={{ fontWeight: 700 }}>{r.name}</div>
-            <div style={{ color: "var(--text-dim)" }}>{r.detail}</div>
+            <div className={styles.resourceName}>{r.name}</div>
+            <div className={styles.resourceDetail}>{r.detail}</div>
             {r.actions.length > 0 && (
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6 }}>
+              <div className={styles.actions}>
                 {r.actions.map((a) => <ActionLink key={a.href} action={a} />)}
               </div>
             )}
@@ -110,10 +102,10 @@ export function CrisisSupportCard({
         ))}
       </ul>
       {support.closing.map((p, i) => (
-        <p key={i} style={{ margin: i === 0 ? "14px 0 0" : "8px 0 0" }}>{p}</p>
+        <p key={i} className={i === 0 ? styles.closingFirst : styles.closing}>{p}</p>
       ))}
       {onDismiss && support.dismiss_label && (
-        <div style={{ marginTop: 16, display: "flex", justifyContent: "flex-end" }}>
+        <div className={styles.footer}>
           <button type="button" className="btn btn--sm" data-testid="crisis-support-dismiss" onClick={onDismiss}>
             {support.dismiss_label}
           </button>
@@ -134,7 +126,7 @@ export function CrisisSupportDialog({
   if (!support) return null;
   return (
     <Dialog open onClose={onClose} labelledBy={titleId} showCloseButton={false} padding="0" size="md">
-      <CrisisSupportCard support={support} onDismiss={onClose} titleId={titleId} style={{ border: "none" }} />
+      <CrisisSupportCard support={support} onDismiss={onClose} titleId={titleId} bare />
     </Dialog>
   );
 }

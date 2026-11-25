@@ -13,6 +13,7 @@ import React from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, cleanup, fireEvent, waitFor, within } from "@testing-library/react";
 import type { EnrolledCourse } from "@/lib/api";
+import styles from "./notetaker.module.css";
 import type { Note as ApiNote, LinkedConcept as ApiLinkedConcept } from "@/lib/types";
 
 const { push, toastError } = vi.hoisted(() => ({ push: vi.fn(), toastError: vi.fn() }));
@@ -166,9 +167,10 @@ describe("loading and empty states", () => {
     vi.mocked(getCourses).mockReturnValue(new Promise(() => {}));
     const { container } = render(<NotetakerPage />);
     expect(screen.getByText("Loading notes…")).toBeInTheDocument();
-    expect((container.firstElementChild as HTMLElement).getAttribute("style")).toBe(
-      "display: flex; align-items: center; justify-content: center; height: 100%; color: var(--text-muted); font-size: 13px;",
-    );
+    // Styled by the screen's CSS module (#866), not inline.
+    const loading = container.firstElementChild as HTMLElement;
+    expect(loading.className).toBe(styles.loading);
+    expect(loading.getAttribute("style")).toBeNull();
     expect(screen.queryByPlaceholderText("Untitled note")).toBeNull();
   });
 
@@ -238,7 +240,8 @@ describe("four-rail layout", () => {
       "false",
     ],
     editor: [
-      "flex: 1 1 0%; min-width: 0px; display: flex; justify-content: center;",
+      // The editor slot is styled by the CSS module (#866); its frame stays inline.
+      null,
       "width: 100%; max-width: none; display: flex; transition: max-width var(--dur-slow) var(--ease);",
     ],
     detail: [
@@ -257,7 +260,8 @@ describe("four-rail layout", () => {
       "true",
     ],
     editor: [
-      "flex: 1 1 0%; min-width: 0px; display: flex; justify-content: center;",
+      // The editor slot is styled by the CSS module (#866); its frame stays inline.
+      null,
       "width: 100%; max-width: min(1200px, 96%); display: flex; transition: max-width var(--dur-slow) var(--ease);",
     ],
     detail: [

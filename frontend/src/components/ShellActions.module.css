@@ -1,0 +1,6 @@
+/* The sidebar layout's corner cluster (ShellCornerActions). useCornerDodge
+   writes its rise as an inline transform; this tweens it, so the button
+   glides between its resting corner and the spot above a control. */
+.corner {
+  transition: transform var(--dur) var(--ease-in-out);
+}

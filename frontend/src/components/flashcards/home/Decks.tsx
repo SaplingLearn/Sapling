@@ -15,6 +15,8 @@
  * their concepts, or to merge them into a new set in the builder.
  */
 import React from "react";
+import { AnimatePresence, motion, type Target } from "framer-motion";
+import { useMotionPresets } from "@/lib/motion";
 import { SET_NAME_MAX, type FlashcardSet } from "@/lib/flashcardSetsApi";
 import { useConfirm } from "@/lib/useConfirm";
 import { mixable, type Deck } from "./decksModel";
@@ -41,22 +43,26 @@ export interface DeckGridProps {
 }
 
 export function DeckGrid(props: DeckGridProps) {
+  // The decks there with the page just appear; a deck made or merged later
+  // grows in where it lands, and a deleted one fades out of its cell.
   return (
     <ul className={h.decks} aria-label="Your sets">
-      {props.decks.map(deck => (
-        <DeckCard
-          key={deck.id}
-          deck={deck}
-          ticked={props.ticked.includes(deck.id)}
-          playing={props.playing === deck.id}
-          busy={props.busy}
-          onPlay={props.onPlay}
-          onOpen={props.onOpen}
-          onTick={props.onTick}
-          onRename={props.onRename}
-          onDelete={props.onDelete}
-        />
-      ))}
+      <AnimatePresence initial={false}>
+        {props.decks.map(deck => (
+          <DeckCard
+            key={deck.id}
+            deck={deck}
+            ticked={props.ticked.includes(deck.id)}
+            playing={props.playing === deck.id}
+            busy={props.busy}
+            onPlay={props.onPlay}
+            onOpen={props.onOpen}
+            onTick={props.onTick}
+            onRename={props.onRename}
+            onDelete={props.onDelete}
+          />
+        ))}
+      </AnimatePresence>
       {props.canBuild && (
         <li className={h.deck}>
           <button type="button" className={h.deckNew} onClick={props.onBuild}>
@@ -82,12 +88,23 @@ function DeckCard({
   onRename: (set: FlashcardSet, name: string) => Promise<boolean>;
   onDelete: (set: FlashcardSet) => void;
 }) {
+  const m = useMotionPresets();
   const [menuOpen, setMenuOpen] = React.useState(false);
   const [renaming, setRenaming] = React.useState(false);
   const set = deck.set;
   const classes = [h.deck, ticked ? h.deckSel : "", menuOpen ? h.deckMenuOpen : ""].filter(Boolean).join(" ");
   return (
-    <li className={classes} data-palette={deck.palette} data-kind={deck.kind} data-busy={playing || undefined} data-testid={`flashcards-deck-${deck.id}`}>
+    <motion.li
+      initial={m.scaleIn.initial as Target}
+      animate={m.scaleIn.animate}
+      exit={m.scaleIn.exit}
+      transition={m.scaleIn.transition}
+      className={classes}
+      data-palette={deck.palette}
+      data-kind={deck.kind}
+      data-busy={playing || undefined}
+      data-testid={`flashcards-deck-${deck.id}`}
+    >
       <span aria-hidden="true" className={h.layer} />
       <span aria-hidden="true" className={`${h.layer} ${h.layerTwo}`} />
       <div className={h.face}>
@@ -133,7 +150,7 @@ function DeckCard({
 
         <DeckBody deck={deck} busy={busy} onPlay={onPlay} />
       </div>
-    </li>
+    </motion.li>
   );
 }
 
@@ -168,6 +185,8 @@ function Peek({ peek }: { peek: Deck["peek"] }) {
 }
 
 const pct = (count: number, total: number) => `${total ? Math.round((count / total) * 100) : 0}%`;
+/** A segment's share of the bar, as the custom property the stylesheet sizes it by. */
+const share = (count: number, total: number) => ({ "--share": pct(count, total) }) as React.CSSProperties;
 
 /** Map / learner-model tiers for the deck's concepts (Study's words), as a
  *  bar and a legend. Not a score from reviewing these cards (W8.4). What is
@@ -178,7 +197,7 @@ function Mastery({ counts }: { counts: MasteryCounts }) {
   return (
     <div className={h.masteryBlock}>
       <span className={h.mastery} role="img" aria-label={mapStatusAria(said)} data-testid="flashcards-mastery">
-        {legend.map(p => <i key={p.kind} data-kind={p.kind} style={{ width: pct(p.count, counts.total) }} />)}
+        {legend.map(p => <i key={p.kind} data-kind={p.kind} style={share(p.count, counts.total)} />)}
       </span>
       <div className={h.legend} aria-hidden="true" data-testid="flashcards-deck-legend">
         {legend.map(p => (

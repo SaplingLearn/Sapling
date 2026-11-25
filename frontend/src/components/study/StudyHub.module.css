@@ -4,24 +4,42 @@
    labels and whitespace. Only a single item that has to stand out (the Up
    Next block, a row you can act on) gets a fill. */
 
+/* Shared by the hub's parts (hubUi.tsx has the TS side). */
+
+/* The surface of the hub's pop-ups: deadlines, a tile's menu, Quick Reviews,
+   the Up Next block's "+N more" (hubUi's POPOVER, as a class). */
+.popover {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-lg);
+}
+/* One line, cut with an ellipsis (hubUi's ELLIPSIS). */
+.ellipsis { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* The full-screen layer behind a pop-up that a click closes it on. Same layer
+   as the pop-up: it comes first in the DOM, so the pop-up paints over it. */
+.clickAway { position: fixed; inset: 0; z-index: var(--z-popover); }
+/* What owns an open tile menu (the roadmap, its column, the tile) rises over
+   its siblings, or the next one paints over the menu. One over a raised
+   sibling: the rail's daily-goal card sits at --z-raised. */
+.lifted { z-index: calc(var(--z-raised) + 1); }
+
 /* Hover states. */
 .hoverOption:hover { background: var(--bg-subtle) !important; }
 .hoverIcon:hover { background: var(--bg-soft) !important; color: var(--text) !important; }
 .hoverTab:hover { border-bottom-color: var(--sap-300) !important; }
 .hoverTabOn:hover { border-bottom-color: var(--brand-forest); }
-.hoverSeg { transition: transform 120ms ease; }
+.hoverSeg { transition: transform var(--dur-fast) var(--ease), opacity var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease); }
 .hoverSeg:hover { transform: scale(1.15); }
 .hoverLegend:hover { background: var(--bg-subtle) !important; color: var(--text) !important; }
 .hoverMore:hover { background: var(--bg-subtle) !important; color: var(--text) !important; }
-.hoverQr { transition: filter var(--dur-fast) var(--ease); }
-.hoverQr:hover { filter: brightness(0.97); }
 .hoverRemove:hover { background: var(--err-soft) !important; }
 
 /* "+" after the last exam tab. Dashed, like the editor's own add-a-row
    button, so the two read as the same action. The bottom margin is the tabs'
    own bottom padding, which centres it on their two lines of text. */
 .addExam {
-  width: 28px; height: 28px; margin-bottom: 8px; flex-shrink: 0;
+  width: 28px; height: 28px; margin-bottom: var(--sp-4); flex-shrink: 0;
   display: grid; place-items: center;
   border: 1px dashed var(--border-strong); border-radius: var(--r-sm);
   background: transparent; color: var(--text-muted); cursor: pointer;
@@ -31,7 +49,7 @@
 
 /* A tool button is the Dashboard's header action exactly (.btn .btn--sm at
    40px, as DashboardActions sets it). */
-.tool { height: 40px; padding: 0 16px; font-size: var(--fs-md); white-space: nowrap; }
+.tool { height: 40px; padding: 0 var(--sp-8); font-size: var(--fs-md); white-space: nowrap; }
 
 /* Thin scrollbar for the Quick Reviews list. */
 .catScroll { scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; }
@@ -52,11 +70,16 @@
    re-keyed on the selected course: a course switch reads as the page turning
    rather than as a flicker. A change of exam TAB is not an entrance: what is
    on the page moves to its new state (useFlip.ts, on hubMotion.ts's clock). */
-.paneEnter { animation: studyPaneEnter 260ms cubic-bezier(0.2, 0.85, 0.35, 1) both; }
+.paneEnter { animation: studyPaneEnter var(--dur) var(--ease-emphasized) both; }
 
 /* Roadmap columns arrive left to right. The delay is set inline per column
    (--i), capped there so a long roadmap doesn't trail. */
-.colEnter { animation: studyPaneEnter 240ms cubic-bezier(0.2, 0.85, 0.35, 1) both; animation-delay: calc(var(--i, 0) * 45ms); }
+.colEnter {
+  /* One beat per column: MOTION.stagger.tight (lib/designTokens.ts). */
+  --col-stagger: 40ms;
+  animation: studyPaneEnter var(--dur) var(--ease-emphasized) both;
+  animation-delay: calc(var(--i, 0) * var(--col-stagger));
+}
 
 /* Concept tiles: selection, prerequisite highlighting and the legend filter
    all change a tile's border and background (and a dimmed tile's ring and
@@ -67,7 +90,9 @@
   /* A filled row with no border, like the Dashboard's Today's-plan rows: the
      roadmap is a list of things to open, not a wall of little cards. */
   background: var(--bg-subtle);
-  transition: background-color 160ms ease, opacity 160ms ease, box-shadow 160ms ease;
+  transition: background-color var(--dur-fast) var(--ease), opacity var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
+  /* The ring of the next and the selected tile. */
+  --tile-ring: 1.5px;
 }
 /* Hover moves the fill, not a filter or a transform: either would also hit
    the action menu that opens inside the tile. */
@@ -79,7 +104,7 @@
    ring goes round the whole tile, as the tile's own did. */
 .tileSelect {
   flex: 1; min-width: 0;
-  display: flex; align-items: center; gap: 10px;
+  display: flex; align-items: center; gap: var(--sp-5);
   padding: 0; border: 0; background: transparent;
   font: inherit; color: inherit; text-align: left; cursor: pointer;
 }
@@ -87,16 +112,16 @@
 .tile:has(> .tileSelect:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
 /* "..." on a tile: the menu that goes straight into a tool for this concept. */
 .tileMore {
-  width: 24px; height: 24px; margin-right: -4px; flex-shrink: 0;
+  width: 24px; height: 24px; margin-right: calc(-1 * var(--sp-2)); flex-shrink: 0;
   display: grid; place-items: center;
   border: 0; border-radius: var(--r-sm); background: transparent;
   color: var(--text-muted); cursor: pointer;
   transition: background-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
 }
 .tileMore:hover, .tileMore[aria-expanded="true"] { background: var(--border); color: var(--text); }
-.tileNext { background: var(--sap-50); box-shadow: inset 0 0 0 1.5px var(--brand-forest); }
+.tileNext { background: var(--sap-50); box-shadow: inset 0 0 0 var(--tile-ring) var(--brand-forest); }
 .tileNext:hover { background: var(--sap-100); }
-.tileSel, .tileSel:hover { background: var(--sap-100); box-shadow: inset 0 0 0 1.5px var(--brand-forest); }
+.tileSel, .tileSel:hover { background: var(--sap-100); box-shadow: inset 0 0 0 var(--tile-ring) var(--brand-forest); }
 /* A dimmed tile's fill drops to the page; its ring fades and its words go to
    --text-muted (RoadmapTile.tsx). The tile itself is never faded: an opacity
    on it would dim its text below AA. */
@@ -104,8 +129,8 @@
 
 /* The readiness ring and the mastery bars grow to their value instead of
    appearing at it. */
-.ring { transition: stroke-dasharray 520ms cubic-bezier(0.2, 0.85, 0.35, 1); }
-.bar { transition: width 420ms cubic-bezier(0.2, 0.85, 0.35, 1); }
+.ring { transition: stroke-dasharray var(--dur-slow) var(--ease-emphasized); }
+.bar { transition: width var(--dur-slow) var(--ease-emphasized), background-color var(--dur-slow) var(--ease); }
 
 /* Popovers: the course menu, the bell, the AI pace note, the "+N more"
    prerequisites, a tile's action menu and the Quick Reviews list. The class
@@ -160,13 +185,13 @@
      the exam tabs and the readiness band. */
   grid-template-rows: auto auto auto auto 1fr;
   align-content: start;
-  column-gap: 40px;
-  padding: 18px 32px 24px;
+  column-gap: var(--sp-20);
+  padding: var(--sp-9) var(--sp-16) var(--sp-12);
   box-sizing: border-box;
 }
 
 .areaHeader  { grid-column: 1 / 3; grid-row: 1; }
-.areaReviews { grid-column: 1 / 3; grid-row: 2; padding-bottom: 18px; }
+.areaReviews { grid-column: 1 / 3; grid-row: 2; padding-bottom: var(--sp-9); }
 /* Loop off (or its status not read yet): LoopReviews renders nothing, and the
    empty row must not leave its 18px under the header. */
 .areaReviews:empty { display: none; }
@@ -181,8 +206,8 @@
      content sits where it looks like it does and the rail ends on the page's
      right edge. The narrow layout drops it — there is no gap to bleed into,
      and it pushed the rail past the viewport edge. */
-  padding: 6px 32px 0 40px;
-  margin: 0 -32px 0 -40px;
+  padding: var(--sp-3) var(--sp-16) 0 var(--sp-20);
+  margin: 0 calc(-1 * var(--sp-16)) 0 calc(-1 * var(--sp-20));
 }
 
 /* The readiness figure beside the Up Next block. */
@@ -196,18 +221,25 @@
      prerequisite warning appeared or went away. */
   grid-template-columns: minmax(240px, 5fr) minmax(300px, 7fr);
   align-items: start;
-  gap: 32px;
+  gap: var(--sp-16);
 }
 
 /* ── the Up Next block ───────────────────────────────────────────────────────
    Sized from its OWN width (it is anywhere from 300px to ~700px wide depending
    on the window and the side nav), not the page's. Wide: one row, the concept
    on the left and its actions on the right. Narrow: one column. */
-.focus { container-type: inline-size; container-name: focus; }
+.focus {
+  container-type: inline-size; container-name: focus;
+  /* The least room the concept (its ring, name and prerequisite line) is
+     given beside the actions: the 72px ring, its gap, and the ~230px the
+     prerequisite line is measured for (hubModel CHIP_LINE). With less, the
+     actions wrap under the concept instead of squeezing its name. */
+  --focus-text-min: calc(var(--sp-32) * 5);
+}
 .focusBody {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: 14px;
+  gap: var(--sp-7);
 }
 /* The block is the SAME height whichever concept is in it. Its one variable
    part is the name, which runs to one or two lines: the concept row is always
@@ -219,8 +251,8 @@
    That 79px is also the ceiling on the mastery ring: it is the tallest thing
    in the row, so a ring past ~72px would make the BLOCK taller rather than
    just filling it. */
-.focusMain { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
-.focusConcept { display: flex; align-items: center; gap: 14px; min-height: 79px; }
+.focusMain { display: flex; flex-direction: column; gap: var(--sp-5); min-width: 0; }
+.focusConcept { display: flex; align-items: center; gap: var(--sp-7); min-height: 79px; }
 /* The clamp box is the LINE box, and the display face's glyphs are taller than
    the 1.2 line it is set on, so `overflow: hidden` was shaving the bottom off
    every descender ("Algorithms" lost the tail of its g). Measured overflow was
@@ -232,17 +264,25 @@
 .focusName {
   display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2;
   overflow: hidden; text-wrap: balance;
+  /* A single word longer than the line breaks rather than being cut. */
+  overflow-wrap: anywhere;
   padding-bottom: 0.1em;
   margin-bottom: -0.1em;
 }
-.focusActions { display: flex; flex-wrap: nowrap; gap: 8px; min-width: 0; }
+.focusActions { display: flex; flex-wrap: nowrap; gap: var(--sp-4); min-width: 0; }
 /* With no concept to show (a course with none yet, or all mastered) the block
    keeps the height it has with one: padding + label line + gap + concept row. */
 .focusEmpty { box-sizing: border-box; min-height: calc(32px + 14.5px + 10px + 79px); }
+/* Wide: the concept and its actions share a row while the concept keeps
+   --focus-text-min; past that the actions wrap onto a row of their own. (A
+   grid row of `1fr auto` gave the actions their whole width first, so at
+   ~1456px the name was cut to "Binary / Numb".) The wrap point is set by the
+   block's width, never by the concept, so picking a different concept still
+   never changes the block's height. */
 @container focus (min-width: 480px) {
-  .focusBody { grid-template-columns: minmax(0, 1fr) auto; column-gap: 18px; align-items: center; }
-  .focusMain { grid-column: 1; grid-row: 1; }
-  .focusActions { grid-column: 2; grid-row: 1; }
+  .focusBody { display: flex; flex-wrap: wrap; align-items: center; column-gap: var(--sp-9); row-gap: var(--sp-7); }
+  .focusMain { flex: 1 1 var(--focus-text-min); }
+  .focusActions { flex: 0 0 auto; }
 }
 /* Stacked: the actions share the row equally, so a longer label ("Review 12
    flashcards") shortens with an ellipsis instead of wrapping to a second row. */
@@ -255,15 +295,19 @@
    wash (6.11:1, hover 7.05:1). A wash of white lightened the olive under the
    white label to 3.77:1 (globals.css --sidenav-wash, spec §13 A135). */
 .focusAct {
-  display: inline-flex; align-items: center; gap: 7px;
-  height: 34px; padding: 0 12px; border-radius: var(--r-sm);
+  display: inline-flex; align-items: center; gap: var(--sp-4);
+  height: 34px; padding: 0 var(--sp-6); border-radius: var(--r-sm);
   background: var(--sidenav-wash); color: var(--sidenav-fg);
   font-size: var(--fs-md); font-weight: 600; text-decoration: none; white-space: nowrap;
-  transition: background-color var(--dur-fast) var(--ease);
+  transition: background-color var(--dur-fast) var(--ease), transform var(--dur-instant) var(--ease);
+  /* How far a press sinks the button. */
+  --press-scale: 0.97;
 }
+.focusAct:active { transform: scale(var(--press-scale)); }
 .focusAct:hover { background: var(--sidenav-wash-strong); }
 .focusActPrimary { background: var(--bg-panel); color: var(--brand-forest); }
-.focusActPrimary:hover { background: #fff; }
+/* The olive block's own white (--sidenav-fg), as a fill. */
+.focusActPrimary:hover { background: var(--sidenav-fg); }
 
 /* Below this the 360px rail no longer leaves the roadmap a usable column
    (200px tiles plus the readiness pair), so the rail goes under the main
@@ -272,14 +316,14 @@
   .hub {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: auto;
-    padding: 18px 24px 24px;
+    padding: var(--sp-9) var(--sp-12) var(--sp-12);
   }
   .areaHeader, .areaReviews, .areaTabs, .areaReady, .areaRoadmap, .areaRail {
     grid-column: 1;
     grid-row: auto;
   }
-  .areaRail { padding: 6px 2px 0 0; margin: 0; }
-  .readyGrid { gap: 24px; }
+  .areaRail { padding: var(--sp-3) var(--sp-1) 0 0; margin: 0; }
+  .readyGrid { gap: var(--sp-12); }
   /* The header and the exam-tab row hold more than fits in one line here. */
   .headRow, .areaTabs { flex-wrap: wrap; }
 }
@@ -287,15 +331,38 @@
 /* Past here the two floors (270 + 300 + 32) no longer fit, so the card does
    finally go under the figure — there is no width left to hold it beside. */
 @container studyhub (max-width: 730px) {
-  .readyGrid { grid-template-columns: minmax(0, 1fr); gap: 24px; }
+  .readyGrid { grid-template-columns: minmax(0, 1fr); gap: var(--sp-12); }
 }
 
 @container studyhub (max-width: 700px) {
   /* The Dashboard's mobile padding. */
-  .hub { padding: 8px 20px 16px; }
-  .readyGrid { gap: 20px; }
+  .hub { padding: var(--sp-4) var(--sp-10) var(--sp-8); }
+  .readyGrid { gap: var(--sp-10); }
 }
 
 /* Leaving for a tool: the hub fades back while the route changes. */
-.leaving { opacity: 0; transform: translateY(-6px); transition: opacity 180ms ease, transform 180ms ease; pointer-events: none; }
+/* An exit: --dur-fast on --ease-in, as lib/motion's exits; useToolNav's LEAVE_MS is the same duration. */
+.leaving { opacity: 0; transform: translateY(calc(-1 * var(--sp-3))); transition: opacity var(--dur-fast) var(--ease-in), transform var(--dur-fast) var(--ease-in); pointer-events: none; }
 @media (prefers-reduced-motion: reduce) { .leaving { transition: none; } }
+
+/* ── the page around the hub (StudyHub.tsx) ─────────────────────────────── */
+.page { background: var(--bg); }
+.hubType {
+  color: var(--text); font-family: var(--font-sans); font-size: var(--fs-md);
+  line-height: 1.45; -webkit-font-smoothing: antialiased;
+}
+.readySection { position: relative; align-content: start; padding: var(--sp-8) 0; border-bottom: 1px solid var(--border); }
+.rail { display: flex; flex-direction: column; }
+.dailyGoal { display: flex; flex-direction: column; gap: var(--sp-6); padding-bottom: var(--sp-12); }
+
+/* A student with no course this term. */
+.empty {
+  height: 100%; display: flex; flex-direction: column;
+  background: var(--bg); font-family: var(--font-sans); color: var(--text);
+}
+.emptyReviews { padding: var(--sp-9) var(--sp-12) 0; }
+.emptyBody { flex: 1; display: flex; align-items: center; justify-content: center; padding: var(--sp-16); }
+.emptyCopy { text-align: center; max-width: 420px; }
+/* The hub's own title: a step past --fs-5xl, the one place it is this large. */
+.emptyTitle { margin: 0; font-size: calc(var(--fs-5xl) + var(--sp-5)); letter-spacing: -0.02em; }
+.emptyLead { font-size: var(--fs-base); color: var(--text-dim); }

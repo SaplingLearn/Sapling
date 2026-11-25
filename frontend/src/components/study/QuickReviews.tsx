@@ -12,11 +12,11 @@
  * Flashcards — cue stream, not Teach.
  */
 import React from "react";
-import { INHERIT_FONT } from "@/lib/inheritFont";
 import { HANDOFF_COPY } from "@/lib/learningHandoffs";
 import { Icon } from "../Icon";
 import { quickReviewEstimate } from "./hubModel";
-import { CardsIcon, ELLIPSIS, POPOVER, StatusDot } from "./hubUi";
+import { CardsIcon, StatusDot } from "./hubUi";
+import q from "./QuickReviews.module.css";
 import s from "./StudyHub.module.css";
 import type { Concept } from "./studyModel";
 
@@ -41,32 +41,32 @@ function ReviewList({ reviews, courseLabel, onStart, onQuiz, fsrsDue }: {
   fsrsDue: boolean;
 }) {
   return (
-    <div style={{ position: "absolute", left: 0, right: 0, top: "100%", paddingTop: 8, zIndex: 31 }}>
-      <div role="dialog" aria-label={fsrsDue ? "Due reviews" : "Quick reviews"} className={s.pop} style={{ width: "100%", boxSizing: "border-box", ...POPOVER, padding: "14px 16px", display: "flex", flexDirection: "column", gap: 10 }}>
-        <span style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-          <span style={{ fontSize: "var(--fs-base)", fontWeight: 600, color: "var(--text)" }}>{reviewsLabel(reviews.length, fsrsDue)}</span>
-          <span style={{ fontSize: "var(--fs-sm)", color: "var(--text-muted)" }}>{quickReviewEstimate(reviews.length)} · {courseLabel}</span>
+    <div className={q.listAnchor}>
+      <div role="dialog" aria-label={fsrsDue ? "Due reviews" : "Quick reviews"} className={`${s.pop} ${s.popover} ${q.list}`}>
+        <span className={q.head}>
+          <span className={q.headTitle}>{reviewsLabel(reviews.length, fsrsDue)}</span>
+          <span className={q.headMeta}>{quickReviewEstimate(reviews.length)} · {courseLabel}</span>
         </span>
-        <span className={s.catScroll} style={{ display: "flex", flexDirection: "column", maxHeight: 200, overflowY: "auto", paddingRight: 4 }}>
-          {reviews.map(x => (
-            <span key={x.t.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 0", borderTop: "1px solid var(--border)" }}>
+        <span className={`${s.catScroll} ${q.scroll}`}>
+          {reviews.map((x, i) => (
+            <span key={x.t.id} className={q.item} style={{ "--i": i } as React.CSSProperties}>
               <StatusDot st={x.t.st} size={8} fixed />
-              <span style={{ flex: 1, minWidth: 0, fontSize: "var(--fs-md)", fontWeight: 600, ...ELLIPSIS }}>{x.t.name}</span>
-              <span style={{ fontSize: "var(--fs-xs)", color: "var(--text-muted)", whiteSpace: "nowrap" }}>{reason(x, fsrsDue)}</span>
+              <span className={`${q.itemName} ${s.ellipsis}`}>{x.t.name}</span>
+              <span className={q.itemReason}>{reason(x, fsrsDue)}</span>
             </span>
           ))}
         </span>
         {onQuiz ? (
-          <span style={{ display: "flex", gap: 8 }}>
-            <button type="button" className="btn btn--primary" data-testid="due-reviews-flashcards" onClick={onStart} style={{ flex: 1, height: 36, justifyContent: "center" }}>
+          <span className={q.actions}>
+            <button type="button" className={`btn btn--primary ${q.action} ${q.actionShare}`} data-testid="due-reviews-flashcards" onClick={onStart}>
               {HANDOFF_COPY.reviewFlashcards}
             </button>
-            <button type="button" className="btn" data-testid="due-reviews-quiz" onClick={onQuiz} style={{ flex: 1, height: 36, justifyContent: "center" }}>
+            <button type="button" className={`btn ${q.action} ${q.actionShare}`} data-testid="due-reviews-quiz" onClick={onQuiz}>
               {HANDOFF_COPY.practiceWhatsDue}
             </button>
           </span>
         ) : (
-          <button type="button" className="btn btn--primary" onClick={onStart} style={{ height: 36, justifyContent: "center" }}>Start review</button>
+          <button type="button" className={`btn btn--primary ${q.action}`} onClick={onStart}>Start review</button>
         )}
       </div>
     </div>
@@ -92,14 +92,13 @@ export function QuickReviews({ reviews, courseLabel, onStart, onQuiz = null, fsr
   const [open, setOpen] = React.useState(false);
   if (reviews.length === 0) return null;
   return (
-    <div onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)} style={{ position: "relative" }}>
-      <button className={s.hoverQr} onClick={onStart} onFocus={() => setOpen(true)} onBlur={() => setOpen(false)} aria-expanded={open}
-        style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, padding: "12px 14px", border: 0, borderRadius: "var(--r-md)", background: "var(--info-soft)", color: "var(--text)", ...INHERIT_FONT, textAlign: "left", cursor: "pointer" }}>
-        <span aria-hidden="true" style={{ width: 24, display: "grid", placeItems: "center", flexShrink: 0, color: "var(--info)" }}><CardsIcon size={21} /></span>
-        <span style={{ flex: 1, minWidth: 0, fontSize: "var(--fs-md)", fontWeight: 600, color: "var(--info)", ...ELLIPSIS }}>{reviewsLabel(reviews.length, fsrsDue)}</span>
+    <div onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)} className={q.anchor}>
+      <button className={q.row} onClick={onStart} onFocus={() => setOpen(true)} onBlur={() => setOpen(false)} aria-expanded={open}>
+        <span aria-hidden="true" className={q.glyph}><CardsIcon size={21} /></span>
+        <span className={`${q.title} ${s.ellipsis}`}>{reviewsLabel(reviews.length, fsrsDue)}</span>
         {/* The original action: the estimate and the chevron in ONE solid blue
             button, not a pale chip sitting beside a loose chevron. */}
-        <span className="chip" style={{ flexShrink: 0, height: 30, padding: "0 12px", borderRadius: "var(--r-sm)", background: "var(--info)", color: "var(--accent-fg)", borderColor: "transparent", fontSize: "var(--fs-sm)", fontWeight: 700 }}>
+        <span className={`chip ${q.estimate}`}>
           {quickReviewEstimate(reviews.length)}
           <Icon name="chev" size={12} />
         </span>

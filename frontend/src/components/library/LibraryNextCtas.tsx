@@ -7,6 +7,7 @@
 
 import Link from "next/link";
 import type { LibraryNext } from "@/lib/libraryNext";
+import styles from "./LibraryNextCtas.module.css";
 
 export function LibraryNextCtas({
   next,
@@ -22,27 +23,18 @@ export function LibraryNextCtas({
   return (
     <div
       data-testid={testIdPrefix}
-      style={{
-        marginTop: 10,
-        padding: 12,
-        borderRadius: "var(--r-sm)",
-        border: "1px solid var(--border)",
-        background: "var(--bg-panel)",
-        display: "flex",
-        flexDirection: "column",
-        gap: 8,
-      }}
+      className={styles.card}
     >
       {next.statusLine && (
         <div
           data-testid={`${testIdPrefix}-status`}
-          style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.4 }}
+          className={styles.status}
         >
           {next.statusLine}
         </div>
       )}
       {(next.treeHref || next.quizHref) && (
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+        <div className={styles.actions}>
           {next.treeHref && (
             <Link
               data-testid={`${testIdPrefix}-tree`}

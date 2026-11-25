@@ -378,8 +378,8 @@ describe("StudyHub", () => {
     expect(loopMore.getAttribute("aria-expanded")).toBe("true");
     // The open menu's tile (and its column) are lifted over the later tiles,
     // or the next tile paints over the menu.
-    expect(loop.style.zIndex).toBe("2");
-    expect(screen.getByTestId("tile-rec").style.zIndex).toBe("");
+    expect(loop.className).toContain("lifted");
+    expect(screen.getByTestId("tile-rec").className).not.toContain("lifted");
 
     // Esc closes it and hands focus back to the "..." that opened it.
     fireEvent.keyDown(document, { key: "Escape" });
