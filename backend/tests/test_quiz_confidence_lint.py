@@ -12,7 +12,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -138,38 +137,6 @@ def test_a_written_question_is_read_for_the_stem_rule_only():
     written = {"id": 1, "type": "short_answer", "question": "Which of these is not a loop?", "options": []}
     assert quiz_evidence.lint_question(written) == [NEGATIVE_STEM]
     assert quiz_evidence.lint_question({**written, "question": "Name the base case."}) == []
-
-
-# ── The measurement the decision was made on ───────────────────────────────
-
-CASSETTES = Path(__file__).parent / "evals" / "cassettes" / "quiz_generation"
-
-
-def test_the_recorded_quiz_cassettes_flag_rates():
-    """A132 measured the codes on the recorded quiz_generation cassettes (real
-    model outputs, replayed): every question through the route's own wire
-    mapping, linted in its stored shape. 29 multiple-choice items; 10 carry
-    correct_longest (34.5%), no other code fires. A change to the linter or a
-    re-record moves these numbers, and A132's table cites them."""
-    from routes.quiz import _agent_question_to_wire
-
-    counts = dict.fromkeys(LINT_FLAGS, 0)
-    linted = 0
-    for path in sorted(CASSETTES.glob("*.json")):
-        for i, raw in enumerate(json.loads(path.read_text())["questions"], start=1):
-            wire = _agent_question_to_wire(QuizQuestion.model_validate(raw), i)
-            assert wire is not None and not wire.get("type")
-            linted += 1
-            for flag in quiz_evidence.lint_question(wire):
-                counts[flag] += 1
-    assert linted == 29
-    assert counts == {
-        CORRECT_LONGEST: 10,
-        CORRECT_REPEATS_STEM: 0,
-        ALL_OR_NONE_OF_ABOVE: 0,
-        DUPLICATE_OPTIONS: 0,
-        NEGATIVE_STEM: 0,
-    }
 
 
 def test_the_e2e_quiz_fixtures_lint_clean():

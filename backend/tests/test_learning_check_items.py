@@ -5886,25 +5886,17 @@ class TestMcReasonEval:
         ctx = SimpleNamespace(output=SimpleNamespace(items=list(drafts)))
         return mod.McOptionsValidEvaluator().evaluate(ctx)
 
-    def test_the_baselines_pin_the_option_contract_and_the_recorded_yield(self):
-        """McOptionsValid — every recorded mc_reason draft passes every A37
-        option rule — is required at 1.0. McReasonValid is the recorded share
-        of mc_reason drafts stored (17/18 in the recordings of the A37 second,
-        third and round-4 reviews: the one drop is an A34 final_answer rule —
-        the answer printed in the stem — that every format meets).
-        McCorrectNotLongest is the recorded mean per case of stored mc_reason
-        drafts whose correct option is not strictly the longest (9 of 17
-        drafts in the round-4 recording, where each distractor states its own
-        misconception; 11 of 17 in the third review's; 12 of 17 in the
-        second's). The round-4 direct runs are the larger sample: the correct
-        option was strictly the longest in 56 of 135 stored items against 57
-        of 130 on the round-3 draft (24 calls each). A re-record changes them
-        here consciously."""
+    def test_the_baselines_pin_the_option_contract(self):
+        """The recorded check_items dataset holds the contracts at 1.0:
+        McOptionsValid (every recorded mc_reason draft passes every A37 option
+        rule) and FinalAnswerValid (A34). The yields (McReasonValid,
+        McCorrectNotLongest) are measurements a re-record moves, not
+        contracts, so they are not pinned here. This stays red until the owed
+        Claude re-record: the current baseline's McOptionsValid is 0.875."""
         baselines = pathlib.Path(__file__).parent / "evals" / "baselines.json"
         scores = json.loads(baselines.read_text())["check_items"]
         assert scores["McOptionsValidEvaluator"] == 1.0
-        assert scores["McReasonValidEvaluator"] == round(17 / 18, 6)
-        assert scores["McCorrectNotLongestEvaluator"] == round(9 / 18, 6)
+        assert scores["FinalAnswerValidEvaluator"] == 1.0
 
     def test_an_optionless_mc_reason_draft_is_an_output_error_the_retries_answer(self):
         """The Claude recording of 2026-11-24 drew a call whose every
