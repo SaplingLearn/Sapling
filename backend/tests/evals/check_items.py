@@ -4,11 +4,16 @@
     SAPLING_EVAL_MODE=record python tests/evals/check_items.py
 
 Cases are derived from fixtures/tutor_course.json (plaintext by design): for
-the first two documents, up to three concept_notes each → 6 cases, one concept
-per call (the standard tier; Flex is a serving choice, not a quality one), and
-one call per document for all three concepts at once → 2 cases: production
-drafts CHECK_ITEM_CONCEPTS_PER_CALL concepts per call (27 items), the shape A38's
-split-and-retry exists for (#866 Z24; recorded in the A111 pass).
+each of the first two documents, one call for all three concepts at once → 2
+cases: production drafts CHECK_ITEM_CONCEPTS_PER_CALL concepts per call (27
+items), the shape A38's split-and-retry exists for (#866 Z24; recorded in the
+A111 pass). Two one-concept calls stay beside them (_SINGLE_CONCEPT_CASES): a
+formula concept whose final answers carry notation the A34 verbatim copy and
+the leak check must survive (Chain Rule), and the concept whose mc_reason
+drafts came back with no options in 2 of 3 Claude runs on 2026-11-24 (Big-O
+Notation; the drafter's option-less retry answers it). The other four
+one-concept cases were dropped on 2026-11-25 (owner's call: production never
+drafts one concept per call).
 ConceptsCovered scores that shape: every concept asked for gets a stored item
 and no item names a concept it was not asked for.
 Chunks are the document summary plus each concept_note description, ids
@@ -99,6 +104,9 @@ _FIXTURE = Path(__file__).parent / "fixtures" / "tutor_course.json"
 _DOCS_PER_DATASET = 2
 _CONCEPTS_PER_DOC = 3
 _MAX_CASES = 8  # the eval-recording budget per dataset
+#: The one-concept calls kept beside production's three-concept shape (see the
+#: module docstring for why each).
+_SINGLE_CONCEPT_CASES = ("eval-doc-1__chain_rule", "eval-doc-2__big-o_notation")
 
 
 def _cases() -> list[Case[CheckItemsInput, CheckItemsOutput]]:
@@ -111,12 +119,9 @@ def _cases() -> list[Case[CheckItemsInput, CheckItemsOutput]]:
         ]
         for note in doc["concept_notes"][:_CONCEPTS_PER_DOC]:
             name = note["name"]
-            cases.append(
-                Case(
-                    name=f"{doc['document_id']}__{name.lower().replace(' ', '_')}",
-                    inputs=(name, tuple(chunks)),
-                )
-            )
+            case_name = f"{doc['document_id']}__{name.lower().replace(' ', '_')}"
+            if case_name in _SINGLE_CONCEPT_CASES:
+                cases.append(Case(name=case_name, inputs=(name, tuple(chunks))))
     for doc in data["documents"][:_DOCS_PER_DATASET]:  # #866 Z24: production's call shape
         chunks = [(f"{doc['document_id']}:c0", doc["summary"])] + [
             (f"{doc['document_id']}:c{i + 1}", f"{n['name']}: {n['description']}")
@@ -125,6 +130,7 @@ def _cases() -> list[Case[CheckItemsInput, CheckItemsOutput]]:
         names = tuple(n["name"] for n in doc["concept_notes"][:CHECK_ITEM_CONCEPTS_PER_CALL])
         assert len(names) == CHECK_ITEM_CONCEPTS_PER_CALL
         cases.append(Case(name=f"{doc['document_id']}__all_concepts", inputs=(names, tuple(chunks))))
+    assert {c.name for c in cases} >= set(_SINGLE_CONCEPT_CASES)
     assert len(cases) <= _MAX_CASES
     return cases
 
