@@ -27,6 +27,9 @@ export function flagMeta(key: string): FlagMeta {
   return { title: humanize(key), group: OTHER_GROUP, hideFlag: false };
 }
 
+/** Where a flag the nav list does not name sorts: after every named one. */
+const UNLISTED_RANK = 999;
+
 /** Flags grouped in nav order (Learn, Organize, …), anything else last. */
 export function groupFlags(flags: AdminFlag[]): { group: string; flags: AdminFlag[] }[] {
   const order = [...NAV_SECTIONS.map((s) => s.label), OTHER_GROUP];
@@ -50,7 +53,7 @@ export function groupFlags(flags: AdminFlag[]): { group: string; flags: AdminFla
       flags: (groups.get(g) ?? []).slice().sort((a, b) => {
         const ia = navOrder.indexOf(a.key);
         const ib = navOrder.indexOf(b.key);
-        return (ia < 0 ? 999 : ia) - (ib < 0 ? 999 : ib) || a.key.localeCompare(b.key);
+        return (ia < 0 ? UNLISTED_RANK : ia) - (ib < 0 ? UNLISTED_RANK : ib) || a.key.localeCompare(b.key);
       }),
     }));
 }
@@ -175,15 +178,22 @@ export function forcedNote(flag: AdminFlag): { chip: string; tip: string } | nul
   return { chip: "Set on the server", tip: `${v} for every student: the server's ${f.detail} environment variable forces it, ${tail}` };
 }
 
+const MS_PER_SECOND = 1000;
+const SECONDS_PER_MINUTE = 60;
+const MINUTES_PER_HOUR = 60;
+const HOURS_PER_DAY = 24;
+/** Past this many days the column shows a date instead of "Nd ago". */
+const RELATIVE_DAYS_MAX = 30;
+
 /** "3h ago" style, for the last-change column. */
 export function relativeTime(iso: string, now: number = Date.now()): string {
-  const s = Math.max(0, Math.round((now - new Date(iso).getTime()) / 1000));
-  if (s < 60) return "just now";
-  const m = Math.round(s / 60);
-  if (m < 60) return `${m}m ago`;
-  const h = Math.round(m / 60);
-  if (h < 24) return `${h}h ago`;
-  const d = Math.round(h / 24);
-  if (d < 30) return `${d}d ago`;
+  const s = Math.max(0, Math.round((now - new Date(iso).getTime()) / MS_PER_SECOND));
+  if (s < SECONDS_PER_MINUTE) return "just now";
+  const m = Math.round(s / SECONDS_PER_MINUTE);
+  if (m < MINUTES_PER_HOUR) return `${m}m ago`;
+  const h = Math.round(m / MINUTES_PER_HOUR);
+  if (h < HOURS_PER_DAY) return `${h}h ago`;
+  const d = Math.round(h / HOURS_PER_DAY);
+  if (d < RELATIVE_DAYS_MAX) return `${d}d ago`;
   return new Date(iso).toLocaleDateString();
 }
