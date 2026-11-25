@@ -259,13 +259,19 @@ textarea::placeholder { color: #8A8372; }
 /* the selection bubble's buttons, on the dark pill */
 .sapHoverOnDark:hover      { background: rgba(255,255,255,0.12) !important; }
 /* a document row: selected rows keep their tint, unselected ones warm */
-/* Owner's call 2026-11-25: the handoff's row hover is #F4F1EA, six units off
-   the #FAF8F3 page behind it — on a real screen you cannot tell a row is under
-   the cursor. #EDE9E0 is the next step down the same warm family (the design
-   names it for `.sapHoverWarmest`), so the row reads as hovered without
-   leaving the palette or colliding with the green selection states. */
-.sapRow:hover              { background: #EDE9E0; }
-.sapRow[data-on="1"]:hover { background: #EBF0E1; }
+/* A row carries its background INLINE (`transparent`, or the tint when it is
+   selected), and an inline style beats a stylesheet rule — so these two need
+   `!important` exactly as every `.sapHover*` above does. Without it the row
+   hover silently did nothing at all: the computed background stayed
+   `rgba(0,0,0,0)` with the cursor on the row.
+
+   The value is the owner's call of 2026-11-25. The handoff's #F4F1EA is six
+   units off the #FAF8F3 page behind it, which reads as no feedback; #EDE9E0 is
+   the next step down the same warm family (the design names it for
+   `.sapHoverWarmest`), so a hovered row is obvious without leaving the
+   palette or colliding with the green selection states. */
+.sapRow:hover              { background: #EDE9E0 !important; }
+.sapRow[data-on="1"]:hover { background: #EBF0E1 !important; }
 /* the upload modal's course radio keeps its chosen tint on hover */
 .sapUplCourse:hover            { background: #F7F4EE; }
 .sapUplCourse[data-on="1"]:hover { background: #F2F6EE; }
