@@ -446,6 +446,7 @@ _GUIDE_CLAIM_RESET = {"generating_at": None}
 
 _IN_CHUNK = 50  # ids per `in.(…)` filter — keeps the query string bounded
 _INSERT_CHUNK = 200
+_DANGLING_SHOWN = 5  # dangling FK values quoted in a BundleError message
 
 
 def _chunks(items: list, size: int) -> Iterator[list]:
@@ -943,6 +944,155 @@ def _wipe(user_id: str) -> dict[str, int]:
     return wipe_account_data(user_id)
 
 
+def _achievements_by_slug(ach_rows: list, ach_slug_of: dict) -> dict[str, str]:
+    """Target achievement id by slug, for every slug the bundle names (badges
+    and the achievement XP rows' source ids)."""
+    slugs = sorted(
+        ({r.get("achievement_slug") for r in ach_rows if isinstance(r, dict)}
+         | {v for v in ach_slug_of.values() if isinstance(v, str)}) - {None}
+    )
+    ach_by_slug: dict[str, str] = {}
+    for chunk in _chunks(slugs, _IN_CHUNK):
+        for a in table("achievements").select("id,slug", filters={"slug": _in(chunk)}) or []:
+            ach_by_slug[a["slug"]] = a["id"]
+    return ach_by_slug
+
+
+def _target_user_achievements(
+    rows: list, user_id: str, ach_by_slug: dict[str, str],
+) -> tuple[list[dict], int]:
+    """(badge rows for the target, rows dropped because the target lacks the slug)."""
+    out = []
+    skipped = 0
+    for r in rows:
+        aid = ach_by_slug.get(r.get("achievement_slug")) if isinstance(r, dict) else None
+        if not aid:
+            skipped += 1
+            continue
+        out.append({"user_id": user_id, "achievement_id": aid,
+                    "earned_at": r.get("earned_at"), "is_featured": r.get("is_featured")})
+    return out, skipped
+
+
+def _prepare_tables(
+    tables: dict[str, list], user_id: str, offering_map: dict, course_map: dict,
+    ach_slug_of: dict, ach_by_slug: dict[str, str],
+) -> tuple[dict[str, list[dict]], int, int]:
+    """(every SPECS table's rows remapped + re-encrypted for the target,
+    badges dropped, achievement XP rows dropped)."""
+    achievements_skipped = 0
+    prepared: dict[str, list[dict]] = {}
+    for spec in SPECS:
+        rows = tables.get(spec.name, [])
+        if spec.name == "user_achievements":
+            prepared[spec.name], achievements_skipped = _target_user_achievements(
+                rows, user_id, ach_by_slug,
+            )
+        else:
+            prepared[spec.name] = [
+                _target_row(spec.name, r, user_id, offering_map, course_map) for r in rows
+            ]
+    prepared["xp_events"], xp_skipped = _remap_achievement_xp(
+        user_id, prepared["xp_events"], ach_slug_of, ach_by_slug,
+    )
+    return prepared, achievements_skipped, xp_skipped
+
+
+def _check_bundle_fks(prepared: dict[str, list[dict]]) -> None:
+    """Every in-bundle FK names a parent row the bundle carries."""
+    for child, column, parent, parent_column in _BUNDLE_FKS:
+        have = {r.get(parent_column) for r in prepared[parent]}
+        dangling = sorted({str(r.get(column)) for r in prepared[child]} - {str(h) for h in have})
+        if dangling:
+            raise BundleError(
+                f"{child}.{column} names {parent} rows the bundle does not carry: {dangling[:_DANGLING_SHOWN]}"
+            )
+
+
+def _target_user_update(bundle: dict, prepared: dict[str, list[dict]]) -> dict:
+    """The `users` counters to write: the copied ones plus the derived XP cache."""
+    user_update = {
+        k: v for k, v in (bundle.get("user") or {}).items()
+        if k in USER_COUNTERS and k not in _DERIVED_COUNTERS
+    }
+    # users.total_xp/level are a cache of the ledger (xp_service._ledger_total):
+    # derive them from the rows actually imported, so dropped achievement XP
+    # is not still counted and the cache agrees with /activity on day one.
+    total_xp = sum(int(r.get("amount") or 0) for r in prepared["xp_events"])
+    user_update.update(total_xp=total_xp, level=level_for_xp(total_xp))
+    return user_update
+
+
+def _target_profile(bundle: dict, user_id: str) -> dict | None:
+    """The `user_profiles` row to upsert (re-encrypted), or None."""
+    if not bundle.get("profile"):
+        return None
+    profile = {k: v for k, v in bundle["profile"].items() if k not in _PROFILE_DROP}
+    username = profile.get("username")
+    if username:
+        # UNIQUE(username): keep the target's own username rather than
+        # fail the copy over someone else already holding it here.
+        taken = table("user_profiles").select(
+            "user_id",
+            filters={"username": f"eq.{username}", "user_id": f"neq.{user_id}"},
+            limit=1,
+        ) or []
+        if taken:
+            profile.pop("username")
+    # user_id first: the profile's 🔒 columns bind to it.
+    return _target_row("user_profiles", {"user_id": user_id, **profile}, user_id, {}, {})
+
+
+def _target_settings(bundle: dict, user_id: str) -> dict | None:
+    """The `user_settings` row to upsert (allowlisted columns only), or None."""
+    copied = {k: v for k, v in (bundle.get("settings") or {}).items() if k in _SETTINGS_COPIED}
+    if not copied:
+        return None
+    # Allowlist on the TARGET side too: whatever the peer sends, the
+    # target's consent/privacy/notification columns are never written.
+    return {"user_id": user_id, **copied}
+
+
+def _probe_target_schema(
+    prepared: dict[str, list[dict]], profile: dict | None, settings: dict | None,
+    user_update: dict,
+) -> None:
+    """Schema probe: every column about to be written must exist here."""
+    for name, rows in prepared.items():
+        if rows:
+            _probe_columns(name, {c for r in rows for c in r})
+    if profile:
+        _probe_columns("user_profiles", profile)
+    if settings:
+        _probe_columns("user_settings", settings)
+    if user_update:
+        _probe_columns("users", user_update)
+
+
+def _write_account(
+    user_id: str, prepared: dict[str, list[dict]], user_update: dict,
+    profile: dict | None, settings: dict | None,
+) -> dict[str, int]:
+    """The post-wipe writes, in FK order. Returns per-table row counts."""
+    counts: dict[str, int] = {}
+    if user_update:
+        table("users").update(user_update, filters={"id": f"eq.{user_id}"})
+    counts["users"] = 1
+    if profile:
+        table("user_profiles").upsert(profile, on_conflict="user_id")
+        counts["user_profiles"] = 1
+    if settings:
+        table("user_settings").upsert(settings, on_conflict="user_id")
+        counts["user_settings"] = 1
+
+    for spec in SPECS:
+        rows = prepared[spec.name]
+        for chunk in _chunks(rows, _INSERT_CHUNK):
+            table(spec.name).insert(chunk)
+        counts[spec.name] = len(rows)
+    return counts
+
+
 def import_account(user_id: str, bundle: dict) -> dict[str, int]:
     """Overwrite this environment's copy of the account with `bundle`.
 
@@ -965,110 +1115,23 @@ def import_account(user_id: str, bundle: dict) -> dict[str, int]:
 
     # Achievements by slug; one this environment does not have is dropped
     # (counted), not fatal — the rest of the account still moves.
-    ach_rows = tables.get("user_achievements", [])
     ach_slug_of: dict = catalog.get("achievements") or {}  # source achievement id → slug
-    slugs = sorted(
-        ({r.get("achievement_slug") for r in ach_rows if isinstance(r, dict)}
-         | {v for v in ach_slug_of.values() if isinstance(v, str)}) - {None}
+    ach_by_slug = _achievements_by_slug(tables.get("user_achievements", []), ach_slug_of)
+
+    prepared, achievements_skipped, xp_skipped = _prepare_tables(
+        tables, user_id, offering_map, course_map, ach_slug_of, ach_by_slug,
     )
-    ach_by_slug: dict[str, str] = {}
-    for chunk in _chunks(slugs, _IN_CHUNK):
-        for a in table("achievements").select("id,slug", filters={"slug": _in(chunk)}) or []:
-            ach_by_slug[a["slug"]] = a["id"]
-    achievements_skipped = 0
+    _check_bundle_fks(prepared)
 
-    prepared: dict[str, list[dict]] = {}
-    for spec in SPECS:
-        rows = tables.get(spec.name, [])
-        if spec.name == "user_achievements":
-            out = []
-            for r in rows:
-                aid = ach_by_slug.get(r.get("achievement_slug")) if isinstance(r, dict) else None
-                if not aid:
-                    achievements_skipped += 1
-                    continue
-                out.append({"user_id": user_id, "achievement_id": aid,
-                            "earned_at": r.get("earned_at"), "is_featured": r.get("is_featured")})
-            prepared[spec.name] = out
-        else:
-            prepared[spec.name] = [
-                _target_row(spec.name, r, user_id, offering_map, course_map) for r in rows
-            ]
-    prepared["xp_events"], xp_skipped = _remap_achievement_xp(
-        user_id, prepared["xp_events"], ach_slug_of, ach_by_slug,
-    )
-
-    for child, column, parent, parent_column in _BUNDLE_FKS:
-        have = {r.get(parent_column) for r in prepared[parent]}
-        dangling = sorted({str(r.get(column)) for r in prepared[child]} - {str(h) for h in have})
-        if dangling:
-            raise BundleError(
-                f"{child}.{column} names {parent} rows the bundle does not carry: {dangling[:5]}"
-            )
-
-    user_update = {
-        k: v for k, v in (bundle.get("user") or {}).items()
-        if k in USER_COUNTERS and k not in _DERIVED_COUNTERS
-    }
-    # users.total_xp/level are a cache of the ledger (xp_service._ledger_total):
-    # derive them from the rows actually imported, so dropped achievement XP
-    # is not still counted and the cache agrees with /activity on day one.
-    total_xp = sum(int(r.get("amount") or 0) for r in prepared["xp_events"])
-    user_update.update(total_xp=total_xp, level=level_for_xp(total_xp))
-
-    profile = None
-    if bundle.get("profile"):
-        profile = {k: v for k, v in bundle["profile"].items() if k not in _PROFILE_DROP}
-        username = profile.get("username")
-        if username:
-            # UNIQUE(username): keep the target's own username rather than
-            # fail the copy over someone else already holding it here.
-            taken = table("user_profiles").select(
-                "user_id",
-                filters={"username": f"eq.{username}", "user_id": f"neq.{user_id}"},
-                limit=1,
-            ) or []
-            if taken:
-                profile.pop("username")
-        # user_id first: the profile's 🔒 columns bind to it.
-        profile = _target_row("user_profiles", {"user_id": user_id, **profile}, user_id, {}, {})
-    settings = None
-    copied = {k: v for k, v in (bundle.get("settings") or {}).items() if k in _SETTINGS_COPIED}
-    if copied:
-        # Allowlist on the TARGET side too: whatever the peer sends, the
-        # target's consent/privacy/notification columns are never written.
-        settings = {"user_id": user_id, **copied}
-
-    # Schema probe: every column about to be written must exist here.
-    for name, rows in prepared.items():
-        if rows:
-            _probe_columns(name, {c for r in rows for c in r})
-    if profile:
-        _probe_columns("user_profiles", profile)
-    if settings:
-        _probe_columns("user_settings", settings)
-    if user_update:
-        _probe_columns("users", user_update)
+    user_update = _target_user_update(bundle, prepared)
+    profile = _target_profile(bundle, user_id)
+    settings = _target_settings(bundle, user_id)
+    _probe_target_schema(prepared, profile, settings, user_update)
 
     # ── Point of no return ──
     _wipe(user_id)
 
-    counts: dict[str, int] = {}
-    if user_update:
-        table("users").update(user_update, filters={"id": f"eq.{user_id}"})
-    counts["users"] = 1
-    if profile:
-        table("user_profiles").upsert(profile, on_conflict="user_id")
-        counts["user_profiles"] = 1
-    if settings:
-        table("user_settings").upsert(settings, on_conflict="user_id")
-        counts["user_settings"] = 1
-
-    for spec in SPECS:
-        rows = prepared[spec.name]
-        for chunk in _chunks(rows, _INSERT_CHUNK):
-            table(spec.name).insert(chunk)
-        counts[spec.name] = len(rows)
+    counts = _write_account(user_id, prepared, user_update, profile, settings)
     if achievements_skipped:
         counts["user_achievements_skipped"] = achievements_skipped
     if xp_skipped:
