@@ -42,6 +42,13 @@ HOLD_TOKENS = INPUT_TOKENS + REQUESTS * OUTPUT_TOKENS_PER_REQUEST
 _USD_QUANTUM = Decimal(1).scaleb(-llm_pricing.COST_SCALE)
 #: The providers a checklist bill can come from (llm_pricing.usage_provider).
 _BILLABLE_PROVIDERS = frozenset({"anthropic", "gemini"})
+#: Retry-After (seconds) while an earlier request may still hold the mutex or
+#: an unconfirmed bill: the two-minute grace. _BUSY_WAIT_WORDS is the same wait
+#: in the 409's words; change both together.
+BUSY_RETRY_AFTER_S = 120
+_BUSY_WAIT_WORDS = "two minutes"
+#: Retry-After (seconds) when the reservation expired or changed under a start.
+CHANGED_RETRY_AFTER_S = 2
 
 
 def billing_label(model_name: str) -> str:
@@ -125,7 +132,7 @@ def _token_cap(value) -> int:
 
 
 def _unavailable() -> HTTPException:
-    return HTTPException(503, "Checklist usage could not be confirmed. Please retry; an earlier request may still reserve allowance.", headers={"Retry-After": "120"})
+    return HTTPException(503, "Checklist usage could not be confirmed. Please retry; an earlier request may still reserve allowance.", headers={"Retry-After": str(BUSY_RETRY_AFTER_S)})
 
 
 @runs_as_service  # spec §13 A148: the checklist_budget_* RPCs and tables are service-only
@@ -231,7 +238,7 @@ def admit(user_id: str, enrollment_id: str, input_hash: str, model_names: tuple[
             detail = "Checklist usage needs reconciliation before another paid refresh. Your saved checklist is still available."
         raise HTTPException(429, detail)
     if status == "busy":
-        raise HTTPException(409, "A checklist request is still in progress. Retry in two minutes; an uncertain earlier bill will remain reserved.", headers={"Retry-After": "120"})
+        raise HTTPException(409, f"A checklist request is still in progress. Retry in {_BUSY_WAIT_WORDS}; an uncertain earlier bill will remain reserved.", headers={"Retry-After": str(BUSY_RETRY_AFTER_S)})
     raise _unavailable()
 
 
@@ -245,7 +252,7 @@ def start(reservation: Reservation) -> Reservation:
     if result["status"] == "usage_unavailable":
         raise _unavailable()
     if result["status"] != "started":
-        raise HTTPException(409, "Checklist request expired or changed. Please refresh again.", headers={"Retry-After": "2"})
+        raise HTTPException(409, "Checklist request expired or changed. Please refresh again.", headers={"Retry-After": str(CHANGED_RETRY_AFTER_S)})
     row = result.get("reservation", {})
     if (row.get("state") != "started" or row.get("operation_id") != str(reservation.operation_id)
         or row.get("fence") != reservation.fence or not row.get("dispatch_at")
