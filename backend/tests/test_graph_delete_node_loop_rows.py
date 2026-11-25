@@ -6,23 +6,17 @@ posttest_poses, posttest_skips, and the append-only teach-prompt records
 learning_prequestions / learning_self_explanations — are removed by
 `graph_service.delete_node` itself: the first two directly, the last two
 through the service-only `learning_node_erase` RPC
-(20261118195124_learning_session_node_erase.sql). Course delete drops one
+(20261118195124_learning_session_node_erase.sql; its SQL is proven in
+tests/integration/test_learning_session_node_erase_db.py). Course delete drops one
 term's enrollment and never touches a node (#766), so it orphans nothing.
 """
 from __future__ import annotations
 
-from db.migration_units import MIGRATION_UNITS
-import re
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from services import graph_service
-
-MIGRATION = next(
-    (MIGRATION_UNITS).glob("*_learning_session_node_erase.sql")
-)
-
 
 class _Db:
     """Every table call and rpc in order; graph_nodes answers `node_rows`."""
@@ -100,31 +94,6 @@ def test_course_delete_touches_no_node_and_so_no_loop_row():
         assert graph_service.delete_course("u1", "c1") == {"deleted": True}
     assert {c.args[0] for c in tbl.call_args_list} == {"enrollments"}
     rpc.assert_not_called()
-
-
-def test_the_erase_function_deletes_only_the_teach_prompt_rows_of_one_students_node():
-    sql = re.sub(r"--[^\n]*", "", MIGRATION.read_text())
-    body = sql[sql.index("FUNCTION learning_node_erase"):]
-    body = body[: body.index("$$;")]
-    assert "SECURITY DEFINER" in body and "SET search_path = public, pg_temp" in body
-    assert re.findall(r"DELETE FROM (\w+) WHERE user_id = p_user_id AND node_id = p_node_id;", body) == [
-        "learning_self_explanations", "learning_prequestions",
-    ]
-    assert len(re.findall(r"\bDELETE\b", body)) == 2
-    assert "GRANT EXECUTE ON FUNCTION learning_node_erase(text, text) TO service_role;" in sql
-    assert "REVOKE ALL ON FUNCTION learning_node_erase(text, text) FROM PUBLIC;" in sql
-
-
-def test_the_session_erase_function_clears_text_and_keeps_the_rows():
-    """C8's twin: a session delete clears the text only (A76 reads the row)."""
-    sql = re.sub(r"--[^\n]*", "", MIGRATION.read_text())
-    body = sql[sql.index("FUNCTION learning_session_text_erase"):]
-    body = body[: body.index("$$;")]
-    assert "SECURITY DEFINER" in body and "DELETE" not in body
-    assert "SET reply_text = NULL, text_erased_at = clock_timestamp()" in body
-    assert "SET guess_json = NULL, text_erased_at = clock_timestamp()" in body
-    assert body.count("WHERE user_id = p_user_id AND session_id = p_session_id") == 2
-    assert "GRANT EXECUTE ON FUNCTION learning_session_text_erase(text, text) TO service_role;" in sql
 
 
 def test_a_failed_clean_up_still_refreshes_the_course_context():
