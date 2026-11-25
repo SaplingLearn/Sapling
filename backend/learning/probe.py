@@ -284,6 +284,7 @@ def next_probe_item(
             and it.node_id in states
             and per_node[it.node_id] < PROBE_ITEMS_PER_SKILL_MAX
             and not _bracketed(independent_by_node[it.node_id])
+            and not strand_floor(by_node[it.node_id])
             and channel_for_format.get(it.format) in CHANNELS
             and _valid_difficulty(it.difficulty)
         ):
@@ -332,11 +333,10 @@ def next_probe_item(
     return min(candidates[node_id], key=rank)
 
 
-def novice_floor(history: Sequence[ProbeObservation]) -> bool:
-    """A session-wide fatigue stop, not proof of a skill's diagnostic floor.
-
-    Legacy/assisted answers count toward exhaustion but never toward a boundary.
-    """
+def _floored(history: Sequence[ProbeObservation]) -> bool:
+    """Enough misses at the easiest level, or enough "I don't know"s, in
+    `history`. Legacy/assisted answers count toward exhaustion but never toward
+    a boundary."""
     misses_easiest = sum(
         1
         for h in history
@@ -351,6 +351,27 @@ def novice_floor(history: Sequence[ProbeObservation]) -> bool:
         if isinstance(h, Mapping) and h.get("idk") is True and _graded_outcome(h) is not None
     )
     return misses_easiest >= NOVICE_FLOOR_MISSES or idks >= NOVICE_FLOOR_IDK
+
+
+def novice_floor(history: Sequence[ProbeObservation]) -> bool:
+    """A session-wide fatigue stop, not proof of a skill's diagnostic floor.
+
+    Only for a student who has answered nothing right in the session (spec §13
+    A153): two "I don't know"s on one concept say nothing about the others, so
+    with any correct answer they close that strand alone (`strand_floor`) and
+    the check-in goes on to find the edge of the rest.
+    """
+    if any(
+        isinstance(h, Mapping) and _graded_outcome(h) is True for h in history
+    ):
+        return False
+    return _floored(history)
+
+
+def strand_floor(history: Sequence[ProbeObservation]) -> bool:
+    """Whether one concept's own observations end its questions (A153): the
+    novice-floor counts within the strand, whatever the other strands show."""
+    return _floored(history)
 
 
 def diagnostic_summary(
@@ -432,7 +453,9 @@ def diagnostic_summary(
         elif all_bracketed:
             stop_reason = "observed_boundaries"
         elif rows and all(
-            r["status"] == "bracketed" or r["observations"] >= PROBE_ITEMS_PER_SKILL_MAX
+            r["status"] == "bracketed"
+            or r["observations"] >= PROBE_ITEMS_PER_SKILL_MAX
+            or strand_floor(by_node[r["node_id"]])
             for r in rows
         ):
             stop_reason = "per_skill_cap"

@@ -86,8 +86,8 @@ def test_an_unreadable_plan_is_503(monkeypatch):
 def test_concept_plan_assembles_states_misconceptions_and_edges():
     nodes = [ql._Node("a", "Alpha", "c1"), ql._Node("b", "Beta", "c1"), ql._Node("c", "Gamma", "c1")]
     states = {
-        "a": MagicMock(p_known=0.96, fsrs_s=2.0, fsrs_last_review_at=NOW - timedelta(days=10), fsrs_due_at=NOW - timedelta(days=1)),
-        "b": MagicMock(p_known=0.40, fsrs_s=None, fsrs_last_review_at=None, fsrs_due_at=None),
+        "a": MagicMock(p_known=0.96, p_at_evidence=0.96, fsrs_s=2.0, fsrs_last_review_at=NOW - timedelta(days=10), fsrs_due_at=NOW - timedelta(days=1)),
+        "b": MagicMock(p_known=0.40, p_at_evidence=0.40, fsrs_s=None, fsrs_last_review_at=None, fsrs_due_at=None),
     }
     with (
         patch.object(ql, "_nodes", return_value=nodes),
@@ -114,7 +114,7 @@ def test_concept_plan_caps_each_course_on_its_own():
         ql._Node("b2", "B2", "c2"),
     ]
     # every c1 concept at 0.7 ranks before the c2 ones at 0.4 (the fringe is p-descending)
-    states = {n.id: MagicMock(p_known=0.7 if n.course_id == "c1" else 0.4, fsrs_s=None,
+    states = {n.id: MagicMock(p_known=0.7 if n.course_id == "c1" else 0.4, p_at_evidence=0.7, fsrs_s=None,
                               fsrs_last_review_at=None, fsrs_due_at=None) for n in nodes}
     with (
         patch.object(ql, "_nodes", return_value=nodes) as read_nodes,
@@ -135,8 +135,8 @@ def test_concept_plan_caps_each_course_on_its_own():
 def test_prereq_guidance_redirects_to_the_weak_parent():
     nodes = [ql._Node("p", "Foundations", "c1"), ql._Node("c", "Matrices", "c1")]
     states = {
-        "p": MagicMock(p_known=0.25),
-        "c": MagicMock(p_known=0.40),
+        "p": MagicMock(p_known=0.25, p_at_evidence=0.25),
+        "c": MagicMock(p_known=0.40, p_at_evidence=0.40),
     }
     with (
         patch.object(ql, "_nodes", return_value=nodes),
@@ -160,7 +160,7 @@ def test_prereq_guidance_is_inert_with_empty_edges():
     nodes = [ql._Node("alone", "Alone", "c1")]
     with (
         patch.object(ql, "_nodes", return_value=nodes),
-        patch.object(ql, "read_states", return_value={"alone": MagicMock(p_known=0.2)}),
+        patch.object(ql, "read_states", return_value={"alone": MagicMock(p_known=0.2, p_at_evidence=0.2)}),
         patch.object(ql, "_prereq_edges", return_value=[]),
     ):
         got = ql.prereq_guidance("u", "alone", "c1")

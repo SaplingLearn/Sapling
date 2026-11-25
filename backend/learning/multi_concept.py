@@ -149,7 +149,7 @@ def combinations(
 
 
 class ComponentState(NamedTuple):
-    p_known: float  # decayed
+    p_known: float  # the planning belief (learner_state.planning_p)
     n_strong_unassisted: int
 
 

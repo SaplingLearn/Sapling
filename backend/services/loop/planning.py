@@ -31,7 +31,7 @@ from learning.goals import (
     progress as goal_progress,
 )
 from learning.posttest_store import posttest_anchors
-from learning.learner_state import read_states
+from learning.learner_state import planning_p, read_states
 from learning.loop_state_store import reported_hashes, revealed_hashes, seen_hashes
 from learning.params import (
     BKT_L0,
@@ -235,9 +235,10 @@ class _PlanEdgesRead:
 
 
 def _plan_states(user_id: str, course_id: str) -> dict[str, float]:
-    """Decayed p_known for every graph node of (user, course) — one
-    `graph_nodes` read, one `learner_state` read (PKG-03); BKT_L0 for a node
-    with no learner_state row."""
+    """The planning belief (`learner_state.planning_p`: decayed p_known, with a
+    learned concept proficient until it decays below the profic band) for every
+    graph node of (user, course) — one `graph_nodes` read, one `learner_state`
+    read (PKG-03); BKT_L0 for a node with no learner_state row."""
     rows = list(page_all(
         _PlanNodesRead(), "id",
         filters={"user_id": f"eq.{user_id}", "course_id": f"eq.{course_id}"},
@@ -245,7 +246,7 @@ def _plan_states(user_id: str, course_id: str) -> dict[str, float]:
     ))
     ids = [r["id"] for r in rows if r.get("id")]
     states = read_states(user_id, ids)
-    return {n: (states[n].p_known if n in states else BKT_L0) for n in ids}
+    return {n: (planning_p(states[n]) if n in states else BKT_L0) for n in ids}
 
 
 #: The map tiers that show progress (`learning.bkt.tier_for`): a concept in one

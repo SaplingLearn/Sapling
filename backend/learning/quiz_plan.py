@@ -331,7 +331,7 @@ def next_step(
     learn target is always named when there is one, so a client without the
     review queue (the learning loop switched off) can offer it instead."""
     due = sum(1 for s in states if _due(s, now))
-    learn = weakest_ready({s.node_id: s.p_known for s in states}, prereq_edges)
+    learn = weakest_ready({s.node_id: s.p_plan for s in states}, prereq_edges)
     if due:
         return NextStep(NEXT_REVIEW, due, learn)
     if learn is not None:

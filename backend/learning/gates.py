@@ -429,6 +429,68 @@ def _hedged_content(text: str) -> str:
     return " ".join(found)
 
 
+# ── Spec §13 A153: a message that only asks ────────────────────────────────
+# A120 looks at messages holding a listed phrase or plea. "hint please", "help
+# me", "tell me the answer please", "can you explain more", "next" and "?" hold
+# none, so each counted as a genuine attempt and unlocked the next hint. A
+# message is refused here only when it plainly asks and offers nothing: every
+# word is filler and at least one is an asking word, or it is one of the
+# requests for content below. The safe direction is to count it: a filler word
+# that answers an item ("the mean", "class", "because it is") has no asking word
+# beside it, and a digit, a relation or a guess word always counts.
+
+#: Words that ask or fill a turn. All are in _ATTEMPT_FILLER, and none answers
+#: an item by itself.
+_ASKING = frozenset(
+    """
+    help hint hints explain tell give show please pls plz thanks thank
+    what whats why how hows forgot lol lmao haha hey hi ok okay hmm hm ugh uh um
+    confused stuck clueless
+    """.split()
+)
+#: Bare-answer words that are ordinary grammar beside an asking word ("can you
+#: help", "I forgot", "what does this mean").
+_ASKED_WITH = frozenset({"can", "could", "do", "does", "will", "would", "a", "an", "i"})
+#: A request for content: its object is asked for, never offered ("show me the
+#: steps", "explain the base case", "can you walk through it").
+_ASKS_FOR = re.compile(
+    r"^(?:(?:can|could|will|would) (?:you|u) )?(?:please |pls |plz )?"
+    r"(?:(?:show|tell|give|help|teach) (?:me|us)|explain|walk (?:me )?through"
+    r"|(?:i )?(?:need|want) (?:a |the |some |more )?(?:hints?|help|answers?|solution)"
+    r"(?=$| (?:with|on|for|about|here|now|please|pls|plz)\b))\b"
+)
+
+
+#: Sentence marks: a message of these alone offers nothing. A sign, an operator
+#: or a bracket ("-", ">", "[]") may be the answer, so it is not one of them.
+_STOPS = frozenset(".?!,;:\u2026\u2019'\"")
+_TYPOGRAPHIC = frozenset("\u2026\u2018\u2019\u201c\u201d\u2013\u2014\ufe0f")
+#: Emoji start here; every mathematical symbol and script below can be an answer.
+_EMOJI_FROM = "\U0001f300"
+
+
+def _only_asks(text: str) -> bool:
+    """A153: whether a message with no A120 phrase or plea offers nothing."""
+    raw = text or ""
+    if any(not (ch.isascii() or ch in _TYPOGRAPHIC or ch >= _EMOJI_FROM) for ch in raw):
+        return False  # "π", "∅", "水": `_norm` drops these, and any may be the answer
+    words = _norm(raw).split()
+    if not words:
+        return bool(raw.strip()) and all(
+            ch.isspace() or ch in _STOPS or ch >= _EMOJI_FROM for ch in raw
+        )
+    if _DIGIT.search(_QUESTION_REF.sub(" ", raw)) or _RELATION.search(raw):
+        return False
+    if any(w in _GUESS_WORDS for w in words):
+        return False
+    if len(_CLAUSE.split(raw.strip().rstrip(".!?"))) == 1 and _ASKS_FOR.match(_norm(raw)):
+        return True
+    return any(w in _ASKING for w in words) and all(
+        w in _ATTEMPT_FILLER and w not in _BARE_ANSWER - _ASKED_WITH
+        for w in words
+    )
+
+
 def vetoes_attempt(text: str) -> bool:
     """`is_genuine_attempt`'s `matched_non_attempt` (spec §13 A120): True when
     `text` holds a non-attempt phrase or plea and nothing else in it counts
@@ -438,9 +500,11 @@ def vetoes_attempt(text: str) -> bool:
     vetoed ("idk", "no idea lol", "I'm not sure, can I have a hint?", every
     probe plea); a hedge beside an answer does not ("X. I'm not sure what Y
     is called", "the mitochondria idk", "idk maybe 7"). A hedge-free message
-    is never vetoed here (the length bar decides it, as before A120)."""
+    is vetoed only when it offers nothing at all (`_only_asks`, spec §13 A153):
+    a request, small talk or punctuation. Anything that could be an answer,
+    however short, still counts."""
     if not has_non_attempt_phrase(text):
-        return False
+        return _only_asks(text)
     if not _hedged_content(text):
         return True
     return any(p in IDK_PATTERNS for p in non_attempt_phrases(text))

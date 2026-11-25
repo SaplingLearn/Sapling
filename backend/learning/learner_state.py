@@ -21,7 +21,7 @@ from datetime import datetime, timedelta, timezone
 from db.connection import page_all, table
 from db.scope import runs_as_service
 from learning import bkt
-from learning.params import BKT_L0, BKT_P_MAX
+from learning.params import BAND_DEVELOP_MAX, BKT_L0, BKT_P_MAX, BKT_PROFICIENT
 
 LEARNER_STATE_COLUMNS = (
     "user_id,node_id,p_known,n_strong_unassisted,streak_unassisted,"
@@ -43,6 +43,9 @@ class LearnerState:
     user_id: str
     node_id: str
     p_known: float = BKT_L0  # decayed at read; the posterior after an update
+    # The belief as the last evidence left it, before decay. Set by a read and
+    # read by `planning_p` only; a writer never reads or stores it.
+    p_at_evidence: float = BKT_L0
     n_strong_unassisted: int = 0
     streak_unassisted: int = 0
     max_streak_unassisted: int = 0  # §13 A3: wheelspin reads "ever reached 3"
@@ -95,7 +98,9 @@ def _from_row(row: dict, now: datetime) -> LearnerState:
     if stored is None:
         raise ValueError(f"learner_state row node={row.get('node_id')} has no p_known")
     p_stored = float(stored)
-    st = LearnerState(user_id=row["user_id"], node_id=row["node_id"], p_known=p_stored, exists=True)
+    st = LearnerState(
+        user_id=row["user_id"], node_id=row["node_id"], p_known=p_stored, p_at_evidence=p_stored, exists=True
+    )
     version = row.get("evidence_version", 0)
     if type(version) is not int or version < 0:
         raise ValueError("Invalid learner-state evidence version")
@@ -115,6 +120,26 @@ def _from_row(row: dict, now: datetime) -> LearnerState:
     # not finite and > 0, or p outside [0, 1], raises there (HANDOFF-01 (h)).
     st.p_known = bkt.decayed_p(p_stored, elapsed_days, st.fsrs_s)
     return st
+
+
+def planning_p(st: LearnerState) -> float:
+    """The belief planning decides proficiency by (spec §13 A153).
+
+    Proficiency is entered at BKT_PROFICIENT and left only below BAND_DEVELOP_MAX,
+    the floor of the profic band A122 already calls a proficient prerequisite.
+    Decay-at-read alone left it long before FSRS asked for the review: at the
+    0.90 retention a review is due at, the surest belief reads 0.934, so nothing
+    was ever proficient on its due date and every concept was lost about 60% of
+    the way there. It was then planned as new material ahead of concepts the
+    student had never met, and it locked what depends on it. Forgetting is the
+    review queue's to act on until the belief really is low.
+
+    A learned concept inside that range reads exactly BKT_PROFICIENT, so it is
+    never ranked above one still at its full belief. `p_known` is unchanged: the
+    band, the ceiling, the next evidence update and every report read it."""
+    if st.p_at_evidence >= BKT_PROFICIENT and BAND_DEVELOP_MAX <= st.p_known < BKT_PROFICIENT:
+        return BKT_PROFICIENT
+    return st.p_known
 
 
 @runs_as_service  # spec §13 A148: learner_state is service-only; read by the graph and the tutor

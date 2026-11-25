@@ -36,7 +36,7 @@ from learning import item_keys, quiz_gates, quiz_plan
 from learning.gate import LEARNING_LOOP_FLAG
 from learning.gate import learning_loop_for_request
 from learning.evidence import PREREQ_RELATIONSHIP_TYPE
-from learning.learner_state import read_states
+from learning.learner_state import planning_p, read_states
 from learning.params import (
     BKT_L0,
     EDGE_PREREQ_SOURCE_IS_PREREQ,
@@ -190,6 +190,7 @@ def _concept_states(user_id: str, nodes: Sequence[_Node], now: datetime) -> list
             quiz_plan.ConceptState(
                 node_id=node.id,
                 p_known=st.p_known if st else BKT_L0,
+                planning_p=planning_p(st) if st else BKT_L0,
                 fsrs_s=st.fsrs_s if st else None,
                 fsrs_last_review_at=st.fsrs_last_review_at if st else None,
                 fsrs_due_at=st.fsrs_due_at if st else None,
@@ -267,7 +268,7 @@ def prereq_guidance(user_id: str, requested_node_id: str, course_id: str | None)
             # mid-request keeps the request unchanged.
             return None
         states = read_states(user_id, list(by_id))
-        p_known = {n.id: (states[n.id].p_known if n.id in states else BKT_L0) for n in nodes}
+        p_known = {n.id: (planning_p(states[n.id]) if n.id in states else BKT_L0) for n in nodes}
         edges = _prereq_edges(user_id, by_id)
         preferred = quiz_plan.prefer_pose(requested_node_id, p_known, edges)
         if preferred is None or preferred not in by_id:

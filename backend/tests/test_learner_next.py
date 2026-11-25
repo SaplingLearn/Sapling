@@ -76,6 +76,7 @@ def test_service_learner_next_wires_the_three_buckets():
             (),
             {
                 "p_known": 0.96,
+                "p_at_evidence": 0.96,
                 "fsrs_s": 2.0,
                 "fsrs_last_review_at": NOW - timedelta(days=10),
                 "fsrs_due_at": NOW - timedelta(days=1),
@@ -86,6 +87,7 @@ def test_service_learner_next_wires_the_three_buckets():
             (),
             {
                 "p_known": 0.40,
+                "p_at_evidence": 0.40,
                 "fsrs_s": None,
                 "fsrs_last_review_at": None,
                 "fsrs_due_at": None,

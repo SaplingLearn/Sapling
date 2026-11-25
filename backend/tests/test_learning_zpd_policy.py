@@ -1615,15 +1615,22 @@ def test_a_routed_non_attempt_always_holds_a_non_attempt_phrase_property():
         assert not non_attempt_phrases(text) or has_non_attempt_phrase(text), repr(text)
 
 
+def gates_question_free(text: str) -> str:
+    from learning.gates import _QUESTION_REF
+
+    return _QUESTION_REF.sub(" ", text)
+
+
 def test_the_a120_veto_property():
-    """Spec §13 A120, for any text: the veto needs a phrase or plea (a
-    hedge-free message is judged as before A120: its whole text counts), and a
+    """Spec §13 A120, for any text: the veto needs a phrase or plea, or a message
+    that only asks (A153; a hedge-free one's content is still its whole text), and a
     message the A16 route records as idk evidence is always vetoed — the route
     and the gate never disagree on "I don't know"."""
     import random
 
     from learning.gates import (
         IDK_PATTERNS,
+        _only_asks,
         attempt_content,
         has_non_attempt_phrase,
         non_attempt_phrases,
@@ -1636,7 +1643,8 @@ def test_the_a120_veto_property():
         text = "".join(rng.choice(parts) for _ in range(rng.randint(1, 9)))
         vetoed = vetoes_attempt(text)
         if not has_non_attempt_phrase(text):
-            assert vetoed is False and attempt_content(text) == text.strip(), repr(text)
+            assert vetoed is _only_asks(text) and attempt_content(text) == text.strip(), repr(text)
+            assert not (vetoed and any(ch.isdigit() for ch in gates_question_free(text))), repr(text)
         if any(p in IDK_PATTERNS for p in non_attempt_phrases(text)):
             assert vetoed is True, repr(text)
         if has_non_attempt_phrase(text) and not vetoed:
