@@ -202,8 +202,11 @@ describe("the old page's actions all still work", () => {
 
     fireEvent.click(screen.getByTestId("library-view-panel"));
     expect(screen.getByTestId("library-view-panel").getAttribute("aria-selected")).toBe("true");
-    // The same document, drawn as a card.
-    expect(screen.getByTestId("library-doc-d1")).toBeTruthy();
+    // The switch cross-slides, so for one slide BOTH views are mounted and the
+    // document is drawn twice — the outgoing copy `aria-hidden`. Wait for the
+    // leaving half to go before asserting there is one card.
+    await waitFor(() =>
+      expect(screen.getAllByTestId("library-doc-d1")).toHaveLength(1));
   });
 
   it("the course scope filters as the old rail did", async () => {

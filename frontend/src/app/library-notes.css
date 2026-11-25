@@ -46,8 +46,18 @@
    tab sits on: Panel is the right tab, so it enters from the right, and List
    from the left. Direction is what makes the toggle feel like a switch rather
    than a replace. */
-@keyframes sapViewInRight { from { opacity: 0; transform: translateX(28px); } to { opacity: 1; transform: none; } }
-@keyframes sapViewInLeft  { from { opacity: 0; transform: translateX(-28px); } to { opacity: 1; transform: none; } }
+@keyframes sapViewInRight  { from { opacity: 0; transform: translateX(28px); }  to { opacity: 1; transform: none; } }
+@keyframes sapViewInLeft   { from { opacity: 0; transform: translateX(-28px); } to { opacity: 1; transform: none; } }
+/* The outgoing half of the same switch. Both views are on screen together for
+   the length of one slide, stacked in the same grid cell, so the new one
+   arrives as the old one leaves instead of appearing into a gap. */
+@keyframes sapViewOutLeft  { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateX(-28px); } }
+@keyframes sapViewOutRight { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateX(28px); } }
+/* While the two slide, the rows and cards must not ALSO stagger themselves in:
+   two motions at once reads as a stutter, where the point is one panel moving
+   across. The slide owns the frame; the per-row entrance returns next time the
+   list is built for any other reason. */
+[data-sliding] [role="row"], [data-sliding] [data-card] { animation: none !important; }
 @keyframes sapFadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 @keyframes sapSlideUp { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { [data-sap-surface], [data-sap-surface] * { animation-duration: 1ms !important; animation-delay: 0ms !important; } }
@@ -249,7 +259,12 @@ textarea::placeholder { color: #8A8372; }
 /* the selection bubble's buttons, on the dark pill */
 .sapHoverOnDark:hover      { background: rgba(255,255,255,0.12) !important; }
 /* a document row: selected rows keep their tint, unselected ones warm */
-.sapRow:hover              { background: #F4F1EA; }
+/* Owner's call 2026-11-25: the handoff's row hover is #F4F1EA, six units off
+   the #FAF8F3 page behind it — on a real screen you cannot tell a row is under
+   the cursor. #EDE9E0 is the next step down the same warm family (the design
+   names it for `.sapHoverWarmest`), so the row reads as hovered without
+   leaving the palette or colliding with the green selection states. */
+.sapRow:hover              { background: #EDE9E0; }
 .sapRow[data-on="1"]:hover { background: #EBF0E1; }
 /* the upload modal's course radio keeps its chosen tint on hover */
 .sapUplCourse:hover            { background: #F7F4EE; }

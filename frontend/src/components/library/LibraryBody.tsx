@@ -98,13 +98,46 @@ function LoadError({
   );
 }
 
-/** The incoming view's entrance, from the side its tab sits on. */
-const viewIn = (view: "list" | "panel"): React.CSSProperties => ({
-  animation: `sapViewIn${view === "panel" ? "Right" : "Left"} `
-    + "300ms cubic-bezier(0.2, 0.7, 0.2, 1) both",
-  // The slide would otherwise widen the page mid-flight.
+/** How long the two views are on screen together. Matches the keyframes. */
+const SLIDE_MS = 300;
+const SLIDE_EASE = "cubic-bezier(0.2, 0.7, 0.2, 1)";
+
+/**
+ * One half of the switch.
+ *
+ * Panel is the right-hand tab, so it arrives from the right and leaves to the
+ * right; List does the mirror. Both halves are laid in the SAME grid cell so
+ * they overlap for the length of one slide — the new view arrives while the
+ * old one is still leaving, rather than appearing into the gap the old one
+ * left behind.
+ */
+const slide = (view: "list" | "panel", dir: "in" | "out"): React.CSSProperties => ({
+  gridArea: "1 / 1",
+  animation: `sapView${dir === "in" ? "In" : "Out"}`
+    + `${view === "panel" ? "Right" : "Left"} ${SLIDE_MS}ms ${SLIDE_EASE} both`,
+  // The travel would otherwise widen the page mid-flight.
   overflowX: "clip",
+  ...(dir === "out" ? { pointerEvents: "none" as const } : null),
 });
+
+/**
+ * The view that is still leaving, for one slide's length.
+ *
+ * `null` whenever nothing is in flight, so the common case renders exactly one
+ * child and the stack collapses to it.
+ */
+function useLeavingView(view: "list" | "panel"): "list" | "panel" | null {
+  const [leaving, setLeaving] = React.useState<"list" | "panel" | null>(null);
+  const previous = React.useRef(view);
+  React.useEffect(() => {
+    if (previous.current === view) return;
+    setLeaving(previous.current);
+    previous.current = view;
+    const t = setTimeout(() => setLeaving(null), SLIDE_MS);
+    return () => clearTimeout(t);
+  }, [view]);
+  return leaving;
+}
 
 export function LibraryBody(props: LibraryBodyProps) {
   const {
@@ -115,6 +148,41 @@ export function LibraryBody(props: LibraryBodyProps) {
   } = props;
 
   const showEmpty = empty && !(loadError && !hasDocuments);
+  const leaving = useLeavingView(view);
+
+  const renderView = (which: "list" | "panel", dir: "in" | "out") =>
+    which === "list" ? (
+      <div key={`list-${dir}`} style={slide("list", dir)} aria-hidden={dir === "out"}>
+        <ListHeader
+          columns={columns}
+          showCourse={showCourse}
+          allChecked={allChecked}
+          onToggleAll={onToggleAll}
+        />
+        {folders.map((f, i) => (
+          <FolderRow
+            key={f.id}
+            columns={columns}
+            showCourse={showCourse}
+            {...folderProps(f.id, i)}
+          />
+        ))}
+        {documents.map((d, i) => (
+          <DocRow key={d.id} columns={columns} showCourse={showCourse} {...rowProps(d, i)} />
+        ))}
+      </div>
+    ) : (
+      <div
+        key={`panel-${dir}`}
+        style={{ ...PANEL_GRID, ...slide("panel", dir) }}
+        aria-hidden={dir === "out"}
+      >
+        {folders.map((f, i) => <FolderCard key={f.id} {...folderProps(f.id, i)} />)}
+        {documents.map((d, i) => (
+          <DocCard key={d.id} showCourseDot={showCourse} {...rowProps(d, i)} />
+        ))}
+      </div>
+    );
 
   return (
     <div
@@ -128,37 +196,17 @@ export function LibraryBody(props: LibraryBodyProps) {
     >
       {loadError && <LoadError hasDocuments={hasDocuments} onRetry={onRetry} />}
 
-      {/* Keyed on the view so React remounts on a switch and the animation
-          replays; without the key the incoming view inherits the outgoing
-          one's finished animation and nothing moves. */}
-      {!empty && view === "list" && (
-        <div key="list" style={viewIn("list")}>
-          <ListHeader
-            columns={columns}
-            showCourse={showCourse}
-            allChecked={allChecked}
-            onToggleAll={onToggleAll}
-          />
-          {folders.map((f, i) => (
-            <FolderRow
-              key={f.id}
-              columns={columns}
-              showCourse={showCourse}
-              {...folderProps(f.id, i)}
-            />
-          ))}
-          {documents.map((d, i) => (
-            <DocRow key={d.id} columns={columns} showCourse={showCourse} {...rowProps(d, i)} />
-          ))}
-        </div>
-      )}
-
-      {!empty && view === "panel" && (
-        <div key="panel" style={{ ...PANEL_GRID, ...viewIn("panel") }}>
-          {folders.map((f, i) => <FolderCard key={f.id} {...folderProps(f.id, i)} />)}
-          {documents.map((d, i) => (
-            <DocCard key={d.id} showCourseDot={showCourse} {...rowProps(d, i)} />
-          ))}
+      {/* The two views share one grid cell, so a switch overlaps them for one
+          slide instead of blanking between them. `data-sliding` is only on the
+          stack while both are present — it silences the per-row entrance, so
+          the frame shows one panel moving rather than rows restaging. */}
+      {!empty && (
+        <div
+          data-sliding={leaving ? "" : undefined}
+          style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)" }}
+        >
+          {leaving && renderView(leaving, "out")}
+          {renderView(view, "in")}
         </div>
       )}
 

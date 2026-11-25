@@ -80,7 +80,10 @@ const NOTES_DESIGN = read("../notes/__fixtures__/notes.design.html");
  * skeleton's matching bars with them. ONLY the height moves: the paddings,
  * radii and type sizes are still the handoff's, so this one regex is the whole
  * deviation. Exactly the four header elements in the prototype carry
- * `height: 48px`, so allowlisting it hides nothing else.
+ * `height: 48px`, so allowlisting it hides nothing else. The upload menu's
+ * `top: 54px` goes with it: the prototype's 54 is its 48px button plus 6, so
+ * the faithful offset at 40px is 46 — the rebuild writes `CONTROL_H + 6` so
+ * the menu keeps following the button. It is the only `top: 54px` there.
  *
  * The Trash count: the handoff puts a tabular count after the word, and
  * baseline-aligns the label to it. Owner's call 2026-11-25 removed the count,
@@ -92,7 +95,7 @@ const EXPECTED_DEVIATIONS = [
   /^font-family: '(Aleo|SUSE|IBM Plex Mono)'/,
   /^width: 1920px$/, /^height: 1080px$/, /^transform-origin: 0 0$/,
   /^grid-template-rows: auto minmax\(0, 1fr\)$/,
-  /^height: 48px$/,
+  /^height: 48px$/, /^top: 54px$/,
   /^align-items: baseline$/,
 ];
 

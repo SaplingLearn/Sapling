@@ -313,16 +313,20 @@ export function LibraryHeader(props: LibraryHeaderProps) {
                 // `designParity` checks every radius against.
                 borderRadius: 6,
                 font: "inherit",
-                fontSize: 15,
+                // Owner's call 2026-11-25: the Study Guide button beside it is
+                // `btn btn--sm`, whose type is `--fs-md`. Upload read a size
+                // and an icon larger than its neighbour; both come down to
+                // match. The 700 weight stays — it is still the primary.
+                fontSize: "var(--fs-md)",
                 fontWeight: 700,
                 cursor: canUpload ? "pointer" : "not-allowed",
                 opacity: canUpload ? 1 : 0.55,
               }}
             >
-              <Glyph name="upload" size={16} />
+              <Glyph name="upload" size={14} />
               Upload
               <span style={{
-                width: 1, height: 22, margin: "0 2px 0 6px", background: "rgba(255,255,255,0.3)",
+                width: 1, height: 18, margin: "0 2px 0 6px", background: "rgba(255,255,255,0.3)",
               }} />
               <Glyph name="chevronDown" size={11} />
             </button>
@@ -343,8 +347,14 @@ export function LibraryHeader(props: LibraryHeaderProps) {
               <>
                 <MenuScrim onClick={() => onMenu(null)} />
                 <div role="menu" style={{
-                  position: "absolute", left: 0, top: 54, zIndex: 31, width: 236,
-                  transformOrigin: "top left", animation: menuAnim, ...MENU_SURFACE,
+                  // `right: 0` is the handoff's own anchor, and the rebuild
+                  // had it as `left: 0` — a porting slip. Upload is the last
+                  // thing in the header, so a 236px menu hung off its LEFT ran
+                  // past the window and clipped. `top` follows the control
+                  // height: the prototype's 54 is its 48px button plus 6.
+                  position: "absolute", right: 0, top: CONTROL_H + 6,
+                  zIndex: 31, width: 236,
+                  transformOrigin: "top right", animation: menuAnim, ...MENU_SURFACE,
                 }}>
                   <button
                     role="menuitem"
