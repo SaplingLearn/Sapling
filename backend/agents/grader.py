@@ -93,6 +93,7 @@ from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.usage import RunUsage
 
 from agents import GRADER_LIMITS
+from agents._prompt_hash import PROMPT_HASH_CHARS
 from agents._bounded import clamp_unit, exceeds_unit
 from agents._providers import ANTHROPIC_MAX_TOKENS, model_for, settings_for_slot, slot_provider
 from agents.deps import SaplingDeps
@@ -125,7 +126,7 @@ ANSWER_REFUSED_EVENT = "learn.answer_refused"
 
 _GRADER_SLOT = "grader"  # the primary run's model slot, budget task and agent name
 _OUTPUT_RETRIES = 2  # #153 output-validation budget; tool-less so retries= is that budget
-_PROMPT_HASH_CHARS = 12  # hex chars of the system prompt's sha256 kept as its version
+_PROMPT_HASH_CHARS = PROMPT_HASH_CHARS  # hex chars of the system prompt's sha256 kept as its version (agents/_prompt_hash.py)
 
 # spec §3.5 slot table: grader_second runs with thinking off. Flash accepts
 # thinking_budget=0 (unlike Pro) — the agents/flashcard.py shape.

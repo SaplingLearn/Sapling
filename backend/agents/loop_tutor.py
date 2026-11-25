@@ -61,6 +61,7 @@ from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.tools import ToolDefinition
 
+from agents._prompt_hash import PROMPT_HASH_CHARS
 from agents._providers import ANTHROPIC_MAX_TOKENS, model_for, slot_provider
 from agents.chat_tutor import _ACADEMIC_INTEGRITY, _build_tools
 from agents.deps import SaplingDeps
@@ -103,7 +104,7 @@ _ITEM_PHASES: tuple[Phase, ...] = ("hint", "feedback")
 # ── Tier slots (spec §3.5, A15) ────────────────────────────────────────────
 
 _STANDARD_SLOT = "loop_tutor"  # the standard tier's model slot, and the agent's name
-_PROMPT_HASH_CHARS = 12  # hex chars of a prompt's sha256 kept as its version
+_PROMPT_HASH_CHARS = PROMPT_HASH_CHARS  # hex chars of a prompt's sha256 kept as its version (agents/_prompt_hash.py)
 _NONCE_BYTES = 12  # random bytes in one envelope delimiter (24 hex chars)
 
 LOOP_TIER_SLOTS: dict[str, str] = {
