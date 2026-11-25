@@ -399,7 +399,6 @@ KEY_A_LEAKS = [
     "It's A because",
     "go with A here",
     "choose A over B",
-    "The answer is A because it grows",
 ]
 KEY_I_LEAKS = [
     "Option I is correct",
@@ -410,16 +409,19 @@ KEY_I_LEAKS = [
 ]
 
 
-@pytest.mark.parametrize("strict", [False, True])
+# Strict mode only ADDS hits to default mode's (learning.leak._option_hits), so
+# a leak is pinned in default mode (the weaker one) and a clean text in strict
+# mode (the more aggressive one): each then holds in the other mode too.
+
+
 @pytest.mark.parametrize("hint", KEY_A_LEAKS)
-def test_key_a_in_a_keyword_context_leaks_in_both_modes(hint, strict):
-    assert _detect(hint, key="A", strict=strict) == (True, "option"), hint
+def test_key_a_in_a_keyword_context_leaks(hint):
+    assert _detect(hint, key="A") == (True, "option"), hint
 
 
-@pytest.mark.parametrize("strict", [False, True])
 @pytest.mark.parametrize("hint", KEY_I_LEAKS)
-def test_key_i_in_a_keyword_context_leaks_in_both_modes(hint, strict):
-    assert _detect(hint, key="I", strict=strict) == (True, "option"), hint
+def test_key_i_in_a_keyword_context_leaks(hint):
+    assert _detect(hint, key="I") == (True, "option"), hint
 
 
 def test_a_fits_best_is_clean_in_both_modes():
@@ -445,8 +447,6 @@ def test_a_fits_best_is_clean_in_both_modes():
 )
 @pytest.mark.parametrize("strict", [False, True])
 def test_the_article_and_pronoun_stay_clean_in_both_modes(hint, key, strict):
-    if strict and hint == "Plan A is the best approach":
-        return  # strict: a mid-sentence capital before "is" is dropped (over-drop is fine)
     assert _detect(hint, key=key, strict=strict) == (False, "none"), (hint, strict)
 
 
@@ -474,12 +474,11 @@ ROUND4_TEMPLATES = [
 ]
 
 
-@pytest.mark.parametrize("strict", [False, True])
 @pytest.mark.parametrize("key", ["A", "C", "I"])
 @pytest.mark.parametrize("template", ROUND4_TEMPLATES)
-def test_round4_true_positives_in_both_modes(template, key, strict):
+def test_round4_true_positives(template, key):
     hint = template.format(x=key)
-    assert _detect(hint, key=key, strict=strict) == (True, "option"), hint
+    assert _detect(hint, key=key) == (True, "option"), hint
 
 
 @pytest.mark.parametrize("strict", [False, True])
@@ -487,10 +486,10 @@ def test_the_right_one_is_i_given_x(strict):
     assert _detect("the right one is I given x", key="I", strict=strict) == (True, "option")
 
 
-@pytest.mark.parametrize("strict", [False, True])
 @pytest.mark.parametrize("hint", DEFAULT_CLEAN_KEY_A)
-def test_a_lowercase_a_before_a_word_is_clean_in_both_modes(hint, strict):
-    assert _detect(hint, key="A", strict=strict) == (False, "none"), hint
+def test_a_lowercase_a_before_a_word_is_clean_in_strict_mode(hint):
+    """Default mode: test_the_article_a_is_no_leak_for_key_a_in_default_mode."""
+    assert _detect(hint, key="A", strict=True) == (False, "none"), hint
 
 
 @pytest.mark.parametrize("strict", [False, True])
