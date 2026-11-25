@@ -72,6 +72,9 @@ const FORMAT_TAG: Record<string, { label: string; Icon: typeof ListChecks }> = {
 };
 
 
+/** The countdown ticks once a second. */
+const MS_PER_SECOND = 1000;
+
 /** Exam Twin's soft countdown (W7.8): seconds left, from the budget, counted
  *  from when the attempt's budget is set; null when there is no budget. Display
  *  only, it never auto-submits. A new budget or attempt starts it again. */
@@ -82,8 +85,8 @@ export function useExamCountdown(budget: number | null, attemptId: string | null
     if (budget == null) return;
     const started = Date.now();
     const id = window.setInterval(() => {
-      setElapsed({ key, sec: Math.floor((Date.now() - started) / 1000) });
-    }, 1000);
+      setElapsed({ key, sec: Math.floor((Date.now() - started) / MS_PER_SECOND) });
+    }, MS_PER_SECOND);
     return () => window.clearInterval(id);
   }, [budget, key]);
   if (budget == null) return null;
@@ -158,7 +161,7 @@ export function SessionTop({
           aria-valuenow={position}
           aria-valuemax={quizLength}
         >
-          <span className="quiz-session-top__fill" style={{ width: `${pct}%` }} />
+          <span className="quiz-session-top__fill" style={{ "--quiz-progress": `${pct}%` } as React.CSSProperties} />
         </div>
       </div>
       <div className="quiz-session-top__end">

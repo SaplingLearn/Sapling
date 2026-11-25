@@ -9,6 +9,7 @@
  */
 
 import React, { useMemo } from "react";
+import { motion } from "framer-motion";
 import type { HighlightInteraction } from "@/lib/quiz/types";
 import {
   decodeHighlightAnswer,
@@ -16,6 +17,7 @@ import {
   isHighlightComplete,
   toggleHighlightPassage,
 } from "@/lib/quiz/highlightInteraction";
+import { useKitMotion, type KitTone } from "./kitMotion";
 
 export interface HighlightAnswerProps {
   interaction: HighlightInteraction;
@@ -31,7 +33,7 @@ function rowTone(
   selected: string[],
   expected: string[],
   verdict: "correct" | "incorrect" | null | undefined,
-): "plain" | "lift" | "right" | "wrong" {
+): KitTone {
   const on = selected.includes(id);
   if (verdict && expected.length) {
     const want = expected.includes(id);
@@ -61,6 +63,7 @@ export function HighlightAnswer({
   );
   const complete = isHighlightComplete(interaction, value);
   const done = Boolean(verdict);
+  const kit = useKitMotion();
 
   const toggle = (id: string) => {
     if (disabled || done) return;
@@ -87,11 +90,13 @@ export function HighlightAnswer({
       >
         {interaction.passages.map(p => {
           const on = selected.includes(p.id);
+          const tone = rowTone(p.id, selected, expectedIds, verdict);
           return (
-            <button
+            <motion.button
+              {...kit.mark(tone)}
               key={p.id}
               type="button"
-              className={`quiz-highlight__row quiz-highlight__row--${rowTone(p.id, selected, expectedIds, verdict)}`}
+              className={`quiz-highlight__row quiz-highlight__row--${tone}`}
               data-testid={`quiz-highlight-row-${p.id}`}
               data-selected={on ? "true" : "false"}
               aria-pressed={on}
@@ -99,7 +104,7 @@ export function HighlightAnswer({
               onClick={() => toggle(p.id)}
             >
               {p.label}
-            </button>
+            </motion.button>
           );
         })}
       </div>

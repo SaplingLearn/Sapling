@@ -22,6 +22,10 @@ import {
   placeBuildItem,
   type BuildAssignment,
 } from "@/lib/quiz/buildInteraction";
+import { KitPiece, useKitMotion, type KitTone } from "./kitMotion";
+
+/** More slots than this wrap onto a second row. */
+const MAX_SLOT_COLUMNS = 4;
 
 export interface BuildAnswerProps {
   interaction: BuildInteraction;
@@ -39,7 +43,7 @@ function cardTone(
   expected: BuildAssignment | null,
   verdict: "correct" | "incorrect" | null | undefined,
   selected: boolean,
-): "plain" | "lift" | "right" | "wrong" {
+): KitTone {
   if (verdict && expected) {
     const got = assign[partId];
     const want = expected[partId];
@@ -66,6 +70,7 @@ export function BuildAnswer({
     [interaction, expected],
   );
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const kit = useKitMotion();
   const complete = isBuildComplete(interaction, assign);
   const tray = interaction.parts.filter(it => assign[it.id] == null);
   const done = Boolean(verdict);
@@ -99,7 +104,7 @@ export function BuildAnswer({
     >
       <div
         className="quiz-build__slots"
-        style={{ gridTemplateColumns: `repeat(${Math.min(interaction.slots.length, 4)}, minmax(0, 1fr))` }}
+        style={{ "--quiz-kit-cols": Math.min(interaction.slots.length, MAX_SLOT_COLUMNS) } as React.CSSProperties}
         data-testid="quiz-build-slots"
         aria-label="Slots to fill"
       >
@@ -130,15 +135,18 @@ export function BuildAnswer({
                 )}
               </button>
               {placed && (
-                <button
-                  type="button"
-                  className={`quiz-build__card quiz-build__card--${cardTone(placed.id, assign, expectedAssign, verdict, false)}`}
+                <KitPiece
+                  kit={kit}
+                  pieceId={placed.id}
+                  block="quiz-build__card"
+                  tone={cardTone(placed.id, assign, expectedAssign, verdict, false)}
+                  movable={!done}
                   data-testid={`quiz-build-item-${placed.id}`}
                   disabled={disabled || done}
                   onClick={() => selectOrReturn(placed.id)}
                 >
                   {placed.label}
-                </button>
+                </KitPiece>
               )}
             </div>
           );
@@ -156,16 +164,19 @@ export function BuildAnswer({
             <ul className="quiz-build__cards">
               {tray.map(it => (
                 <li key={it.id}>
-                  <button
-                    type="button"
-                    className={`quiz-build__card quiz-build__card--${cardTone(it.id, assign, expectedAssign, verdict, selectedId === it.id)}`}
+                  <KitPiece
+                    kit={kit}
+                    pieceId={it.id}
+                    block="quiz-build__card"
+                    tone={cardTone(it.id, assign, expectedAssign, verdict, selectedId === it.id)}
+                    movable={!done}
                     data-testid={`quiz-build-item-${it.id}`}
                     aria-pressed={selectedId === it.id}
                     disabled={disabled}
                     onClick={() => selectOrReturn(it.id)}
                   >
                     {it.label}
-                  </button>
+                  </KitPiece>
                 </li>
               ))}
             </ul>

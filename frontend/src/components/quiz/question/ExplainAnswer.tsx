@@ -8,9 +8,11 @@
  * yet). Mic is refused (W6).
  */
 
-import React from "react";
+import React, { useState } from "react";
+import { motion } from "framer-motion";
 import type { ExplainInteraction } from "@/lib/quiz/types";
 import { isExplainComplete } from "@/lib/quiz/explainInteraction";
+import { toneOfVerdict, useKitMotion } from "./kitMotion";
 
 export interface ExplainAnswerProps {
   interaction: ExplainInteraction;
@@ -33,6 +35,10 @@ export function ExplainAnswer({
   const placeholder =
     interaction.placeholder?.trim() || "Type your explanation";
   const rubric = interaction.rubric ?? [];
+  const kit = useKitMotion();
+  // Marked before the kit appeared (a revisited question): the rubric is
+  // already there, so it doesn't stagger in.
+  const [doneAtMount] = useState(done);
 
   return (
     <div
@@ -41,7 +47,8 @@ export function ExplainAnswer({
       data-complete={complete ? "true" : "false"}
       data-verdict={verdict || undefined}
     >
-      <textarea
+      <motion.textarea
+        {...kit.mark(toneOfVerdict(verdict))}
         className="quiz-explain__input field"
         data-testid="quiz-explain-input"
         value={value}
@@ -52,21 +59,25 @@ export function ExplainAnswer({
         onChange={e => onChange(e.target.value)}
       />
       {done && rubric.length > 0 ? (
-        <ul
+        <motion.ul
+          variants={kit.list.container}
+          initial={doneAtMount ? false : "hidden"}
+          animate="shown"
           className="quiz-explain__rubric"
           data-testid="quiz-explain-rubric"
           aria-label="Explanation criteria"
         >
           {rubric.map((row, i) => (
-            <li
+            <motion.li
+              variants={kit.list.item}
               key={`${i}-${row}`}
               className={`quiz-explain__rubric-row quiz-explain__rubric-row--${verdict === "correct" ? "right" : "wrong"}`}
               data-testid={`quiz-explain-rubric-${i}`}
             >
               {row}
-            </li>
+            </motion.li>
           ))}
-        </ul>
+        </motion.ul>
       ) : null}
     </div>
   );
