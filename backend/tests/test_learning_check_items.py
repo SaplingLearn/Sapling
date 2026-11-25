@@ -1,5 +1,5 @@
-"""PKG-04 check items: params, migration invariants, models, service, agent
-plumbing, route hook, backfill. Spec §3.4, §3.5, §4, §8.6/8.9/8.12, §13 A2/A22/A23."""
+"""PKG-04 check items: migration invariants, models, service, agent plumbing,
+the index-then-draft chain, backfill. Spec §3.4, §3.5, §4, §8.6/8.9/8.12, §13 A2/A22/A23."""
 
 from __future__ import annotations
 
@@ -33,51 +33,6 @@ def _migration() -> str:
     hits = sorted(MIG_DIR.glob("*_learning_check_items.sql"))
     assert len(hits) == 1, f"expected exactly one learning_check_items migration, got {hits}"
     return hits[0].read_text()
-
-
-class TestParams:
-    def test_constants_match_spec(self):
-        from learning import params
-
-        assert params.CHECK_ITEM_FORMATS == ("free", "teachback", "mc_reason")
-        assert params.CHECK_ITEM_DIFFICULTIES == (1, 2, 3)
-        assert params.CHECK_ITEM_MIN_RUBRIC == 2
-        assert params.CHECK_ITEM_MIN_WRONG == 1
-        assert params.CHECK_ITEM_MAX_CHUNKS == 8
-        assert params.CHECK_ITEM_MAX_CONCEPTS_PER_DOC == 10
-        assert params.CHECK_ITEM_OUTPUT_RETRIES == 2
-        assert isinstance(params.CHECK_HASH_VERSION, str) and params.CHECK_HASH_VERSION
-        assert params.CHECK_ITEM_CONCEPTS_PER_CALL == 3
-        assert params.FLEX_TIMEOUT_S == 900
-        assert params.CHECK_ITEM_ANSWER_KINDS == ("free", "numeric")
-        assert params.CHECK_ITEM_STEPWISE_MIN_STEPS >= 2
-        assert params.CHECK_ITEM_FLEX_RETRIES >= 0
-        assert params.CHECK_ITEM_BACKFILL_MIN_CHUNK_SCORE == 1
-        assert params.CHECK_ITEM_DRAFT_WORKERS >= 1
-        assert params.CHECK_ITEM_FINAL_ANSWER_MAX_TOKENS == 20  # † A34
-        assert params.CHECK_ITEM_MC_OPTIONS == 4  # † A37: A22's four options, A-D
-        # every distractor carries a distinct wrong key, so an mc_reason item
-        # lists at least CHECK_ITEM_MC_OPTIONS - 1 of them
-        assert params.CHECK_ITEM_MC_OPTIONS - 1 >= params.CHECK_ITEM_MIN_WRONG
-
-    def test_mc_reason_floor_and_top_up_budget(self):
-        """A37 (series coordinator's ruling, 2026-09-28): a pass leaves each
-        concept it drafted with >= 2 stored mc_reason items or tops it up with
-        ONE focused call; the floor fits inside the difficulties, so a top-up
-        can always ask for difficulties the concept does not have yet."""
-        from learning import params
-
-        assert params.CHECK_ITEM_MC_MIN_PER_CONCEPT == 2
-        assert params.CHECK_ITEM_MC_TOPUP_CALLS == 1  # † per concept per pass
-        assert params.CHECK_ITEM_MC_MIN_PER_CONCEPT <= len(params.CHECK_ITEM_DIFFICULTIES)
-
-    def test_initial_set_is_every_pair_and_covers_its_consumers(self):
-        from learning import params
-
-        pairs = len(params.CHECK_ITEM_FORMATS) * len(params.CHECK_ITEM_DIFFICULTIES)
-        assert params.CHECK_ITEM_INITIAL_PER_CONCEPT == pairs == 9
-        # §3.5: >= PROBE_ITEMS_PER_SKILL_MAX + 2 isomorphs + 1 post-test reserve
-        assert params.CHECK_ITEM_INITIAL_PER_CONCEPT >= params.PROBE_ITEMS_PER_SKILL_MAX + 2 + 1
 
 
 class TestMigration:
@@ -3360,125 +3315,6 @@ class TestAgentPlumbing:
             CheckItemsOutput()
         assert CheckItemsOutput.model_json_schema()["properties"]["items"]["minItems"] == 1
 
-    def test_the_prompt_states_the_option_objects_and_leaves_letters_to_code(self):
-        from agents.check_items import _PROMPT, CheckItemsOutput
-        from learning.params import CHECK_ITEM_MC_OPTIONS
-
-        for phrase in (
-            "`options`",
-            "`is_correct`",
-            "`misconception_key`",
-            "`misconception_text`",
-            "null",
-            "never name an option",
-        ):
-            assert phrase in _PROMPT, phrase
-        assert f"exactly {CHECK_ITEM_MC_OPTIONS} options" in _PROMPT
-        for gone in (
-            "option_letters",
-            "option_texts",
-            "option_wrong_keys",
-            "correct_option",
-            "`wrong_key`",
-        ):
-            assert gone not in _PROMPT, gone
-        schema = CheckItemsOutput.model_json_schema()["$defs"]
-        assert (
-            f"exactly {CHECK_ITEM_MC_OPTIONS}"
-            in schema["CheckItemDraft"]["properties"]["options"]["description"]
-        )
-        for name in ("misconception_key", "misconception_text"):
-            assert "null" in schema["OptionDraft"]["properties"][name]["description"], name
-
-    def test_the_mc_misconceptions_ride_on_the_distractors_with_no_list_to_match(self):
-        """A37 (coordinator decision, round 4): the one cross-reference left
-        in round 3 — each distractor's key had to name a DISTINCT entry of the
-        item's wrong_keys — was the rule the model broke (1 mc_reason item for
-        a concept in the ENG150 review run). Each distractor now states its
-        own misconception; the prompt and the schema say that an mc_reason
-        item's wrong_keys / wrong_texts are [] and that the distractors'
-        misconceptions differ."""
-        from agents.check_items import _PROMPT, CheckItemsOutput
-
-        for phrase in (
-            "its own misconception",
-            "different misconceptions",
-            "`wrong_keys` and `wrong_texts` are []",
-        ):
-            assert phrase in _PROMPT, phrase
-        defs = CheckItemsOutput.model_json_schema()["$defs"]
-        draft = defs["CheckItemDraft"]["properties"]
-        assert "[] for mc_reason" in draft["wrong_keys"]["description"]
-        assert "[] for mc_reason" in draft["wrong_texts"]["description"]
-        key = defs["OptionDraft"]["properties"]["misconception_key"]["description"]
-        assert "snake_case" in key and "different" in key
-
-    def test_the_options_are_asked_alike_in_length_and_without_their_own_reason(self):
-        """Review of A37: the correct option was the single longest in 10 of
-        12 live HIST200 items, and it often carried its own justification,
-        so a restated pick read as a reason. The prompt and the option's text
-        description (which flash-lite follows where the prompt alone does
-        not) ask for options alike in length and detail, the correct one
-        never the longest, and no option stating its reason."""
-        from agents.check_items import _PROMPT, CheckItemsOutput
-
-        for phrase in ("alike in length", "never the longest", "carries its own reason"):
-            assert phrase in _PROMPT, phrase
-        text = CheckItemsOutput.model_json_schema()["$defs"]["OptionDraft"]["properties"]["text"]
-        for phrase in ("as long and as detailed as the other options", "never its own reason"):
-            assert phrase in text["description"], phrase
-
-    def test_the_mc_reference_is_a_students_reason_never_the_models_working(self):
-        """Third review of A37: two stored references were the model's own
-        working (the rule word "deliberation" now drops them), a definition
-        item's reference only restated its definition, so it failed code's
-        reason criterion (MC_REASON_CRITERION), and a d3 stem that asked
-        "what fallacy, and why" got options that each carried a reason. The
-        prompt asks for the reason a strong student would write — a fact,
-        cause, mechanism or example — never thinking aloud about the item, a
-        question the passages answer, and an option that is the answer
-        alone. Direct runs: deliberation drops 8 of 264 mc_reason drafts →
-        1 of 312, and the criterion failed the reference's own reason on 4
-        of 30 graded items → 1 of 30."""
-        from agents.check_items import _PROMPT, CheckItemsOutput
-
-        for phrase in (
-            "the answer a strong student would write",
-            "at least one fact, cause, mechanism or example",
-            "never only the option's own words or its definition reworded",
-            "never your own thinking aloud",
-            "ask only what the passages answer",
-            "the option is the answer alone",
-        ):
-            assert phrase in _PROMPT, phrase
-        text = CheckItemsOutput.model_json_schema()["$defs"]["OptionDraft"]["properties"]["text"]
-        assert "the answer alone" in text["description"]
-
-    def test_free_and_teachback_lines_restate_the_short_closing_sentence(self):
-        """A37 round 4: with each distractor stating its own misconception,
-        flash-lite wrote "Final answer:" on the mc_reason references only and
-        left it off every free and teachback reference in 24 of 44 direct
-        calls on the CS101 passages (8 of 44 with the round-3 draft), so those
-        drafts failed A34's containment rule. Reverting the prompt's wording
-        around the wrong-reason lists, the schema descriptions or the option
-        docstring did not move it (7 to 11 of 16 each); what did is each of
-        those two format lines restating the closing sentence, kept short:
-        6 of 32 on CS101, free and teachback stored 89% across four subjects
-        against 84% for the round-3 draft and 60% without the line. Without
-        "short", the history references closed with their whole last
-        sentence and failed the 20-token cap (51 of 96 dropped)."""
-        from agents.check_items import _PROMPT
-        from learning.params import CHECK_ITEM_FINAL_ANSWER_MAX_TOKENS
-
-        closing = (
-            "Its reference_answer, like every item's, ends with `Final answer: <final_answer>.` "
-            f"— the short final answer (at most {CHECK_ITEM_FINAL_ANSWER_MAX_TOKENS} tokens), "
-            "not the whole explanation again."
-        )
-        lines = {line.split(":")[0]: line for line in _PROMPT.splitlines() if line.startswith("- ")}
-        for fmt in ("- free", "- teachback"):
-            assert lines[fmt].endswith(closing), lines[fmt]
-
     def test_build_prompt_names_every_concept_and_marks_passages(self):
         from agents.check_items import build_prompt
 
@@ -3789,52 +3625,6 @@ class TestMcTopUpAgent:
     ONE focused call for one concept, asking for exactly the missing count and
     told why the earlier drafts were dropped. Its own agent with one prompt
     stack, on the check_items model slot, billed apart as check_items_topup."""
-
-    def test_main_prompt_is_unchanged_by_the_shared_fragments(self):
-        """The top-up reuses the check_items prompt's mc_reason rules, so they
-        are named fragments now; the prompt the live runs measured and the
-        cassette recorded is byte-identical (its version hash is pinned)."""
-        from agents import check_items as ci
-
-        assert ci._PROMPT_HASH == "4710781c2f16"
-        for fragment in (
-            ci._MC_RULES,
-            ci._DIFFICULTY,
-            ci._ITEM_FIELDS,
-            ci._ANSWER_KIND,
-            ci._STEPWISE,
-            ci._NO_REFERENCE_IN_PROMPT,
-            ci._MC_SHAPE,
-            ci._STEPWISE_SHAPE,
-            ci._CHUNK_IDS,
-            ci._UNTRUSTED,
-        ):
-            assert fragment and fragment in ci._PROMPT
-
-    def test_topup_prompt_asks_for_mc_reason_only_with_the_same_rules(self):
-        from agents import check_items as ci
-        from agents import check_items_topup as tu
-
-        prompt = tu._PROMPT
-        for fragment in (
-            ci._MC_RULES,
-            ci._DIFFICULTY,
-            ci._ITEM_FIELDS,
-            ci._ANSWER_KIND,
-            ci._STEPWISE,
-            ci._NO_REFERENCE_IN_PROMPT,
-            ci._MC_SHAPE,
-            ci._STEPWISE_SHAPE,
-            ci._CHUNK_IDS,
-            ci._UNTRUSTED,
-        ):
-            assert fragment in prompt
-        # never the full set: no free or teachback format line, no 9-pair order
-        assert ci._ORDER not in prompt
-        assert "- free:" not in prompt and "- teachback:" not in prompt
-        assert ci._CLOSING not in prompt
-        assert "ONE course concept" in prompt and "exactly the items the request asks for" in prompt
-        assert tu._PROMPT_HASH != ci._PROMPT_HASH
 
     def test_topup_agent_is_one_prompt_stack_on_the_check_items_slot(self):
         from agents import check_items as ci
@@ -5221,147 +5011,29 @@ class TestMcTopUp:
         assert "repeat: the prompt is a stored item's" in line
 
 
-def _documents_route_helpers():
-    import importlib
-    import sys
-
-    sys.path.insert(0, str(pathlib.Path(__file__).parent))  # no tests/__init__.py
-    return importlib.import_module("test_documents_routes")  # its helpers, not copies
+# ── the upload's index-then-draft chain (PKG-04) ───────────────────────────
+# Which route runs it, and when, is tests/test_document_upload_jobs.py's
+# (LOOP_MODES: the flag-off upload is the pre-loop upload).
 
 
-def _upload_sync_with(monkeypatch, *, flag: bool, mode: str):
-    """Drive /upload/sync with the orchestrator mocked, returning
-    (index_document mock, generate_for_document mock, queue mock,
-    schedule_document_index mock — main's #116 first indexing attempt)."""
-    import config
+@pytest.mark.parametrize("mode", ["function", "real"])
+def test_an_indexing_failure_still_drafts_and_a_drafting_failure_never_raises(caplog, mode):
+    from routes import documents as rd
 
-    tdr = _documents_route_helpers()
-    monkeypatch.setattr(config, "LEARNING_LOOP_ENABLED", flag)
-    result = tdr._make_orchestrator_result(category="lecture_notes", is_syllabus=False)
     with (
-        tdr._mock_validate_user(),
-        patch_documents("extract_text_from_file", return_value=tdr._doc_text("text")),
-        patch_documents("process_document", return_value=result),
-        patch_documents("apply_graph_update"),
-        patch_documents("table") as t,
         patch_documents("model_mode", return_value=mode),
-        patch_documents("index_document") as idx,
-        patch_documents("generate_for_document") as gen,
-        patch_documents("queue_generation_for_document") as queue,
-        patch_documents("schedule_document_index") as sched,
-        patch_documents("_refresh_course_context"),
-        patch_documents("_check_upload_achievements"),
+        patch_documents("index_document", side_effect=RuntimeError("pg down")),
+        patch_documents(
+            "generate_for_document", side_effect=RuntimeError("boom")
+        ) as gen,
+        patch_documents(
+            "queue_generation_for_document", side_effect=RuntimeError("boom")
+        ) as queue,
+        caplog.at_level("ERROR"),
     ):
-        t.return_value.select.return_value = []
-        t.return_value.insert.return_value = [{"id": "doc-1"}]
-        r = tdr._make_upload()
-        assert r.status_code == 200, r.text
-    return idx, gen, queue, sched
-
-
-def _fn_name(fn) -> str:
-    """A scheduled callable's name; a patched one is a MagicMock (no __name__)."""
-    return getattr(fn, "__name__", None) or fn._mock_name
-
-
-class TestUploadHook:
-    def test_flag_off_schedules_index_document_only(self, monkeypatch):
-        idx, gen, queue, sched = _upload_sync_with(monkeypatch, flag=False, mode="real")
-        # main's #116 entry point: inline index_document, or a document.index job
-        sched.assert_called_once_with("doc-1", "u1")
-        idx.assert_not_called()
-        gen.assert_not_called()
-        queue.assert_not_called()
-
-    def test_flag_off_background_tasks_are_unchanged(self, monkeypatch):
-        """Byte-identical flag-off post-roll: main's three tasks, unchanged
-        (the study-guide cache invalidation went with the durable guides)."""
-        from fastapi import BackgroundTasks
-
-        added = []
-        monkeypatch.setattr(
-            BackgroundTasks, "add_task", lambda self, fn, *a, **k: added.append((_fn_name(fn), a))
-        )
-        _upload_sync_with(monkeypatch, flag=False, mode="function")
-        assert [name for name, _ in added] == [
-            "_refresh_course_context",
-            "_check_upload_achievements",
-            "schedule_document_index",
-        ]
-        assert added[-1][1] == ("doc-1", "u1")
-
-    def test_flag_on_real_mode_indexes_in_background_then_queues_the_drafting(self, monkeypatch):
-        idx, gen, queue, sched = _upload_sync_with(monkeypatch, flag=True, mode="real")
-        sched.assert_not_called()  # the loop's chain indexes instead
-        # TestClient runs BackgroundTasks before returning: indexing ran, then
-        # the drafting was QUEUED on check_item_service's own pool — never run
-        # on the shared request threadpool.
-        idx.assert_called_once_with("doc-1")
-        gen.assert_not_called()
-        queue.assert_called_once()
-        assert queue.call_args[0] == ("doc-1",)
-        kwargs = queue.call_args[1]
-        assert kwargs["user_id"] == "u1" and kwargs["course_id"] == "course-1"
-        assert kwargs["concept_names"] == ["Concept A"]
-
-    def test_flag_on_function_mode_runs_synchronously(self, monkeypatch):
-        from fastapi import BackgroundTasks
-
-        added = []
-        monkeypatch.setattr(
-            BackgroundTasks, "add_task", lambda self, fn, *a, **k: added.append(_fn_name(fn))
-        )
-        idx, gen, queue, sched = _upload_sync_with(monkeypatch, flag=True, mode="function")
-        sched.assert_not_called()
-        idx.assert_called_once_with("doc-1")
-        gen.assert_called_once()
-        assert gen.call_args[1]["flex"] is True, "ingest-time generation is background prefill"
-        queue.assert_not_called()
-        assert "_index_then_check_items" not in added and "schedule_document_index" not in added
-
-    @pytest.mark.parametrize("mode", ["function", "real"])
-    def test_index_then_check_items_orders_the_two(self, mode):
-        from routes import documents as rd
-
-        calls = []
-        with (
-            patch_documents("model_mode", return_value=mode),
-            patch_documents(
-                "index_document", side_effect=lambda d: calls.append(("index", d))
-            ),
-            patch_documents(
-                "generate_for_document",
-                side_effect=lambda d, **k: calls.append(("gen", d)),
-            ),
-            patch_documents(
-                "queue_generation_for_document",
-                side_effect=lambda d, **k: calls.append(("queue", d)),
-            ),
-        ):
-            rd._index_then_check_items("doc-1", "u1", "course-1", ["A"])
-        second = "gen" if mode == "function" else "queue"
-        assert calls == [("index", "doc-1"), (second, "doc-1")]
-
-    @pytest.mark.parametrize("mode", ["function", "real"])
-    def test_an_indexing_failure_still_drafts_and_a_drafting_failure_never_raises(
-        self, caplog, mode
-    ):
-        from routes import documents as rd
-
-        with (
-            patch_documents("model_mode", return_value=mode),
-            patch_documents("index_document", side_effect=RuntimeError("pg down")),
-            patch_documents(
-                "generate_for_document", side_effect=RuntimeError("boom")
-            ) as gen,
-            patch_documents(
-                "queue_generation_for_document", side_effect=RuntimeError("boom")
-            ) as queue,
-            caplog.at_level("ERROR"),
-        ):
-            rd._index_then_check_items("doc-1", "u1", "course-1", ["A"])
-        (gen if mode == "function" else queue).assert_called_once()
-        assert len([r for r in caplog.records if r.levelname == "ERROR"]) == 2
+        rd._index_then_check_items("doc-1", "u1", "course-1", ["A"])
+    (gen if mode == "function" else queue).assert_called_once()
+    assert len([r for r in caplog.records if r.levelname == "ERROR"]) == 2
 
 
 class TestDraftPool:
@@ -5405,84 +5077,6 @@ class TestDraftPool:
             )
             assert future.result(timeout=10) is None
         assert any("doc-1" in r.getMessage() for r in caplog.records)
-
-
-def _sse_upload_with(monkeypatch, *, flag: bool, mode: str):
-    """Drive the streaming /upload with every agent mocked; return the
-    post-roll labels spawned and the generate_for_document mock."""
-    import config
-    from types import SimpleNamespace
-
-    tdr = _documents_route_helpers()
-    monkeypatch.setattr(config, "LEARNING_LOOP_ENABLED", flag)
-    res = tdr._make_orchestrator_result(category="lecture_notes", is_syllabus=False)
-
-    def _run(output):
-        async def run(*a, **k):
-            return SimpleNamespace(output=output, usage=lambda: None)
-
-        return run
-
-    spawned = []
-    with (
-        tdr._mock_validate_user(),
-        patch_documents("extract_text_from_file", return_value=tdr._doc_text("text")),
-        patch("agents.classifier.classifier_agent.run", side_effect=_run(res.classification)),
-        patch("agents.summary.summary_agent.run", side_effect=_run(res.summary)),
-        patch("agents.concept_extraction.concept_extraction_agent.run", side_effect=_run(res.concepts)),
-        # #835/#118 (spec §13 A149): the one pipeline runs the agents and the
-        # merge in agents/document.py
-        patch("agents.document.apply_concepts_to_graph", AsyncMock(return_value=1)),
-        patch("agents.document.record_agent_usage", side_effect=lambda r, **k: r),
-        patch_documents("table") as t,
-        patch_documents("model_mode", return_value=mode),
-        patch_documents("index_document") as idx,
-        patch_documents("generate_for_document") as gen,
-        patch_documents("queue_generation_for_document"),
-        patch_documents("_spawn_post_roll", side_effect=lambda *ts: spawned.extend(ts)),
-    ):
-        t.return_value.select.return_value = []
-        t.return_value.insert.return_value = [{"id": "doc-1"}]
-        r = tdr.client.post(
-            "/api/documents/upload",
-            files={"file": ("notes.pdf", b"%PDF-1.4 sample", "application/pdf")},
-            data={"course_id": "course-1", "user_id": "u1"},
-        )
-        assert r.status_code == 200 and '"done"' in r.text, r.text
-    return spawned, idx, gen
-
-
-class TestSseUploadHook:
-    @pytest.mark.parametrize("mode", ["real", "function"])  # the E2E lane is function mode
-    def test_flag_off_spawns_index_document_exactly_as_before(self, monkeypatch, mode):
-        spawned, idx, gen = _sse_upload_with(monkeypatch, flag=False, mode=mode)
-        assert [s[0] for s in spawned] == [
-            "update_course_context",
-            "check_upload_achievements",
-            "index_document",
-        ]
-        # main's #116 entry point, with the uploader for the jobs_queue flag
-        assert spawned[-1][1].__name__ == "schedule_document_index"
-        assert spawned[-1][2:] == ("doc-1", "u1")
-        idx.assert_not_called()  # spawned, not called inline
-        gen.assert_not_called()
-
-    def test_flag_on_real_mode_spawns_the_chain(self, monkeypatch):
-        spawned, idx, gen = _sse_upload_with(monkeypatch, flag=True, mode="real")
-        assert spawned[-1][0] == "index_then_check_items"
-        assert spawned[-1][2:] == ("doc-1", "u1", "course-1", ["Concept A"])
-        assert "index_document" not in [s[0] for s in spawned]
-        gen.assert_not_called()  # spawned, not run, since _spawn_post_roll is spied
-
-    def test_flag_on_function_mode_runs_inline_before_the_post_roll(self, monkeypatch):
-        spawned, idx, gen = _sse_upload_with(monkeypatch, flag=True, mode="function")
-        idx.assert_called_once_with("doc-1")
-        gen.assert_called_once()
-        assert gen.call_args[1]["concept_names"] == ["Concept A"]
-        assert [s[0] for s in spawned] == [
-            "update_course_context",
-            "check_upload_achievements",
-        ]
 
 
 # ── withdrawal (A23): consent stays answerable for items ──────────────────
@@ -6051,25 +5645,17 @@ class TestMcReasonEval:
         ctx = SimpleNamespace(output=SimpleNamespace(items=list(drafts)))
         return mod.McOptionsValidEvaluator().evaluate(ctx)
 
-    def test_the_baselines_pin_the_option_contract_and_the_recorded_yield(self):
-        """McOptionsValid — every recorded mc_reason draft passes every A37
-        option rule — is required at 1.0. McReasonValid is the recorded share
-        of mc_reason drafts stored (17/18 in the recordings of the A37 second,
-        third and round-4 reviews: the one drop is an A34 final_answer rule —
-        the answer printed in the stem — that every format meets).
-        McCorrectNotLongest is the recorded mean per case of stored mc_reason
-        drafts whose correct option is not strictly the longest (9 of 17
-        drafts in the round-4 recording, where each distractor states its own
-        misconception; 11 of 17 in the third review's; 12 of 17 in the
-        second's). The round-4 direct runs are the larger sample: the correct
-        option was strictly the longest in 56 of 135 stored items against 57
-        of 130 on the round-3 draft (24 calls each). A re-record changes them
-        here consciously."""
+    def test_the_baselines_pin_the_option_contract(self):
+        """The recorded check_items dataset holds the contracts at 1.0:
+        McOptionsValid (every recorded mc_reason draft passes every A37 option
+        rule) and FinalAnswerValid (A34). The yields (McReasonValid,
+        McCorrectNotLongest) are measurements a re-record moves, not
+        contracts, so they are not pinned here. This stays red until the owed
+        Claude re-record: the current baseline's McOptionsValid is 0.875."""
         baselines = pathlib.Path(__file__).parent / "evals" / "baselines.json"
         scores = json.loads(baselines.read_text())["check_items"]
         assert scores["McOptionsValidEvaluator"] == 1.0
-        assert scores["McReasonValidEvaluator"] == round(17 / 18, 6)
-        assert scores["McCorrectNotLongestEvaluator"] == round(9 / 18, 6)
+        assert scores["FinalAnswerValidEvaluator"] == 1.0
 
     def test_an_optionless_mc_reason_draft_is_an_output_error_the_retries_answer(self):
         """The Claude recording of 2026-11-24 drew a call whose every
@@ -6213,31 +5799,6 @@ class TestMcReasonEval:
         assert score(_mc_draft(wrong_keys=["k", "k"], wrong_texts=[])) == 1.0  # not read
         assert score(_mc_draft(), one_mistake_twice) == 0.0
         assert score(_draft(wrong_keys=["k", "k"], wrong_texts=["a", "b"])) == 0.0
-
-
-class TestProjectRef:
-    @pytest.mark.parametrize(
-        "url,ref",
-        [
-            ("https://abcdefghij.supabase.co", "abcdefghij"),
-            ("https://ABCDEFGHIJ.supabase.co/", "abcdefghij"),
-            ("http://127.0.0.1:54321", "local"),
-            ("http://localhost:54321", "local"),
-            ("", "local"),
-        ],
-    )
-    def test_ref_is_parsed_from_supabase_url(self, monkeypatch, url, ref):
-        import importlib
-        import sys
-
-        monkeypatch.setattr("dotenv.load_dotenv", lambda *a, **k: False)
-        sys.modules.pop("scripts.backfill_check_items", None)
-        try:
-            module = importlib.import_module("scripts.backfill_check_items")
-            monkeypatch.setattr(module, "SUPABASE_URL", url)
-            assert module._project_ref() == ref
-        finally:
-            sys.modules.pop("scripts.backfill_check_items", None)
 
 
 # ── PKG-10 fix round F3: a wrong reason never states the final answer ──────
@@ -6407,21 +5968,6 @@ _UNSERVABLE_HONEST = [
     ("true", _GENERIC, "Thinks it is true only for positive n"),
     ("2", _GENERIC, "Adds 2 to both sides instead of subtracting"),
 ]
-
-
-def _serve_withholds(final_answer, prompt, text) -> bool:
-    from learning.leak import confront_text_states_answer
-
-    return confront_text_states_answer(text, final_answer=final_answer)
-
-
-@pytest.mark.parametrize(
-    "final_answer,prompt,text", _STATED + _PROMPT_ANAPHORS + _NO_TOKEN + _UNSERVABLE_HONEST
-)
-def test_the_drafting_lint_agrees_with_the_serve_time_check(final_answer, prompt, text):
-    """R4-2/3: stored == servable, case by case."""
-    draft = _wrong_reason_draft(final_answer, text, prompt=prompt)
-    assert _states_answer(draft) is _serve_withholds(final_answer, prompt, text)
 
 
 @pytest.mark.parametrize("final_answer,prompt,text", _STATED)

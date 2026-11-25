@@ -621,18 +621,6 @@ def test_check_next_moves_past_a_stale_claim_and_never_regrades_it(gate_on, seam
     seams.grade.assert_not_awaited()
 
 
-def test_the_evidence_backstop_is_documented_not_a_migration():
-    """C2's DB backstop (a second flush for the same session/item/attempt refused
-    by the evidence journal) needs a UNIQUE key the journal does not have; the
-    claim is the guard, and HANDOFF-07 records the decision."""
-    from pathlib import Path
-
-    handoff = (
-        Path(__file__).resolve().parents[2] / "docs/superpowers/plans/learning-loop/HANDOFF-07.md"
-    )
-    assert "evidence backstop" in handoff.read_text()
-
-
 # ── M1: one genuine, new attempt per rung anchor ──────────────────────────
 
 

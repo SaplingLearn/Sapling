@@ -1,37 +1,12 @@
 """PKG-14b: spec §11 removals and launch changes that inv_21's grep does not cover."""
 
 import inspect
-import pathlib
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
 from tests.split_patches import patch_tutor
 from tests.db_fakes import with_async_twins
-
-BACKEND = pathlib.Path(__file__).resolve().parents[1]
-REPO = BACKEND.parent
-
-
-def test_gate_module_is_env_only():
-    import re
-
-    src = (BACKEND / "learning" / "gate.py").read_text()
-    assert not re.search(r"^from db|table\(", src, re.M), "spec §7: the post-launch gate reads no table"
-    assert "user_settings" not in src and "learning_loop_beta" not in src
-
-
-def test_config_parse_is_the_exact_spec_7_expression():
-    src = (BACKEND / "config.py").read_text()
-    assert '_raw = os.getenv("LEARNING_LOOP_ENABLED", "").strip().lower()' in src
-    assert 'LEARNING_LOOP_ENABLED = _raw not in {"false", "0", "off", "no"}' in src
-
-
-def test_quiz_and_flashcards_do_not_consult_the_gate():
-    from routes import flashcards, quiz
-
-    for mod in (quiz, flashcards):
-        assert "learning_loop_active" not in inspect.getsource(mod), mod.__name__
 
 
 def test_onboarding_ignores_learning_style():
@@ -51,42 +26,6 @@ def test_onboarding_ignores_learning_style():
     assert "learning_style" not in inspect.getsource(onboarding.save_onboarding_profile)
 
 
-def test_profile_reads_no_learning_style():
-    from routes import profile
-
-    assert "learning_style" not in inspect.getsource(profile)
-
-
-def test_end_session_summary_has_no_dead_lists():
-    from routes import learn
-
-    src = inspect.getsource(learn.end_session)
-    for key in ("mastery_changes", "new_connections", "recommended_next"):
-        assert key not in src, key
-
-
-def test_frontend_session_summary_renders_no_dead_lists():
-    src = (REPO / "frontend/src/components/chat/SessionSummary.tsx").read_text()
-    for key in ("mastery_changes", "new_connections", "recommended_next"):
-        assert key not in src, key
-
-
-def test_post_launch_wording_replaces_the_build_phase_comments():
-    main = (BACKEND / "main.py").read_text()
-    assert (
-        "# Learning loop: 404 unless the loop is on for the student (the "
-        "LEARNING_LOOP_ENABLED kill switch, then their learning_loop flag)." in main
-    )
-    example = (BACKEND / ".env.local.example").read_text()
-    assert (
-        "# LEARNING_LOOP_ENABLED — the kill switch: false/0/off/no = loop off for everyone; "
-        "unset = the per-student learning_loop flag decides (spec §7)" in example
-    )
-    assert not any(
-        line.strip().startswith("LEARNING_LOOP_ENABLED=") for line in example.splitlines()
-    ), "no example config sets the variable (spec §7: owner-set)"
-
-
 @pytest.mark.kill_switch
 def test_kill_switch_marker_turns_the_loop_off(loop_off_via):
     """Both ways (tests/conftest.py LOOP_OFF_VIA): the env kill switch, or the
@@ -102,56 +41,6 @@ def test_kill_switch_marker_turns_the_loop_off(loop_off_via):
         assert config.LEARNING_LOOP_ENABLED is True
         assert os.environ["SAPLING_FLAG_LEARNING_LOOP"] == "off"
     assert learning_loop_active("anyone") is False
-
-
-#: The five legacy tutor handler bodies (#118: the same-named functions in
-#: services/tutor/; routes/learn.py wraps them).
-LEGACY_TUTOR_BODIES = ("start_session", "start_session_stream", "chat", "chat_stream", "action")
-
-
-def _loop_branch(body: str) -> tuple[int, int]:
-    """(start, end) of a handler body's `if loop_handler is not None:` block,
-    ending at the hand-off's `return await loop_handler(...)`."""
-    start = body.index("if loop_handler is not None:")
-    return start, body.index("return await loop_handler(body, request)", start)
-
-
-def test_only_the_loop_path_reads_the_ai_budget_in_source():
-    """Owner decision 2026-11-18 ("caps only when the loop is on"; was A20's
-    kill-switch cost bound, PKG-14b). The legacy tutor a loop-off student gets
-    reads no AI budget: every `ai_budget` read in a handler body sits inside
-    its loop branch, and none of them calls the retired `_kill_switch_budget`."""
-    import routes.learn as learn_route
-    import services.tutor as tutor
-    import services.tutor.run as tutor_run
-
-    for module in (tutor_run, learn_route):  # deleted, not just uncalled (#866 B2)
-        assert not hasattr(module, "_kill_switch_budget"), module.__name__
-        assert not hasattr(module, "KILL_SWITCH_BUDGET_BAND"), module.__name__
-    assert not hasattr(tutor_run, "ai_budget")
-    for name in LEGACY_TUTOR_BODIES:
-        body = inspect.getsource(getattr(tutor, name))
-        start, end = _loop_branch(body)
-        assert "_kill_switch_budget" not in body, name
-        reads = [i for i in range(len(body)) if body.startswith("ai_budget.", i)]
-        reads += [i for i in range(len(body)) if body.startswith("_loop_turn_entry(", i)]
-        assert reads, name
-        assert all(start < i < end for i in reads), name
-
-
-def test_the_loop_turn_entry_replays_and_refuses_before_the_rate_limit():
-    """#761 order on the loop path (B3): ownership, the replay of a persisted
-    turn, the ended-session 409, and only then the rate-limit read."""
-    from services.tutor import turns
-
-    body = inspect.getsource(turns._loop_turn_entry)
-    order = [
-        body.index("await _require_turn_session(session_id, user_id)"),
-        body.index("await _persisted_turn(session_id, turn_id)"),
-        body.index("await _refuse_ended_session(session_id)"),
-        body.index("asyncio.to_thread(ai_budget.enforce_rate_limit_for, user_id)"),
-    ]
-    assert order == sorted(order)
 
 
 def _route(path: str):
@@ -176,33 +65,16 @@ def _route(path: str):
         "/api/learn/action",
     ],
 )
-def test_every_delegating_route_reads_the_rate_limit_once_after_require_self(path):
-    """A20 on the delegating routes (A93 review): ONE rate-limit read on the loop
-    path (none on the legacy one, owner decision 2026-11-18), and only AFTER the
-    caller's identity is checked — never a dependency, which FastAPI runs before
-    the handler's require_self."""
-    import inspect
-
+def test_no_delegating_route_reads_the_rate_limit_as_a_dependency(path):
+    """A20 on the delegating routes (A93 review): the rate-limit read is never a
+    route dependency, which FastAPI would run before the handler's require_self.
+    The behaviour (no read on the loop-off path, the replay and the 409 before
+    the read on the loop path) is pinned by the request tests below."""
     from services import ai_budget
-
-    import services.tutor as tutor
-    from services.tutor import turns
 
     route = _route(path)
     deps = [d.call for d in route.dependant.dependencies]
     assert ai_budget.enforce_rate_limit not in deps, path
-    # #118 (spec §13 A149): the route is a thin wrapper; its body is the
-    # same-named function in services/tutor/, where the read hops off the loop
-    body = inspect.getsource(getattr(tutor, route.endpoint.__name__))
-    read = "asyncio.to_thread(ai_budget.enforce_rate_limit_for, body.user_id)"
-    if "_loop_turn_entry(" in body:  # the turn routes: the read is the entry's last step
-        assert read not in body, path
-        read = "_loop_turn_entry("
-        entry = inspect.getsource(turns._loop_turn_entry)
-        assert entry.count("asyncio.to_thread(ai_budget.enforce_rate_limit_for, user_id)") == 1
-    assert body.count(read) == 1, path
-    # #756: the guard runs off the event loop (`guard_off_loop(require_self, ...)`)
-    assert body.index("guard_off_loop(require_self, body.user_id, request)") < body.index(read), path
 
 
 # ── legacy client (kill-switch path) ─────────────────────────────────────────

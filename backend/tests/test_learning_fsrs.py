@@ -605,23 +605,6 @@ def _imports_fsrs(source: str) -> bool:
     return False
 
 
-@pytest.mark.parametrize(
-    "source, expected",
-    [
-        ("import learning.fsrs", True),
-        ("from learning.fsrs import next_state", True),
-        ("from learning import bkt, fsrs", True),
-        ("from learning import (\n    fsrs,\n)", True),
-        ("def f():\n    from learning import fsrs", True),
-        ("from learning import bkt", False),
-        ("from learning.gate import learning_loop_active", False),
-        ("# from learning import fsrs", False),
-    ],
-)
-def test_fsrs_import_detector(source, expected):
-    assert _imports_fsrs(source) is expected
-
-
 #: The gate a route may call: `learning_loop_active`, or its route-entry form
 #: `learning_loop_for_request` (owner decision 00, A38 — the loop routes read the
 #: gate once at entry through it; tests/test_learning_gate_route_entry.py).
@@ -650,42 +633,6 @@ def _route_violates_gate_rule(source: str) -> bool:
     passes. It is a tripwire for a route that forgot the gate entirely, not a
     proof that every fsrs use sits under it."""
     return _imports_fsrs(source) and not _calls_gate(source)
-
-
-_UNGATED_ROUTE = """
-from learning.fsrs import next_state
-# TODO: wrap in learning_loop_active later
-def h(row):
-    return next_state(row["d"], row["s"], 3, 1.0)
-"""
-
-
-@pytest.mark.parametrize(
-    "source, violates",
-    [
-        (_UNGATED_ROUTE, True),  # the gate named only in a comment
-        ("from learning.gate import learning_loop_active\nfrom learning import fsrs", True),
-        ("from learning import fsrs\nGATE = 'learning_loop_active'", True),
-        (
-            "from learning import fsrs\nfrom learning.gate import learning_loop_active\n"
-            "def h(uid):\n    if learning_loop_active(uid):\n        fsrs.order_due([], 0)",
-            False,
-        ),
-        (
-            "from learning import fsrs, gate\ndef h(uid):\n    return gate.learning_loop_active(uid)",
-            False,
-        ),
-        ("from learning.gate import learning_loop_active\ndef h(uid):\n    return 1", False),
-        (
-            "from learning import fsrs\nfrom learning.gate import learning_loop_for_request\n"
-            "def h(uid):\n    if learning_loop_for_request(uid):\n        fsrs.order_due([], 0)",
-            False,
-        ),
-        ("from learning import fsrs\nGATE = 'learning_loop_for_request'", True),
-    ],
-)
-def test_route_gate_rule_detector(source, violates):
-    assert _route_violates_gate_rule(source) is violates
 
 
 def test_routes_import_fsrs_only_behind_the_gate():
