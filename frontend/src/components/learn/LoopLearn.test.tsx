@@ -842,7 +842,9 @@ describe("LoopLearn — A26", () => {
     fireEvent.change(screen.getByTestId("tutor-input"), { target: { value: "i want to kill myself" } });
     fireEvent.click(screen.getByTestId("tutor-send"));
     await screen.findByTestId("crisis-support-card");
-    expect(screen.queryByTestId("loop-materials-unavailable")).toBeNull();
+    // The note leaves through its collapse exit (AnimatePresence): gone once
+    // that settles, not necessarily in the same tick as the card arriving.
+    await waitFor(() => expect(screen.queryByTestId("loop-materials-unavailable")).toBeNull());
     fireEvent.change(screen.getByTestId("tutor-input"), { target: { value: "and?" } });
     fireEvent.click(screen.getByTestId("tutor-send"));
     await screen.findByText("And the next step.");
@@ -862,7 +864,9 @@ describe("LoopLearn — A26", () => {
     fireEvent.change(await screen.findByTestId("tutor-input"), { target: { value: "i want to kill myself" } });
     fireEvent.click(screen.getByTestId("tutor-send"));
     await screen.findByTestId("crisis-support-card");
-    expect(screen.queryByTestId("loop-preparing-items")).toBeNull();
+    // The note leaves through its collapse exit (AnimatePresence): gone once
+    // that settles, not necessarily in the same tick as the card arriving.
+    await waitFor(() => expect(screen.queryByTestId("loop-preparing-items")).toBeNull());
   });
 
   it("A128: the opener's failed retrieval shows the note from the first turn", async () => {

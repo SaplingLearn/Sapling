@@ -8,7 +8,7 @@
  * Surfaces and states:
  *  - the shell's top-navigation layout, wide and on a phone with its menu open;
  *  - dashboard (and its courses key open), library (documents, a document's
- *    detail panel, the upload dialog), study (the Study hub with the loop's
+ *    details dialog, the upload menu), study (the Study hub with the loop's
  *    due reviews, its course picker open, the deadlines pop-up, the dates
  *    editor, a concept's actions menu, the daily goal editor; the Study Guides
  *    home, the New study guide dialog with its class list open and with a
@@ -152,13 +152,18 @@ test("library", async ({ page }) => {
   const doc = page.locator('[data-testid^="library-doc-"]').first();
   await expect(doc).toBeVisible();
   await expectAccessible(page, "library: documents");
-  await doc.click();
-  await expect(page.getByTestId("library-detail-close")).toBeVisible();
-  await expectAccessible(page, "library: document detail");
-  await page.getByTestId("library-detail-close").click();
+  // v2 (#717): a document's details are the dialog its "⋯" opens, with the
+  // next-steps links (W8.1) inside it.
+  await doc.getByRole("button", { name: "Details and actions" }).click();
+  await expect(page.getByTestId("library-doc-menu")).toBeVisible();
+  await expectAccessible(page, "library: document details");
+  await page.mouse.click(5, 5); // the dialog's scrim
+  await expect(page.getByTestId("library-doc-menu")).toBeHidden();
+  // The Upload button opens a menu (the picker and the uploader's dialog sit
+  // behind a native file chooser).
   await page.getByTestId("library-upload").click();
-  await expect(page.getByTestId("upload-modal")).toBeVisible();
-  await expectAccessible(page, "library: upload dialog");
+  await expect(page.getByRole("menu")).toBeVisible();
+  await expectAccessible(page, "library: upload menu");
 });
 
 /**

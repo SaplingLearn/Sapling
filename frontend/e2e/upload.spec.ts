@@ -2,8 +2,9 @@
  * Journey: upload → SSE → document appears (#387).
  *
  * Drives the REAL streaming pipeline end to end through the UI: pick a
- * fixture PDF in the upload modal (upload-modal testids, #382), start the
- * upload, ride the SSE stream (frontend/src/lib/sse.ts::streamSSE under
+ * fixture PDF in the Library's uploader (#717: `library-upload` opens the
+ * file picker, then the "Where does this belong?" dialog,
+ * `library-upload-where`), start the upload, ride the SSE stream (frontend/src/lib/sse.ts::streamSSE under
  * uploadDocumentStream) to its terminal `done` event, then assert the
  * document appears in the library AND the row exists in Postgres via
  * raw-SQL readback (support/db.ts::query).
@@ -35,10 +36,14 @@
  * Waiting is event-based only (no waitForTimeout): every wait is an
  * auto-retrying expect() on UI state that a pipeline event flips.
  *
- * Also carries the #435 library-course-filter regression coverage: once the
- * uploaded document appears, the journey resolves its seeded course from
- * Postgres and asserts filtering the library by that course still surfaces
- * the document (and "Uncategorized" does not) — the regression being that
+ * The upload modal of #382 (`upload-modal-*`) now opens only from the
+ * Calendar's "Import syllabus"; the journeys that test the modal itself (the
+ * inline course add, Re-analyze) open it there.
+ *
+ * Also carries the #435 course-scope regression coverage: once the uploaded
+ * document appears, the journey resolves its seeded course from Postgres and
+ * asserts scoping the library to that course still surfaces the document (and
+ * "No Course" does not) — the regression being that
  * GET /api/documents/user/{id} never returned course_id, so every upload
  * silently miscategorized as "Uncategorized" regardless of its real course.
  */
@@ -111,14 +116,19 @@ async function expectFunctionMode(): Promise<void> {
   ).toBe("function");
 }
 
-/** Upload the fixture through the library's upload modal; leaves the modal
- * open on its Done footer, the file's row processed. */
-async function uploadFixture(page: Page): Promise<void> {
-  await page.goto("/library");
-  const uploadButton = page.getByTestId("library-upload");
-  await expect(uploadButton).toBeEnabled();
-  await uploadButton.click();
+/** Open the #382 upload modal. Since the Library's v2 rebuild (#717) it
+ * lives behind the Calendar's "Import syllabus"; the Library has its own
+ * uploader (`uploadInLibrary`). */
+async function openUploadModal(page: Page): Promise<void> {
+  await page.goto("/calendar");
+  await page.getByRole("button", { name: "Import syllabus" }).click();
   await expect(page.getByTestId("upload-modal")).toBeVisible();
+}
+
+/** Upload the fixture through the upload modal; leaves the modal open on its
+ * Done footer, the file's row processed. */
+async function uploadFixture(page: Page): Promise<void> {
+  await openUploadModal(page);
   await page.getByTestId("upload-modal-file-input").setInputFiles(FIXTURE_PDF);
   await expect(page.getByTestId("upload-modal-file-row-0")).toBeVisible();
   await page.getByTestId("upload-modal-submit").click();
@@ -141,11 +151,7 @@ async function uploadFixture(page: Page): Promise<void> {
 test("a course added inline is immediately selectable for the queued file (#186)", async ({
   page,
 }) => {
-  await page.goto("/library");
-  const uploadButton = page.getByTestId("library-upload");
-  await expect(uploadButton).toBeEnabled();
-  await uploadButton.click();
-  await expect(page.getByTestId("upload-modal")).toBeVisible();
+  await openUploadModal(page);
 
   // Queue a file so a per-file Course dropdown exists to assert on.
   await page.getByTestId("upload-modal-file-input").setInputFiles(FIXTURE_PDF);
@@ -192,35 +198,30 @@ test("upload → SSE → document appears in library and Postgres", async ({
 
   // Enabled only once the courses fetch lands (the seeded rich-user-active
   // has enrollments), so this wait also covers the library's initial load.
-  const uploadButton = page.getByTestId("library-upload");
-  await expect(uploadButton).toBeEnabled();
-  await uploadButton.click();
+  await expect(page.getByTestId("library-upload")).toBeEnabled();
+  // The Upload button opens a menu whose "Upload files" clicks this hidden
+  // picker; setting its files directly is the same change event.
+  await page.locator('input[type="file"][accept=".pdf,.pptx,.docx"]').setInputFiles(FIXTURE_PDF);
 
-  await expect(page.getByTestId("upload-modal")).toBeVisible();
-  await page.getByTestId("upload-modal-file-input").setInputFiles(FIXTURE_PDF);
-
-  const fileRow = page.getByTestId("upload-modal-file-row-0");
-  await expect(fileRow).toBeVisible();
-  await expect(fileRow).toContainText(FIXTURE_NAME);
-
-  await page.getByTestId("upload-modal-submit").click();
+  const where = page.getByTestId("library-upload-where");
+  await expect(where).toBeVisible();
+  await expect(where).toContainText(FIXTURE_NAME);
+  // A course must be chosen before "Add to Library" enables: take the
+  // suggestion when the dialog made one, else the first enrolled course.
+  const courses = where.getByRole("radiogroup", { name: "Course" });
+  if ((await courses.getByRole("radio", { checked: true }).count()) === 0) {
+    await courses.getByRole("radio").first().click();
+  }
+  await page.getByTestId("library-upload-confirm").click();
 
   // ── Ride the SSE stream to completion ─────────────────────────────────
-  // The "Done" footer button only replaces "Start upload" once every row
-  // left the uploading state — i.e. once streamSSE consumed the terminal
-  // `status: done` event and uploadDocumentStream resolved with the
-  // persisted document. Event-based wait; generous budget for the OCR +
-  // pipeline round trips, but it normally flips in a few seconds.
-  const doneButton = page.getByTestId("upload-modal-done");
-  await expect(doneButton).toBeVisible({ timeout: 60_000 });
-
-  // The row rendered the orchestrator result from the SSE `result` event:
-  // the scripted summary abstract and concept chips — proof the stream
-  // delivered the full DocumentProcessingResult, not an error/fallback.
-  await expect(fileRow).toContainText(SCRIPTED_ABSTRACT_SNIPPET);
-  for (const concept of SCRIPTED_CONCEPTS) {
-    await expect(fileRow).toContainText(concept);
-  }
+  // The footer reads "Working…" (disabled) while any row is uploading and
+  // turns into an enabled "Done" once every row resolved — i.e. once the
+  // stream consumed its terminal `status: done` event and
+  // uploadDocumentStream resolved with the persisted document.
+  await expect(where).toContainText("Added to your library", { timeout: 60_000 });
+  const doneButton = where.getByRole("button", { name: "Done" });
+  await expect(doneButton).toBeEnabled({ timeout: 60_000 });
 
   // ── Postgres readback (raw SQL) ───────────────────────────────────────
   const docs = await queryRaw(
@@ -280,48 +281,54 @@ test("upload → SSE → document appears in library and Postgres", async ({
   expect(await scriptedPrerequisiteEdges()).toEqual([]);
 
   // ── Document appears in the library ───────────────────────────────────
-  // Closing via Done triggers the library refetch (onComplete → load()).
   await doneButton.click();
-  await expect(page.getByTestId("upload-modal")).toBeHidden();
+  await expect(page.getByTestId("library-upload-where")).toBeHidden();
 
   const card = page.getByTestId(`library-doc-${doc.id}`);
   await expect(card).toBeVisible();
   await expect(card).toContainText(FIXTURE_NAME);
-  // The card renders the decrypted summary — the encryption round-trip
-  // (encrypt at persist, decrypt at read) closed correctly.
-  await expect(card).toContainText(SCRIPTED_ABSTRACT_SNIPPET);
+  // Its details dialog renders the decrypted summary and the concepts — the
+  // encryption round-trip (encrypt at persist, decrypt at read) closed
+  // correctly, and the SSE result carried the scripted pipeline's output.
+  await card.getByRole("button", { name: "Details and actions" }).click();
+  const details = page.getByTestId("library-doc-menu");
+  await expect(details).toContainText(SCRIPTED_ABSTRACT_SNIPPET);
+  for (const concept of SCRIPTED_CONCEPTS) {
+    await expect(details).toContainText(concept);
+  }
+  // W8.1: where to go next with it — its concepts on the Tree.
+  await expect(details.getByTestId("library-next-tree")).toBeVisible();
+  // The dialog closes on a click on its scrim (fixed, the whole viewport).
+  await page.mouse.click(5, 5);
+  await expect(details).toBeHidden();
 
-  // ── Library course filter matches the seeded course (#435) ────────────
+  // ── Library course scope matches the seeded course (#435) ─────────────
   // Regression: GET /api/documents/user/{id} used to return offering_id but
-  // never the abstract course_id that Library.tsx filters/labels on, so a
-  // freshly uploaded doc could never match a course filter — it always
-  // counted as "Uncategorized" no matter which course it was tagged with.
-  // Resolve the seeded course from the persisted row itself (offering_id →
+  // never the abstract course_id the Library scopes and labels on, so a
+  // freshly uploaded doc could never match its course — it always counted as
+  // having none, whichever course it was tagged with. Resolve the seeded
+  // course from the persisted row itself (offering_id →
   // course_offerings.course_id) rather than assuming which enrolled course
-  // the upload modal defaulted to.
+  // the upload dialog defaulted to.
   const offeringRows = await queryRaw(
-    `SELECT course_id FROM course_offerings WHERE id = $1`,
+    `SELECT o.course_id, c.course_code
+       FROM course_offerings o
+       JOIN courses c ON c.id = o.course_id
+      WHERE o.id = $1`,
     [doc.offering_id],
   );
-  const courseId = (offeringRows[0] as { course_id: string } | undefined)
-    ?.course_id;
-  expect(
-    courseId,
-    "the document's offering must resolve to an abstract course",
-  ).toBeTruthy();
+  const course = offeringRows[0] as { course_id: string; course_code: string } | undefined;
+  expect(course?.course_id, "the document's offering must resolve to an abstract course").toBeTruthy();
 
-  const courseFilter = page.getByTestId(`library-course-filter-${courseId}`);
-  await expect(courseFilter).toBeVisible();
-  await courseFilter.click();
-
-  // The uploaded doc matches its course's filter — not dropped, not stuck
-  // under "Uncategorized".
+  const switcher = page.getByTestId("library-course-switcher");
+  await switcher.click();
+  await page.getByRole("option", { name: new RegExp(course!.course_code) }).first().click();
+  // The uploaded doc is in its course's scope — not dropped, not stuck
+  // under "No Course".
   await expect(card).toBeVisible();
 
-  const uncategorizedFilter = page.getByTestId(
-    "library-course-filter-uncategorized",
-  );
-  await uncategorizedFilter.click();
+  await switcher.click();
+  await page.getByRole("option", { name: /No Course/ }).click();
   await expect(card).not.toBeVisible();
 });
 

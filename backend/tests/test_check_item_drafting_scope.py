@@ -86,8 +86,9 @@ def test_the_drafting_status_writes_run_as_the_service_role(enforced, monkeypatc
     svc.mark_drafting("doc-1", svc.DRAFTING_PENDING)
     svc.mark_drafting("doc-1", svc.DRAFTING_DONE)
     svc.clear_drafting("doc-1")
+    svc.forget_drafting("doc-1")
 
-    assert [(t, v) for t, v, _ in rec.calls] == [("documents", "update")] * 3
+    assert [(t, v) for t, v, _ in rec.calls] == [("documents", "update")] * 4
     assert rec.as_student() == []
 
 

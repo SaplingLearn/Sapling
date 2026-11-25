@@ -162,10 +162,32 @@ export interface Document {
   category: 'syllabus' | 'lecture_notes' | 'slides' | 'reading' | 'assignment' | 'study_guide' | 'other';
   summary: string | null;
   concept_notes: ConceptNote[] | null;
+  /** The folder the document is filed in, or null for loose in the course. */
+  folder_id?: string | null;
+  /**
+   * Pages in the source file, counted at upload. Null when it cannot be known
+   * — a DOCX (no fixed pagination), a file that would not parse, or a document
+   * uploaded before the column existed. The Library renders those as an em
+   * dash and sorts them last under "Most Pages".
+   */
+  page_count?: number | null;
   created_at: string;
   processed_at: string | null;
   /** Where check-item drafting is; null when the loop never drafted this row. */
   check_items_status?: CheckItemsStatus | null;
+  /** Set only on the Trash read. */
+  deleted_at?: string | null;
+}
+
+/** A named box inside a course that holds documents. */
+export interface DocFolder {
+  id: string;
+  user_id: string;
+  /** The abstract course, or null for a folder under "No Course". */
+  course_id: string | null;
+  name: string;
+  created_at: string;
+  updated_at: string;
 }
 
 export type RarityTier = 'common' | 'uncommon' | 'rare' | 'epic' | 'legendary';

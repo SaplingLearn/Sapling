@@ -1,0 +1,9 @@
+/* DocMenu.tsx: the dialog's own spacing for the next-steps card, which
+   brings its own top margin (LibraryNextCtas.module.css). */
+.next {
+  padding: 0 var(--sp-5) var(--sp-4);
+}
+
+.next:empty {
+  display: none;
+}

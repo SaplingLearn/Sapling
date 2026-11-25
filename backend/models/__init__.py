@@ -757,9 +757,19 @@ class UploadDocumentBody(BaseModel):
 
 class UpdateDocumentBody(BaseModel):
     """PATCH /api/documents/doc/{id}. ``category`` stays a bounded string, not
-    a Literal, so an unknown one keeps its 400 (the route's contract)."""
+    a Literal, so an unknown one keeps its 400 (the route's contract).
+
+    The redesign's filing fields are bounded here too, so an overlong one is a
+    422 before the handler — `tests/test_abuse_limits.py` requires that no
+    handler, and so no DB read, runs for an oversized field. Whether a field
+    was SENT still matters (a null clears the course, an absent key leaves it),
+    so the route reads `model_fields_set`, not the values alone.
+    """
     user_id: Optional[Id] = None
     category: Optional[str] = Field(default=None, max_length=64)
+    file_name: Optional[str] = Field(default=None, max_length=300)
+    course_id: Optional[Id] = None
+    folder_id: Optional[Id] = None
 
 
 class ScanConceptsBody(BaseModel):

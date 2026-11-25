@@ -346,6 +346,10 @@ SPECS: tuple[_Spec, ...] = (
     _Spec("misconception_attempts", key="misconception_id", parent="misconceptions"),
     _Spec("learning_evidence_voids", key="event_id", parent="node_mastery_events",
           order="event_id"),
+    # Before documents: documents.folder_id references document_folders.
+    # No 🔒 column (`name` is a plaintext label, like flashcard_sets.name);
+    # `course_id` is remapped (_COURSE_TABLES).
+    _Spec("document_folders"),
     # Before enrollments: enrollments.syllabus_doc_id references documents.
     _Spec("documents"),
     _Spec("enrollments"),
@@ -389,7 +393,7 @@ _OFFERING_TABLES = ("documents", "enrollments", "notes", "flashcards", "sessions
 _COURSE_TABLES = (
     "graph_nodes", "flashcard_sets", "learning_evidence_voids", "misconception_attempts",
     "posttest_poses", "posttest_skips", "learning_prequestions",
-    "learning_self_explanations",
+    "learning_self_explanations", "document_folders",
 )
 
 # Foreign keys between bundled tables that are not covered by a parent spec
