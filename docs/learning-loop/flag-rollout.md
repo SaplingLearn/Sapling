@@ -30,7 +30,7 @@ Per-student flags are resolved once per request (or once per quiz generation and
 
 Several flags change a prompt or an output schema, so their eval datasets must be recorded live and pass before the flag goes on (`backend/tests/evals/README.md`; record with `SAPLING_EVAL_MODE=record`, three recordings for a floor).
 
-**As of 2026-11-24 (A111 on #866 + Day 9 W0.3b/W0.5):** `LOOP_SLOTS_PENDING_CLAUDE_EVAL` is empty. Default-path Claude cassettes + floors landed for `loop_tutor*`, confront, grader, check_items, decisions; plus `__pedagogy`, `__flags`, `__v2`, and `check_item_gates` (verify/solve/topup/varied/combo). Only `deep` is routable on Claude (`LOOP_ROUTABLE_TIERS`). `__v2` served gates (incl. SycophancyResists + ServedAnswerLeak) are **1.0** ×3 on lite/standard/deep (`baselines.json`, prompt `ca02dcf9e63b`); W0.5 three E2E lanes green. `loop_tutor_v2` / `learning_loop` population enable remains **operator-only**.
+**As of 2026-11-24 (A111 on #866 + Day 9 W0.3b/W0.5), re-checked against `floors.py --check`:** `LOOP_SLOTS_PENDING_CLAUDE_EVAL` is empty. Default-path Claude cassettes + floors landed for `loop_tutor*`, confront, grader, check_items, decisions; plus `__pedagogy`, `__flags`, `__v2`, and `check_item_gates` (verify/solve/topup/varied/combo). Only `deep` is routable on Claude (`LOOP_ROUTABLE_TIERS`). **The `__v2` floors do not hold:** they were set to 1.0 by hand, but the committed run logs show RawAnswerLeak / ServedAnswerLeak / SycophancyResists / ServedNoReveal at 0.9 and confront Confronts / FeedbackNeverEndsInAnswer at 0.875 in at least one of three runs, so `floors.py --check` and `tests/test_eval_floors.py` fail. A prompt fix is prepared; it needs a three-run Claude re-record. `loop_tutor_v2` is not ready, even for self-target, until that passes. The default `check_items` dataset also owes a three-run re-record (McOptionsValid 0.875 against its required 1.0; the drafter retry landed in `9bd4bd9a`). The pending set tracks model slots only, so its being empty does not cover `__v2`, `__flags` or a below-contract floor. Self-target runbook and per-flag readiness: [w0-flag-enable-checklist.md](w0-flag-enable-checklist.md).
 
 `SAPLING_EVAL_USAGE_LOG=<path>` records each run's token cost, so a recording also measures what the flag will cost.
 
@@ -68,7 +68,7 @@ Several flags change a prompt or an output schema, so their eval datasets must b
 
 ### loop_tutor_v2 (A121)
 - **Changes:** the tutor opens with a plain verdict on the student's reply, labels only new content "Key idea:", and names the plan's current concept and why.
-- **Before:** `loop_tutor` and `misconception_confront` re-recorded live under `LOOP_EVAL_VARIANT=v2` (their own cassettes), every served gate passing. Once a v2 namespace is recorded, `run_all.py` (and CI) replays it beside the default one, so a later edit to a v2 prompt line fails like any regression.
+- **Before:** `loop_tutor` and `misconception_confront` re-recorded live under `LOOP_EVAL_VARIANT=v2` (their own cassettes), every served gate passing. **Not met on 2026-11-24:** see the paragraph above. Once a v2 namespace is recorded, `run_all.py` (and CI) replays it beside the default one, so a later edit to a v2 prompt line fails like any regression.
 - **Watch:** `zpd.leak` events, tutor turn retries, session wrap-up ratings.
 
 ### segment_prequestion (A138)
@@ -83,8 +83,8 @@ Several flags change a prompt or an output schema, so their eval datasets must b
 
 ### next_probe_hint (W2.4)
 - **Changes:** when reason-before-submit / self-explain plaintext is available, activation may prefer an already-eligible check whose stem overlaps that text (deterministic keywords). Never mastery.
-- **Before:** nothing eval-gated (no prompt change). Prefer after W2.3 storage is in use and a decrypt path into activation exists; until then the call site is a no-op even when on (no plaintext threaded). See [w2-next-probe-hint.md](w2-next-probe-hint.md).
-- **Watch:** activation still respects exclusions / post-test reserves; no `apply_graph_update` from this path.
+- **Before:** nothing eval-gated (no prompt change). Since W2.4b the call site in `services/loop/practice.py` opens the student's latest sealed reasoning (only while the flag is on) and passes it in, so the flag acts once reason-before-submit text exists. See [w2-next-probe-hint.md](w2-next-probe-hint.md).
+- **Watch:** it emits no event of its own. Activation still respects exclusions / post-test reserves; no `apply_graph_update` from this path.
 - **Roll back:** off restores ordinary `select_item` preference.
 
 ### quiz_planned_questions (A144)

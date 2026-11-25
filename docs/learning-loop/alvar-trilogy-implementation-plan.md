@@ -227,6 +227,8 @@ These are **done** when `learning_loop` is on. Work is enable / eval / polish, n
 
 Pending slots (`LOOP_SLOTS_PENDING_CLAUDE_EVAL`): **empty**.
 
+**Correction (2026-11-24, `floors.py --check`):** the `__v2` floors above were hand-set to 1.0; the committed run logs show safety gates at 0.875–0.9 in some runs, so the check fails (10 problems, all `__v2`). A prompt fix is prepared and awaits a three-run Claude re-record. `check_items` also owes a three-run re-record (McOptionsValid 0.875 vs its required 1.0; drafter retry in `9bd4bd9a`). The empty pending set tracks model slots only. Details: [`w0-flag-enable-checklist.md`](w0-flag-enable-checklist.md).
+
 ---
 
 ### Workstream W1 — P0 philosophy into the teach spine (V1 → A+)
@@ -300,7 +302,7 @@ Order follows `flag-rollout.md`, tightened for Alvar A+.
 |---|---|---|
 | **E0** | `learning_loop` rollout | W0.1–W0.3 + W0.5 **done**; **operator** self→class→% only ([`w0-flag-enable-checklist.md`](w0-flag-enable-checklist.md)) |
 | **E1** (read-only / safety) | `quiz_concept_plan`, `quiz_results_routing`, `item_reports`, then `crisis_support` | Code ready; **operator self-target**; crisis copy review |
-| **E2** (prompt / Alvar sensing) | `loop_tutor_v2`, `segment_prequestion`, `self_explanation_prompts` | `__flags` + ×3 `__v2` floors **done**; population enable still **operator HOLD** |
+| **E2** (prompt / Alvar sensing) | `loop_tutor_v2`, `segment_prequestion`, `self_explanation_prompts` | `__flags` **done**; `__v2` floors **fail** `floors.py --check` (re-record pending), so `loop_tutor_v2` waits even for self-target; population enable still **operator HOLD** |
 | **E3** (quiz learning) | `quiz_planned_questions` → `quiz_item_gates` → `quiz_misconceptions` | Planned/gates evals; after E1–E2 dogfood |
 | **E4** (drafting / Alvar dials) | `varied_isomorphs`, `upload_prereq_edges`, then `multi_concept_items` | Varied/combo/relations evals |
 | **E5** (trial measurement) | `help_gate_strict`, `probe_matched_pretest`, `retention_due_badge` | Trial boundary only |

@@ -26,7 +26,7 @@
 ### Loop / W0–W5 (code)
 
 - Learning loop + Tutor V2 + quiz learning features (A143–A147) on this branch; flags **off** by default.
-- W0.1–W0.3 Claude evals recorded; `LOOP_SLOTS_PENDING_CLAUDE_EVAL` empty; `__v2` lite/standard/deep served gates **1.0** ×3 floors.
+- W0.1–W0.3 Claude evals recorded; `LOOP_SLOTS_PENDING_CLAUDE_EVAL` empty. **Correction (2026-11-24):** the `__v2` floors fail `floors.py --check` (safety gates 0.875–0.9 in some runs); re-record pending — see [`w0-flag-enable-checklist.md`](./w0-flag-enable-checklist.md).
 - W0.5 three E2E lanes **GREEN** on tip (default / kill-switch / flag-off) — see checklist.
 - Day 9 eng rows **#1–8, #10–23 done**; only Day 9 **#9 = operator HOLD**.
 

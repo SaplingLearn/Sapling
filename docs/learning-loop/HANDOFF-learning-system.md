@@ -30,7 +30,7 @@ Finish whatever is still missing from the Alvar trilogy **implementation plan fo
 ## Already true (do not redo)
 
 - Loop + Tutor V2 + quiz **learning** features (A143–A147) coded; flags default **off**.
-- W0.1–W0.3 Claude evals recorded; `__v2` lite/standard/deep served gates **1.0** ×3 floors.
+- W0.1–W0.3 Claude evals recorded. **Correction (2026-11-24):** the `__v2` floors were hand-set to 1.0, but the committed run logs show safety gates at 0.875–0.9 in some runs, so `floors.py --check` and `tests/test_eval_floors.py` fail. A prompt fix is prepared (`.v2_prompt_fix.patch`) and awaits a three-run Claude re-record. `check_items` also owes a three-run re-record after `9bd4bd9a`. See [`w0-flag-enable-checklist.md`](./w0-flag-enable-checklist.md).
 - W0.5 three E2E lanes GREEN (default / kill-switch / flag-off) — see checklist.
 - Day 9 eng complete except **#9 operator HOLD**.
 - W8 spine (Library/Tree/Study/`learner_next`/cross-links) largely done in plan.
@@ -42,15 +42,15 @@ Finish whatever is still missing from the Alvar trilogy **implementation plan fo
 
 ### A. Operator (agent prepares checklist; does not flip)
 
-- [ ] Self-target dogfood order in [`w0-flag-enable-checklist.md`](./w0-flag-enable-checklist.md):
+- [x] Self-target dogfood order in [`w0-flag-enable-checklist.md`](./w0-flag-enable-checklist.md) — runbook prepared 2026-11-24; the operator runs it:
   1. `learning_loop` (self)
   2. Read-only: `quiz_concept_plan`, `quiz_results_routing`, `item_reports`, `next_probe_hint`
   3. Prompt children: `segment_prequestion`, `self_explanation_prompts`
-  4. `loop_tutor_v2` — self-target OK; **population HOLD** (`LOOP_ROUTABLE_TIERS={deep}`)
+  4. `loop_tutor_v2` — **blocked** until the `__v2` re-record passes `floors.py --check`; then self-target only; **population HOLD** (`LOOP_ROUTABLE_TIERS={deep}`)
   5. Later W5.E3–E4 quiz/drafting pack — still self/class only
   6. Last: class → % → only then `default_variant: "on"`
-- [ ] Rollout watches / kill-switch drills ([`flag-rollout.md`](./flag-rollout.md))
-- [ ] Crisis copy review before broad `crisis_support`
+- [x] Rollout watches / kill-switch drills — per step in the runbook (Admin Flags action, watch list, flag drill + env drill, go/no-go)
+- [ ] Crisis copy review before broad `crisis_support` — review checklist, code locations and sign-off are in the runbook ("Crisis copy review"); the owner's review is still to do
 
 ### B. Merge hygiene for learning code on tip
 
@@ -76,9 +76,9 @@ Walk [`alvar-trilogy-implementation-plan.md`](./alvar-trilogy-implementation-pla
 - [ ] **W3.1** plan dependency **UI** (`prereq_edges` API done; UI open)
 - [ ] **W3.5** learner mini-map — only if product still wants beyond wrap-up stub (never mastery edges)
 - [ ] **W4** Stage B SVG verify / grounded cite-or-rewrite — cost-gated; Stage A withheld figure done
-- [ ] **W5.E2–E4** code/dogfood readiness docs; enable remains operator
+- [x] **W5.E2–E4** code/dogfood readiness docs; enable remains operator — table in [`w0-flag-enable-checklist.md`](./w0-flag-enable-checklist.md#w5e2e4-readiness): only `segment_prequestion` / `self_explanation_prompts` (E2) and `varied_isomorphs` / `multi_concept_items` (E4, test course) are eval-ready; `loop_tutor_v2`, `quiz_planned_questions`, `quiz_item_gates`, `upload_prereq_edges` await live records
 - [x] **W8** residual: Hub/Dashboard call sites on `learner_next` (Dashboard Today-plan quiz item was the last bypass; Tutor T1 `weakestConcept` and quiz-results `next_step.learn` still rank on their own — Tutor/Quiz-summary, out of W8.6 scope)
-- [ ] Cross-surface copy pass ([`w3-handoffs.md`](./w3-handoffs.md))
+- [x] Cross-surface copy pass ([`w3-handoffs.md`](./w3-handoffs.md)) — findings and proposed strings in [`copy-pass-2026-11-24.md`](./copy-pass-2026-11-24.md); frontend not edited (one product call: quiz results' mastery vs skill meters)
 
 ### D. Explicit non-goals for this handoff
 
@@ -123,7 +123,7 @@ export SAPLING_FUNCTION_HANDLERS=agents.function_handlers_e2e
 scripts/e2e-cycle.sh -- bash -c \
   'cd frontend && npx playwright test e2e/learn-loop.spec.ts e2e/tutor.spec.ts --reporter=list'
 
-# Eval floors still hold (no re-record unless you change prompts)
+# Eval floors (fail today on the __v2 datasets until their three-run re-record)
 cd backend && venv/bin/python tests/evals/floors.py --check
 ```
 
