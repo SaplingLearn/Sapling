@@ -1,5 +1,6 @@
 "use client";
 import React from "react";
+import { motion, type Target } from "framer-motion";
 import Dialog from "../Dialog";
 import { CustomSelect } from "../CustomSelect";
 import { Icon } from "../Icon";
@@ -25,6 +26,11 @@ import s from "./FlashcardImportModal.module.css";
 import { IMPORT_PRACTICE_NOTE } from "./flashcardsCopy";
 import { humanizeError } from "@/lib/errorMessage";
 import { CLEANUP_WITHHELD_NOTICE } from "@/lib/integrityNotice";
+import { useMotionPresets } from "@/lib/motion";
+
+/** The sheet's width: 980px of two columns, less a --sp-8 gutter each side on
+ *  a narrower screen. */
+const DIALOG_WIDTH = "min(980px, calc(100vw - 2 * var(--sp-8)))";
 
 type TabKey = "paste" | "upload" | "url" | "ai" | "photo";
 
@@ -217,6 +223,7 @@ function SourceInput({ tab, cards, onCards, documents, documentsLoading, pasteRe
 
 /** Left column: where the cards come from. */
 function SourcePane({ onSelect, ...input }: SourceInputProps & { onSelect: (next: TabKey) => void }) {
+  const m = useMotionPresets();
   return (
     <section className={s.source} aria-label="Card source">
       <div className={`${s.seg} ${s.sourcePicker}`} role="group" aria-label="Import from">
@@ -230,9 +237,17 @@ function SourcePane({ onSelect, ...input }: SourceInputProps & { onSelect: (next
           >{t.label}</button>
         ))}
       </div>
-      <div className={s.sourceBody} data-source={input.tab}>
+      {/* Keyed by source: picking another one fades its input in. */}
+      <motion.div
+        key={input.tab}
+        className={s.sourceBody}
+        data-source={input.tab}
+        initial={m.fade.initial as Target}
+        animate={m.fade.animate}
+        transition={m.fade.transition}
+      >
         <SourceInput {...input} />
-      </div>
+      </motion.div>
     </section>
   );
 }
@@ -343,6 +358,7 @@ interface PreviewPaneProps {
 
 /** Right column: where the cards go, then what they are. */
 function PreviewPane({ cards, onChange, reverse, onReverse, destination }: PreviewPaneProps) {
+  const m = useMotionPresets();
   const { cleaning, cleanup } = useCleanup(cards, onChange);
   const flagged = flaggedCountOf(cards);
 
@@ -368,7 +384,15 @@ function PreviewPane({ cards, onChange, reverse, onReverse, destination }: Previ
       {cards.length === 0 ? (
         <p className={s.empty}>Cards show up here as you add them.</p>
       ) : (
-        <div role="list" className={s.rows}>
+        // The list fades in when the first cards arrive (it replaces the
+        // empty line); rows added after that just appear in it.
+        <motion.div
+          role="list"
+          className={s.rows}
+          initial={m.fade.initial as Target}
+          animate={m.fade.animate}
+          transition={m.fade.transition}
+        >
           {cards.map((card, i) => (
             <PreviewRow
               key={i}
@@ -377,7 +401,7 @@ function PreviewPane({ cards, onChange, reverse, onReverse, destination }: Previ
               onRemove={() => onChange(removeCard(cards, i))}
             />
           ))}
-        </div>
+        </motion.div>
       )}
     </section>
   );
@@ -432,7 +456,7 @@ export function FlashcardImportModal({
       open={open}
       onClose={onClose}
       labelledBy={titleId}
-      width="min(980px, calc(100vw - 32px))"
+      width={DIALOG_WIDTH}
       padding="0"
       showCloseButton={false}
       initialFocusRef={pasteRef}

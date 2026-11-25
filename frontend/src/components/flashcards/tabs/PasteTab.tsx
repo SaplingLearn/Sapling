@@ -18,6 +18,9 @@ interface Props {
   textareaRef?: React.Ref<HTMLTextAreaElement>;
 }
 
+/** How much text the separators are guessed from, once, as the student types. */
+const DETECT_AFTER_CHARS = 20;
+
 const TERM_OPTIONS = [
   { value: "\t", label: "Tab" },
   { value: ",", label: "Comma" },
@@ -106,7 +109,7 @@ export function PasteTab({ cards, onCards, textareaRef }: Props) {
   // (It used to be an effect on `text`, which put a second, commit-phase
   // update behind every keystroke; a burst of input, such as a script typing
   // a deck out, piled those up until React stopped it with "Maximum update
-  // depth exceeded" and a keystroke was lost.) The first 20 characters also
+  // depth exceeded" and a keystroke was lost.) The first DETECT_AFTER_CHARS characters also
   // settle the separators, once.
   const typed = (next: string) => {
     dirtyRef.current = true;
@@ -114,7 +117,7 @@ export function PasteTab({ cards, onCards, textareaRef }: Props) {
     setText(next);
     let t = term;
     let c = card;
-    if (!autoDetectedOnce && next.length >= 20) {
+    if (!autoDetectedOnce && next.length >= DETECT_AFTER_CHARS) {
       const detected = detectDelimiters(next);
       setTermSel(detected.term);
       setCardSel(detected.card);
