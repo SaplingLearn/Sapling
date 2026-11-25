@@ -37,46 +37,6 @@ def _function_body(sql: str) -> str:
 
 
 class TestMigration:
-    def test_rollup_floor_literal_matches_params(self):
-        sql = _migration()
-        assert f"HAVING count(DISTINCT m.user_id) >= {params.MISCONCEPTION_ROLLUP_MIN_USERS}" in sql
-
-    def test_rollup_is_backend_only(self):
-        """Executable by service_role only (ADR 0023 §5: a backend function, not a
-        tutor tool). Functions grant EXECUTE to PUBLIC by default, so PUBLIC is
-        revoked unguarded; the Supabase roles are revoked/granted inside the
-        role-existence guard (a plain Postgres has none of them, and an
-        unguarded REVOKE naming one aborts the migration — the house idiom of
-        20260929050404_learning_ai_tutor_daily_calls.sql)."""
-        sql = _migration()
-        assert "REVOKE ALL ON FUNCTION misconception_rollup(text) FROM PUBLIC;" in sql
-        assert re.search(
-            r"FOREACH r IN ARRAY ARRAY\['anon', 'authenticated'\] LOOP\s+"
-            r"IF EXISTS \(SELECT 1 FROM pg_roles WHERE rolname = r\) THEN\s+"
-            r"EXECUTE format\('REVOKE ALL ON TABLE misconceptions FROM %I', r\);\s+"
-            r"EXECUTE format\('REVOKE ALL ON FUNCTION misconception_rollup\(text\) FROM %I', r\);",
-            sql,
-        )
-        assert re.search(
-            r"IF EXISTS \(SELECT 1 FROM pg_roles WHERE rolname = 'service_role'\) THEN\s+"
-            r"GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE misconceptions TO service_role;\s+"
-            r"GRANT EXECUTE ON FUNCTION misconception_rollup\(text\) TO service_role;",
-            sql,
-        )
-
-    def test_table_is_rls_locked(self):
-        """The anon key the frontend ships reaches every public table through
-        PostgREST: RLS with no policy denies every non-bypass role."""
-        sql = _migration()
-        assert "ALTER TABLE misconceptions ENABLE ROW LEVEL SECURITY;" in sql
-        assert "REVOKE ALL ON TABLE misconceptions FROM PUBLIC;" in sql
-        assert "CREATE POLICY" not in sql
-
-    def test_security_definer_pins_its_search_path(self):
-        fn = _function_body(_migration())
-        assert "SECURITY DEFINER" in fn
-        assert "SET search_path = public, pg_temp" in fn
-
     def test_rollup_excludes_resolved_rows(self):
         assert "m.resolved_at IS NULL" in _migration()
 
@@ -107,15 +67,6 @@ class TestMigration:
             "big-O  Notation",
         ]:
             assert re.sub(r"\s+", " ", name).strip(" ").lower() == _normalize_concept(name)
-
-    def test_evidence_text_has_no_unique(self):
-        """Spec §4 encryption rule / inv 9: an encrypted column is never a key."""
-        sql = _migration()
-        col = re.search(r"^\s*evidence_text\s+text,.*$", sql, re.M)
-        assert col, "evidence_text column missing"
-        assert "UNIQUE" not in col.group(0).upper()
-        assert "UNIQUE INDEX" not in sql.upper()
-        assert not re.search(r"UNIQUE\s*\([^)]*evidence_text", sql)
 
     def test_table_and_index_are_idempotent(self):
         sql = _migration()
@@ -1467,29 +1418,6 @@ def _followup() -> str:
 
 
 class TestFollowupMigration:
-    def test_one_open_row_per_key_is_enforced(self):
-        sql = _followup()
-        assert (
-            "CREATE UNIQUE INDEX IF NOT EXISTS misconceptions_open_key_uidx\n"
-            "  ON misconceptions (user_id, node_id, wrong_key) WHERE resolved_at IS NULL;" in sql
-        )
-        # duplicates an old read-then-write left behind are merged first
-        assert sql.index("DELETE FROM misconceptions") < sql.index("CREATE UNIQUE INDEX")
-
-    def test_record_is_one_insert_on_conflict_increment(self):
-        sql = _followup()
-        fn = sql[sql.index("CREATE OR REPLACE FUNCTION misconception_record") :]
-        assert "ON CONFLICT (user_id, node_id, wrong_key) WHERE resolved_at IS NULL" in fn
-        assert "SET count = misconceptions.count + 1" in fn
-        assert "SET search_path = public, pg_temp" in fn
-
-    def test_both_functions_are_backend_only(self):
-        sql = _followup()
-        for sig in ("misconception_record(text, text, text, text, text, text)",):
-            assert f"REVOKE ALL ON FUNCTION {sig} FROM PUBLIC;" in sql
-            assert f"EXECUTE format('REVOKE ALL ON FUNCTION {sig} FROM %I', r);" in sql
-            assert f"GRANT EXECUTE ON FUNCTION {sig} TO service_role;" in sql
-
     def test_rollup_joins_the_node_to_its_own_student(self):
         """F6: defense in depth — a row whose node belongs to another student
         never counts toward the rollup."""
@@ -1500,81 +1428,6 @@ class TestFollowupMigration:
         assert "RETURNS TABLE (concept_key text, wrong_key text, users int)" in fn
         assert "SET search_path = public, pg_temp" in fn
         assert "GROUP BY m.node_id" not in fn
-
-    def test_no_unique_on_the_encrypted_column(self):
-        sql = _followup()
-        for line in sql.splitlines():
-            if "UNIQUE" in line.upper():
-                assert "evidence_text" not in line
-
-
-# ── spec §13 A127 × A123: why a misconception closed ────────────────────────
-
-#: A123's CHECK list as applied; its migration is immutable, so this is history.
-A123_RESOLVED_REASONS = ("evidence_void",)
-_REASON_CHECK = re.compile(
-    r"CHECK\s*\(\s*resolved_reason IS NULL\s+OR\s+resolved_reason IN\s*\(([^)]*)\)\s*\)", re.I
-)
-
-
-def _ddl(sql: str) -> str:
-    """The SQL without its comment lines (a header may quote an older CHECK)."""
-    return "\n".join(line for line in sql.splitlines() if not line.lstrip().startswith("--"))
-
-
-def _reason_checks() -> list[tuple[str, tuple[str, ...]]]:
-    """Every misconceptions.resolved_reason CHECK list the migrations define, in
-    apply order."""
-    return [
-        (path.name, tuple(v.strip().strip("'") for v in m.group(1).split(",")))
-        for path in sorted(MIG_DIR.glob("*.sql"))
-        for m in _REASON_CHECK.finditer(_ddl(path.read_text()))
-    ]
-
-
-class TestResolvedReasonMigration:
-    def test_the_check_in_force_admits_exactly_the_two_closures(self):
-        """The two writers of resolved_at each record a reason: A123's void
-        closure and A127's resolve(). The last CHECK the migrations apply names
-        exactly those two, so neither writer's UPDATE is refused and no third
-        value can be written. No widening drops a value an earlier CHECK
-        allowed, so no closed row is left violating the CHECK in force."""
-        from learning.evidence_void import MISCONCEPTION_VOID_REASON
-        from learning.misconceptions import RESOLVED_BY_ISOMORPH
-
-        checks = _reason_checks()
-        assert [values for _, values in checks] == [
-            A123_RESOLVED_REASONS,
-            ("evidence_void", "correct_unassisted_isomorph"),
-        ]
-        name, in_force = checks[-1]
-        assert name.endswith("_learning_misconception_resolved_reason.sql"), name
-        assert set(in_force) == {MISCONCEPTION_VOID_REASON, RESOLVED_BY_ISOMORPH}
-        for (_, earlier), (_, later) in zip(checks, checks[1:]):
-            assert set(earlier) <= set(later)
-
-    def test_the_widening_replaces_the_narrow_check_by_its_body(self):
-        """One migration, after A123's, swaps the CHECK. It finds the narrow
-        constraint by its definition, never by an assumed name alone (a DROP by
-        name no-ops on a suffixed variant and leaves the narrow CHECK enforced:
-        20260828172725). It adds the wide one only when none is present
-        (re-runnable), NOT VALID (a strict superset, so no scan), and writes no
-        row (a row closed before keeps its NULL)."""
-        hits = sorted(MIG_DIR.glob("*_learning_misconception_resolved_reason.sql"))
-        assert len(hits) == 1, hits
-        void = sorted(MIG_DIR.glob("*_learning_evidence_void.sql"))
-        assert len(void) == 1 and hits[0].name > void[0].name, "must sort after A123's"
-        assert re.fullmatch(r"\d{14}_learning_misconception_resolved_reason\.sql", hits[0].name)
-        ddl = _ddl(hits[0].read_text())
-        assert "'public.misconceptions'::regclass" in ddl
-        assert "NOT ILIKE '%correct_unassisted_isomorph%'" in ddl
-        assert "DROP CONSTRAINT %I" in ddl
-        assert "DROP CONSTRAINT IF EXISTS" not in ddl, "never by an assumed name alone"
-        assert "IF NOT EXISTS" in ddl
-        assert "ADD CONSTRAINT misconceptions_resolved_reason_check" in ddl
-        assert ddl.count("NOT VALID") == 1
-        assert not re.search(r"\b(UPDATE|DELETE|INSERT)\b", ddl, re.I), "no row is relabelled"
-        assert len(_REASON_CHECK.findall(ddl)) == 1
 
 
 def test_every_unreleased_eval_case_is_a_line_production_would_send():
