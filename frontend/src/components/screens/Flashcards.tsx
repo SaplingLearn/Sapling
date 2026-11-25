@@ -35,12 +35,14 @@
  * enters with the Study tools' `tool-enter` fade.
  */
 import React from "react";
+import { motion } from "framer-motion";
 
 import { BackLink } from "../BackLink";
 import { AIDisclaimerChip } from "../chat/AIDisclaimerChip";
 import { Icon } from "../Icon";
 import { CoursePicker } from "../study/CoursePicker";
 import fc from "./Flashcards.module.css";
+import { useMotionPresets } from "@/lib/motion";
 import { FlashcardsSkeleton } from "../Skeleton";
 import { useUser } from "@/context/UserContext";
 import { useIsMobile } from "@/lib/useIsMobile";
@@ -190,7 +192,7 @@ function PageHeader({
   return (
     <>
       <header className={fc.head}>
-        <h1 className="h-serif" style={{ margin: 0, fontSize: isMobile ? 34 : 42, letterSpacing: "-0.02em", lineHeight: 1.15, color: "var(--text)" }}>Flashcards</h1>
+        <h1 className={`h-serif ${fc.title} ${isMobile ? fc.titleMobile : ""}`}>Flashcards</h1>
         {place && <span className={fc.deckName} data-testid="flashcards-deck-name">{place.label}</span>}
         {!place && courses.length > 0 && (
           <CoursePicker courses={courses} value={courseId} onChange={onCourse} fullWidth={isMobile} />
@@ -262,15 +264,17 @@ const NO_DOCUMENTS: LibraryDocument[] = [];
 
 /** Arrived with `start=1`: the deck is loading, or its cards are being made. */
 function Arriving({ progress }: { progress: StartProgress | null }) {
+  const m = useMotionPresets();
   if (!progress) return <div className={rv.stage}><FlashcardsSkeleton /></div>;
   return (
     <div className={rv.stage}>
-      <div className={rv.message} role="status">
-        <div className="h-serif" style={{ fontSize: "var(--fs-2xl)", color: "var(--text)" }}>Making cards for {progress.name}…</div>
-        <div style={{ marginTop: 6 }}>
+      {/* Replaces the skeleton once the deck is known to be in the making. */}
+      <motion.div className={rv.message} role="status" {...m.fade}>
+        <div className={`h-serif ${fc.messageTitle}`}>Making cards for {progress.name}…</div>
+        <div className={fc.messageBody}>
           {progress.of > 1 ? `${progress.at} of ${progress.of}. ` : ""}From your course material. Review starts as soon as they&apos;re ready.
         </div>
-      </div>
+      </motion.div>
     </div>
   );
 }
@@ -278,13 +282,14 @@ function Arriving({ progress }: { progress: StartProgress | null }) {
 /** The card list could not be read. Offering the map now would call every
  *  concept "no cards yet" and generate over a deck that is really there. */
 function LoadFailed({ onRetry }: { onRetry: () => void }) {
+  const m = useMotionPresets();
   return (
     <div className={rv.stage}>
-      <div className={rv.message} role="alert">
-        <div className="h-serif" style={{ fontSize: "var(--fs-2xl)", color: "var(--text)" }}>Couldn&apos;t load your flashcards</div>
-        <div style={{ marginTop: 6 }}>Check your connection and try again.</div>
-        <button type="button" className="btn btn--primary" style={{ marginTop: 16 }} onClick={onRetry}>Try again</button>
-      </div>
+      <motion.div className={rv.message} role="alert" {...m.fadeUp}>
+        <div className={`h-serif ${fc.messageTitle}`}>Couldn&apos;t load your flashcards</div>
+        <div className={fc.messageBody}>Check your connection and try again.</div>
+        <button type="button" className={`btn btn--primary ${fc.messageAction}`} onClick={onRetry}>Try again</button>
+      </motion.div>
     </div>
   );
 }

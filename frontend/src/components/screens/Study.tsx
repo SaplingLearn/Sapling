@@ -22,6 +22,7 @@
  * retired `?mode=cards` link that carries one lands here, not on Flashcards.
  */
 import React from "react";
+import { motion } from "framer-motion";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useUser } from "@/context/UserContext";
 import { useIsMobile } from "@/lib/useIsMobile";
@@ -32,6 +33,7 @@ import { studyGuideHref } from "@/lib/toolHrefs";
 import { DueQueue } from "../learn/DueQueue";
 import { RetentionCheck } from "../learn/RetentionCheck";
 import { useLoopStatus } from "../learn/useLoopStatus";
+import { useMotionPresets } from "@/lib/motion";
 import s from "./Study.module.css";
 
 /** The retention check's deep-link parameter (RetentionDueContext). */
@@ -132,25 +134,28 @@ export function Study() {
 function LoopReviews({ courses, retentionCourse }: { courses: EnrolledCourse[]; retentionCourse: string }) {
   const { userId, userReady } = useUser();
   const { status: loopActive, retry: retryLoopStatus } = useLoopStatus(userId, userReady);
+  // The reviews arrive after the loop-status read, never with the page: a
+  // change worth marking, so they rise into the slot.
+  const m = useMotionPresets();
   if (loopActive === "error") {
     return (
       <div className={s.shell}>
-        <div role="status" className={s.reviews} style={{ display: "block", fontSize: 13 }}>
-          <p style={{ margin: "0 0 8px" }}>Couldn&apos;t load due reviews. The rest of Study is still available.</p>
+        <motion.div role="status" className={`${s.reviews} ${s.statusNotice}`} {...m.fadeUp}>
+          <p>Couldn&apos;t load due reviews. The rest of Study is still available.</p>
           <button type="button" className="btn btn--sm" onClick={retryLoopStatus} data-testid="review-status-retry">
             Retry due reviews
           </button>
-        </div>
+        </motion.div>
       </div>
     );
   }
   if (loopActive !== true) return null;
   return (
     <div className={s.shell}>
-      <div className={s.reviews} data-testid="study-reviews">
+      <motion.div className={s.reviews} data-testid="study-reviews" {...m.fadeUp}>
         <DueQueue userId={userId} />
         <RetentionCheck key={userId} userId={userId} courses={courses} initialCourseId={retentionCourse} />
-      </div>
+      </motion.div>
     </div>
   );
 }
