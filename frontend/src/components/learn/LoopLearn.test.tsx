@@ -699,9 +699,9 @@ describe("LoopLearn — A26", () => {
     render(<LoopLearn />);
     await startFromHome();
     expect((await screen.findByTestId("loop-no-check-items")).textContent).toContain("No practice questions for this course yet");
-    expect(screen.queryByTestId("loop-preparing-items")).toBeNull();
+    await waitFor(() => expect(screen.queryByTestId("loop-preparing-items")).toBeNull());
     // A128: another notice showing never brings the materials note with it
-    expect(screen.queryByTestId("loop-materials-unavailable")).toBeNull();
+    await waitFor(() => expect(screen.queryByTestId("loop-materials-unavailable")).toBeNull());
   });
 
   it("A128: while the upload is still drafted, says preparing — never 'No practice questions'", async () => {
@@ -750,7 +750,7 @@ describe("LoopLearn — A26", () => {
     fireEvent.change(await screen.findByTestId("tutor-input"), { target: { value: "why?" } });
     fireEvent.click(screen.getByTestId("tutor-send"));
     await screen.findByText("Plain turn.");
-    expect(screen.queryByTestId("loop-materials-unavailable")).toBeNull();
+    await waitFor(() => expect(screen.queryByTestId("loop-materials-unavailable")).toBeNull());
   });
 
   it("W4.3: a teach turn with materials_grounded shows calm grounded chrome, not cites", async () => {
@@ -764,7 +764,7 @@ describe("LoopLearn — A26", () => {
     const chrome = await screen.findByTestId("loop-materials-grounded");
     expect(chrome.textContent).toBe(MATERIALS_GROUNDED_LABEL);
     expect(chrome).toHaveAttribute("title", MATERIALS_GROUNDED_HINT);
-    expect(screen.queryByTestId("loop-materials-unavailable")).toBeNull();
+    await waitFor(() => expect(screen.queryByTestId("loop-materials-unavailable")).toBeNull());
   });
 
   it("W4.3: no grounded chrome without materials_grounded (never invents cites)", async () => {
@@ -846,7 +846,7 @@ describe("LoopLearn — A26", () => {
     fireEvent.change(screen.getByTestId("tutor-input"), { target: { value: "i want to kill myself" } });
     fireEvent.click(screen.getByTestId("tutor-send"));
     await screen.findByTestId("crisis-support-card");
-    expect(screen.queryByTestId("loop-materials-unavailable")).toBeNull();
+    await waitFor(() => expect(screen.queryByTestId("loop-materials-unavailable")).toBeNull());
     fireEvent.change(screen.getByTestId("tutor-input"), { target: { value: "and?" } });
     fireEvent.click(screen.getByTestId("tutor-send"));
     await screen.findByText("And the next step.");
@@ -866,7 +866,7 @@ describe("LoopLearn — A26", () => {
     fireEvent.change(await screen.findByTestId("tutor-input"), { target: { value: "i want to kill myself" } });
     fireEvent.click(screen.getByTestId("tutor-send"));
     await screen.findByTestId("crisis-support-card");
-    expect(screen.queryByTestId("loop-preparing-items")).toBeNull();
+    await waitFor(() => expect(screen.queryByTestId("loop-preparing-items")).toBeNull());
   });
 
   it("A128: the opener's failed retrieval shows the note from the first turn", async () => {
@@ -2417,7 +2417,7 @@ describe("explicit goal fresh-practice preflight", () => {
     render(<LoopLearn />);
     fireEvent.click(await screen.findByTestId("loop-practice-refresh"));
     await screen.findByTestId("loop-plan-concept-foundation");
-    expect(screen.queryByTestId("loop-practice-unavailable")).toBeNull();
+    await waitFor(() => expect(screen.queryByTestId("loop-practice-unavailable")).toBeNull());
     expect(api.approveLoopPlan).not.toHaveBeenCalled();
     expect(api.startLoopSession).not.toHaveBeenCalled();
     expect(api.streamLoopChat).not.toHaveBeenCalled();
@@ -2473,7 +2473,7 @@ describe("explicit goal fresh-practice preflight", () => {
     fireEvent.click(screen.getByTestId("loop-session-s3"));
     await waitFor(() => expect(screen.getByTestId("loop-phase").getAttribute("data-session-id")).toBe("s3"));
     await act(async () => { oldPlan.resolve(unavailable); });
-    expect(screen.queryByTestId("loop-practice-unavailable")).toBeNull();
+    await waitFor(() => expect(screen.queryByTestId("loop-practice-unavailable")).toBeNull());
     expect(screen.queryByTestId("loop-plan-approve")).toBeNull();
     expect(screen.getByTestId("loop-goal-summary").textContent).toContain("Explore the whole course");
   });
