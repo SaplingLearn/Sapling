@@ -76,11 +76,17 @@ INDEX_LEASE_SECONDS = int(os.getenv("INDEX_LEASE_SECONDS", "600"))
 #: Kept short: this runs in a background thread and the sweeper re-drives
 #: whatever is still short after it, bounded by INDEX_MAX_ATTEMPTS.
 _INLINE_TRIES = 3
+_EMBED_FAILED = "embed_failed"  # the error of a try that landed short with no reason given
+_DEFAULT_CATEGORY = "other"  # the chunking category of a row with none
+_TABLE = "documents"
 _BACKOFF_SECONDS = (1, 4)
 
 #: Failures no retry can fix. Recorded EXHAUSTED at once, so they stay
 #: visible on the admin list and the sweeper never claims them again.
-TERMINAL_ERRORS = frozenset({"no_extracted_text", "no_chunks", "no_course"})
+_NO_TEXT = "no_extracted_text"
+_NO_CHUNKS = "no_chunks"
+_NO_COURSE = "no_course"
+TERMINAL_ERRORS = frozenset({_NO_TEXT, _NO_CHUNKS, _NO_COURSE})
 
 #: Spec §13 A128: the attempt found the embeddings breaker already open, so it
 #: made no embed call. The PROCESS's outage, not the document's failure: the
@@ -288,7 +294,7 @@ def _load(doc_id: str) -> dict | None:
     # `*`, not a column list: a named column that the migration has not added
     # yet would 400 the read, and the whole point of `tracking` above is that
     # an environment without those columns keeps indexing.
-    rows = table("documents").select(
+    rows = table(_TABLE).select(
         "*", filters={"id": f"eq.{doc_id}", "deleted_at": "is.null"}, limit=1,
     )
     return rows[0] if rows else None
@@ -298,7 +304,7 @@ def _deleted_since_load(doc_id: str) -> bool:
     """Whether the row is gone or soft-deleted now. A failed read says no:
     retrieval refuses chunks whose every source is deleted anyway."""
     try:
-        rows = table("documents").select(
+        rows = table(_TABLE).select(
             "deleted_at", filters={"id": f"eq.{doc_id}"}, limit=1,
         )
     except Exception:
@@ -347,7 +353,7 @@ def _claim_one(row: dict, *, force: bool) -> str | None:
         filters["index_status"] = f"in.({','.join(_RECLAIMABLE)})"
         next_attempts = attempts + 1
     lease = _utc(now)
-    won = table("documents").update(
+    won = table(_TABLE).update(
         {
             "index_status": INDEXING,
             "index_leased_at": lease,
@@ -379,18 +385,29 @@ def _is_transient(exc: Exception) -> bool:
     return False
 
 
-def _run(row: dict) -> IndexOutcome:
+class _Prepared(NamedTuple):
+    """What `_run` indexes, once the deterministic checks passed."""
+
+    text: str
+    category: str
+    chunks: list[str]
+    course_code: str
+
+
+def _prepared(row: dict) -> _Prepared | IndexOutcome:
+    """The row's text, category, chunks and course code, or the FAILED outcome
+    of the first deterministic check it fails (no outage changes these)."""
     doc_id = row["id"]
     stored = row.get("extracted_text")
     if not stored:
-        return IndexOutcome(FAILED, error="no_extracted_text")
+        return IndexOutcome(FAILED, error=_NO_TEXT)
     try:
         # STRICT, not decrypt_if_present: that falls back to the raw value, so
         # a process holding the wrong ENCRYPTION_KEY would chunk the base64
         # ciphertext and index it as course material. extracted_text has been
         # encrypted since the column was added (0030); there is no legacy
         # plaintext to tolerate.
-        text = decrypt(stored, bind=bind("documents", "extracted_text", doc_id))
+        text = decrypt(stored, bind=bind(_TABLE, "extracted_text", doc_id))
     except Exception:
         logger.warning(
             "[RAG] extracted_text for doc %s does not decrypt under this "
@@ -398,16 +415,25 @@ def _run(row: dict) -> IndexOutcome:
         )
         return IndexOutcome(FAILED, error="decrypt_failed")
     if not text.strip():
-        return IndexOutcome(FAILED, error="no_extracted_text")
+        return IndexOutcome(FAILED, error=_NO_TEXT)
 
-    category = row.get("category") or "other"
+    category = row.get("category") or _DEFAULT_CATEGORY
     chunks = chunk_for_category(text, category)
     if not chunks:
-        return IndexOutcome(FAILED, error="no_chunks")
+        return IndexOutcome(FAILED, error=_NO_CHUNKS)
 
     course_code = _course_code(row.get("offering_id"))
     if course_code is None:
-        return IndexOutcome(FAILED, error="no_course")
+        return IndexOutcome(FAILED, error=_NO_COURSE)
+    return _Prepared(text, category, chunks, course_code)
+
+
+def _run(row: dict) -> IndexOutcome:
+    doc_id = row["id"]
+    prepared = _prepared(row)
+    if isinstance(prepared, IndexOutcome):
+        return prepared
+    text, category, chunks, course_code = prepared
 
     user_id = row["user_id"]
     # Reproduced from what was stored, never re-decided: re-running the
@@ -435,9 +461,34 @@ def _run(row: dict) -> IndexOutcome:
     if embedding_blocked():
         return IndexOutcome(FAILED, error=EMBEDDINGS_UNAVAILABLE)
 
-    # The best try, not the last: chunk ids are content-addressed, so whatever
-    # ANY try upserted is in course_chunks now, and the best count is the
-    # honest lower bound on what retrieval is serving.
+    tried = _index_with_retries(
+        doc_id, course_code, user_id, chunks, visibility=visibility, category=category
+    )
+    if isinstance(tried, IndexOutcome):
+        return tried
+    best, error = tried
+
+    landed = best.upserted if best is not None else 0
+    if landed:
+        _observe_course_relevance(
+            doc_id, course_code, user_id, category,
+            decrypt_if_present(row.get("summary"), bind=bind(_TABLE, "summary", doc_id)) or "",
+            chunks[0],
+        )
+    if best is not None and error is None and landed >= best.total:
+        return IndexOutcome(INDEXED, landed)
+    return IndexOutcome(PARTIAL if landed else FAILED, landed, error or _EMBED_FAILED)
+
+
+def _index_with_retries(
+    doc_id: str, course_code: str, user_id: str, chunks: list[str], *, visibility, category: str
+):
+    """Up to _INLINE_TRIES index attempts: (the best try, its error), or the
+    SKIPPED outcome when the seam turned embedding off.
+
+    The best try, not the last: chunk ids are content-addressed, so whatever
+    ANY try upserted is in course_chunks now, and the best count is the
+    honest lower bound on what retrieval is serving."""
     best = None
     error: str | None = None
     for attempt in range(_INLINE_TRIES):
@@ -476,7 +527,7 @@ def _run(row: dict) -> IndexOutcome:
         if result.upserted >= result.total:
             error = None
             break
-        error = result.embed_error or "embed_failed"
+        error = result.embed_error or _EMBED_FAILED
         logger.warning(
             "[RAG] doc %s indexed %d/%d chunks (try %d/%d)",
             doc_id, result.upserted, result.total, attempt + 1, _INLINE_TRIES,
@@ -487,17 +538,7 @@ def _run(row: dict) -> IndexOutcome:
             # refused: the attempt ends here, spent, and the sweeper re-drives
             # the document once the breaker closes — no sleep, no hot retry.
             break
-
-    landed = best.upserted if best is not None else 0
-    if landed:
-        _observe_course_relevance(
-            doc_id, course_code, user_id, category,
-            decrypt_if_present(row.get("summary"), bind=bind("documents", "summary", doc_id)) or "",
-            chunks[0],
-        )
-    if best is not None and error is None and landed >= best.total:
-        return IndexOutcome(INDEXED, landed)
-    return IndexOutcome(PARTIAL if landed else FAILED, landed, error or "embed_failed")
+    return best, error
 
 
 def _observe_course_relevance(
@@ -554,7 +595,7 @@ def _held(doc_id: str, lease: str | None) -> dict:
 
 def _write_if_held(doc_id: str, data: dict, lease: str | None, what: str) -> None:
     try:
-        written = table("documents").update(data, filters=_held(doc_id, lease))
+        written = table(_TABLE).update(data, filters=_held(doc_id, lease))
     except Exception:
         # Only the bookkeeping failed. The row stays 'indexing' until its lease
         # expires, and the sweeper then re-drives it — idempotently, since
