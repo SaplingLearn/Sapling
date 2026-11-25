@@ -18,6 +18,7 @@ from models import ProbeNextBody
 from services.tutor import _consume_pending
 from services.feature_flags import flag_on
 
+from services.loop.flags import _GRADING_CLAIM
 from services.loop.state import (
     _gate,
     _load_loop_state,
@@ -218,7 +219,7 @@ def _serve_current_again(pr: dict, cur, bank: _ProbeBank, out: dict) -> bool:
     if not (isinstance(cur, dict) and cur.get("question_hash")):
         return False
     qh = cur["question_hash"]
-    if (not cur.get("grading_claim") or _claim_live(cur, bank.now)) and qh in bank.by_hash:
+    if (not cur.get(_GRADING_CLAIM) or _claim_live(cur, bank.now)) and qh in bank.by_hash:
         out["item"] = bank.by_hash[qh]  # posed and not answered: the same item again
         return True
     if qh not in pr["unavailable"]:

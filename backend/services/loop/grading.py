@@ -8,6 +8,7 @@ import copy
 import logging
 import uuid
 from datetime import datetime, timezone
+from services.loop.flags import _GRADING_CLAIM, _GRADING_CLAIM_AT
 from services.loop.errors import HTTPException
 from starlette.requests import Request
 from agents.tools.check import CHANNEL_FOR_FORMAT, CheckAnswer, grade_answer
@@ -79,7 +80,7 @@ def _require_gradable(state: dict, entry, qh: str) -> dict:
     """The step of this session's current check `qh`: 409 for an item already
     graded, being graded or superseded; 404 for one that is not current."""
     if isinstance(entry, dict) and (
-        entry.get("graded_at") is not None or entry.get("grading_claim") or entry.get("grading_superseded")
+        entry.get("graded_at") is not None or entry.get(_GRADING_CLAIM) or entry.get("grading_superseded")
     ):
         raise HTTPException(status_code=409, detail=_ALREADY_GRADED)
     if not isinstance(entry, dict) or state.get("current") != qh:
@@ -107,8 +108,8 @@ def _count_refusal(disowned: bool):
             e["refusals"] = int(e.get("refusals") or 0) + 1
         if disowned or e["refusals"] < CHECK_REFUSALS_AS_IDK:
             # nothing was graded: the claim goes with the count
-            e.pop("grading_claim", None)
-            e.pop("grading_claim_at", None)
+            e.pop(_GRADING_CLAIM, None)
+            e.pop(_GRADING_CLAIM_AT, None)
 
     return count
 
@@ -279,7 +280,7 @@ async def _grade_submission(
                     body.session_id,
                     _under_claim(qh, claim, _count_refusal(outcome.refused == _DISOWNED), release=False),
                 )
-                if (_steps(state).get(qh) or {}).get("grading_claim") != claim:
+                if (_steps(state).get(qh) or {}).get(_GRADING_CLAIM) != claim:
                     return _Submission("refused", state, rendered, scope, refused=True)
                 # never a skip: the CHECK_REFUSALS_AS_IDK-th refusal is an idk observation (A1)
                 idk, genuine = True, False

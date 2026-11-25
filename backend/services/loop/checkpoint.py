@@ -7,6 +7,7 @@ import copy
 import logging
 from typing import NamedTuple
 import config
+from services.loop.flags import _GRADING_CLAIM, _GRADING_CLAIM_AT
 from services.loop.errors import HTTPException
 from agents.deps import SaplingDeps
 from agents.tools.check import CheckAnswer, GradeOutcome
@@ -131,7 +132,7 @@ def submitted_answer(body, *, idk: bool) -> CheckAnswer:
 def _open_grade_checkpoint(entry, body, course_id, *, kind):
     try:
         return grade_checkpoint.open_checkpoint(
-            entry.get(grade_checkpoint.KEY), kind=kind, operation_id=entry.get("grading_claim"),
+            entry.get(grade_checkpoint.KEY), kind=kind, operation_id=entry.get(_GRADING_CLAIM),
             user_id=body.user_id, session_id=body.session_id, course_id=course_id or None,
             question_hash=body.question_hash,
         )
@@ -170,7 +171,7 @@ def _save_grade_checkpoint(checkpoint):
                 and entry.get("grading_abandoned") == ABANDON_MOVED_PAST
                 and entry.get("discarded_grade_operation_id") == checkpoint.operation_id):
             raise HTTPException(status_code=409, detail=_MOVED_ON)  # /check/next closed it meanwhile
-        if (not isinstance(entry, dict) or entry.get("grading_claim") != checkpoint.operation_id
+        if (not isinstance(entry, dict) or entry.get(_GRADING_CLAIM) != checkpoint.operation_id
                 or (checkpoint.kind == PROBE_KIND and entry.get("question_hash") != checkpoint.question_hash)):
             raise HTTPException(status_code=409, detail=_ALREADY_GRADED)
         if checkpoint.kind == CHECK_KIND and doc.get("current") != checkpoint.question_hash:
@@ -178,7 +179,7 @@ def _save_grade_checkpoint(checkpoint):
             moved["past"] = True
             return
         entry[grade_checkpoint.KEY] = encrypted
-        entry["grading_claim_at"] = _now_s()
+        entry[_GRADING_CLAIM_AT] = _now_s()
 
     _update_loop_state(checkpoint.session_id, save, require_open=True, require_existing=True)
     if moved.get("past"):
@@ -202,7 +203,7 @@ def _abandon_grade_checkpoint(checkpoint, reason: str) -> None:
     def abandon(doc: dict) -> None:
         if checkpoint.kind == CHECK_KIND:
             entry = _steps(doc).get(qh)
-            if isinstance(entry, dict) and entry.get("grading_claim") == claim:
+            if isinstance(entry, dict) and entry.get(_GRADING_CLAIM) == claim:
                 _abandon_claimed(entry, reason)
                 if doc.get("current") == qh:
                     doc["current"] = None
@@ -249,7 +250,7 @@ def _flush_guard(checkpoint):
         else:
             _require_teaching(doc)
             entry = _steps(doc).get(checkpoint.question_hash)
-        if (not isinstance(entry, dict) or entry.get("grading_claim") != checkpoint.operation_id
+        if (not isinstance(entry, dict) or entry.get(_GRADING_CLAIM) != checkpoint.operation_id
                 or grade_checkpoint.KEY not in entry):
             raise HTTPException(status_code=409, detail=_ALREADY_GRADED)
         if checkpoint.kind == CHECK_KIND and doc.get("current") != checkpoint.question_hash:
@@ -598,7 +599,7 @@ def _record_check_grade(checkpoint, graded: dict, band: _BandOutcome | None, hel
         _refuse_while_closing(doc, _now_s())
         _check_goal_version(doc, checkpoint.goal_version)
         entry = _steps(doc).get(qh)
-        held["last"] = isinstance(entry, dict) and entry.get("grading_claim") == claim
+        held["last"] = isinstance(entry, dict) and entry.get(_GRADING_CLAIM) == claim
         under(doc)
         if held["last"]:
             _steps(doc)[qh]["graded_operation_id"] = claim

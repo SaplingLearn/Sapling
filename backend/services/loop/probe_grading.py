@@ -9,6 +9,7 @@ import logging
 import uuid
 from datetime import datetime, timezone
 import config
+from services.loop.flags import _GRADING_CLAIM, _GRADING_CLAIM_AT
 from services.loop.errors import HTTPException
 from services import abuse_limits
 from services.request_limits import aenforce_abuse_limit
@@ -81,8 +82,8 @@ logger = logging.getLogger("routes.learn_loop")
 
 
 def _release(_pr: dict, cur: dict) -> None:
-    cur.pop("grading_claim", None)
-    cur.pop("grading_claim_at", None)
+    cur.pop(_GRADING_CLAIM, None)
+    cur.pop(_GRADING_CLAIM_AT, None)
     cur.pop(grade_checkpoint.KEY, None)
 
 
@@ -114,9 +115,9 @@ def _take_claim(qh: str, claim: str, now: float):
         cur = _probe_doc(doc).get("current")
         if not isinstance(cur, dict) or cur.get("question_hash") != qh:
             raise HTTPException(status_code=409, detail=_PROBE_NOT_POSED)
-        if cur.get("grading_claim"):
+        if cur.get(_GRADING_CLAIM):
             raise HTTPException(status_code=409, detail=_ALREADY_GRADED)
-        cur["grading_claim"], cur["grading_claim_at"] = claim, now
+        cur[_GRADING_CLAIM], cur[_GRADING_CLAIM_AT] = claim, now
 
     return take_posed
 
@@ -180,7 +181,7 @@ async def _probe_submission(body: ProbeAnswerBody, request: Request, *, loop_on:
     if grade_checkpoint.KEY in posed:
         checkpoint = _open_grade_checkpoint(posed, body, course_id, kind=PROBE_KIND)
         return await asyncio.to_thread(_finish_probe_checkpoint, checkpoint, request, loop_on=loop_on)
-    if posed.get("grading_claim"):
+    if posed.get(_GRADING_CLAIM):
         raise HTTPException(status_code=409, detail=_ALREADY_GRADED)
     skills = list(_probe_doc(state).get("skills") or [])
     node_id = posed["node_id"]
@@ -234,7 +235,7 @@ async def _probe_submission(body: ProbeAnswerBody, request: Request, *, loop_on:
                     _update_loop_state, body.session_id,
                     _under_probe_claim(qh, claim, _count_refusal(qh, outcome.refused == _DISOWNED)),
                 )
-                if (_probe_doc(state).get("current") or {}).get("grading_claim") != claim:
+                if (_probe_doc(state).get("current") or {}).get(_GRADING_CLAIM) != claim:
                     return dict(_REFUSED)
                 synthetic_idk = True
                 idk = True  # the CHECK_REFUSALS_AS_IDK-th refusal is an idk observation (A1)
