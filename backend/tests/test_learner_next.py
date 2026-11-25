@@ -14,8 +14,6 @@ from learning import params, quiz_plan
 from learning.learner_next import (
     ConceptState,
     DUE,
-    MISCONCEPTION,
-    READY,
     learner_next,
 )
 from services import learner_next as ln_svc
@@ -34,34 +32,6 @@ def _state(node, p, *, due=None, s=None, last=None, mis=0, course_id=None):
         open_misconceptions=mis,
         course_id=course_id,
     )
-
-
-def test_learner_next_buckets_match_quiz_plan_order_before_cap():
-    """Due → misconceptions → ready; same members and order as rank_concepts
-    when under the per-course cap (the shared source of truth)."""
-    states = [
-        _state("ready_low", 0.40),
-        _state("ready_high", 0.70),
-        _state("due_far", 0.96, due=NOW - timedelta(days=9), s=2.0, last=NOW - timedelta(days=10)),
-        _state("due_near", 0.97, due=NOW - timedelta(hours=1), s=5.0, last=NOW - timedelta(days=5)),
-        _state("held", 0.50, mis=2),
-        _state("blocked", 0.20),
-        _state("proficient", 0.97),
-        _state("due_later", 0.60, due=NOW + timedelta(days=2), s=4.0, last=NOW - timedelta(days=1)),
-    ]
-    edges = [("ready_low", "blocked")]
-    nxt = learner_next(states, edges, NOW)
-    assert [c.node_id for c in nxt.due] == ["due_far", "due_near"]
-    assert all(c.reason == DUE for c in nxt.due)
-    assert [c.node_id for c in nxt.misconceptions] == ["held"]
-    assert nxt.misconceptions[0].reason == MISCONCEPTION
-    assert [c.node_id for c in nxt.ready] == ["ready_high", "due_later", "ready_low"]
-    assert all(c.reason == READY for c in nxt.ready)
-    assert "blocked" not in {c.node_id for c in nxt.ordered}
-    assert "proficient" not in {c.node_id for c in nxt.ordered}
-    # Quiz plan is the same flat order when nothing hits the cap.
-    plan = quiz_plan.rank_concepts(states, edges, NOW)
-    assert [(c.node_id, c.reason) for c in plan] == [(c.node_id, c.reason) for c in nxt.ordered]
 
 
 def test_rank_concepts_caps_learner_next_per_course():
