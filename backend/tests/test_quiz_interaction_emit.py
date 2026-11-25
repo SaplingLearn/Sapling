@@ -201,3 +201,30 @@ def test_the_planned_schema_carries_the_kit_as_flat_quiz_scalars():
     assert schema["properties"]["kit_slot"]["type"] == "integer"
     assert schema["properties"]["kit"]["type"] == "string"
     assert "interaction" not in schema["$defs"]["PlannedQuestion"]["properties"]
+
+
+def test_keyless_projection_serves_the_sanitized_kit():
+    """The student answers ON the kit, so the keyless projection (generate,
+    the next question, resume) must carry it — re-sanitized, short_answer
+    only. quiz-kit.spec.ts never mounted Sort while the allowlist dropped it."""
+    from services.quiz.wire import _strip_answer_key
+
+    sort = {
+        "kind": "sort",
+        "buckets": ["Prokaryote", "Eukaryote"],
+        "items": [{"id": "ecoli", "label": "E. coli"}, {"id": "yeast", "label": "Yeast"}],
+    }
+    stored = [
+        {"id": 1, "question": "Sort them.", "type": "short_answer", "options": [],
+         "correct_answer": "Prokaryote=ecoli;Eukaryote=yeast",
+         "interaction": {**sort, "answer": "Prokaryote=ecoli;Eukaryote=yeast"}},
+        {"id": 2, "question": "Name it.", "type": "short_answer", "options": [],
+         "correct_answer": "x", "interaction": {"kind": "sort", "buckets": ["one"], "items": []}},
+        {"id": 3, "question": "Pick.", "type": "multiple_choice",
+         "options": [{"label": "A", "text": "a", "correct": True}], "interaction": sort},
+    ]
+    kit, junk, mc = _strip_answer_key(stored)
+    assert kit["interaction"] == sort
+    assert "correct_answer" not in kit
+    assert "interaction" not in junk
+    assert "interaction" not in mc

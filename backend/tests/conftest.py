@@ -469,6 +469,8 @@ _GENERATE_OPTIONAL_TOP_LEVEL_KEYS = frozenset({"source"})
 _KEYLESS_QUESTION_KEYS = frozenset({
     "type", "material_context",
     "id", "question", "concept_tested", "difficulty", "options",
+    # W7: a short_answer's sanitized kit (layout only, never the key).
+    "interaction",
 })
 _KEYLESS_OPTION_KEYS = frozenset({"label", "text"})
 #: Substrings that would name an answer key if one ever reappeared under a

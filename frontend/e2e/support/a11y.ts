@@ -18,7 +18,8 @@
  * fonts and for every finite animation to finish, so a fade-in caught half way
  * is never measured for colour contrast. The specs also run with
  * `reducedMotion: "reduce"`, which the app's global reset (globals.css) turns
- * into instant transitions.
+ * into near-instant transitions, and every scan turns transitions off outright
+ * (see `stillTransitions`).
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -83,9 +84,31 @@ async function settle(page: Page): Promise<void> {
   });
 }
 
+/**
+ * Turn CSS transitions off for the rest of the page's life. The reduced-motion
+ * reset (globals.css) shortens every transition to 0.01ms but leaves
+ * `transition-property: all` on every element, so any style change starts a
+ * transition, and axe can read a computed value before its first frame lands:
+ * in the learning-loop wrap-up scan the tutor rail's plan row had already lost
+ * its current-row background while its text still read white (axe
+ * color-contrast 1.02, 5 runs in 28). With no transitions a computed style is
+ * always the end state, which is what "instant" in the header promises
+ * (0 in 16 since).
+ */
+async function stillTransitions(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    if (document.getElementById("a11y-no-transitions")) return;
+    const style = document.createElement("style");
+    style.id = "a11y-no-transitions";
+    style.textContent = "*, *::before, *::after { transition: none !important; }";
+    document.head.appendChild(style);
+  });
+}
+
 /** Run axe against the current page and return its violations. */
 export async function scanA11y(page: Page, label: string): Promise<A11yViolation[]> {
   await shown(page);
+  await stillTransitions(page);
   await settle(page);
   if (!(await page.evaluate(() => "axe" in window))) {
     await page.addScriptTag({ path: AXE_SOURCE });
