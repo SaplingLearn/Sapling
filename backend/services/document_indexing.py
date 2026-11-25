@@ -77,6 +77,7 @@ INDEX_LEASE_SECONDS = int(os.getenv("INDEX_LEASE_SECONDS", "600"))
 #: whatever is still short after it, bounded by INDEX_MAX_ATTEMPTS.
 _INLINE_TRIES = 3
 _EMBED_FAILED = "embed_failed"  # the error of a try that landed short with no reason given
+_SCORE_DECIMALS = 4  # decimals a relevance score is reported to
 _DEFAULT_CATEGORY = "other"  # the chunking category of a row with none
 _TABLE = "documents"
 _BACKOFF_SECONDS = (1, 4)
@@ -577,7 +578,7 @@ def _observe_course_relevance(
             # An LLM abstract and a raw first chunk score on different
             # distributions; a threshold needs to know which it is looking at.
             "sample": sample,
-            "score": round(score, 4),
+            "score": round(score, _SCORE_DECIMALS),
         },
     )
 
