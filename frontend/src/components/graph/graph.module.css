@@ -18,7 +18,9 @@
 
 /* Visually hidden, still read: the pointer-only SVG's nodes as a list. */
 .srOnly {
-  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  /* The standard visually-hidden box: one pixel, pulled back over itself. */
+  --sr-px: 1px;
+  position: absolute; width: var(--sr-px); height: var(--sr-px); padding: 0; margin: calc(-1 * var(--sr-px));
   overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
 }
 
