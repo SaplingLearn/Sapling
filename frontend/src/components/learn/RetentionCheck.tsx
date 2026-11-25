@@ -58,7 +58,7 @@ export function RetentionCheck({ userId, courses, initialCourseId = "" }: {
   return (
     <section aria-label="Retention check" className={`card ${styles.retention}`} style={{ margin: 0 }}>
       <h2 style={{ margin: 0, fontSize: 17 }}>Retention check</h2>
-      <p style={{ margin: 0, fontSize: 13 }}>Check what you remember after time away. No tutor hints are offered here; the server tracks any help or intervening practice.</p>
+      <p style={{ margin: 0, fontSize: 13 }}>Check what you remember after time away. No tutor hints here. Sapling notes any help or practice in between.</p>
       <label>Course
         {/* #866 Z29: the answer boxes' field style — Tailwind's preflight strips a select's border and fill */}
         <select aria-label="Retention course" aria-describedby={fellBack ? noteId : undefined} data-testid="retention-course" value={courseId} onChange={(event) => setSelected(event.target.value)} className={styles.scopeText} style={{ display: "block", minWidth: 0, marginTop: 4 }}>
@@ -241,7 +241,7 @@ function RetentionSession({ userId, courseId }: { userId: string; courseId: stri
         {skipped && <p data-testid="retention-skipped" style={STATUS_LINE}>That question is no longer available, so it was skipped.</p>}
         {items?.length === 0 && (
           <div ref={statusRef} tabIndex={-1} data-testid="retention-empty" style={STATUS_LINE}>
-            <p style={{ margin: 0 }}>No eligible unseen retention checks are available for this course. Checks open at fixed times after you first study a concept; you may need more time or new check material.</p>
+            <p style={{ margin: 0 }}>No retention checks are open for this course yet. They open at set times after you first study a concept, so check back later or add course material.</p>
             {renderHandoffs(emptyHandoffs, (link) => link.testId, (link) => link.testId)}
           </div>
         )}

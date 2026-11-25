@@ -142,7 +142,7 @@ describe("the plan's words", () => {
     // quiz_planned_questions on, in a multiple-choice or mixed round, and only
     // when the writer tags a distractor that passes the checks: the card cannot
     // know, so it says why the concept is proposed and promises nothing more.
-    expect(planReasonCopy("misconception")).toBe("You've mixed this one up before — worth practising again.");
+    expect(planReasonCopy("misconception")).toBe("You've mixed this one up before — worth practicing again.");
     expect(planReasonCopy("misconception")).not.toMatch(/checks?|this round/i);
   });
 });

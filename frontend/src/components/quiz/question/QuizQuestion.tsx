@@ -435,7 +435,7 @@ function HintPanel({ hint, onOpenGuide }: { hint: ScaffoldHint; onOpenGuide: () 
           data-testid="quiz-hint-open-guide"
           onClick={onOpenGuide}
         >
-          Open Study guide
+          Open study guides
         </Button>
       </div>
     </aside>

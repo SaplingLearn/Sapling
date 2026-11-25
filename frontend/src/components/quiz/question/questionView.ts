@@ -270,7 +270,7 @@ export function scaffoldHint({
   return {
     focus,
     rubric,
-    note: "Scaffolding only — never the answer. Open Study guide for course cards (keys stay hidden).",
+    note: "Scaffolding only — never the answer. Open study guides for course cards (keys stay hidden).",
   };
 }
 

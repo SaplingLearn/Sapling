@@ -2,6 +2,7 @@
 import React from "react";
 import Link from "next/link";
 import type { LoopPanelConcept, LoopPlanPrereqEdge } from "@/lib/api";
+import { HANDOFF_COPY } from "@/lib/learningHandoffs";
 import { MASTERY_PALETTE, TIER_LABEL, type MasteryTier } from "@/lib/graph/nodeStyle";
 import { PlanDeps } from "../PlanDeps";
 import { planKind } from "../planLabels";
@@ -116,7 +117,7 @@ export function SessionPanel({
                 {dueCountText(dueCount)}
               </span>
               <Link href={dueHref} className="btn btn--sm" style={{ alignSelf: "flex-start" }} data-testid="tutor-panel-review">
-                Due on Study
+                {HANDOFF_COPY.dueOnStudy}
               </Link>
             </div>
           </section>
@@ -126,7 +127,7 @@ export function SessionPanel({
             <span id="tutor-panel-map" className="label-micro">Knowledge map</span>
             {showTreeLink && (
               <Link data-testid="loop-tree-link" href={treeHref} className={styles.textLink} style={{ fontSize: 12 }}>
-                See on your map
+                {HANDOFF_COPY.seeOnMap}
               </Link>
             )}
           </div>

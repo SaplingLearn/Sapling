@@ -3,6 +3,7 @@ import React, { useLayoutEffect, useRef } from "react";
 import Link from "next/link";
 import type { EnrolledCourse } from "@/lib/api";
 import type { GraphNode } from "@/lib/data";
+import { HANDOFF_COPY } from "@/lib/learningHandoffs";
 import { MASTERY_PALETTE, TIER_LABEL, tierFor, type MasteryTier } from "@/lib/graph/nodeStyle";
 import { Icon } from "../../Icon";
 import { ChevRight } from "./TutorIcons";
@@ -110,7 +111,7 @@ export function TutorHome({
         )}
         {dueHref && (dueCount ?? 0) > 0 && (
           <Link className={styles.pill} data-testid="tutor-home-due" href={dueHref}>
-            Due on Study · {dueCount}
+            {HANDOFF_COPY.dueOnStudyDot(dueCount ?? 0)}
           </Link>
         )}
         {startWith && (

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Icon } from "@/components/Icon";
 import { tierFill, tierLabel, tierText } from "@/components/studyGuide/shared/tiers";
 import { useFlag } from "@/context/FlagsContext";
+import { HANDOFF_COPY } from "@/lib/learningHandoffs";
 import { buildQuizHref } from "@/lib/quiz/source";
 import type { ConceptMapBlock } from "@/lib/studyGuide/types";
 import { studyGuideReaderHref } from "@/lib/toolHrefs";
@@ -67,7 +68,7 @@ function TutorPrompts({
             className={s.option}
             data-testid={`guide-concept-quiz-${blockId}`}
           >
-            Quiz this concept
+            {HANDOFF_COPY.quizThisConcept}
           </Link>
         )}
         {PROMPTS.map((prompt, i) => (

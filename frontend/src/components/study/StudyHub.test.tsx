@@ -1119,7 +1119,7 @@ describe("StudyHub's roadmap and Up Next follow the selected exam", () => {
     renderHub();
     await screen.findByText("Ready for Exam 2");
     const names = () => {
-      const row = screen.getByRole("button", { name: /2 Quick Reviews/ });
+      const row = screen.getByRole("button", { name: /2 quick reviews/ });
       fireEvent.focus(row);
       const list = screen.getByRole("dialog", { name: "Quick reviews" });
       const found = ["Variables", "Loops", "Recursion", "Arrays"].filter(n => within(list).queryByText(n));
@@ -1282,7 +1282,7 @@ describe("StudyHub shows only what its data backs", () => {
     vi.mocked(getTopicChecklist).mockResolvedValue({ topics: [topic("t-loop", "Loops", null, "loop", ["e2"])], needs_refresh: false } as never);
     renderHub();
     await screen.findByText("Ready for Exam 2");
-    const row = screen.getByRole("button", { name: /2 Quick Reviews/ });
+    const row = screen.getByRole("button", { name: /2 quick reviews/ });
     expect(within(row).getByText("~ 4 min")).toBeTruthy();
     fireEvent.focus(row); // the list opens on focus as well as hover
     const list = screen.getByRole("dialog", { name: "Quick reviews" });
@@ -1308,15 +1308,15 @@ describe("StudyHub shows only what its data backs", () => {
     renderHub();
     await hubLoaded();
     await waitFor(() => expect(getStudyNext).toHaveBeenCalledWith("u1", "c1"));
-    await waitFor(() => expect(screen.getByRole("button", { name: /1 Due Review/ })).toBeTruthy());
+    await waitFor(() => expect(screen.getByRole("button", { name: /1 review due/ })).toBeTruthy());
     const focus = screen.getByTestId("focus-card");
     expect(within(focus).getByText("Arrays")).toBeTruthy();
     expect(within(focus).getByText("Up Next")).toBeTruthy();
-    fireEvent.focus(screen.getByRole("button", { name: /1 Due Review/ }));
+    fireEvent.focus(screen.getByRole("button", { name: /1 review due/ }));
     const dueDlg = screen.getByRole("dialog", { name: "Due reviews" });
     expect(within(dueDlg).getByText("Due for review")).toBeTruthy();
     // W8.3b / W3.3b: Due Reviews offer Practice what's due beside Flashcards.
-    expect(within(dueDlg).getByTestId("due-reviews-flashcards")).toBeTruthy();
+    expect(within(dueDlg).getByTestId("due-reviews-flashcards").textContent).toBe("Review flashcards");
     expect(within(dueDlg).getByTestId("due-reviews-quiz").textContent).toBe("Practice what's due");
     fireEvent.click(within(dueDlg).getByTestId("due-reviews-quiz"));
     expect(push).toHaveBeenLastCalledWith(
@@ -1337,10 +1337,10 @@ describe("StudyHub shows only what its data backs", () => {
     });
     renderHub();
     await hubLoaded();
-    await waitFor(() => expect(screen.getByRole("button", { name: /1 Due Review/ })).toBeTruthy());
-    fireEvent.focus(screen.getByRole("button", { name: /1 Due Review/ }));
+    await waitFor(() => expect(screen.getByRole("button", { name: /1 review due/ })).toBeTruthy());
+    fireEvent.focus(screen.getByRole("button", { name: /1 review due/ }));
     const dueDlg = screen.getByRole("dialog", { name: "Due reviews" });
-    expect(within(dueDlg).getByRole("button", { name: "Start Review" })).toBeTruthy();
+    expect(within(dueDlg).getByRole("button", { name: "Start review" })).toBeTruthy();
     expect(within(dueDlg).queryByTestId("due-reviews-quiz")).toBeNull();
   });
 
@@ -1354,10 +1354,10 @@ describe("StudyHub shows only what its data backs", () => {
   it("flag-off Quick Reviews stay Flashcards-only (no Quiz secondary)", async () => {
     renderHub();
     await hubLoaded();
-    const row = screen.getByRole("button", { name: /Quick Reviews?/ });
+    const row = screen.getByRole("button", { name: /quick reviews?/ });
     fireEvent.focus(row);
     const list = screen.getByRole("dialog", { name: "Quick reviews" });
-    expect(within(list).getByRole("button", { name: "Start Review" })).toBeTruthy();
+    expect(within(list).getByRole("button", { name: "Start review" })).toBeTruthy();
     expect(within(list).queryByTestId("due-reviews-quiz")).toBeNull();
   });
 

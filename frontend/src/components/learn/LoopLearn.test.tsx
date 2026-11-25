@@ -694,13 +694,13 @@ describe("LoopLearn — A26", () => {
     api.getLoopPlan.mockResolvedValue({ concepts: [], order: [], empty: true, phase: "teach" });
     render(<LoopLearn />);
     await startFromHome();
-    expect((await screen.findByTestId("loop-no-check-items")).textContent).toContain("No check items for this course yet");
+    expect((await screen.findByTestId("loop-no-check-items")).textContent).toContain("No practice questions for this course yet");
     expect(screen.queryByTestId("loop-preparing-items")).toBeNull();
     // A128: another notice showing never brings the materials note with it
     expect(screen.queryByTestId("loop-materials-unavailable")).toBeNull();
   });
 
-  it("A128: while the upload is still drafted, says preparing — never 'No check items'", async () => {
+  it("A128: while the upload is still drafted, says preparing — never 'No practice questions'", async () => {
     api.listLoopSessionsFor.mockResolvedValue(listed([]));
     api.startLoopSession.mockResolvedValue({ session_id: "s9", initial_message: "" });
     api.nextLoopProbe.mockResolvedValue({ done: true, phase: "plan", no_check_items: true, preparing: true });

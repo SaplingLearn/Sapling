@@ -276,7 +276,7 @@ export function StudyGuideDrawer({
           <div className="quiz-guide-drawer__row">
             <h3 className="quiz-guide-drawer__h">Your guides</h3>
             <Link href={homeHref} className="quiz-guide-drawer__link" data-testid="quiz-guide-open-home">
-              Open Study Guides
+              Open study guides
             </Link>
           </div>
           {listError && (
@@ -291,7 +291,7 @@ export function StudyGuideDrawer({
           )}
           {guides && guides.length === 0 && !listError && (
             <p className="quiz-guide-drawer__muted" data-testid="quiz-guide-empty">
-              No guides for this class yet. Open Study Guides to make one.
+              No guides for this class yet. Open study guides to make one.
             </p>
           )}
           {guides && guides.length > 0 && (

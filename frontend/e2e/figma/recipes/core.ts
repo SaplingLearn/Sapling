@@ -632,7 +632,7 @@ export const RECIPES_CORE: RecipeBook = {
     run: async (page) => {
       await openDashboard(page);
       await page.getByRole("button", { name: "Fullscreen graph" }).click();
-      await text(page, "Knowledge graph — fullscreen");
+      await text(page, "Knowledge map — fullscreen");
       await text(page, "Press Esc to exit");
       await waitGraph(page);
     },

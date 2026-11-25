@@ -13,6 +13,7 @@
  */
 import React from "react";
 import { INHERIT_FONT } from "@/lib/inheritFont";
+import { HANDOFF_COPY } from "@/lib/learningHandoffs";
 import { Icon } from "../Icon";
 import { quickReviewEstimate } from "./hubModel";
 import { CardsIcon, ELLIPSIS, POPOVER, StatusDot } from "./hubUi";
@@ -23,8 +24,8 @@ export type QuickReview = { t: Concept; ago: number };
 
 const reviewsLabel = (n: number, fsrsDue: boolean) =>
   fsrsDue
-    ? `${n} Due ${n === 1 ? "Review" : "Reviews"}`
-    : `${n} Quick ${n === 1 ? "Review" : "Reviews"}`;
+    ? `${n} ${n === 1 ? "review" : "reviews"} due`
+    : `${n} quick ${n === 1 ? "review" : "reviews"}`;
 /** Why a concept is on the list: FSRS-due, not seen for a week, or simply weak. */
 const reason = (x: QuickReview, fsrsDue: boolean) =>
   fsrsDue
@@ -58,14 +59,14 @@ function ReviewList({ reviews, courseLabel, onStart, onQuiz, fsrsDue }: {
         {onQuiz ? (
           <span style={{ display: "flex", gap: 8 }}>
             <button type="button" className="btn btn--primary" data-testid="due-reviews-flashcards" onClick={onStart} style={{ flex: 1, height: 36, justifyContent: "center" }}>
-              Flashcards
+              {HANDOFF_COPY.reviewFlashcards}
             </button>
             <button type="button" className="btn" data-testid="due-reviews-quiz" onClick={onQuiz} style={{ flex: 1, height: 36, justifyContent: "center" }}>
-              Practice what&apos;s due
+              {HANDOFF_COPY.practiceWhatsDue}
             </button>
           </span>
         ) : (
-          <button type="button" className="btn btn--primary" onClick={onStart} style={{ height: 36, justifyContent: "center" }}>Start Review</button>
+          <button type="button" className="btn btn--primary" onClick={onStart} style={{ height: 36, justifyContent: "center" }}>Start review</button>
         )}
       </div>
     </div>

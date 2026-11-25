@@ -678,7 +678,7 @@ function renderGraphCard({
     >
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 22px", borderBottom: "1px solid var(--border)" }}>
         <div>
-          <div className="label-micro">Your knowledge graph</div>
+          <div className="label-micro">Your knowledge map</div>
           <div className="h-serif" style={{ fontSize: 20, marginTop: 2 }}>
             {`${conceptCount} ${conceptCount === 1 ? "concept" : "concepts"} across ${scopedCourses.length} ${scopedCourses.length === 1 ? "course" : "courses"}`}
           </div>
@@ -1124,7 +1124,7 @@ function renderFullscreenOverlay({
     >
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 20px", borderBottom: "1px solid var(--border)" }}>
         <div>
-          <div className="label-micro">Knowledge graph — fullscreen</div>
+          <div className="label-micro">Knowledge map — fullscreen</div>
           <div className="h-serif" style={{ fontSize: 18 }}>Press Esc to exit</div>
         </div>
         <button className="btn btn--ghost btn--sm" onClick={onClose}>

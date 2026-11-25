@@ -530,7 +530,7 @@ describe("QuizResults", () => {
   it("falls back to practising the missed questions, and calls practiseMissed", () => {
     const { acts } = renderResults();
     const button = screen.getByTestId("quiz-practise-missed");
-    expect(button).toHaveTextContent("Practise the one you missed");
+    expect(button).toHaveTextContent("Practice the one you missed");
     fireEvent.click(button);
     expect(acts.practiseMissed).toHaveBeenCalledTimes(1);
   });
@@ -547,7 +547,7 @@ describe("QuizResults", () => {
     });
     expect(screen.getByTestId("quiz-missed-list")).toHaveTextContent("2 to look at");
     expect(screen.getByTestId("quiz-practise-missed")).toHaveTextContent(
-      "Practise the ones you missed",
+      "Practice the ones you missed",
     );
   });
 

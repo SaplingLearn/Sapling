@@ -357,7 +357,7 @@ export function planReasonCopy(reason: PlanReason): string {
       // Never "this round checks it": a round targets the misconception only
       // with quiz_planned_questions on (server-only), in a multiple-choice or
       // mixed format, and only if a tagged distractor survives (#866 K43).
-      return "You've mixed this one up before — worth practising again.";
+      return "You've mixed this one up before — worth practicing again.";
     default:
       return "Ready to learn — everything it builds on is solid.";
   }

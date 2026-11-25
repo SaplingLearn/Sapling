@@ -579,7 +579,7 @@ test("missed review: the results screen explains the wrong answer and asks for a
   await page.getByTestId("quiz-ask-panel-close").click();
   await expect(sheet).toHaveCount(0);
 
-  // R-5 / G5: "practise the one you missed" is a NEW attempt on the same
+  // R-5 / G5: "practice the one you missed" is a NEW attempt on the same
   // concept, one question, same difficulty — and it NAMES the attempt just
   // finished, so the backend re-serves the item that was actually missed
   // rather than writing a new one (#537 G5). What the client asks for is the
@@ -602,7 +602,7 @@ test("missed review: the results screen explains the wrong answer and asks for a
     r => r.url().includes("/api/quiz/generate") && r.method() === "POST",
   );
   const practise = page.getByTestId("quiz-practise-missed");
-  await expect(practise).toHaveText("Practise the one you missed");
+  await expect(practise).toHaveText("Practice the one you missed");
   await practise.click();
   const body = (await generateRequest).postDataJSON() as {
     concept_node_id: string;

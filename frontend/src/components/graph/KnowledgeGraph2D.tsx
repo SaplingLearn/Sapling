@@ -1716,7 +1716,7 @@ function KnowledgeGraph2DImpl({
         width={width}
         height={height}
         role="img"
-        aria-label="Knowledge graph"
+        aria-label="Knowledge map"
         data-color-mode={colorMode}
         style={{
           display: "block",
@@ -1777,7 +1777,7 @@ function KnowledgeGraph2DImpl({
           id as `data-node-id` so tests assert by identity, never by label
           (concept names are only unique per course). Registered in
           docs/frontend-testids.md. */}
-      <ul style={SR_ONLY} aria-label="Knowledge graph nodes" data-testid="graph-node-items">
+      <ul style={SR_ONLY} aria-label="Knowledge map nodes" data-testid="graph-node-items">
         {nodes.map((n) =>
           onNodeClick ? (
             <li key={n.id} data-testid="graph-node-item" data-node-id={n.id}>

@@ -133,7 +133,7 @@ describe("KnowledgeGraph2D — the panel map's zoom and its auto-fit (PR #866 U4
   const panel = (nodes = NODES, edges = EDGES) => (
     <KnowledgeGraph2D nodes={nodes} edges={edges} width={W} height={H} fit zoomControls={false} wheelZoom="pinch" />
   );
-  const svg = () => screen.getByRole("img", { name: "Knowledge graph" });
+  const svg = () => screen.getByRole("img", { name: "Knowledge map" });
 
   it("a plain wheel (scrolling the panel) leaves the frame alone", () => {
     const { container } = render(panel());

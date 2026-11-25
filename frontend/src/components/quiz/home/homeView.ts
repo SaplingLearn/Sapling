@@ -163,7 +163,7 @@ export function cardMeta(
   planned = false,
   planLineShown = false,
 ): string {
-  if (mode === "course") return `${courseQueueLength} concepts ${planned ? "to practise" : "due"}`;
+  if (mode === "course") return `${courseQueueLength} concepts ${planned ? "to practice" : "due"}`;
   if (mode === "due") {
     const order = planned ? "most overdue" : "weakest";
     return `${due.count} concepts across ${due.courseCount} courses · starting with the ${Math.min(due.count, QUEUE_MAX)} ${order}`;

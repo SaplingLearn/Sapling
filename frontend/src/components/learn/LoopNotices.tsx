@@ -14,7 +14,7 @@ import { BudgetPausedBanner, tutorPauseMessage } from "./BudgetPausedBanner";
 import { PREPARING_COPY } from "./checkNote";
 
 const NO_CHECK_ITEMS_COPY =
-  "No check items for this course yet. You can still learn with the tutor; nothing is graded until the course has items.";
+  "No practice questions for this course yet. You can still learn with the tutor; nothing is graded until the course has some.";
 // spec §13 A128: the session's course-material retrieval failed (an outage, not
 // an empty result). Shown once per session, from the turn's response field —
 // never a prompt change.
@@ -97,7 +97,7 @@ export function LoopNotices({
           style={{ ...NOTE_STYLE, fontSize: 14, lineHeight: 1.5 }}>
           <p style={{ margin: "0 0 6px" }}>{NO_FRESH_PRACTICE_COPY}</p>
           <p style={{ margin: "0 0 8px", overflowWrap: "anywhere" }}>Practice unavailable: {practiceUnavailable.map((id) => names.get(id) ?? "A selected concept").join(", ")}.</p>
-          {exhaustedPracticeAttempt && <p style={{ margin: "0 0 8px" }}>This session already moved past those concepts. Once new questions are available, start a new session to practise them.</p>}
+          {exhaustedPracticeAttempt && <p style={{ margin: "0 0 8px" }}>This session already moved past those concepts. Once new questions are available, start a new session to practice them.</p>}
           <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
             {libraryVisible && <Link data-testid="loop-practice-sources" href="/library" className="btn btn--sm btn--ghost" style={{ minHeight: 44, flex: "1 1 130px", whiteSpace: "normal", justifyContent: "center", textAlign: "center" }}>Review source material</Link>}
             {practiceHandoffs.map((link) => (

@@ -307,8 +307,8 @@ export function QuizResults({
             {/* The prototype's `practiseLabel`: an uncounted plural. The count
                 is already on the eyebrow above ("3 to look at"). */}
             {missed.length === 1
-              ? "Practise the one you missed"
-              : "Practise the ones you missed"}
+              ? "Practice the one you missed"
+              : "Practice the ones you missed"}
           </Button>
         ) : (
           <Button
