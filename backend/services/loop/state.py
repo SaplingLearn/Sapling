@@ -40,7 +40,7 @@ from services.loop.constants import (
     _NOT_ENABLED,
     _STATE_CONFLICT,
 )
-from services.loop.flags import _ANSWER_CLAIM
+from services.loop.flags import _ANSWER_CLAIM, _CLOSE_CLAIM, _GRADING_CLAIM
 
 #: Every module of the package logs as the route always did (the ops-log
 #: mirror and the tests key on this logger name).
@@ -410,7 +410,7 @@ def _grading_in_flight(doc: dict, now: float) -> bool:
     # spec §13 A138 (review fix): a prequestion guess being saved under its
     # claim — its row is the commit point, so a close now would strand it
     cards = [r for r in prequestion_rules.records(doc).values() if isinstance(r, dict)]
-    return any(grade_checkpoint.KEY in e or _live(e, "grading_claim", now) for e in entries) or any(
+    return any(grade_checkpoint.KEY in e or _live(e, _GRADING_CLAIM, now) for e in entries) or any(
         _live(r, _ANSWER_CLAIM, now) for r in cards
     )
 
@@ -421,13 +421,13 @@ def _refuse_while_closing(doc: dict, now: float) -> None:
     holds it (the close refuses a live grading claim, `_claim_close`)."""
     if _loop_phase(doc) == "close":
         raise HTTPException(status_code=409, detail=_SESSION_CLOSED)
-    if _live(doc, "close_claim", now):
+    if _live(doc, _CLOSE_CLAIM, now):
         raise HTTPException(status_code=409, detail=_CLOSE_IN_PROGRESS)
 
 
 def _closing(doc: dict, now: float) -> bool:
     """`_refuse_while_closing`'s condition, as a predicate."""
-    return _loop_phase(doc) == "close" or _live(doc, "close_claim", now)
+    return _loop_phase(doc) == "close" or _live(doc, _CLOSE_CLAIM, now)
 
 
 def _close_phase(doc: dict | None) -> str:

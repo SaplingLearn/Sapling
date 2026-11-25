@@ -55,6 +55,7 @@ from services.loop.state import (
     _request_id,
     _update_loop_state,
 )
+from services.loop.flags import _CLOSE_CLAIM, _CLOSE_CLAIM_AT
 from services.loop.served import _item_check_kwargs
 from services.loop.guard import option_text
 
@@ -164,14 +165,14 @@ def _claim_close(session_id: str, claim: str, now: float) -> dict:
     def take(doc: dict) -> None:
         if _loop_phase(doc) == CLOSE_PHASE:
             raise _AlreadyClosed()
-        if doc.get("close_claim") != claim and _live(doc, "close_claim", now):
+        if doc.get(_CLOSE_CLAIM) != claim and _live(doc, _CLOSE_CLAIM, now):
             raise HTTPException(status_code=409, detail=_CLOSE_IN_PROGRESS)
         if _grading_in_flight(doc, now):
             raise HTTPException(status_code=409, detail=_GRADING_IN_FLIGHT)
         out["doc"] = copy.deepcopy(
-            {k: v for k, v in doc.items() if k not in ("close_claim", "close_claim_at")}
+            {k: v for k, v in doc.items() if k not in (_CLOSE_CLAIM, _CLOSE_CLAIM_AT)}
         )
-        doc["close_claim"], doc["close_claim_at"] = claim, now
+        doc[_CLOSE_CLAIM], doc[_CLOSE_CLAIM_AT] = claim, now
 
     _update_loop_state(session_id, take)
     return out.get("doc", {})
@@ -182,9 +183,9 @@ def _finish_close(session_id: str, claim: str, *, closed: bool) -> None:
     Best effort after the store: `close_json` is the record of truth."""
 
     def finish(doc: dict) -> None:
-        if doc.get("close_claim") == claim:
-            doc.pop("close_claim", None)
-            doc.pop("close_claim_at", None)
+        if doc.get(_CLOSE_CLAIM) == claim:
+            doc.pop(_CLOSE_CLAIM, None)
+            doc.pop(_CLOSE_CLAIM_AT, None)
         if closed:
             doc["phase"] = CLOSE_PHASE
 

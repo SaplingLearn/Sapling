@@ -16,6 +16,7 @@ from learning.params import LOOP_GRADING_CLAIM_STALE_S
 from models import LoopCheckAnswerBody
 
 from services.loop.constants import _ALREADY_GRADED, _IDK_RENDERED
+from services.loop.flags import _GRADING_CLAIM, _GRADING_CLAIM_AT
 from services.loop.state import _refuse_while_closing, _request_id, _steps, _update_loop_state
 from services.loop.planning import _probe_doc
 
@@ -88,9 +89,9 @@ def _grading_open(entry: dict | None, now: float) -> bool:
         return False
     if grade_checkpoint.KEY in entry:
         return True  # a saved result must be recovered, never abandoned as stale
-    claimed_at = entry.get("grading_claim_at")
+    claimed_at = entry.get(_GRADING_CLAIM_AT)
     return not (
-        entry.get("grading_claim") and now - float(claimed_at or 0) > LOOP_GRADING_CLAIM_STALE_S
+        entry.get(_GRADING_CLAIM) and now - float(claimed_at or 0) > LOOP_GRADING_CLAIM_STALE_S
     )
 
 
@@ -107,9 +108,9 @@ def _claim_grading(session_id: str, qh: str, claim: str, now: float) -> None:
         entry = _steps(state).get(qh)
         if not isinstance(entry, dict):
             raise HTTPException(status_code=404, detail="No such check item in this session")
-        if entry.get("graded_at") is not None or entry.get("grading_claim"):
+        if entry.get("graded_at") is not None or entry.get(_GRADING_CLAIM):
             raise HTTPException(status_code=409, detail=_ALREADY_GRADED)
-        entry["grading_claim"], entry["grading_claim_at"] = claim, now
+        entry[_GRADING_CLAIM], entry[_GRADING_CLAIM_AT] = claim, now
 
     _update_loop_state(session_id, take)
 
@@ -130,13 +131,13 @@ def _abandon_claimed(entry: dict, reason: str) -> None:
     graded again (`grading_superseded`, read by `_grading_open` and the answer
     route) and keeps why (`grading_abandoned`) and the operation it discarded.
     A late grade under that claim then finds no claim to save under (409)."""
-    claim = entry.get("grading_claim")
+    claim = entry.get(_GRADING_CLAIM)
     entry["grading_superseded"] = True
     entry["grading_abandoned"] = reason
     if claim:
         entry["discarded_grade_operation_id"] = claim
-    entry.pop("grading_claim", None)
-    entry.pop("grading_claim_at", None)
+    entry.pop(_GRADING_CLAIM, None)
+    entry.pop(_GRADING_CLAIM_AT, None)
     entry.pop(grade_checkpoint.KEY, None)
 
 
@@ -146,12 +147,12 @@ def _under_claim(qh: str, claim: str, change: Callable[[dict], None], *, release
 
     def mutate(state: dict) -> None:
         entry = _steps(state).get(qh)
-        if not isinstance(entry, dict) or entry.get("grading_claim") != claim:
+        if not isinstance(entry, dict) or entry.get(_GRADING_CLAIM) != claim:
             return
         change(entry)
         if release:
-            entry.pop("grading_claim", None)
-            entry.pop("grading_claim_at", None)
+            entry.pop(_GRADING_CLAIM, None)
+            entry.pop(_GRADING_CLAIM_AT, None)
             entry.pop(grade_checkpoint.KEY, None)
 
     return mutate
@@ -227,7 +228,7 @@ def _under_probe_claim(
     `_under_claim` for the probe's posed item)."""
 
     def guarded(pr: dict, cur: dict) -> None:
-        if cur.get("grading_claim") == claim:
+        if cur.get(_GRADING_CLAIM) == claim:
             change(pr, cur)
 
     return _on_posed(qh, guarded)

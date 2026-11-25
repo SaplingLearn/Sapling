@@ -19,6 +19,7 @@ from services.check_item_service import get_check_item
 from services.feature_flags import flag_on
 
 from services.loop.constants import _SESSION_MISMATCH, _WITHDRAWN_ITEM
+from services.loop.flags import _GRADING_CLAIM, _GRADING_CLAIM_AT
 from services.loop.state import (
     _gate,
     _load_loop_state,
@@ -161,8 +162,8 @@ def _clear_reported_current(session_id: str, question_hash: str, now: float) -> 
         if not isinstance(entry, dict):
             return
         entry["reported"] = True
-        claimed = entry.get("grading_claim") and not (
-            now - float(entry.get("grading_claim_at") or 0) > LOOP_GRADING_CLAIM_STALE_S
+        claimed = entry.get(_GRADING_CLAIM) and not (
+            now - float(entry.get(_GRADING_CLAIM_AT) or 0) > LOOP_GRADING_CLAIM_STALE_S
         )
         if (
             state.get("current") == question_hash

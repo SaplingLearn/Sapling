@@ -18,7 +18,7 @@ from services.ai_budget import AIBudgetExceeded
 from services.check_item_service import get_check_item
 from services import varied_practice
 
-from services.loop.flags import _ANSWER_CLAIM, _GUESS_IN_FLIGHT, OPEN_QUESTION_KEY
+from services.loop.flags import _ANSWER_CLAIM, _GRADING_CLAIM, _GUESS_IN_FLIGHT, OPEN_QUESTION_KEY
 from services.loop.state import (
     _arm_for,
     _gate,
@@ -133,7 +133,7 @@ def _drop_current(st: dict, cur_entry) -> None:
     on a withdrawn item) is given up in this same write, so the grade it
     guards can never be saved on an item that is no longer current (it would
     wedge the session)."""
-    if (isinstance(cur_entry, dict) and cur_entry.get("grading_claim")
+    if (isinstance(cur_entry, dict) and cur_entry.get(_GRADING_CLAIM)
             and cur_entry.get("graded_at") is None):
         _abandon_claimed(cur_entry, ABANDON_MOVED_PAST)
     st["current"] = None
