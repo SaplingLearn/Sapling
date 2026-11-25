@@ -99,6 +99,35 @@ def grading_failure_http(exc: BaseException) -> HTTPException | None:
     return None
 
 
+def grading_deps(body, course_id, request, *, kind: str, loop_on: bool, state: dict) -> SaplingDeps:
+    """The deps one graded answer runs grade_answer under: billed to its kind's
+    feature, with a copy of the loop state for the grade hook's attempt log
+    (its change rides the checkpoint into the claimed save)."""
+    return SaplingDeps(
+        user_id=body.user_id,
+        course_id=course_id or None,
+        supabase=None,
+        request_id=_request_id(request),
+        session_id=body.session_id,
+        feature=_FEATURE_FOR_KIND[kind],
+        learning_loop=loop_on,
+        loop_state=copy.deepcopy(state),
+    )
+
+
+def submitted_answer(body, *, idk: bool) -> CheckAnswer:
+    """The student's explicit answer as the grader takes it."""
+    return CheckAnswer(
+        question_hash=body.question_hash,
+        answer_text=body.answer,
+        selected_option=body.option,
+        reason=body.reason,
+        idk=idk,
+        # spec §13 A127: the stated confidence; an idk (a box or a phrase) states none
+        confidence=None if idk else body.confidence,
+    )
+
+
 def _open_grade_checkpoint(entry, body, course_id, *, kind):
     try:
         return grade_checkpoint.open_checkpoint(
