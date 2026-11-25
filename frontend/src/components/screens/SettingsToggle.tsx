@@ -1,4 +1,5 @@
 "use client";
+import styles from "./SettingsToggle.module.css";
 
 /**
  * The settings on/off switch: a real `<button role="switch">`, so it is
@@ -27,34 +28,9 @@ export function Toggle({
       data-testid={testId}
       disabled={disabled}
       onClick={() => onChange(!on)}
-      style={{
-        flexShrink: 0,
-        width: 36,
-        height: 20,
-        padding: 0,
-        border: "none",
-        borderRadius: "var(--r-full)",
-        background: on ? "var(--accent)" : "var(--bg-soft)",
-        position: "relative",
-        cursor: disabled ? "not-allowed" : "pointer",
-        opacity: disabled ? 0.5 : 1,
-        transition: "all var(--dur) var(--ease)",
-      }}
+      className={styles.toggle}
     >
-      <span
-        aria-hidden
-        style={{
-          position: "absolute",
-          top: 2,
-          left: on ? 18 : 2,
-          width: 16,
-          height: 16,
-          borderRadius: "50%",
-          background: "#fff",
-          boxShadow: "var(--shadow-sm)",
-          transition: "all var(--dur) var(--ease)",
-        }}
-      />
+      <span aria-hidden className={styles.knob} />
     </button>
   );
 }
