@@ -1184,8 +1184,8 @@ inside `loop-messages` is `ChatPanel`, whose own `tutor-*` ids
 | `loop-plan-kind-{nodeId}` | that concept's kind badge (`learn/planLabels.ts::planKind`, from GET /plan `kind`: review / new / started / sibling); the session panel shows the same label under the concept's name |
 | `loop-plan-reason-{nodeId}` | why a goal session plans it (`planGoalReason`: `goal` / `prerequisite`); absent outside a goal session |
 | `loop-plan-retry` | the plan failed to load — retry (`GET /plan`) |
-| `loop-plan-deps` | W3.1: PlanPanel compact “How these connect” under the numbered plan; present only when GET /plan `prereq_edges` is non-empty |
-| `loop-plan-dep-{prereqId}-{dependentId}` | one prerequisite → dependent line in `loop-plan-deps` (concept names from the plan / names map) |
+| `loop-plan-deps` | W3.1: PlanPanel compact “How these connect” section (named by its heading) under the numbered plan; present only when at least one GET /plan `prereq_edges` pair touches a planned concept. Structure only — prerequisite order, never mastery |
+| `loop-plan-dep-{prereqId}-{dependentId}` | one prerequisite → dependent line in `loop-plan-deps` (concept names from the plan / names map), once per pair, in plan order (`PlanDeps.orderedPlanEdges`; an edge up to a goal target off the plan sorts last) |
 | `session-plan-deps` | W3.1b: SessionPanel twin of `loop-plan-deps` (same `PlanDeps` markup, `session-plan` prefix); under the rail’s Plan list when LoopLearn’s kept `prereq_edges` is non-empty; omitted when empty or while phase is `plan` (rail plan is hidden) |
 | `session-plan-dep-{prereqId}-{dependentId}` | one prerequisite → dependent line in `session-plan-deps` (same name resolution as PlanPanel) |
 | `loop-plan-approve` | approve the plan (`/plan/approve`, the proposed ids in order) |

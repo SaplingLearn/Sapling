@@ -72,6 +72,7 @@ const api = vi.hoisted(() => ({
   addGraphNode: vi.fn(),
   deleteGraphNode: vi.fn(),
   describeConcept: vi.fn(),
+  getLoopPlan: vi.fn(),
 }));
 vi.mock("@/lib/api", async importOriginal => ({
   ...(await importOriginal<typeof import("@/lib/api")>()),
@@ -421,6 +422,20 @@ describe("session summary", () => {
 });
 
 // ───────────────────────────────── knowledge-map rail ─────────────────────────────────
+
+// W3.1: the plan dependency block is a loop-only surface. With the loop off
+// (the kill switch / every loop flag at its default) the legacy tutor renders
+// exactly as before: no plan read, no dependency block on screen or rail.
+describe("loop off", () => {
+  it("never reads the loop plan and shows no plan dependency block", async () => {
+    renderLearn();
+    await openSession("sess-a", "A function calling itself.");
+    expect(api.getLoopPlan).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("loop-plan-deps")).toBeNull();
+    expect(screen.queryByTestId("session-plan-deps")).toBeNull();
+    expect(screen.queryByText("How these connect")).toBeNull();
+  });
+});
 
 describe("knowledge-map rail", () => {
   it("header, legend, and the focus card for the session's own concept", async () => {

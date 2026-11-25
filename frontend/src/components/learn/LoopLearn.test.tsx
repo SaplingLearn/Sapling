@@ -187,6 +187,37 @@ describe("LoopLearn — resume (spec §11.3)", () => {
     expect(api.nextLoopProbe).not.toHaveBeenCalled();
   });
 
+  it("W3.1: GET /plan's prereq edges show under the plan, then stay on the rail after approve", async () => {
+    api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "plan", "2026-09-21T10:00:00Z")]));
+    api.getLoopPlan.mockResolvedValue({
+      concepts: [
+        { node_id: "n1", concept_name: "Binary Numbers", kind: "new", p_known: 0.35 },
+        { node_id: "n2", concept_name: "Bitwise Operators", kind: "new", p_known: 0.35 },
+      ],
+      order: [],
+      prereq_edges: [{ prerequisite: "n1", dependent: "n2" }],
+    });
+    api.approveLoopPlan.mockResolvedValue({ phase: "teach" });
+    render(<LoopLearn />);
+    expect((await screen.findByTestId("loop-plan-dep-n1-n2")).textContent).toBe("Binary Numbers → Bitwise Operators");
+    // while the plan is on screen the rail hides its plan, so the block is not doubled
+    expect(screen.queryByTestId("session-plan-deps")).toBeNull();
+    fireEvent.click(screen.getByTestId("loop-plan-approve"));
+    await waitFor(() => expect(screen.queryByTestId("loop-plan-deps")).toBeNull());
+    expect((await screen.findByTestId("session-plan-dep-n1-n2")).textContent).toBe("Binary Numbers → Bitwise Operators");
+  });
+
+  it("W3.1: a plan without prereq edges renders no dependency block anywhere", async () => {
+    api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "plan", "2026-09-21T10:00:00Z")]));
+    api.getLoopPlan.mockResolvedValue({ concepts: [{ node_id: "n1", concept_name: "Recursion", kind: "new", p_known: 0.35 }], order: [], prereq_edges: [] });
+    api.approveLoopPlan.mockResolvedValue({ phase: "teach" });
+    render(<LoopLearn />);
+    fireEvent.click(await screen.findByTestId("loop-plan-approve"));
+    await screen.findByTestId("loop-teach-start");
+    expect(screen.queryByTestId("loop-plan-deps")).toBeNull();
+    expect(screen.queryByTestId("session-plan-deps")).toBeNull();
+  });
+
   it.each(["probe", "plan"] as const)("holds New session until the resumed %s and its scope have settled", async (phase) => {
     const transcript = deferred<{ session: { id: string }; messages: object[] }>();
     const scope = deferred<ReturnType<typeof status>>();

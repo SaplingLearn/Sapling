@@ -10,6 +10,7 @@ import React from "react";
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import type { LoopPlanConcept, LoopPlanPrereqEdge } from "@/lib/api";
+import { orderedPlanEdges } from "./PlanDeps";
 import { PlanPanel } from "./PlanPanel";
 
 afterEach(cleanup);
@@ -92,5 +93,52 @@ describe("PlanPanel", () => {
       },
     );
     expect(screen.getByTestId("loop-plan-dep-n1-n2").textContent).toBe("Binary Numbers → Operators");
+  });
+
+  it("lists the edges in plan order, once each, and only those touching the plan", () => {
+    renderPlan(
+      [
+        concept({ node_id: "a", concept_name: "Bits" }),
+        concept({ node_id: "b", concept_name: "Bytes" }),
+        concept({ node_id: "c", concept_name: "Words" }),
+      ],
+      {
+        prereqEdges: [
+          { prerequisite: "b", dependent: "c" },
+          { prerequisite: "goal1", dependent: "goal2" }, // neither planned today
+          { prerequisite: "a", dependent: "b" },
+          { prerequisite: "b", dependent: "c" }, // a repeat
+        ],
+      },
+    );
+    const lines = screen.getByRole("list", { name: "Prerequisite dependencies" }).querySelectorAll("li");
+    expect(Array.from(lines, (li) => li.getAttribute("data-testid"))).toEqual([
+      "loop-plan-dep-a-b",
+      "loop-plan-dep-b-c",
+    ]);
+  });
+
+  it("shows order only: no mastery, score or band appears in the dependency block", () => {
+    renderPlan(
+      [concept({ p_known: 0.91 }), concept({ node_id: "n2", concept_name: "Operators", p_known: 0.12 })],
+      { prereqEdges: [{ prerequisite: "n1", dependent: "n2" }] },
+    );
+    const text = screen.getByTestId("loop-plan-deps").textContent ?? "";
+    expect(text).toBe("How these connectBinary → Operators");
+    expect(text).not.toMatch(/\d|%|mastered|learning|struggling/i);
+  });
+});
+
+describe("orderedPlanEdges", () => {
+  const plan = [{ node_id: "x", concept_name: "X" }, { node_id: "y", concept_name: "Y" }];
+  it("keeps an edge up to a goal target off the plan, after the planned pairs", () => {
+    expect(orderedPlanEdges(
+      [{ prerequisite: "y", dependent: "goal" }, { prerequisite: "x", dependent: "y" }],
+      plan,
+    )).toEqual([{ prerequisite: "x", dependent: "y" }, { prerequisite: "y", dependent: "goal" }]);
+  });
+  it("drops self-loops and returns nothing without a plan", () => {
+    expect(orderedPlanEdges([{ prerequisite: "x", dependent: "x" }], plan)).toEqual([]);
+    expect(orderedPlanEdges([{ prerequisite: "x", dependent: "y" }], null)).toEqual([]);
   });
 });

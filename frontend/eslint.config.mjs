@@ -213,6 +213,11 @@ const eslintConfig = [
       "src/components/learn/BudgetPausedBanner.tsx",
       // LoopLearn's actions between checks, moved out of it. No backlog.
       "src/components/learn/TeachActions.tsx",
+      // The plan card (approve / retry; W3.1's dependency block renders inside it)
+      // and the session rail that mirrors that block after approve. Every
+      // control already carries a testid: no backlog.
+      "src/components/learn/PlanPanel.tsx",
+      "src/components/learn/tutor/SessionPanel.tsx",
       // "Report this question" (spec §13 A113), shared by the loop and review
       // surfaces; its testids are passed in. New file, no baselined backlog.
       "src/components/learn/ReportQuestion.tsx",
