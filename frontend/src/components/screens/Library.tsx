@@ -2,6 +2,11 @@
 import React from "react";
 import dynamic from "next/dynamic";
 import { createPortal } from "react-dom";
+import { AnimatePresence, motion, type MotionProps } from "framer-motion";
+// Importing lib/motion also sets framer's test-mode skip (#383).
+import { useMotionPresets, type MotionPreset } from "@/lib/motion";
+import { AnimatedNumber } from "./AnimatedNumber";
+import styles from "./Library.module.css";
 import { TopBar } from "../TopBar";
 import { FullHeightScreen } from "../FullHeightScreen";
 import { Icon } from "../Icon";
@@ -50,6 +55,17 @@ const catColor: Record<Doc["category"], string> = {
   other:         "var(--text-muted)",
 };
 
+/** A syllabus's assignments land after the upload returns; reload once more after this. */
+const SYLLABUS_RELOAD_DELAY_MS = 1500;
+
+// lib/motion types a preset's `initial` as TargetAndTransition, which
+// motion.div's `initial` prop does not accept as written; the values are the
+// same shape, so view one as the other.
+const asProps = (p: MotionPreset): MotionProps => p as MotionProps;
+
+/** `--cat` for a document's category colour (the tile's fill). */
+const catVar = (d: Doc) => ({ "--cat": catColor[d.category] }) as React.CSSProperties;
+
 type Cat = Doc["category"] | "all";
 type View = "grid" | "list";
 
@@ -72,6 +88,7 @@ export function Library() {
   // renders its own error state + retry instead of "Your library is quiet".
   const [loadError, setLoadError] = React.useState(false);
   const loadReq = useLatestRequest();
+  const m = useMotionPresets();
 
   useScrollLock(Boolean(detail));
   const [modalMounted, setModalMounted] = React.useState(false);
@@ -185,25 +202,25 @@ export function Library() {
     return counts;
   }, [documents]);
 
+  // The document list replays its stagger when the filter or the view
+  // changes; a search keystroke only adds or drops cards.
+  const listKey = `${view}:${cat}:${courseFilter}`;
+
   return (
     <FullHeightScreen direction="row">
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
+      <div className={styles.screen}>
         <TopBar
           title="Library"
           subtitle={`${documents.length} document${documents.length === 1 ? "" : "s"} · auto-extracted summaries and takeaways`}
           actions={
             <>
-              <div style={{ position: "relative" }}>
+              <div className={styles.searchWrap}>
                 <input
                   data-testid="library-search"
                   value={query}
                   onChange={e => setQuery(e.target.value)}
                   placeholder="Search documents…"
-                  style={{
-                    padding: "6px 12px", fontSize: 12,
-                    border: "1px solid var(--border)", borderRadius: "var(--r-full)",
-                    background: "var(--bg-panel)", width: 220,
-                  }}
+                  className={styles.search}
                 />
               </div>
               {courseScanCourseId && (
@@ -231,16 +248,13 @@ export function Library() {
           }
         />
 
-        <div style={{
-          padding: "14px 32px", display: "flex", gap: 6, alignItems: "center",
-          borderBottom: "1px solid var(--border)", flexWrap: "wrap",
-        }}>
+        <div className={styles.filters}>
           <FilterPills
             options={cats.map((c) => ({ value: c, label: c.replace("_", " ") }))}
             value={cat}
             onChange={setCat}
           />
-          <div style={{ flex: 1 }} />
+          <div className={styles.spacer} />
           <Toggle
             options={[
               { value: "grid", label: "Grid" },
@@ -252,25 +266,25 @@ export function Library() {
           />
         </div>
 
-        <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
-          <div style={{ flex: 1, overflowY: "auto", padding: "24px 32px" }}>
+        <div className={styles.main}>
+          <div className={styles.content}>
             {loading ? (
               view === "grid" ? <LibraryGridSkeleton /> : <LibraryListSkeleton />
             ) : (
               <>
             {loadError && documents.length === 0 && (
-              <div data-testid="library-load-error" role="alert" style={{ textAlign: "center", padding: "60px 20px", color: "var(--text-muted)", maxWidth: 440, margin: "0 auto" }}>
-                <div className="h-serif" style={{ fontSize: 22, color: "var(--text)" }}>Couldn&apos;t load your library</div>
-                <div className="body-serif" style={{ fontSize: 14, marginTop: 8, lineHeight: 1.6 }}>
+              <div data-testid="library-load-error" role="alert" className={styles.empty}>
+                <div className={`h-serif ${styles.emptyTitle}`}>Couldn&apos;t load your library</div>
+                <div className={`body-serif ${styles.emptyBody}`}>
                   Your documents are safe. Check your connection and try again.
                 </div>
-                <button data-testid="library-load-retry" className="btn btn--sm btn--primary" style={{ marginTop: 16 }} onClick={retryLoad}>
+                <button data-testid="library-load-retry" className={`btn btn--sm btn--primary ${styles.emptyAction}`} onClick={retryLoad}>
                   Try again
                 </button>
               </div>
             )}
             {loadError && documents.length > 0 && (
-              <div data-testid="library-load-error" role="alert" style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 12, display: "flex", alignItems: "center", gap: 8 }}>
+              <div data-testid="library-load-error" role="alert" className={styles.staleNotice}>
                 Couldn&apos;t refresh your library — showing what was last loaded.
                 <button data-testid="library-load-retry" className="btn btn--ghost btn--sm" onClick={retryLoad}>Retry</button>
               </div>
@@ -278,126 +292,87 @@ export function Library() {
             <LibraryGuides guides={shownGuides} courses={courses} failed={saved.failed} onRetry={saved.reload} />
             {/* Not quiet until the guides are known: they may be on their way, or unreadable. */}
             {filtered.length + shownGuides.length === 0 && !(loadError && documents.length === 0) && saved.known && (
-              <div style={{ textAlign: "center", padding: "60px 20px", color: "var(--text-muted)", maxWidth: 440, margin: "0 auto" }}>
-                <div className="h-serif" style={{ fontSize: 22, color: "var(--text)" }}>Your library is quiet</div>
-                <div className="body-serif" style={{ fontSize: 14, marginTop: 8, lineHeight: 1.6 }}>
+              <motion.div className={styles.empty} {...asProps(m.fade)}>
+                <div className={`h-serif ${styles.emptyTitle}`}>Your library is quiet</div>
+                <div className={`body-serif ${styles.emptyBody}`}>
                   Upload a syllabus, lecture notes, or reading. Sapling reads them and starts
                   building your knowledge graph.
                 </div>
-              </div>
+              </motion.div>
             )}
             {view === "grid" ? (
-              <div style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
-                gap: 16,
-              }}>
+              <motion.div
+                key={listKey}
+                className={styles.grid}
+                variants={m.list.container}
+                initial="hidden"
+                animate="shown"
+              >
                 {filtered.map(d => {
                   const isSelected = detail?.id === d.id;
                   const courseLabel = courseLookup[d.course_id ?? ""];
                   return (
-                    <button
+                    <motion.button
                       key={d.id}
                       data-testid={`library-doc-${d.id}`}
                       onClick={() => setDetail(d)}
-                      className="card"
-                      style={{
-                        padding: "var(--pad-lg)", display: "flex", flexDirection: "column",
-                        gap: 10, textAlign: "left", cursor: "pointer",
-                        borderColor: isSelected ? "var(--accent-border)" : undefined,
-                        background: isSelected ? "var(--accent-soft)" : undefined,
-                        transition: "border-color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease)",
-                      }}
+                      className={`card ${styles.docCard}${isSelected ? ` ${styles.selected}` : ""}`}
+                      variants={m.list.item}
                     >
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                        <div style={{
-                          width: 40, height: 48, borderRadius: "var(--r-sm)",
-                          background: catColor[d.category], color: "#fff",
-                          display: "flex", alignItems: "center", justifyContent: "center",
-                          flexShrink: 0,
-                        }}>
+                      <div className={styles.docCardHead}>
+                        <div className={styles.tile} style={catVar(d)}>
                           <Icon name="doc" size={18} />
                         </div>
-                        <span className="chip" style={{ textTransform: "capitalize" }}>
+                        <span className={`chip ${styles.capitalize}`}>
                           {d.category.replace("_", " ")}
                         </span>
                       </div>
                       <div>
-                        <div className="h-serif" style={{
-                          fontSize: 16, lineHeight: 1.3, color: "var(--text)",
-                          display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden",
-                        }}>
-                          {d.file_name}
-                        </div>
-                        <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>
+                        <div className={`h-serif ${styles.docTitle}`}>{d.file_name}</div>
+                        <div className={styles.docMeta}>
                           {courseLabel ? `${courseLabel} · ` : ""}{new Date(d.created_at).toLocaleDateString()}
                         </div>
                       </div>
-                      {d.summary && (
-                        <div style={{
-                          fontSize: 12, color: "var(--text-dim)", lineHeight: 1.5,
-                          display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden",
-                        }}>
-                          {d.summary}
-                        </div>
-                      )}
-                    </button>
+                      {d.summary && <div className={styles.docSummary}>{d.summary}</div>}
+                    </motion.button>
                   );
                 })}
-              </div>
+              </motion.div>
             ) : (
-              <div className="card" style={{ padding: 0 }}>
-                {filtered.map((d, i) => {
+              <motion.div
+                key={listKey}
+                className={`card ${styles.listCard}`}
+                variants={m.list.container}
+                initial="hidden"
+                animate="shown"
+              >
+                {filtered.map(d => {
                   const isSelected = detail?.id === d.id;
                   return (
-                    <button
+                    <motion.button
                       key={d.id}
                       data-testid={`library-doc-${d.id}`}
                       onClick={() => setDetail(d)}
-                      style={{
-                        width: "100%", display: "flex", alignItems: "center", gap: 16,
-                        padding: "14px 20px", textAlign: "left", cursor: "pointer",
-                        borderBottom: i < filtered.length - 1 ? "1px solid var(--border)" : "none",
-                        background: isSelected ? "var(--accent-soft)" : "transparent",
-                        border: "none", borderTop: "none", borderLeft: "none", borderRight: "none",
-                        transition: "background var(--dur-fast) var(--ease)",
-                      }}
+                      className={`${styles.listRow}${isSelected ? ` ${styles.selected}` : ""}`}
+                      variants={m.list.item}
                     >
-                      <div style={{
-                        width: 28, height: 36, borderRadius: "var(--r-xs)",
-                        background: catColor[d.category], color: "#fff",
-                        display: "flex", alignItems: "center", justifyContent: "center",
-                        flexShrink: 0,
-                      }}>
+                      <div className={styles.rowTile} style={catVar(d)}>
                         <Icon name="doc" size={14} />
                       </div>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{
-                          fontSize: 14, fontWeight: 500, color: "var(--text)",
-                          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                        }}>
-                          {d.file_name}
-                        </div>
-                        <div style={{
-                          fontSize: 11, color: "var(--text-muted)",
-                          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                        }}>
-                          {d.summary || "—"}
-                        </div>
+                      <div className={styles.listText}>
+                        <div className={`${styles.listTitle} ${styles.truncate}`}>{d.file_name}</div>
+                        <div className={`${styles.listSub} ${styles.truncate}`}>{d.summary || "—"}</div>
                       </div>
-                      <span className="chip" style={{ textTransform: "capitalize", flexShrink: 0 }}>
+                      <span className={`chip ${styles.capitalize} ${styles.noShrink}`}>
                         {d.category.replace("_", " ")}
                       </span>
-                      <span style={{
-                        fontSize: 11, color: "var(--text-muted)",
-                        width: 80, textAlign: "right", flexShrink: 0,
-                      }}>
+                      <span className={styles.listDate}>
                         {new Date(d.created_at).toLocaleDateString()}
                       </span>
-                    </button>
+                    </motion.button>
                   );
                 })}
-              </div>
+              </motion.div>
             )}
               </>
             )}
@@ -407,11 +382,8 @@ export function Library() {
       </div>
 
       {!isMobile && (
-        <aside style={{
-          width: 240, borderLeft: "1px solid var(--border)", flexShrink: 0,
-          background: "var(--bg-subtle)", padding: 16, overflowY: "auto",
-        }}>
-          <div className="label-micro" style={{ marginBottom: 10 }}>Courses</div>
+        <aside className={styles.rail}>
+          <div className={`label-micro ${styles.railLabel}`}>Courses</div>
           <CourseRow
             testid="library-course-filter-all"
             label="All"
@@ -441,36 +413,36 @@ export function Library() {
         </aside>
       )}
 
-      {detail && modalMounted && createPortal(
-        <div
-          onClick={() => setDetail(null)}
-          style={{
-            position: "fixed", inset: 0, background: "rgba(25, 37, 11,0.45)",
-            zIndex: 200, display: "grid", placeItems: "center", padding: 20,
-          }}
-        >
-          <div
-            onClick={e => e.stopPropagation()}
-            className="card slide-up"
-            style={{
-              width: "min(820px, 100%)", maxHeight: "88vh",
-              overflow: "hidden", padding: 0, display: "flex", flexDirection: "column",
-            }}
-          >
-            <div style={{ overflowY: "auto" }}>
-              <DetailPanel
-                doc={detail}
-                embedded
-                onClose={() => setDetail(null)}
-                onDeleted={async () => {
-                  setDetail(null);
-                  await load();
-                  toast.success("Document deleted");
-                }}
-              />
-            </div>
-          </div>
-        </div>,
+      {modalMounted && createPortal(
+        <AnimatePresence>
+          {detail && (
+            <motion.div
+              key="library-detail"
+              onClick={() => setDetail(null)}
+              className={styles.scrim}
+              {...asProps(m.fade)}
+            >
+              <motion.div
+                onClick={e => e.stopPropagation()}
+                className={`card ${styles.modal}`}
+                {...asProps(m.fadeUp)}
+              >
+                <div className={styles.modalScroll}>
+                  <DetailPanel
+                    doc={detail}
+                    embedded
+                    onClose={() => setDetail(null)}
+                    onDeleted={async () => {
+                      setDetail(null);
+                      await load();
+                      toast.success("Document deleted");
+                    }}
+                  />
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>,
         document.body
       )}
 
@@ -484,7 +456,7 @@ export function Library() {
           await load();
           if (hasSyllabus) {
             // Brief delay for server-side ingestion races, then reload again.
-            setTimeout(load, 1500);
+            setTimeout(load, SYLLABUS_RELOAD_DELAY_MS);
             toast.info("Syllabus processed — new assignments will appear on the calendar.");
           }
         }}
@@ -504,23 +476,18 @@ function CourseRow({
     <button
       data-testid={testid}
       onClick={onClick}
-      style={{
-        width: "100%", display: "flex", alignItems: "center", gap: 8,
-        padding: "8px 10px", borderRadius: "var(--r-sm)", marginBottom: 4,
-        background: active ? "var(--bg-panel)" : "transparent",
-        border: active ? "1px solid var(--border)" : "1px solid transparent",
-        textAlign: "left",
-      }}
+      className={`${styles.courseRow}${active ? ` ${styles.active}` : ""}`}
     >
-      <span style={{
-        width: 8, height: 8, borderRadius: "50%",
-        background: color || "var(--text-muted)",
-      }} />
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 12, fontWeight: active ? 600 : 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</div>
-        {subLabel && <div style={{ fontSize: 10, color: "var(--text-muted)" }}>{subLabel}</div>}
+      <span
+        className={styles.courseDot}
+        style={color ? ({ "--course": color } as React.CSSProperties) : undefined}
+      />
+      <div className={styles.courseText}>
+        <div className={`${styles.courseLabel} ${styles.truncate}`}>{label}</div>
+        {subLabel && <div className={styles.courseSub}>{subLabel}</div>}
       </div>
-      <span className="mono" style={{ fontSize: 11, color: "var(--text-muted)" }}>{count}</span>
+      {/* Tweens when an upload or a delete changes the count. */}
+      <AnimatedNumber value={count} className={`mono ${styles.courseCount}`} />
     </button>
   );
 }
@@ -594,27 +561,30 @@ function DetailPanel({
     }
   });
 
-  const container: React.CSSProperties = embedded
-    ? { padding: 20 }
-    : { width: 360, borderLeft: "1px solid var(--border)", padding: 20, background: "var(--bg-subtle)", overflowY: "auto", flexShrink: 0 };
+  const m = useMotionPresets();
+  const scanNote = scanState === "done" && scanResult
+    ? scanResult.added > 0
+      ? `Added ${scanResult.added} new concept${scanResult.added === 1 ? "" : "s"} on top of the existing ${scanResult.existing}.`
+      : `Course graph already covers this (${scanResult.existing} concept${scanResult.existing === 1 ? "" : "s"}).`
+    : "Extend this course's graph using this document's summary and takeaways.";
 
   return (
-    <aside style={container}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+    <aside className={embedded ? styles.detail : styles.detailSide}>
+      <div className={styles.detailHead}>
         <span className="chip">{doc.category.replace("_", " ")}</span>
         <button data-testid="library-detail-close" className="btn btn--ghost btn--sm" onClick={onClose} aria-label="Close">
           <Icon name="x" size={12} />
         </button>
       </div>
-      <h2 className="h-serif" style={{ fontSize: 20, margin: "10px 0 6px", fontWeight: 500 }}>{doc.file_name}</h2>
-      <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 16 }}>
+      <h2 className={`h-serif ${styles.detailTitle}`}>{doc.file_name}</h2>
+      <div className={styles.detailMeta}>
         Uploaded {new Date(doc.created_at).toLocaleDateString()}
       </div>
 
       {doc.summary && (
-        <div style={{ marginBottom: 16 }}>
-          <div className="label-micro" style={{ marginBottom: 4 }}>Summary</div>
-          <div style={{ fontSize: 13, lineHeight: 1.55, color: "var(--text-dim)" }}>{doc.summary}</div>
+        <div className={styles.section}>
+          <div className={`label-micro ${styles.sectionLabel}`}>Summary</div>
+          <div className={styles.summary}>{doc.summary}</div>
         </div>
       )}
 
@@ -624,27 +594,22 @@ function DetailPanel({
 
       <LibraryNextCtas next={next} />
 
-      <div style={{
-        marginTop: 10, marginBottom: 10, padding: 12, borderRadius: "var(--r-sm)",
-        border: "1px solid var(--border)", background: "var(--bg-panel)",
-      }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-          <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
+      <div className={styles.scanBox}>
+        <div className={styles.scanRow}>
+          <div className={styles.scanText}>
             <div className="label-micro">Concept scan</div>
-            <div style={{ fontSize: 11, color: "var(--text-muted)", lineHeight: 1.4 }}>
-              {scanState === "done" && scanResult
-                ? scanResult.added > 0
-                  ? `Added ${scanResult.added} new concept${scanResult.added === 1 ? "" : "s"} on top of the existing ${scanResult.existing}.`
-                  : `Course graph already covers this (${scanResult.existing} concept${scanResult.existing === 1 ? "" : "s"}).`
-                : "Extend this course's graph using this document's summary and takeaways."}
-            </div>
+            {/* The note swaps to the scan's result: fade the new text in. */}
+            <AnimatePresence mode="wait" initial={false}>
+              <motion.div key={scanNote} className={styles.scanNote} {...asProps(m.fade)}>
+                {scanNote}
+              </motion.div>
+            </AnimatePresence>
           </div>
           <button
             data-testid="library-detail-scan"
             onClick={runScan}
             disabled={scanState === "scanning"}
-            className="btn btn--sm"
-            style={{ flexShrink: 0 }}
+            className={`btn btn--sm ${styles.noShrink}`}
           >
             <Icon name="sparkle" size={12} />
             {scanState === "scanning"
@@ -659,8 +624,7 @@ function DetailPanel({
       <button
         data-testid="library-detail-delete"
         onClick={del.trigger}
-        className={`btn ${del.armed ? "btn--danger" : ""}`}
-        style={{ width: "100%", background: del.armed ? "var(--err-soft)" : undefined, color: del.armed ? "var(--err)" : undefined }}
+        className={`btn ${styles.delete}${del.armed ? ` btn--danger ${styles.armed}` : ""}`}
       >
         <Icon name="x" size={13} /> {del.armed ? "Click again to confirm" : "Delete document"}
       </button>
@@ -670,6 +634,7 @@ function DetailPanel({
 
 function ConceptList({ notes }: { notes: ConceptNote[] }) {
   const [open, setOpen] = React.useState<Record<number, boolean>>({});
+  const m = useMotionPresets();
   const allOpen = notes.every((_, i) => open[i]);
   const toggleAll = () => {
     if (allOpen) setOpen({});
@@ -677,90 +642,42 @@ function ConceptList({ notes }: { notes: ConceptNote[] }) {
   };
 
   return (
-    <div style={{ marginBottom: 16 }}>
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          marginBottom: 8,
-        }}
-      >
+    <div className={styles.section}>
+      <div className={styles.conceptsHead}>
         <div className="label-micro">Key concepts ({notes.length})</div>
         <button
           data-testid="library-concepts-toggle-all"
           onClick={toggleAll}
-          className="btn btn--ghost btn--sm"
-          style={{ fontSize: 11 }}
+          className={`btn btn--ghost btn--sm ${styles.toggleAll}`}
         >
           {allOpen ? "Collapse all" : "Expand all"}
         </button>
       </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+      <div className={styles.concepts}>
         {notes.map((n, i) => {
           const isOpen = !!open[i];
           return (
-            <div
-              key={`${n.name}-${i}`}
-              style={{
-                borderRadius: "var(--r-sm)",
-                border: "1px solid var(--border)",
-                background: "var(--bg-panel)",
-                overflow: "hidden",
-              }}
-            >
+            <div key={`${n.name}-${i}`} className={styles.concept}>
               <button
                 data-testid={`library-concept-toggle-${i}`}
                 onClick={() => setOpen(prev => ({ ...prev, [i]: !prev[i] }))}
                 aria-expanded={isOpen}
-                style={{
-                  width: "100%",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 10,
-                  padding: "10px 12px",
-                  background: "transparent",
-                  border: "none",
-                  textAlign: "left",
-                  cursor: "pointer",
-                }}
+                className={styles.conceptToggle}
               >
-                <span
-                  style={{
-                    display: "inline-flex",
-                    transform: isOpen ? "rotate(90deg)" : "rotate(0deg)",
-                    transition: "transform var(--dur-fast) var(--ease)",
-                    color: "var(--text-muted)",
-                  }}
-                >
+                <span className={`${styles.chev}${isOpen ? ` ${styles.open}` : ""}`}>
                   <Icon name="chev" size={12} />
                 </span>
-                <span
-                  className="h-serif"
-                  style={{
-                    fontSize: 14,
-                    fontWeight: 600,
-                    color: "var(--text)",
-                    flex: 1,
-                    minWidth: 0,
-                  }}
-                >
-                  {n.name}
-                </span>
+                <span className={`h-serif ${styles.conceptName}`}>{n.name}</span>
               </button>
-              {isOpen && (
-                <div
-                  style={{
-                    padding: "0 12px 12px 34px",
-                    fontSize: 13,
-                    color: "var(--text-dim)",
-                    borderTop: "1px solid var(--border)",
-                    paddingTop: 10,
-                  }}
-                >
-                  <MarkdownChat>{n.description}</MarkdownChat>
-                </div>
-              )}
+              <AnimatePresence initial={false}>
+                {isOpen && (
+                  <motion.div key="body" {...asProps(m.collapse)}>
+                    <div className={styles.conceptBody}>
+                      <MarkdownChat>{n.description}</MarkdownChat>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
           );
         })}
