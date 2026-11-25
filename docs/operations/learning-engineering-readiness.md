@@ -10,7 +10,7 @@ The lifecycle spans session state, evidence writes and provider operations;
 ordinary analytics still use queued best-effort telemetry. Audit each durable
 boundary against the selected candidate. A healthy page or HTTP 200 does not establish delivered
 tutor feedback, durable billing, cross-worker recovery or learning efficacy.
-ADRs [0030](../decisions/0030-learning-loop-cutover.md),
+ADRs [0040](../decisions/0040-learning-loop-cutover.md),
 [0033](../decisions/0033-goal-scoped-observed-diagnosis.md),
 [0034](../decisions/0034-evidence-integrity-and-goal-continuation.md) and
 [0035](../decisions/0035-durable-planning-observations.md) and

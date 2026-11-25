@@ -1,4 +1,4 @@
-# 0030: The learning loop replaces LLM-moved mastery, and becomes every student's default
+# 0040: The learning loop replaces LLM-moved mastery, and becomes every student's default
 
 - Status: accepted; cutover pending owner launch
   - learning_loop_beta retired: 2026-09-30 (PKG-14b) — the gate no longer
@@ -14,12 +14,13 @@
 - Date: 2026-09-29
 - Relates to: `docs/superpowers/specs/2026-09-26-learning-loop-design.md` (the
   spec; §1, §5, §7, §10, §11, §13 A14–A23, A33, A40, A45, A79), ADR 0024 (honest
-  degrade — one Pydantic AI seam, no second prompt on failure), ADR 0027 (the
+  degrade — one Pydantic AI seam, no second prompt on failure), ADR 0039 (the
   typed decision seam, PKG-05b), ADR 0015 (the tutor this replaces), #620
   (feature flags — no flag system in this series), PR #673
 - Supersedes: none
-- Number: 0027, 0028 and 0029 are claimed by the open PRs #672, #677 and #705
-  (spec §13 A45); this ADR takes the next free number, 0030.
+- Number: written as 0030 while 0027–0029 were claimed by the open PRs #672,
+  #677 and #705 (spec §13 A45); main later used 0030 for the Claude provider
+  swap, so this ADR was renumbered 0040 when #866 landed.
 
 ## Context
 

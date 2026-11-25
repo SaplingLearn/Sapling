@@ -1,6 +1,7 @@
-# 0027: A typed decision seam; one non-Gemini backend admitted behind it, post-series
+# 0039: A typed decision seam; one non-Gemini backend admitted behind it, post-series
 
 - Status: accepted
+- Number: written as 0027 on `feat/learning-loop`; renumbered 0039 when #866 landed beside main's own ADR 0027 (the tutor router's seam), so every ADR number names one decision.
 - Date: 2026-09-27
 - Relates to: learning-loop spec `docs/superpowers/specs/2026-09-26-learning-loop-design.md`
   §3.6 and §13 A24 (owner decision 5), #640 (turn routing / rerank), #641 (upload

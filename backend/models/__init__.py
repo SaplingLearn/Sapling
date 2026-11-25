@@ -794,7 +794,7 @@ class OnboardingBody(BaseModel):
     )
     # PKG-14b (spec §11.2): the learning-style step is gone for everyone; an older
     # client that still sends the field is accepted and the value ignored
-    # (user_profiles.learning_style stays, dead — ADR 0030).
+    # (user_profiles.learning_style stays, dead — ADR 0040).
     learning_style: Optional[str] = Field(default=None, max_length=64)
     # Under-18 students start private: the server applies their privacy
     # settings before onboarding completes (routes/onboarding.py).

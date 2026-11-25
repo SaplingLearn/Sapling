@@ -35,8 +35,8 @@ both clients.
 The code has two deliberately distinct APIs rather than one overloaded name.
 Historical learning design documents that mention `services/decisions.py` describe
 the contract now implemented by `services/learning_decisions.py`; main's ADR 0027
-continues to describe the generic API. The two existing ADRs numbered 0027 are
-historical and are not renumbered here.
+continues to describe the generic API. The learning loop's own decision-seam ADR,
+first written as a second 0027, is now ADR 0039.
 
 This change establishes integration compatibility. It does not validate a model's
 grading accuracy or demonstrate improved human learning outcomes.

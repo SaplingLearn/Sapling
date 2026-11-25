@@ -20,7 +20,7 @@ atomic SQL commit (`learning_evidence_commit`, ADR 0037).
 writer means one place where weights, propagation, FSRS and the mirror are
 computed, so a void can replay them exactly, and a crash can never leave the
 journal and the state disagreeing. Before the loop, the tutor itself moved
-mastery scores; that is exactly what this rule removes (ADR 0030).
+mastery scores; that is exactly what this rule removes (ADR 0040).
 
 **Enforced by.**
 - `inv_01_single_graph_writer` and its companions: a source scan of

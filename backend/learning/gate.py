@@ -24,7 +24,7 @@ the event loop; a sync route (FastAPI's threadpool) calls it directly.
 Work with no student request (the upload's check-item drafting, on the request
 or the job queue) is the UPLOADER's: `learning_loop_for_uploader`, resolved once
 per upload. The per-user settings column of the build phase stays retired
-(PKG-14b, ADR 0030): this module reads no table itself.
+(PKG-14b, ADR 0040): this module reads no table itself.
 """
 
 from __future__ import annotations

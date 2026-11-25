@@ -4,17 +4,17 @@
 - Date: 2026-10-01
 - Relates to: learning-loop spec `docs/superpowers/specs/2026-09-26-learning-loop-design.md`
   §3.6, §6, §8 invariant 24, §13 A24 and A98; PKG-15 (`HANDOFF-15.md`); #642;
-  ADR 0024 (the single LLM seam); ADR 0027 (the decision seam, which admitted this
+  ADR 0024 (the single LLM seam); ADR 0039 (the decision seam, which admitted this
   backend); PR #672 (an earlier, direct-HTTP Jev seam, now superseded)
 - Supersedes: PR #672's `services/typesafe_client.py` design (never merged). Amends
-  ADR 0027's "Jev absent" clauses.
-- Numbering: 0027 is the decision-seam ADR on `feat/learning-loop`. #672's branch also
+  ADR 0039's "Jev absent" clauses.
+- Numbering: the decision-seam ADR was 0027 on `feat/learning-loop` and is now 0039 (renumbered when #866 landed). #672's branch also
   has a 0027, and `feat/620-feature-flags` claims 0028 and 0029. 0030 is the
   cutover ADR, so this ADR is 0031.
 
 ## Context
 
-ADR 0027 admitted one non-Gemini model backend, `agents/_jev.py`, behind the typed
+ADR 0039 admitted one non-Gemini model backend, `agents/_jev.py`, behind the typed
 decision seam. That ADR said Jev would be absent until PKG-15 and gated on a
 privacy review. PKG-15 builds the backend. Three choices were open.
 
