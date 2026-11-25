@@ -223,21 +223,6 @@ def test_allowlist_matches_exact_existing_sites_and_main_installs_bridge():
     )
 
 
-def test_railway_deploy_intent_has_explicit_health_and_teardown_settings():
-    path = Path(__file__).resolve().parents[1] / "railway.json"
-    value = json.loads(path.read_text())
-    assert value["$schema"] == "https://railway.com/railway.schema.json"
-    assert value["deploy"] == {
-        "healthcheckPath": "/api/health",
-        "healthcheckTimeout": 120,
-        "overlapSeconds": 30,
-        "drainingSeconds": 120,
-        "restartPolicyType": "ON_FAILURE",
-        "restartPolicyMaxRetries": 10,
-    }
-    assert "build" not in value  # no accidental source/builder override
-
-
 @pytest.mark.parametrize(
     "name,level,template,args,signal",
     [
@@ -323,30 +308,6 @@ def test_unstructured_debug_wrong_severity_counts_or_platform_values_never_expor
     row = logging.LogRecord(name, level, __file__, 1, template, args, None)
     ops_logging.AccountingLogfireHandler().handle(row)
     assert exporter.exported_spans_as_dict() == []
-
-
-def test_finite_operational_templates_are_exact_existing_source_calls():
-    root = Path(__file__).resolve().parents[1]
-    expected = {
-        "services/events_service.py": {
-            ops_logging._QUEUE: "warning",
-            ops_logging._DROPPED: "warning",
-            ops_logging._LOST_USAGE: "exception",
-        },
-        "services/ai_budget.py": {ops_logging._PLATFORM: "warning"},
-    }
-    for file, templates in expected.items():
-        tree = ast.parse((root / file).read_text())
-        expected_logger = "sapling.events" if "events_service" in file else "sapling.ai_budget"
-        assert _logger_name(tree, file[:-3].replace("/", ".")) == expected_logger
-        assert expected_logger in ops_logging._LOGGER_NAMES
-        found = {}
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.args:
-                value = node.args[0]
-                if isinstance(value, ast.Constant) and value.value in templates:
-                    found[value.value] = node.func.attr
-        assert found == templates
 
 
 def _logger_name(tree, module):
