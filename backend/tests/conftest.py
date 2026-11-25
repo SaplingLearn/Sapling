@@ -21,6 +21,7 @@ A `live_llm` test is billable, so `pytest_collection_modifyitems` skips every
 one of them unless a RUN_LIVE_<LANE>=1 opt-in is set (tests/live_opt_in.py):
 a plain `pytest tests/` never calls a model, whatever keys backend/.env holds.
 """
+import inspect
 import sys
 import os
 from contextlib import contextmanager
@@ -97,8 +98,9 @@ def pytest_configure(config):
     )
     config.addinivalue_line(
         "markers",
-        "kill_switch: legacy /api/learn path with the loop off (spec §11.5): run twice, under "
-        "LEARNING_LOOP_ENABLED=false and with the student's learning_loop flag off",
+        "kill_switch: legacy /api/learn path with the loop off (spec §11.5), under "
+        "LEARNING_LOOP_ENABLED=false. A test that takes `loop_off_via` as an argument runs "
+        "twice: under the kill switch and with the student's learning_loop flag off.",
     )
     config.addinivalue_line(
         "markers",
@@ -151,23 +153,28 @@ def pytest_collection_modifyitems(config, items):
 
 
 #: How a `kill_switch` test turns the loop off: the env kill switch, or the
-#: student's `learning_loop` flag off under an open switch. Every kill_switch
-#: test runs both ways, so "flag off" is pinned to be the kill switch's app.
+#: student's `learning_loop` flag off under an open switch. A kill_switch test
+#: runs once, under the kill switch; one that takes `loop_off_via` as its own
+#: argument runs both ways. That flag off is the kill switch's app is pinned by
+#: tests/test_learning_loop_flag.py (every loop route, the legacy tutor's
+#: hand-off, the quiz flags) over the one gate both go through.
 LOOP_OFF_VIA = ("kill_switch", "flag_off")
 
 
 def pytest_generate_tests(metafunc):
+    # `fixturenames` holds every autouse fixture's closure, and `_kill_switch`
+    # (autouse) requests `loop_off_via`, so test only the function's own args.
     if (
         metafunc.definition.get_closest_marker("kill_switch")
-        and "loop_off_via" in metafunc.fixturenames
+        and "loop_off_via" in inspect.signature(metafunc.function).parameters
     ):
         metafunc.parametrize("loop_off_via", LOOP_OFF_VIA, indirect=True)
 
 
 @pytest.fixture
 def loop_off_via(request):
-    """`kill_switch` tests: parametrized over LOOP_OFF_VIA (pytest_generate_tests);
-    any other test: the env kill switch, unused."""
+    """`kill_switch` tests that take it as an argument: parametrized over
+    LOOP_OFF_VIA (pytest_generate_tests); any other test: the env kill switch."""
     return getattr(request, "param", "kill_switch")
 
 
@@ -183,8 +190,8 @@ def _kill_switch(request, monkeypatch, loop_off_via):
     SAPLING_FLAG_LEARNING_LOOP=off itself.
 
     Spec §11.5 (PKG-14b): tests marked kill_switch drive the legacy /api/learn/*
-    path. Each runs twice: under the env kill switch, and with the switch open
-    and the student's flag off — the two must be the same pre-loop app."""
+    path, under the env kill switch (or, when they take `loop_off_via`, also
+    with the switch open and the student's flag off)."""
     monkeypatch.setenv("SAPLING_FLAG_LEARNING_LOOP", "on")
     if request.node.get_closest_marker("kill_switch"):
         if loop_off_via == "flag_off":

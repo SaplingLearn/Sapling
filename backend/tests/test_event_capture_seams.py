@@ -31,10 +31,6 @@ from tests.split_patches import patch_documents
 from tests.split_patches import patch_quiz
 from tests.split_patches import patch_tutor
 
-# Spec §11.5 (PKG-14b): this module drives the legacy /api/learn/* path (or the
-# upload hook's flag-off branch), so it runs as an explicit kill-switch test.
-pytestmark = pytest.mark.kill_switch
-
 client = TestClient(app)
 
 
@@ -1297,6 +1293,8 @@ def _learn_table_factory(offering_id="off1"):
 SECRET_MESSAGE = "my very private question about recursion and my grades"
 
 
+# Spec §11.5 (PKG-14b): the legacy /api/learn/* path, so the loop is off.
+@pytest.mark.kill_switch
 def test_chat_json_emits_message_sent_with_fingerprint(sink):
     agent = MagicMock()
     agent.run = AsyncMock(return_value=run_result("A reply."))
@@ -1326,6 +1324,8 @@ def test_chat_json_emits_message_sent_with_fingerprint(sink):
     assert SECRET_MESSAGE not in str(ev)
 
 
+# Spec §11.5 (PKG-14b): the legacy /api/learn/* path, so the loop is off.
+@pytest.mark.kill_switch
 def test_chat_stream_emits_message_sent_with_explicit_request_id(sink):
     async def fake_stream(**kwargs):
         from services.agent_events import SaplingEvent
@@ -1373,6 +1373,8 @@ def test_chat_stream_emits_message_sent_with_explicit_request_id(sink):
 # ── Sessions: session.started + session.ended ────────────────────────────────
 
 
+# Spec §11.5 (PKG-14b): the legacy /api/learn/* path, so the loop is off.
+@pytest.mark.kill_switch
 def test_consume_pending_emits_session_started(sink):
     import routes.learn as learn
 
@@ -1402,6 +1404,8 @@ def test_consume_pending_emits_session_started(sink):
     assert "Extremely Private Topic" not in str(ev)
 
 
+# Spec §11.5 (PKG-14b): the legacy /api/learn/* path, so the loop is off.
+@pytest.mark.kill_switch
 def test_end_session_pending_early_return_emits_nothing(sink):
     import routes.learn as learn
 
@@ -1420,6 +1424,8 @@ def test_end_session_pending_early_return_emits_nothing(sink):
     assert _events(sink) == []
 
 
+# Spec §11.5 (PKG-14b): the legacy /api/learn/* path, so the loop is off.
+@pytest.mark.kill_switch
 def test_end_session_emits_session_ended(sink):
     # Naive-UTC isoformat, matching what the route stores (it subtracts this
     # from a naive utcnow); datetime.utcnow() itself is deprecated — don't copy it.
@@ -1561,6 +1567,8 @@ def test_unhandled_exception_emits_exactly_one_error_5xx(sink):
     assert ev["request_id"]
 
 
+# Spec §11.5 (PKG-14b): the legacy /api/learn/* path, so the loop is off.
+@pytest.mark.kill_switch
 def test_nonstream_fallback_turn_emits_chat_message_sent_exactly_once(sink):
     """PR #465 review (F1), reworked for #151a: a streamed turn served by the
     Rung-1 nonstream fallback (`_chat_turn_json`) is a fully persisted turn
