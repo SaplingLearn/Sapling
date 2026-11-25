@@ -78,6 +78,9 @@ from services.quiz_ask import quiz_ask_session_ids
 # Log records keep the name they had in routes/admin_analytics.py.
 logger = logging.getLogger("sapling.admin_analytics")
 
+#: Seconds in a day: a range's length in days for the per-day rates.
+SECONDS_PER_DAY = 86_400
+
 
 # ── Learning loop KPIs (PKG-14; spec §10) ────────────────────────────────────
 #
@@ -550,7 +553,7 @@ def _range_days(from_iso: str, to_iso: str) -> float | None:
         return ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
 
     try:
-        return (parse(to_iso) - parse(from_iso)).total_seconds() / 86400
+        return (parse(to_iso) - parse(from_iso)).total_seconds() / SECONDS_PER_DAY
     except ValueError:
         return None
 
