@@ -1,10 +1,14 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
-import { AnimatePresence, motion } from "framer-motion";
-import { useMotionPresets } from "@/lib/motion";
+import { AnimatePresence, motion, type Target } from "framer-motion";
+import { useMotionPresets, type MotionPreset } from "@/lib/motion";
 import styles from "./TopicChecklistPanel.module.css";
 import { getTopicChecklist, refreshTopicChecklist, setTopicReviewed, type TopicChecklist } from "@/lib/topicChecklistApi";
+
+/** A preset as motion props. Its `initial` is narrowed to `Target`: spread
+ *  as-is, framer's prop union is too wide for TypeScript to check. */
+const asMotion = (p: MotionPreset) => ({ initial: p.initial as Target, animate: p.animate, exit: p.exit, transition: p.transition });
 
 const STATUS_LABELS = {
   not_started: "Not started",
@@ -102,7 +106,7 @@ export function TopicChecklistPanel({ userId, courseId, semester, semesters = []
       </button>
       <AnimatePresence initial={false}>
         {open && (
-          <motion.div key="checklist" {...m.collapse}>
+          <motion.div key="checklist" {...asMotion(m.collapse)}>
             <div id="topic-checklist-content" className={styles.content} aria-busy={busy}>
               <p className={styles.note}>Course topics from BU catalog information and your materials. Check a topic after studying it; mastery and review needs remain separate.</p>
               {data?.semester && <p className={styles.note}>Semester: {data.semester}</p>}
@@ -120,9 +124,9 @@ export function TopicChecklistPanel({ userId, courseId, semester, semesters = []
                   </select>
                 </label>
                 <button data-testid="topic-checklist-refresh" className="btn btn--sm" type="button" disabled={busy} onClick={() => update()}>Update from materials</button>
-                {busy && <motion.span role="status" {...m.fade}>Updating checklist…</motion.span>}
+                {busy && <motion.span role="status" {...asMotion(m.fade)}>Updating checklist…</motion.span>}
               </div>
-              {error && <motion.p role="alert" {...m.fade}>{error}</motion.p>}
+              {error && <motion.p role="alert" {...asMotion(m.fade)}>{error}</motion.p>}
               {data?.needs_refresh && !busy && <p className={styles.note}>Showing the previous outline. Update from materials to include recent changes.</p>}
               {data?.warnings.map((warning) => <p key={warning} className={styles.note}>{warning}</p>)}
               {!!data?.assessments.length && (
