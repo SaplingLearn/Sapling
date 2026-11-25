@@ -23,7 +23,7 @@ import {
   type GraphColorMode,
 } from "@/lib/graph/nodeStyle";
 import { nodeBlobPath, wobbleFor } from "@/lib/graph/blobShape";
-import { driftAllowed, driftForce, idle, prefersReducedMotion, startPlanned } from "@/lib/graph/motion";
+import { SETTLE_ALPHA, driftAllowed, driftForce, idle, prefersReducedMotion, startPlanned } from "@/lib/graph/motion";
 import { IS_TEST_MODE } from "@/lib/testMode";
 import {
   ANCHOR_WIDTH,
@@ -309,7 +309,7 @@ export function followForce(
     }
     if (Math.hypot(n.vx ?? 0, n.vy ?? 0) >= 0.1) moving = true;
   }
-  if (!moving || (free.dragging == null && alpha < 0.02)) settle();
+  if (!moving || (free.dragging == null && alpha < SETTLE_ALPHA)) settle();
 }
 
 /** How far the content may shift before a fitted view re-frames on it: more

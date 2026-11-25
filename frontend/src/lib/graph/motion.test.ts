@@ -8,8 +8,9 @@
  * `components/graph/KnowledgeGraph2D.load.test.tsx`.
  */
 
+import { forceSimulation } from "d3-force";
 import { describe, expect, it } from "vitest";
-import { driftForce, type DriftNode } from "./motion";
+import { IDLE_ALPHA, SETTLE_ALPHA, driftForce, startPlanned, type DriftNode } from "./motion";
 
 const node = (id: string, extra: Partial<DriftNode> = {}): DriftNode => ({ id, vx: 0, vy: 0, ...extra });
 const speed = (n: DriftNode) => Math.hypot(n.vx ?? 0, n.vy ?? 0);
@@ -81,5 +82,19 @@ describe("driftForce", () => {
     const moved = wander(n, 1000);
     expect(Math.hypot(moved.x, moved.y)).toBeGreaterThan(0.9);
     expect(Math.hypot(moved.x, moved.y)).toBeLessThan(28);
+  });
+});
+
+describe("the idle heat", () => {
+  it("sits under the settle threshold, or a released concept would never settle", () => {
+    expect(IDLE_ALPHA).toBeLessThan(SETTLE_ALPHA);
+  });
+
+  // This file runs without a DOM, so no reduced-motion preference: drift is on.
+  it("leaves a drag's own heat alone when the layout is re-planned mid-drag", () => {
+    const sim = forceSimulation([{ x: 0, y: 0 }]).stop().alphaTarget(0.3);
+    expect(startPlanned(sim, true)).toBe(false);
+    expect(sim.alphaTarget()).toBe(0.3);
+    sim.stop();
   });
 });

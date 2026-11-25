@@ -37,9 +37,13 @@ const DRIFT_ACCEL = 0.14;
 const DRIFT_TURN_MS = 13_000;
 /** Course roots are anchors: they wander at half a concept's amplitude. */
 const DRIFT_ROOT_SCALE = 0.5;
-/** The heat a drifting graph is held at — under the follow force's settle
- *  threshold, so a released concept still adopts where it came to rest. */
-const IDLE_ALPHA = 0.015;
+/** Below this heat a released concept adopts where it came to rest (the
+ *  graph's follow force). The drift keeps every freed node moving faster than
+ *  the follow force's speed exit, so this alpha exit is the only one left. */
+export const SETTLE_ALPHA = 0.02;
+/** The heat a drifting graph is held at — under SETTLE_ALPHA, or a released
+ *  concept would never settle. */
+export const IDLE_ALPHA = 0.015;
 const TAU = Math.PI * 2;
 
 /** A node's place in the drift: its phase, and how fast its push turns. */
@@ -169,8 +173,8 @@ export function startPlanned<N extends SimulationNodeDatum, L extends Simulation
     return true;
   }
   if (dragging) {
+    // Keep the drag's own alphaTarget: the release calls `idle`.
     sim.alpha(0.9).restart();
-    idle(sim, true);
     return false;
   }
   settleQuietly(sim);
