@@ -29,6 +29,10 @@ from learning_trial._stats import (
 from learning_trial.logistic import fit_logit, multiway_vcov
 from learning_trial.table import CONTROL, TREATMENT, TableError, TrialRow, read_csv, write_csv
 
+# Offline research tooling, not app behaviour: skipped unless RUN_ANALYSIS=1
+# (tests/conftest.py).
+pytestmark = pytest.mark.analysis
+
 
 def _row(student, concept, arm, post, *, pre=None, window=7, status="rung0", exclusion=""):
     return TrialRow(

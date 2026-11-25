@@ -20,6 +20,8 @@ cannot reach the network.
 A `live_llm` test is billable, so `pytest_collection_modifyitems` skips every
 one of them unless a RUN_LIVE_<LANE>=1 opt-in is set (tests/live_opt_in.py):
 a plain `pytest tests/` never calls a model, whatever keys backend/.env holds.
+It likewise skips every `analysis` test (offline research tooling, e.g. the
+learning_trial power simulation) unless RUN_ANALYSIS=1.
 """
 import inspect
 import sys
@@ -104,6 +106,11 @@ def pytest_configure(config):
     )
     config.addinivalue_line(
         "markers",
+        "analysis: offline research/analysis tooling (learning_trial), not app behaviour. "
+        "Skipped unless RUN_ANALYSIS=1.",
+    )
+    config.addinivalue_line(
+        "markers",
         "real_course_enrollment: run the REAL course-enrollment check on course-keyed "
         "writes (#115) instead of the hermetic bypass (_bypass_course_enrollment).",
     )
@@ -142,6 +149,13 @@ def pytest_collection_modifyitems(config, items):
     backend/.env."""
     from tests.live_opt_in import billable, live_opt_in
 
+    if os.environ.get("RUN_ANALYSIS") != "1":
+        skip_analysis = pytest.mark.skip(
+            reason="offline analysis tooling: opt in with RUN_ANALYSIS=1"
+        )
+        for item in items:
+            if item.get_closest_marker("analysis"):
+                item.add_marker(skip_analysis)
     if live_opt_in(os.environ):
         return
     skip = pytest.mark.skip(

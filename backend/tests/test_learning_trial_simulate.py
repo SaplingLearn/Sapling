@@ -17,6 +17,10 @@ from learning_trial import simulate
 from learning_trial._stats import expit, norm_cdf, norm_ppf
 from learning_trial.table import TREATMENT
 
+# Offline research tooling, not app behaviour: skipped unless RUN_ANALYSIS=1
+# (tests/conftest.py).
+pytestmark = pytest.mark.analysis
+
 
 def test_arm_assignment_is_the_products_variant_for():
     labels = ["trial-2027s", "x", "sim-42", ""]
