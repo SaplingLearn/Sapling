@@ -119,9 +119,21 @@ const NOTES_DESIGN = read("../notes/__fixtures__/notes.design.html");
 const EXPECTED_DEVIATIONS = [
   /^font-family: '(Aleo|SUSE|IBM Plex Mono)'/,
   /^width: 1920px$/, /^height: 1080px$/, /^transform-origin: 0 0$/,
-  /^grid-template-rows: auto minmax\(0, 1fr\)$/, /^min-height: 0$/,
+  /^grid-template-rows: auto minmax\(0, 1fr\)$/,
   /^height: 48px$/, /^top: 54px$/,
-  /^align-items: baseline$/, /^display: inline-block$/,
+  /^align-items: baseline$/,
+];
+
+/**
+ * What the Library's own owner's calls take with them (the inner scroller's
+ * `min-height: 0`s, and the Trash chip: its count's `inline-block` and
+ * `translateY(0.5px)`, the lid's transform-box / origin / tilt transition, the
+ * skeleton's 104px placeholder; see above). They are excused for the Library
+ * design ONLY: the Notes page has its own scrollers, inline boxes and
+ * transitions, and a dropped one there is a real drop.
+ */
+const LIBRARY_ONLY_DEVIATIONS = [
+  /^min-height: 0$/, /^display: inline-block$/,
   /^transform-box: fill-box$/, /^transform-origin: 85% 100%$/,
   /^transition: transform 200ms cubic-bezier\(0\.2, 0\.7, 0\.2, 1\)$/,
   /^transform: translateY\(0\.5px\)$/, /^width: 104px$/,
@@ -181,7 +193,7 @@ function carried(have: Set<string>, haveSets: Set<string>, p: string, v: string)
   return false;
 }
 
-function dropped(design: string, root: HTMLElement): string[] {
+function dropped(design: string, root: HTMLElement, also: RegExp[] = []): string[] {
   const have = new Set<string>();
   const haveSets = new Set<string>();
   for (const [p, v] of renderedDeclarations(root)) {
@@ -198,7 +210,7 @@ function dropped(design: string, root: HTMLElement): string[] {
     const key = norm(p, v);
     if (seen.has(key)) continue;
     seen.add(key);
-    if (EXPECTED_DEVIATIONS.some(re => re.test(key))) continue;
+    if ([...EXPECTED_DEVIATIONS, ...also].some(re => re.test(key))) continue;
     if (!carried(have, haveSets, p, v)) out.push(key);
   }
   return out.sort();
@@ -231,7 +243,8 @@ describe("every design declaration was ported", () => {
   it("the Library drops nothing", async () => {
     const view = render(<ToastProvider><Library /></ToastProvider>);
     await screen.findByTestId("library-doc-d1");
-    expect(dropped(LIBRARY_DESIGN, view.container as HTMLElement)).toEqual([]);
+    expect(dropped(LIBRARY_DESIGN, view.container as HTMLElement, LIBRARY_ONLY_DEVIATIONS))
+      .toEqual([]);
   });
 
   it("the Notes page drops nothing", async () => {
