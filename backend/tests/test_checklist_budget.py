@@ -168,6 +168,28 @@ def test_admission_failures_never_authorize_dispatch(monkeypatch, status, code):
     assert error.value.status_code == code
 
 
+def test_unpriced_usage_is_reported_as_such_not_as_retryable(monkeypatch, caplog):
+    """#866 debug: 'usage_unavailable' (an unpriced llm_usage row this month)
+    was mapped to the generic "retry; an earlier request may still reserve
+    allowance" 503 with nothing logged. Retrying never clears it."""
+    monkeypatch.setattr(budget, "rpc", lambda *args: {"status": "usage_unavailable"})
+    with caplog.at_level("WARNING", logger=budget.__name__), pytest.raises(HTTPException) as error:
+        budget.admit("owner", "enrollment", "a" * 64, MODEL_NAMES)
+    assert error.value.status_code == 503
+    assert "cannot be priced" in error.value.detail and "Retry-After" not in (error.value.headers or {})
+    assert "llm_usage row this month has no usable price" in caplog.text
+
+
+def test_a_failed_budget_rpc_is_logged_without_its_message(monkeypatch, caplog):
+    def rpc(*args):
+        raise RuntimeError("PostgREST said p_user_id=owner")
+    monkeypatch.setattr(budget, "rpc", rpc)
+    with caplog.at_level("WARNING", logger=budget.__name__), pytest.raises(HTTPException):
+        budget.read(budget.Reservation(uuid4(), "owner", "enrollment", "a" * 64, 7, models=MODELS))
+    assert "checklist_budget_read failed: RuntimeError" in caplog.text
+    assert "p_user_id=owner" not in caplog.text
+
+
 def test_coalesced_cache_hit_is_free(monkeypatch):
     monkeypatch.setattr(budget, "rpc", lambda *args: {"status": "cached"})
     assert budget.admit("owner", "enrollment", "a" * 64, MODEL_NAMES) is None

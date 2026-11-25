@@ -40,6 +40,12 @@ class Change(NamedTuple):
     forbids: tuple[str, ...] = ()
 
 
+#: 20261125074254's narrowing of the checklist budget's unknown-price guard.
+_FUNCTION_SEAM_FREE = (
+    "(cost_usd IS NULL AND (provider IS DISTINCT FROM 'function'\n"
+    "                                         OR model IS NULL OR model NOT LIKE 'function:%'))"
+)
+
 REGISTRY: dict[tuple[str, int], dict[str, Change]] = {
     # main's Canopy metrics (not a loop function): in scope because main's
     # wave 2 re-created it on 2026-11-08 (#116/#119). Each definition is the
@@ -207,12 +213,29 @@ REGISTRY: dict[tuple[str, int], dict[str, Change]] = {
             forbids=("c.deleted_at IS NULL",)
         ),
     },
+    ("checklist_budget_admit", 12): {
+        # PR #866 B1: the hold and its models are the caller's, checked
+        "20261118194745_checklist_budget_any_model.sql": Change(
+            requires=("p_held_usd,p_held_tokens,p_models", "'checklist-50k-3x8192-v2'"),
+            forbids=("c.deleted_at IS NULL",),
+        ),
+        # a function-seam usage row's NULL cost is not an unknown price
+        "20261125074254_checklist_budget_function_usage.sql": Change(
+            requires=(_FUNCTION_SEAM_FREE,),
+            forbids=("AND (cost_usd IS NULL OR",),
+        ),
+    },
     ("checklist_budget_start", 3): {
         "20261019125459_checklist_budget.sql": Change(
             requires=("WHERE e.id=r.enrollment_id AND e.user_id=p_user_id",)
         ),
         "20261108033310_checklist_budget_no_course_soft_delete.sql": Change(
             forbids=("c.deleted_at IS NULL",)
+        ),
+        # a function-seam usage row's NULL cost is not an unknown price
+        "20261125074254_checklist_budget_function_usage.sql": Change(
+            requires=(_FUNCTION_SEAM_FREE,),
+            forbids=("AND (cost_usd IS NULL OR",),
         ),
     },
     ("posttest_anchors", 5): {

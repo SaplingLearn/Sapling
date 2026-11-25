@@ -66,7 +66,12 @@ def test_a_checklist_receipt_keeps_the_keys_its_reconcile_admits():
     """A checklist receipt IS build_llm_usage_row's row (services/usage_receipts.py),
     and checklist_budget_reconcile refuses a receipt with any other key: the
     course goes onto the enqueued row only, never into the receipt."""
-    sql = sorted(MIG_DIR.glob("*_checklist_budget*.sql"))[-1].read_text()
+    # The last checklist-budget migration that (re)defines the reconcile: a later
+    # one may re-create other budget functions only (20261125074254).
+    sql = [
+        text for text in (path.read_text() for path in sorted(MIG_DIR.glob("*_checklist_budget*.sql")))
+        if "FUNCTION checklist_budget_reconcile" in text
+    ][-1]
     admitted = set(re.findall(r"'(\w+)'", re.search(r"p_receipt - ARRAY\[(.*?)\]", sql, re.S).group(1)))
     row = events_service.build_llm_usage_row(
         feature="topic_checklist", task="topic_checklist", model="gemini-2.5-flash", usage=_FakeUsage()

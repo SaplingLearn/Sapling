@@ -223,7 +223,7 @@ def _content(label):
     return encrypt_json({"topics": [], "synthetic_test_revision": label})
 
 
-def _usage_row(owner, *, cost=".15", created_at=None):
+def _usage_row(owner, *, cost=".15", created_at=None, model="gemini-2.5-flash", provider=None):
     from services.events_service import build_llm_usage_row
 
     # Pure formatter only. This intentional ledger fixture is not an observed
@@ -231,7 +231,8 @@ def _usage_row(owner, *, cost=".15", created_at=None):
     row = build_llm_usage_row(
         feature="integration_fixture",
         task="integration_fixture",
-        model="gemini-2.5-flash",
+        model=model,
+        provider=provider,
         user_id=owner,
         usage={"input_tokens": 100, "output_tokens": 20},
     )
@@ -608,6 +609,24 @@ def test_unknown_legacy_price_denies_admission_and_start_without_zero_fallback(
         None,
         "usage_unavailable",
     )
+
+
+def test_function_seam_usage_is_not_an_unknown_price(db_conn, owner_enrollments):
+    """20261125074254: a SAPLING_MODEL_MODE=function row (model 'function:<task>',
+    provider 'function', cost NULL by design) does not refuse admission or start;
+    a NULL cost that only borrows half of that label still does."""
+    from db.connection import rpc, table
+
+    owner, enrollments = owner_enrollments
+    table("llm_usage").insert(_usage_row(owner, cost=None, created_at=_now(db_conn), model="function:quiz"))
+    prepared = _admitted(owner, enrollments[0])
+    assert rpc("checklist_budget_start", _identity(prepared))["status"] == "started"
+
+    for model, provider in (("function:quiz", "gemini"), ("gemini-2.5-flash", "function")):
+        borrowed = _usage_row(owner, cost=None, created_at=_now(db_conn), model=model, provider=provider)
+        table("llm_usage").insert(borrowed)
+        assert _admit(owner, enrollments[1])[0]["status"] == "usage_unavailable", (model, provider)
+        db_conn.execute("DELETE FROM llm_usage WHERE id = %s", (borrowed["id"],))
 
 
 @pytest.mark.parametrize(
