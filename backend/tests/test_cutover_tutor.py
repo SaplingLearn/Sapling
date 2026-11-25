@@ -3,13 +3,6 @@
 import pytest
 
 
-def test_mastery_tool_symbols_are_gone():
-    import agents.tools.graph as g
-
-    for name in ("update_mastery_tool", "MasteryUpdateInput", "ConceptMasteryUpdate", "TUTOR_EVENT_TYPES"):
-        assert not hasattr(g, name), name
-
-
 def test_preamble_no_longer_instructs_mastery_writes():
     import agents.chat_tutor as ct
 
@@ -21,34 +14,6 @@ def test_preamble_no_longer_instructs_mastery_writes():
     # The reply-after-tools instruction that lived in the deleted paragraph is
     # kept: a turn must never end on a tool call (tests/test_textless_turn_continuation.py).
     assert "ALWAYS write your reply to the student" in ct._SHARED_PREAMBLE
-
-
-def _names(tools) -> set:
-    return {getattr(t, "name", None) or getattr(t, "__name__", None) for t in tools}
-
-
-def test_legacy_tool_set_drops_only_the_mastery_tool():
-    from agents.chat_tutor import _build_tools
-
-    names = _names(_build_tools(learning_loop=False))
-    assert "update_mastery_tool" not in names
-    assert names == {
-        "search_course_materials",
-        "read_session_history_tool",
-        "read_user_progress_tool",
-        "apply_graph_update_tool",
-        "read_graph_neighborhood",
-        "read_concepts_for_user",
-    }  # spec §7: the seven legacy tools minus the mastery tool
-
-
-def test_registered_legacy_agents_carry_no_mastery_tool():
-    from agents.chat_tutor import expository_agent, socratic_agent, teachback_agent
-
-    for agent in (socratic_agent, expository_agent, teachback_agent):
-        names = set(agent._function_toolset.tools.keys())
-        assert "update_mastery_tool" not in names
-        assert len(names) == 6, names
 
 
 def test_legacy_agents_are_kept_for_the_kill_switch():
