@@ -1,18 +1,25 @@
 "use client";
 
 import React, { useState } from "react";
+import { AnimatePresence, motion, type Target } from "framer-motion";
 import { DisclaimerModal } from "../DisclaimerModal";
+import { useMotionPresets } from "@/lib/motion";
+import styles from "./AIDisclaimerChip.module.css";
+
+/** The chip's default height, px: the controls it usually sits beside. */
+const DEFAULT_CHIP_HEIGHT = 28;
 
 /** `height`: the chip matches the controls beside it (28 by default; the
  *  Tutor's TopBar sets every action to 32). */
-export function AIDisclaimerChip({ height = 28 }: { height?: number } = {}) {
+export function AIDisclaimerChip({ height = DEFAULT_CHIP_HEIGHT }: { height?: number } = {}) {
   const [tooltipVisible, setTooltipVisible] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
+  const m = useMotionPresets();
 
   return (
     <>
       <div
-        style={{ position: "relative" }}
+        className={styles.wrap}
         onMouseEnter={() => setTooltipVisible(true)}
         onMouseLeave={() => setTooltipVisible(false)}
       >
@@ -20,65 +27,39 @@ export function AIDisclaimerChip({ height = 28 }: { height?: number } = {}) {
           type="button"
           onClick={() => setModalOpen(true)}
           aria-label="Review AI guidelines"
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 4,
-            height,
-            padding: "0 12px",
-            background: "var(--bg-subtle)",
-            border: "1px solid var(--border)",
-            borderRadius: "var(--r-full)",
-            cursor: "pointer",
-            fontSize: 12,
-            color: "var(--text-dim)",
-            fontWeight: 500,
-            letterSpacing: "0.02em",
-            lineHeight: 1.2,
-          }}
+          className={styles.chip}
+          style={{ "--chip-h": `${height}px` } as React.CSSProperties}
         >
-          <span aria-hidden style={{ fontSize: 10, opacity: 0.85 }}>✦</span>
+          <span aria-hidden className={styles.spark}>✦</span>
           AI-assisted
         </button>
 
-        {tooltipVisible && (
-          <div
-            role="tooltip"
-            style={{
-              position: "absolute",
-              top: "calc(100% + 10px)",
-              right: 0,
-              background: "var(--bg-panel)",
-              border: "1px solid var(--border)",
-              borderRadius: "var(--r-md)",
-              padding: "13px 15px",
-              fontSize: 12,
-              lineHeight: 1.6,
-              width: 260,
-              zIndex: 9999,
-              boxShadow: "var(--shadow-md)",
-              pointerEvents: "none",
-              color: "var(--text-dim)",
-            }}
-          >
-            <div
-              className="label-micro"
-              style={{ marginBottom: 6, color: "var(--text)" }}
+        <AnimatePresence>
+          {tooltipVisible && (
+            <motion.div
+              role="tooltip"
+              className={styles.tooltip}
+              initial={m.scaleIn.initial as Target}
+              animate={m.scaleIn.animate}
+              exit={m.scaleIn.exit}
+              transition={m.scaleIn.transition}
             >
-              AI powered learning
-            </div>
-            <p style={{ margin: "0 0 8px" }}>
-              Sapling uses Anthropic&apos;s Claude to tutor, quiz, and track your progress.
-              Responses may not always be accurate — verify with your course materials.
-            </p>
-            <div style={{ borderTop: "1px solid var(--border)", paddingTop: 8 }}>
-              <p style={{ margin: 0, fontSize: 11, color: "var(--text-muted)", lineHeight: 1.5 }}>
-                Don&apos;t share passwords or sensitive personal data. Use Sapling as a
-                study aid, not a substitute for your own work. Click to review full guidelines.
+              <div className={`label-micro ${styles.tooltipTitle}`}>
+                AI powered learning
+              </div>
+              <p className={styles.tooltipBody}>
+                Sapling uses Anthropic&apos;s Claude to tutor, quiz, and track your progress.
+                Responses may not always be accurate — verify with your course materials.
               </p>
-            </div>
-          </div>
-        )}
+              <div className={styles.tooltipFoot}>
+                <p className={styles.tooltipNote}>
+                  Don&apos;t share passwords or sensitive personal data. Use Sapling as a
+                  study aid, not a substitute for your own work. Click to review full guidelines.
+                </p>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
 
       <DisclaimerModal open={modalOpen} onClose={() => setModalOpen(false)} />

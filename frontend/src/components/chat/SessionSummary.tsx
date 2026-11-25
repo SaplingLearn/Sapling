@@ -1,7 +1,10 @@
 "use client";
 
 import React from "react";
+import { motion, type Target } from "framer-motion";
 import type { SessionSummaryData } from "@/lib/api";
+import { useMotionPresets } from "@/lib/motion";
+import styles from "./SessionSummary.module.css";
 
 interface SessionSummaryProps {
   summary: SessionSummaryData;
@@ -13,58 +16,51 @@ interface SessionSummaryProps {
  *  always empty (mastery changes, new connections, recommended next) are gone. */
 export function SessionSummary({ summary, onClose }: SessionSummaryProps) {
   const { concepts_covered = [], time_spent_minutes = 0 } = summary || {};
+  const m = useMotionPresets();
 
+  // The session just ended: the backdrop fades in and the dialog scales up
+  // into place, then the concepts covered arrive one after another.
   return (
-    <div
-      style={{
-        position: "fixed",
-        inset: 0,
-        background: "rgba(0,0,0,0.45)",
-        zIndex: 200,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: 16,
-      }}
+    <motion.div
+      className={styles.backdrop}
       onClick={onClose}
+      initial={m.fade.initial as Target}
+      animate={m.fade.animate}
+      transition={m.fade.transition}
     >
-      <div
-        className="card"
+      <motion.div
+        className={`card ${styles.dialog}`}
         onClick={e => e.stopPropagation()}
-        style={{
-          width: "min(560px, 100%)",
-          maxHeight: "calc(100vh - 64px)",
-          overflowY: "auto",
-          padding: 28,
-          boxShadow: "var(--shadow-lg)",
-        }}
+        initial={m.scaleIn.initial as Target}
+        animate={m.scaleIn.animate}
+        transition={m.scaleIn.transition}
       >
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+        <div className={styles.header}>
           <div className="label-micro">Session summary</div>
           <button className="btn btn--ghost btn--sm" onClick={onClose} aria-label="Close">×</button>
         </div>
-        <div className="h-serif" style={{ fontSize: 28, marginBottom: 4 }}>Nice session.</div>
-        <div style={{ fontSize: 13, color: "var(--text-dim)", marginBottom: 20 }}>
+        <div className={`h-serif ${styles.title}`}>Nice session.</div>
+        <div className={styles.time}>
           {time_spent_minutes > 0 ? `${time_spent_minutes} minute${time_spent_minutes === 1 ? "" : "s"} spent.` : "Session wrapped."}
         </div>
 
         {concepts_covered.length > 0 && (
-          <section style={{ marginBottom: 18 }}>
-            <div className="label-micro" style={{ marginBottom: 8 }}>Concepts covered</div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+          <section className={styles.section}>
+            <div className={`label-micro ${styles.sectionLabel}`}>Concepts covered</div>
+            <motion.div className={styles.chips} variants={m.list.container} initial="hidden" animate="shown">
               {concepts_covered.map(c => (
-                <span key={c} className="chip" style={{ textTransform: "none", fontFamily: "var(--font-sans)" }}>
+                <motion.span key={c} className={`chip ${styles.concept}`} variants={m.list.item}>
                   {c}
-                </span>
+                </motion.span>
               ))}
-            </div>
+            </motion.div>
           </section>
         )}
 
-        <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 20, gap: 8 }}>
+        <div className={styles.footer}>
           <button className="btn btn--primary" onClick={onClose}>Done</button>
         </div>
-      </div>
-    </div>
+      </motion.div>
+    </motion.div>
   );
 }
