@@ -238,11 +238,12 @@ def _plan_states(user_id: str, course_id: str) -> dict[str, float]:
     """The planning belief (`learner_state.planning_p`: decayed p_known, with a
     learned concept proficient until it decays below the profic band) for every
     graph node of (user, course) — one `graph_nodes` read, one `learner_state`
-    read (PKG-03); BKT_L0 for a node with no learner_state row."""
+    read (PKG-03); BKT_L0 for a node with no learner_state row. Oldest first:
+    `planner.outer_fringe` breaks ties in this order (spec §13 A153)."""
     rows = list(page_all(
         _PlanNodesRead(), "id",
         filters={"user_id": f"eq.{user_id}", "course_id": f"eq.{course_id}"},
-        order="id.asc",
+        order="created_at.asc,id.asc",
     ))
     ids = [r["id"] for r in rows if r.get("id")]
     states = read_states(user_id, ids)

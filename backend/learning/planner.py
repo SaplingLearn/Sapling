@@ -253,10 +253,16 @@ def prerequisite_ready(
 
 
 def outer_fringe(states: dict[str, float], prereq_edges: Iterable[tuple[str, str]]) -> list[str]:
-    """Ready nodes below proficiency, by p descending then node_id."""
+    """Ready nodes below proficiency, by p descending; ties keep `states`' order.
+
+    The callers read nodes oldest first (spec §13 A153): an upload writes its
+    concepts in importance order, so in a course with no prerequisite edges and
+    no evidence, where every belief is the prior, the plan and the check-in's
+    strands follow the material. Breaking ties on the node id (a random UUID)
+    put them in no order at all."""
     ready = prerequisite_ready(states, prereq_edges)
     fringe = [n for n, p in states.items() if p < BKT_PROFICIENT and n in ready]
-    return sorted(fringe, key=lambda n: (-states[n], n))
+    return sorted(fringe, key=lambda n: -states[n])
 
 
 def plan(

@@ -129,13 +129,14 @@ class _EdgesRead:
 def _nodes(user_id: str, course_id: str | None) -> list[_Node]:
     """The student's concept nodes, in one course or all. Every stored
     `graph_nodes` row is a concept: a subject root is never stored, only drawn
-    by the graph read (graph_service.get_graph)."""
+    by the graph read (graph_service.get_graph). Oldest first, as the loop's plan
+    reads them (spec §13 A153): `planner.outer_fringe` breaks ties in this order."""
     filters = {"user_id": f"eq.{user_id}"}
     if course_id:
         filters["course_id"] = f"eq.{course_id}"
     return [
         _Node(row["id"], row.get("concept_name") or "", row.get("course_id"))
-        for row in page_all(_NodesRead(), "id,concept_name,course_id", filters=filters, order="id")
+        for row in page_all(_NodesRead(), "id,concept_name,course_id", filters=filters, order="created_at.asc,id.asc")
         if row.get("id")
     ]
 

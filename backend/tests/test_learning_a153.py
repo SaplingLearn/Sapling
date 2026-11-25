@@ -10,6 +10,7 @@ from learning import bkt, gates, params, planner
 from learning.learner_next import ConceptState, learner_next
 from learning.learner_state import LearnerState, planning_p
 from learning.misconceptions import Attempt, slip_or_misconception
+from learning.quiz_plan import weakest_ready
 from learning.probe import diagnostic_summary, next_probe_item, novice_floor, probe_done
 from tests.test_learning_adaptive_probe import bank, observation
 
@@ -68,6 +69,26 @@ def test_learner_next_decides_readiness_on_the_planning_belief():
     ready = learner_next(states, [("base", "next")], NOW).ready
     assert [c.node_id for c in ready] == ["next"]
     assert ConceptState("x", 0.4).p_plan == 0.4, "a caller that passes none keeps p_known"
+
+
+def test_a_course_with_no_edges_is_planned_in_the_order_of_the_material():
+    """Ties used to fall to the node id, a random UUID: no order at all."""
+    states = {"z-first": params.BKT_L0, "m-second": params.BKT_L0, "a-third": params.BKT_L0}
+    assert planner.outer_fringe(states, []) == list(states)
+    states["a-third"] = params.BKT_L0 + 0.2
+    assert planner.outer_fringe(states, [])[0] == "a-third", "belief still ranks first"
+    assert weakest_ready({"z": 0.35, "a": 0.35}, []) == "z"
+
+
+def test_the_plan_reads_the_nodes_oldest_first():
+    from services.loop import planning
+
+    with (
+        patch.object(planning, "page_all", return_value=[{"id": "z"}, {"id": "a"}]) as read,
+        patch.object(planning, "read_states", return_value={}),
+    ):
+        assert list(planning._plan_states("u", "c")) == ["z", "a"]
+    assert read.call_args.kwargs["order"] == "created_at.asc,id.asc"
 
 
 # ── the check-in ─────────────────────────────────────────────────────────────

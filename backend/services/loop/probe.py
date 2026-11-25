@@ -129,7 +129,7 @@ def _probe_skills(state: dict, fixed: list | None, states: dict, edges, scope) -
     if fixed is None:
         fringe = planner.outer_fringe(states, edges)
         targets = list((state.get("goal") or {}).get("target_node_ids") or [])
-        candidates = targets + fringe + (sorted(scope) if scope is not None else [])
+        candidates = targets + fringe + ([n for n in states if n in scope] if scope is not None else [])
         return list(dict.fromkeys(n for n in candidates if scope is None or n in scope))[:PROBE_MAX_SKILLS]
     return [s for s in fixed if isinstance(s, str) and s in states and (scope is None or s in scope)]
 

@@ -281,11 +281,11 @@ def weakest_ready(
     p_known: Mapping[str, float], prereq_edges: Iterable[tuple[str, str]]
 ) -> str | None:
     """The concept with the lowest p_known among the ready ones below
-    proficiency (`planner.outer_fringe`'s set), ties by node id; None."""
+    proficiency (`planner.outer_fringe`'s set), ties in its order; None."""
     fringe = planner.outer_fringe(dict(p_known), prereq_edges)
     if not fringe:
         return None
-    return min(fringe, key=lambda n: (p_known[n], n))
+    return min(fringe, key=lambda n: p_known[n])
 
 
 def prefer_pose(
