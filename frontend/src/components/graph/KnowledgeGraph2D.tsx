@@ -23,6 +23,7 @@ import {
   type GraphColorMode,
 } from "@/lib/graph/nodeStyle";
 import { nodeBlobPath, wobbleFor } from "@/lib/graph/blobShape";
+import { driftAllowed, driftForce, idle, prefersReducedMotion, startPlanned } from "@/lib/graph/motion";
 import { IS_TEST_MODE } from "@/lib/testMode";
 import {
   ANCHOR_WIDTH,
@@ -180,10 +181,6 @@ export function releaseVelocity(
   return [vx, vy];
 }
 
-function prefersReducedMotion(): boolean {
-  return typeof window !== "undefined" && !!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-}
-
 /** The shortest a link is held at by the link force. */
 const LINK_REST = 56;
 /**
@@ -315,64 +312,10 @@ export function followForce(
   if (!moving || (free.dragging == null && alpha < 0.02)) settle();
 }
 
-/** The most ticks, and the most time, spent settling a graph before it is drawn. */
-const QUIET_TICKS = 300;
-const QUIET_MS = 150;
-/** A graph whose fastest node moves less than this (graph units a tick) is at rest. */
-const REST_SPEED = 0.05;
-
-/**
- * Settles a newly planned graph before it is drawn: the simulation runs
- * synchronously, from where the plan put each node, until nothing moves,
- * so the first frame shows the graph at rest instead of shaking into place
- * (links pulling, concepts pushing apart, every course swinging out and
- * back). `tick()` fires no "tick" events: the caller re-renders. If time
- * runs out first (a huge graph on a slow machine), the rest plays out on
- * screen, already nearly still.
- */
-export function settleQuietly<N extends SimulationNodeDatum, L extends SimulationLinkDatum<N>>(
-  sim: Simulation<N, L>,
-  now: () => number = () => performance.now(),
-): boolean {
-  sim.stop().alpha(0.9);
-  const start = now();
-  for (let i = 0; i < QUIET_TICKS; i++) {
-    sim.tick();
-    let fastest = 0;
-    for (const n of sim.nodes()) fastest = Math.max(fastest, Math.abs(n.vx ?? 0), Math.abs(n.vy ?? 0));
-    if (fastest < REST_SPEED) {
-      sim.alpha(0);
-      return true;
-    }
-    if (now() - start > QUIET_MS) break;
-  }
-  sim.restart();
-  return false;
-}
-
-/**
- * Sets a newly planned simulation going, and says whether it is already at
- * rest when first drawn (the caller then frames it where it rests, at once).
- * Normally it is settled before it is drawn (`settleQuietly`). With reduced
- * motion — and in test mode, so node coordinates are identical on every
- * load — it settles synchronously on a fixed tick count, and is at rest
- * too. Mid-drag it plays on, on screen.
- */
-function startPlanned<N extends SimulationNodeDatum, L extends SimulationLinkDatum<N>>(
-  sim: Simulation<N, L>,
-  dragging: boolean,
-): boolean {
-  if (IS_TEST_MODE || prefersReducedMotion()) {
-    sim.alpha(1).tick(200).alpha(0).stop();
-    return true;
-  }
-  if (dragging) {
-    sim.alpha(0.9).restart();
-    return false;
-  }
-  settleQuietly(sim);
-  return true;
-}
+/** How far the content may shift before a fitted view re-frames on it: more
+ *  than the idle drift's wander, less than any real move (px / scale). */
+const FIT_HOLD = 14;
+const FIT_HOLD_SCALE = 0.02;
 
 /** Smallest on-screen node radius (px) in legible mode, down to MIN_ZOOM. */
 const MIN_SCREEN_R = 7;
@@ -941,6 +884,7 @@ function KnowledgeGraph2DImpl({
     };
 
     const sim = simRef.current;
+    const drifting = driftAllowed();
     sim
       .force(
         "link",
@@ -977,6 +921,9 @@ function KnowledgeGraph2DImpl({
           },
         }),
       )
+      // Idle drift: a few units of wander for every node the simulation still
+      // owns, so the map is never dead still (see driftForce).
+      .force("drift", drifting ? () => driftForce(nextNodes, performance.now()) : () => {})
       .force("home", (alpha: number) => {
         // Legible: each free course root drifts back toward its home (where
         // it was planned, or where the student last left it).
@@ -1096,7 +1043,7 @@ function KnowledgeGraph2DImpl({
           const sim = simRef.current;
           if (!sim) continue;
           if (entry.isIntersecting) {
-            sim.alphaTarget(0).restart();
+            idle(sim, driftAllowed());
           } else {
             sim.stop();
           }
@@ -1176,8 +1123,19 @@ function KnowledgeGraph2DImpl({
   // jumping once it stops.
   frameContentRef.current = (snap = false) => {
     if (initialZoom === 1 || viewTouchedRef.current || dragRef.current) return;
-    const target = contentFrame();
-    if (!target) return;
+    const fresh = contentFrame();
+    if (!fresh) return;
+    // The idle drift moves every node a little, for ever; re-fitting on that
+    // would have the whole view creeping about under it. The frame is kept
+    // until the nodes have really moved (a drag, a concept added, a re-plan).
+    const held = fittedViewRef.current;
+    const target =
+      held &&
+      Math.abs(fresh.tx - held.tx) < FIT_HOLD &&
+      Math.abs(fresh.ty - held.ty) < FIT_HOLD &&
+      Math.abs(fresh.scale - held.scale) < FIT_HOLD_SCALE
+        ? held
+        : fresh;
     fittedViewRef.current = target;
     if (snap) {
       setView(target);
@@ -1421,9 +1379,13 @@ function KnowledgeGraph2DImpl({
         }
       }
       flingRef.current = null;
-      // Reheat so the release plays out; alphaTarget 0 lets it settle again.
+      // Reheat so the release plays out; the idle target lets it settle again
+      // (and go on drifting).
       const sim = simRef.current;
-      if (sim) sim.alpha(Math.max(sim.alpha(), 0.35)).alphaTarget(0).restart();
+      if (sim) {
+        sim.alpha(Math.max(sim.alpha(), 0.35)).restart();
+        idle(sim, driftAllowed());
+      }
     }
     if (svgRef.current) svgRef.current.style.cursor = "grab";
     // Restore tooltip/stroke now that dragRef cleared; reseed the tooltip
