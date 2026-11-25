@@ -285,7 +285,7 @@ export function Library() {
                 act.purgeDocs(scope.checkedIds);
               }}
               deleteConfirm={ui.bulkConfirm}
-              onClear={ui.clearChecked}
+              onClear={() => { ui.closeAllMenus(); ui.clearChecked(); }}
             />
           </BulkBarReveal>
 

@@ -285,4 +285,20 @@ describe("what the redesign adds, end to end", () => {
     expect(bar.textContent).toContain("1 Selected");
     await waitFor(() => expect(screen.queryByTestId("library-bulk-bar")).toBeNull());
   });
+
+  it("clearing the selection closes an open Move To menu with it", async () => {
+    await renderLibrary();
+    fireEvent.click(screen.getByLabelText("Select Determinants Lecture 7"));
+    const bar = await screen.findByTestId("library-bulk-bar");
+    fireEvent.click(within(bar).getByText("Move To"));
+    expect(await screen.findByTestId("library-bulk-menu")).toBeTruthy();
+
+    fireEvent.click(within(bar).getByText("Clear"));
+    await waitFor(() => expect(screen.queryByTestId("library-bulk-bar")).toBeNull());
+
+    // Selecting again brings the bar back with its menu shut.
+    fireEvent.click(screen.getByLabelText("Select Determinants Lecture 7"));
+    await screen.findByTestId("library-bulk-bar");
+    expect(screen.queryByTestId("library-bulk-menu")).toBeNull();
+  });
 });
