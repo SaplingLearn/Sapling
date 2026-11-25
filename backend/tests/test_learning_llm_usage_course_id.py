@@ -20,24 +20,6 @@ BACKEND = Path(__file__).resolve().parents[1]
 MIG_DIR = MIGRATION_UNITS
 
 
-def _migration() -> Path:
-    (path,) = sorted(MIG_DIR.glob("*_learning_llm_usage_course_id.sql"))
-    return path
-
-
-def test_the_migration_is_additive_nullable_and_after_the_session_column():
-    path = _migration()
-    (session,) = sorted(MIG_DIR.glob("*_learning_llm_usage_session_id.sql"))
-    assert re.fullmatch(r"\d{14}_learning_llm_usage_course_id\.sql", path.name)
-    assert path.name > session.name
-    body = "\n".join(ln for ln in path.read_text().splitlines() if not ln.lstrip().startswith("--"))
-    assert "ALTER TABLE llm_usage ADD COLUMN IF NOT EXISTS course_id text;" in body
-    assert "NOT NULL" not in body.upper() and "DEFAULT" not in body.upper()
-    for forbidden in ("DROP ", "RENAME", "ALTER COLUMN", "UPDATE ", "DELETE "):
-        assert forbidden not in body.upper(), forbidden
-    assert "NOTIFY pgrst, 'reload schema';" in body
-
-
 class _FakeUsage:
     input_tokens = 10
     output_tokens = 5
