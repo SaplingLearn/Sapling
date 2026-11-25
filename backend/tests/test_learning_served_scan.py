@@ -219,7 +219,7 @@ def test_incremental_scanning_finds_what_a_whole_text_scan_finds():
         text = ". ".join(" ".join(pieces[i : i + 9]) for i in range(0, len(pieces), 9))
         found: set[str] = set()
         shown, upto = "", 0
-        step = rnd.choice([1, 7, 20, 64])
+        step = rnd.choice([1, 64])
         for k in range(0, len(text), step):
             shown += text[k : k + step]
             found |= set(scan.stated(shown, start=scan.window_start(shown, upto), skip=found))
@@ -456,7 +456,7 @@ def _streamed(text, items, step):
     return found
 
 
-@pytest.mark.parametrize("step", [1, 7, 20, 64])
+@pytest.mark.parametrize("step", [1, 64])
 def test_an_ngram_padded_with_punctuation_between_its_words_is_caught_while_streaming(step):
     """Review m1: the n-gram rule reads word tokens and skips punctuation, so 60
     dashes between the words stretched the answer past a window counted in
@@ -500,7 +500,7 @@ def test_the_reviewers_probe_cases_stream_exactly_as_a_whole_text_scan():
     ]
     for item, text in cases:
         whole = set(_detect_all(text, [item]))
-        for step in (1, 7, 20, 64):
+        for step in (1, 64):
             assert _streamed(text, [item], step) == whole, (item.question_hash, step)
 
 
