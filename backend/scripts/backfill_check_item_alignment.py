@@ -109,7 +109,7 @@ def plan(course: str | None, *, reverify: bool) -> tuple[int, list[tuple]]:
     return len(rows), planned
 
 
-def main(argv: list[str] | None = None) -> int:
+def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Re-check stored check items with the alignment check (spec §13 A119)."
     )
@@ -126,8 +126,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Allow SAPLING_MODEL_MODE other than 'real' (deterministic local runs).",
     )
-    args = parser.parse_args(argv)
+    return parser.parse_args(argv)
 
+
+def _refused(args: argparse.Namespace) -> bool:
+    """Print the connected project, then True (and why) when this run must not go on."""
     connected = _project_ref()
     print(f"Project: {connected}")
     if args.apply and args.project != connected:
@@ -135,77 +138,105 @@ def main(argv: list[str] | None = None) -> int:
             f"Refusing: --apply needs --project {connected} (the connected project); got "
             f"{args.project!r}. Check the env file this run loaded."
         )
-        return 2
+        return True
     mode = model_mode()
     if mode != "real" and not args.function_mode:
         print(
             f"Refusing: SAPLING_MODEL_MODE is {mode!r}, not 'real'. Unset it or pass "
             "--function-mode deliberately."
         )
-        return 2
+        return True
+    return False
 
-    read, planned = plan(args.course, reverify=args.reverify)
-    unchanged: list[str] = []
-    rewrites: list[tuple] = []
-    retires: list[str] = []
-    unchecked = 0
-    rejected: Counter[str] = Counter()
-    flagged: Counter[str] = Counter()
-    for row, item, result in planned:
-        if result is None or result.unverified:
-            unchecked += 1
-        elif result.reject:
-            retires.append(item.id)
-            rejected[REASON_CODES.get(result.reject, "rejected")] += 1
-        elif result.flags:
-            rewrites.append((row, item, result))
-            flagged.update(result.flags)
-        else:
-            unchanged.append(item.id)
+
+class _Sorted:
+    """The planned items by what a run does to them."""
+
+    def __init__(self, planned: list[tuple]) -> None:
+        self.unchanged: list[str] = []
+        self.rewrites: list[tuple] = []
+        self.retires: list[str] = []
+        self.unchecked = 0
+        self.rejected: Counter[str] = Counter()
+        self.flagged: Counter[str] = Counter()
+        for row, item, result in planned:
+            if result is None or result.unverified:
+                self.unchecked += 1
+            elif result.reject:
+                self.retires.append(item.id)
+                self.rejected[REASON_CODES.get(result.reject, "rejected")] += 1
+            elif result.flags:
+                self.rewrites.append((row, item, result))
+                self.flagged.update(result.flags)
+            else:
+                self.unchanged.append(item.id)
+
+
+def _print_plan(read: int, plan_: _Sorted, *, apply: bool) -> None:
+    flagged = plan_.flagged
     print(
-        f"  {read} row(s) read; {len(unchanged)} aligned as stored, "
+        f"  {read} row(s) read; {len(plan_.unchanged)} aligned as stored, "
         f"{flagged[RUBRIC_UNASKED_DROPPED]} trimmed, {flagged[CONCEPT_RETAGGED]} re-tagged, "
-        f"{len(retires)} to retire, {unchecked} unchecked" + (" — dry run" if not args.apply else "")
+        f"{len(plan_.retires)} to retire, {plan_.unchecked} unchecked"
+        + (" — dry run" if not apply else "")
     )
     for flag in ALIGNMENT_FLAGS:
         if flagged[flag]:
             print(f"    {flag}: {flagged[flag]}")
-    for code, n in sorted(rejected.items()):
+    for code, n in sorted(plan_.rejected.items()):
         print(f"    retire ({code}): {n}")
-    for _, item, result in rewrites:
+    for _, item, result in plan_.rewrites:
         if result.concept_key != item.concept_key:
             print(f"    re-tag {item.id}: {item.concept_key} -> {result.concept_key}")
-    for item_id in retires:
+    for item_id in plan_.retires:
         print(f"    retire {item_id}")
 
+
+def _apply(plan_: _Sorted) -> tuple[int, int, int]:
+    """Write the plan: (written, failed, changed since read)."""
     failed = written = changed = 0
+    at = datetime.now(UTC).isoformat()
+    if plan_.unchanged:
+        try:
+            written += mark_aligned(plan_.unchanged, at=at)
+        except Exception as exc:  # noqa: BLE001 — one failed batch is reported, the rest still run
+            failed += len(plan_.unchanged)
+            print(f"  stamp failed for {len(plan_.unchanged)} row(s): {type(exc).__name__}")
+    for row, item, result in plan_.rewrites:
+        try:
+            if apply_item_alignment(row, item, result, at=at) is None:
+                # Z35: a staff decision landed during the check; left as
+                # staff left it for the next run, which reads it afresh
+                changed += 1
+                print(f"    changed since read, not written: {item.id}")
+            else:
+                written += 1
+        except Exception as exc:  # noqa: BLE001
+            failed += 1
+            print(f"  write failed for {item.id}: {type(exc).__name__}")
+    if plan_.retires:
+        try:
+            retire_items_by_id(plan_.retires)
+            written += len(plan_.retires)
+        except Exception as exc:  # noqa: BLE001
+            failed += len(plan_.retires)
+            print(f"  retire failed for {len(plan_.retires)} row(s): {type(exc).__name__}")
+    return written, failed, changed
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _parse_args(argv)
+    if _refused(args):
+        return 2
+
+    read, planned = plan(args.course, reverify=args.reverify)
+    sorted_plan = _Sorted(planned)
+    _print_plan(read, sorted_plan, apply=args.apply)
+
+    failed = changed = 0
+    unchecked = sorted_plan.unchecked
     if args.apply:
-        at = datetime.now(UTC).isoformat()
-        if unchanged:
-            try:
-                written += mark_aligned(unchanged, at=at)
-            except Exception as exc:  # noqa: BLE001 — one failed batch is reported, the rest still run
-                failed += len(unchanged)
-                print(f"  stamp failed for {len(unchanged)} row(s): {type(exc).__name__}")
-        for row, item, result in rewrites:
-            try:
-                if apply_item_alignment(row, item, result, at=at) is None:
-                    # Z35: a staff decision landed during the check; left as
-                    # staff left it for the next run, which reads it afresh
-                    changed += 1
-                    print(f"    changed since read, not written: {item.id}")
-                else:
-                    written += 1
-            except Exception as exc:  # noqa: BLE001
-                failed += 1
-                print(f"  write failed for {item.id}: {type(exc).__name__}")
-        if retires:
-            try:
-                retire_items_by_id(retires)
-                written += len(retires)
-            except Exception as exc:  # noqa: BLE001
-                failed += len(retires)
-                print(f"  retire failed for {len(retires)} row(s): {type(exc).__name__}")
+        written, failed, changed = _apply(sorted_plan)
         print(
             f"Done: {written} row(s) written, {failed} failed, {unchecked} unchecked"
             + (f", {changed} changed since read" if changed else "")

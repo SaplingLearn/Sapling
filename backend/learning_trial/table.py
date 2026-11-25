@@ -65,10 +65,14 @@ ARMS = (TREATMENT, CONTROL)
 #: that carried help or no credit (max_rung > 0); an answer from before A112
 #: recorded no outcome; a live pose; a pose that expired unanswered (void); a
 #: window that opened with nothing posed.
-STATUSES = ("rung0", "assisted", "unrecorded", "open", "expired", "not_posed")
+RUNG0 = "rung0"
+NOT_POSED = "not_posed"
+STATUSES = (RUNG0, "assisted", "unrecorded", "open", "expired", NOT_POSED)
 #: item-level exclusions (A113): the item was retired as broken, or it carries a
 #: student report no later staff approval cleared.
-EXCLUSIONS = ("", "retired_item", "reported_item")
+RETIRED_ITEM = "retired_item"
+REPORTED_ITEM = "reported_item"
+EXCLUSIONS = ("", RETIRED_ITEM, REPORTED_ITEM)
 #: spec §13 A126 (learning/params.py POSTTEST_ITEM_MATCHES / _SOURCES /
 #: _SKIP_REASONS, pinned equal by tests/test_learning_trial_export.py; this
 #: package imports nothing of the app's), each with "" for not recorded
@@ -112,7 +116,7 @@ class TrialRow:
     window: int
     pretest: bool | None
     posttest: bool | None
-    status: str = "rung0"
+    status: str = RUNG0
     exclusion: str = ""
     course: str = ""
     item: str = ""
@@ -126,6 +130,11 @@ class TrialRow:
     covariates: tuple[tuple[str, float], ...] = ()
 
     def __post_init__(self) -> None:
+        self._check_core()
+        self._check_a126()
+
+    def _check_core(self) -> None:
+        """The columns every table carries (A112/A113)."""
         if not self.student or not self.concept:
             raise TableError("student and concept are required")
         if self.arm not in ARMS:
@@ -136,18 +145,21 @@ class TrialRow:
             raise TableError(f"status must be one of {STATUSES}, got {self.status!r}")
         if self.exclusion not in EXCLUSIONS:
             raise TableError(f"exclusion must be one of {EXCLUSIONS}, got {self.exclusion!r}")
-        if self.posttest is not None and self.status != "rung0":
+        if self.posttest is not None and self.status != RUNG0:
             raise TableError("a post-test outcome is recorded only for status rung0")
         for value in (self.pretest, self.posttest):
             if value is not None and not isinstance(value, bool):
                 raise TableError("pretest and posttest are bool or None")
+
+    def _check_a126(self) -> None:
+        """The optional A126 columns: the pose's record and the skip reason."""
         if self.item_match not in ITEM_MATCHES:
             raise TableError(f"item_match must be one of {ITEM_MATCHES}, got {self.item_match!r}")
         if self.item_source not in ITEM_SOURCES:
             raise TableError(f"item_source must be one of {ITEM_SOURCES}, got {self.item_source!r}")
         if self.skip_reason not in SKIP_REASONS:
             raise TableError(f"skip_reason must be one of {SKIP_REASONS}, got {self.skip_reason!r}")
-        if self.skip_reason and self.status != "not_posed":
+        if self.skip_reason and self.status != NOT_POSED:
             raise TableError("a skip reason is recorded only for status not_posed")
         if self.hidden_count is not None and (
             isinstance(self.hidden_count, bool) or not isinstance(self.hidden_count, int) or self.hidden_count < 0
@@ -166,7 +178,7 @@ class TrialRow:
 
 def analyzable(row: TrialRow) -> bool:
     """An unassisted outcome on a valid item: the rows the analysis models."""
-    return row.status == "rung0" and row.posttest is not None and not row.exclusion
+    return row.status == RUNG0 and row.posttest is not None and not row.exclusion
 
 
 def select(rows: Iterable[TrialRow], windows: Sequence[int]) -> list[TrialRow]:

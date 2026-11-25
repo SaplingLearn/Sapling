@@ -31,7 +31,11 @@ import re
 from e2e_oracles.findings import Finding
 
 ORACLE_P_TOLERANCE = 1e-9  # † mirror equality; both sides are written from one float
-_SAMPLE = 20
+_SAMPLE = 20  # ids listed per finding's evidence sample
+_ORACLE = "learn_loop"  # the oracle name every finding here carries
+# what a leaked mention states (the leak finding's wording, and its bucket)
+_FINAL_ANSWER = "the seeded final answer"
+_PREQUESTION_ANSWER = "a seeded prequestion's answer"
 
 
 def _probability(value) -> bool:
@@ -58,7 +62,7 @@ def learn_loop_findings(
     if missing:
         findings.append(
             Finding(
-                oracle="learn_loop",
+                oracle=_ORACLE,
                 summary=(
                     f"{len(missing)} evidence-touched (user, node) pair(s) have no "
                     "learner_state row — a second evidence writer?"
@@ -70,7 +74,7 @@ def learn_loop_findings(
     if leak_count:
         findings.append(
             Finding(
-                oracle="learn_loop",
+                oracle=_ORACLE,
                 summary=f"{leak_count} zpd.leak event(s) recorded",
                 evidence={"count": leak_count},
             )
@@ -83,7 +87,7 @@ def learn_loop_findings(
             if not _probability(value):
                 findings.append(
                     Finding(
-                        oracle="learn_loop",
+                        oracle=_ORACLE,
                         summary=f"zpd.step payload #{i} {key} out of [0,1] or missing",
                         evidence={"value": value},
                     )
@@ -100,7 +104,7 @@ def learn_loop_findings(
         if score is None or abs(float(score) - float(p)) > ORACLE_P_TOLERANCE:
             findings.append(
                 Finding(
-                    oracle="learn_loop",
+                    oracle=_ORACLE,
                     summary=f"graph_nodes.mastery_score != learner_state p_known for {node}",
                     evidence={"mastery_score": score, "p_known": p},
                 )
@@ -254,22 +258,14 @@ def _states_unreleased_check(text: str, needle: str, token_re, steps: dict, at) 
     return bare and not _bare_mention_released(steps, at)
 
 
-def learn_loop_activity_findings(
+def _graded_coverage(
     sessions: list[dict],
     evidence_keys: set[tuple[str, str]],
     step_event_keys: set[tuple[str, str]],
-    messages: list[dict],
-    sentinel: str,
-    expect_activity: bool,
-    prequestion_sentinel: str | None = None,
-) -> list[Finding]:
-    """`sessions`: {id, user_id, loop_state} of every loop session; the key
-    sets are (session_id, question_hash) — the session that wrote the evidence
-    row / emitted the check-phase zpd.step (Z47: never the user, or one
-    session's rows would vouch for another's lost ones); `messages`:
-    {session_id, at (epoch s), content (PLAINTEXT)} — the assistant rows of
-    those sessions."""
-    findings: list[Finding] = []
+) -> tuple[dict[str, dict], dict[str, dict[str, float | None]], list, list, bool]:
+    """Each session's steps and prequestion cutoffs, and the graded steps with
+    no evidence row / no zpd.step event of their own session: (steps by
+    session, prequestion cutoffs by session, no evidence, no step, any graded)."""
     no_evidence, no_step, graded_any = [], [], False
     session_steps: dict[str, dict] = {}
     pq_release: dict[str, dict[str, float | None]] = {}
@@ -285,10 +281,15 @@ def learn_loop_activity_findings(
                 no_evidence.append([s["id"], qh])
             if step.get("feedback_given") and (s["id"], qh) not in step_event_keys:
                 no_step.append([s["id"], qh])
+    return session_steps, pq_release, no_evidence, no_step, graded_any
+
+
+def _coverage_findings(no_evidence: list, no_step: list) -> list[Finding]:
+    findings: list[Finding] = []
     if no_evidence:
         findings.append(
             Finding(
-                oracle="learn_loop",
+                oracle=_ORACLE,
                 summary=(
                     f"{len(no_evidence)} graded check step(s) have no evidence row of "
                     "their session for their question_hash — the grade never reached "
@@ -300,17 +301,39 @@ def learn_loop_activity_findings(
     if no_step:
         findings.append(
             Finding(
-                oracle="learn_loop",
+                oracle=_ORACLE,
                 summary=f"{len(no_step)} served feedback turn(s) have no zpd.step event of their session",
                 evidence={"sample": no_step[:_SAMPLE]},
             )
         )
+    return findings
+
+
+def _states_unreleased_prequestion(text: str, pq_token, cutoffs: dict[str, float | None], at) -> bool:
+    """Whether `text` states a prequestion's answer before its release: each
+    item's key by its OWN record; a bare or unknown one fails closed."""
+    tokens = pq_token.findall(text) or [None]
+    for token in tokens:
+        cutoff = cutoffs.get(token) if token else None
+        if cutoff is None or at is None or at < cutoff:
+            return True
+    return False
+
+
+def _leak_scan(
+    messages: list[dict],
+    session_steps: dict[str, dict],
+    pq_release: dict[str, dict[str, float | None]],
+    sentinel: str,
+    prequestion_sentinel: str | None,
+) -> tuple[dict[str, list[str]], list[str]]:
+    """(sessions per kind of leaked answer, sessions with an unreadable message)."""
     needle = sentinel.casefold()
     check_token = re.compile(re.escape(needle) + r" ([a-z0-9_-]+-d\d+)")
     pq_token = re.compile(re.escape(prequestion_sentinel.casefold()) + r" ([a-z0-9-]+-pq\d+)") if (
         prequestion_sentinel
     ) else None
-    leaked: dict[str, list[str]] = {"the seeded final answer": [], "a seeded prequestion's answer": []}
+    leaked: dict[str, list[str]] = {_FINAL_ANSWER: [], _PREQUESTION_ANSWER: []}
     unreadable: list[str] = []
     for m in messages:
         sid = m.get("session_id")
@@ -321,19 +344,19 @@ def learn_loop_activity_findings(
         text, at = str(m.get("content") or "").casefold(), _number(m.get("at"))
         if sid in session_steps and needle in text:
             if _states_unreleased_check(text, needle, check_token, session_steps[sid], at):
-                leaked["the seeded final answer"].append(sid)
+                leaked[_FINAL_ANSWER].append(sid)
         if pq_token is not None and sid in pq_release and prequestion_sentinel.casefold() in text:
-            # each item's key by its OWN record; a bare or unknown one fails closed
-            tokens = pq_token.findall(text) or [None]
-            for token in tokens:
-                cutoff = pq_release[sid].get(token) if token else None
-                if cutoff is None or at is None or at < cutoff:
-                    leaked["a seeded prequestion's answer"].append(sid)
-                    break
+            if _states_unreleased_prequestion(text, pq_token, pq_release[sid], at):
+                leaked[_PREQUESTION_ANSWER].append(sid)
+    return leaked, unreadable
+
+
+def _leak_findings(leaked: dict[str, list[str]], unreadable: list[str]) -> list[Finding]:
+    findings: list[Finding] = []
     if unreadable:
         findings.append(
             Finding(
-                oracle="learn_loop",
+                oracle=_ORACLE,
                 summary=(
                     f"{len(unreadable)} assistant message(s) of loop sessions could not be "
                     "decrypted — the final-answer leak check cannot read them"
@@ -345,25 +368,56 @@ def learn_loop_activity_findings(
         if sids:
             findings.append(
                 Finding(
-                    oracle="learn_loop",
+                    oracle=_ORACLE,
                     summary=f"{len(sids)} assistant message(s) state {what} before the session released it",
                     evidence={"sessions": sorted(set(sids))[:_SAMPLE]},
                 )
             )
+    return findings
+
+
+def _vacuous_pass_findings(sessions: list[dict], graded_any: bool) -> list[Finding]:
+    """Under --expect-loop-activity: loop users and a graded check step exist."""
+    findings: list[Finding] = []
+    # Z50: the students who have a loop session, never a settings column
+    if not {s.get("user_id") for s in sessions} - {None, ""}:
+        findings.append(
+            Finding(
+                oracle=_ORACLE, summary="expected loop activity but no loop users exist"
+            )
+        )
+    if not graded_any:
+        findings.append(
+            Finding(
+                oracle=_ORACLE,
+                summary="expected loop activity but no graded check step exists — vacuous pass",
+                evidence={"sessions": len(sessions)},
+            )
+        )
+    return findings
+
+
+def learn_loop_activity_findings(
+    sessions: list[dict],
+    evidence_keys: set[tuple[str, str]],
+    step_event_keys: set[tuple[str, str]],
+    messages: list[dict],
+    sentinel: str,
+    expect_activity: bool,
+    prequestion_sentinel: str | None = None,
+) -> list[Finding]:
+    """`sessions`: {id, user_id, loop_state} of every loop session; the key
+    sets are (session_id, question_hash) — the session that wrote the evidence
+    row / emitted the check-phase zpd.step (Z47: never the user, or one
+    session's rows would vouch for another's lost ones); `messages`:
+    {session_id, at (epoch s), content (PLAINTEXT)} — the assistant rows of
+    those sessions."""
+    session_steps, pq_release, no_evidence, no_step, graded_any = _graded_coverage(
+        sessions, evidence_keys, step_event_keys
+    )
+    findings = _coverage_findings(no_evidence, no_step)
+    leaked, unreadable = _leak_scan(messages, session_steps, pq_release, sentinel, prequestion_sentinel)
+    findings += _leak_findings(leaked, unreadable)
     if expect_activity:
-        # Z50: the students who have a loop session, never a settings column
-        if not {s.get("user_id") for s in sessions} - {None, ""}:
-            findings.append(
-                Finding(
-                    oracle="learn_loop", summary="expected loop activity but no loop users exist"
-                )
-            )
-        if not graded_any:
-            findings.append(
-                Finding(
-                    oracle="learn_loop",
-                    summary="expected loop activity but no graded check step exists — vacuous pass",
-                    evidence={"sessions": len(sessions)},
-                )
-            )
+        findings += _vacuous_pass_findings(sessions, graded_any)
     return findings

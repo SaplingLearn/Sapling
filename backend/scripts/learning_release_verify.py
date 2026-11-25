@@ -32,6 +32,21 @@ from promotion.preflight import ledger_diff, ledger_exists, recorded_filenames  
 
 MAX_RESPONSE_BYTES = 128_000
 MAX_LOG_BYTES = 10_000_000
+#: The largest session token file read (bytes).
+MAX_SESSION_TOKEN_BYTES = 8192
+#: The default and the longest --timeout a live probe accepts (seconds).
+DEFAULT_PROBE_TIMEOUT_S = 10
+MAX_PROBE_TIMEOUT_S = 30
+#: Supabase's transaction-mode pooler port; DDL-unsafe, never audited through.
+TRANSACTION_POOLER_PORT = 6543
+#: The metadata connection's bounds: connect (s), statement and lock waits (ms).
+DB_CONNECT_TIMEOUT_S = 5
+DB_STATEMENT_TIMEOUT_MS = 5000
+DB_LOCK_TIMEOUT_MS = 1000
+#: The placeholder session the loop-status probe names (never a real session).
+PROBE_SESSION_ID = "00000000-0000-4000-8000-000000000000"
+#: An environment variable name the audits accept.
+ENV_NAME_PATTERN = re.compile(r"[A-Z][A-Z0-9_]*")
 #: The cookie name the authenticated probe presents the QA session under
 #: (sec2 M1). Every backend, https or loopback http, reads the host-only
 #: `__Host-sapling_session` first and never as the legacy Domain cookie; a
@@ -391,8 +406,8 @@ def read_session_token(path: Path) -> str:
         if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
             raise VerificationError("Session token file must be owner-only and regular")
         with os.fdopen(fd, "rb", closefd=False) as source:
-            raw = source.read(8193)
-        if len(raw) > 8192:
+            raw = source.read(MAX_SESSION_TOKEN_BYTES + 1)
+        if len(raw) > MAX_SESSION_TOKEN_BYTES:
             raise VerificationError("Session token file too large")
         token = raw.decode("ascii").strip()
         if not re.fullmatch(r"[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+", token):
@@ -449,7 +464,7 @@ def probe_health(fetch, base: str, expected_commit: str, expected_mode: str) -> 
 
 
 def probe_loop(fetch, base: str, user_id: str, expectation: str) -> dict:
-    query = urlencode({"user_id": user_id, "session_id": "00000000-0000-4000-8000-000000000000"})
+    query = urlencode({"user_id": user_id, "session_id": PROBE_SESSION_ID})
     status, body = fetch(base + "/api/learn/loop/status?" + query)
     matched = (expectation == "enabled" and status == 200 and body.get("active") is True) or (
         expectation == "disabled"
@@ -663,7 +678,7 @@ def database_audit(args, inventory, rpcs):
         target.scheme not in {"postgres", "postgresql"}
         or target.hostname != args.expected_db_host
         or target.port != args.expected_db_port
-        or target.port == 6543
+        or target.port == TRANSACTION_POOLER_PORT
     ):
         raise VerificationError(
             "Explicit database host/port did not match the selected environment variable"
@@ -673,8 +688,12 @@ def database_audit(args, inventory, rpcs):
     )
     with drift.psycopg.connect(
         value,
-        connect_timeout=5,
-        options="-c default_transaction_read_only=on -c statement_timeout=5000 -c lock_timeout=1000",
+        connect_timeout=DB_CONNECT_TIMEOUT_S,
+        options=(
+            "-c default_transaction_read_only=on"
+            f" -c statement_timeout={DB_STATEMENT_TIMEOUT_MS}"
+            f" -c lock_timeout={DB_LOCK_TIMEOUT_MS}"
+        ),
     ) as conn:
         conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
         return audit_database(conn, inventory, rpcs, reference)
@@ -701,7 +720,7 @@ def audit_log(path: Path) -> dict:
     }
 
 
-def main(argv=None) -> int:
+def _parse_args(argv) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--probe", action="store_true", help="Perform bounded actual GET probes")
     parser.add_argument("--api-base")
@@ -712,7 +731,7 @@ def main(argv=None) -> int:
     )
     parser.add_argument("--expect-model-mode", choices=("real", "function"), default="real")
     parser.add_argument("--allow-loopback-http", action="store_true")
-    parser.add_argument("--timeout", type=float, default=10)
+    parser.add_argument("--timeout", type=float, default=DEFAULT_PROBE_TIMEOUT_S)
     parser.add_argument("--session-token-file", type=Path)
     parser.add_argument("--user-id")
     parser.add_argument(
@@ -751,8 +770,11 @@ def main(argv=None) -> int:
     parser.add_argument(
         "--output", type=Path, help="New JSON proof file; an existing proof is never overwritten"
     )
-    args = parser.parse_args(argv)
-    report = {
+    return parser.parse_args(argv)
+
+
+def _new_report() -> dict:
+    return {
         "schema_version": 1,
         "checked_at": datetime.now(timezone.utc).isoformat(),
         "release_authorized": False,
@@ -765,100 +787,132 @@ def main(argv=None) -> int:
             "Independent learning validity and real-provider reliability",
         ],
     }
-    try:
-        directory = BACKEND / "db" / "migrations"
-        inventory = migration_inventory(directory)
-        report["migration_sha256"] = inventory
-        report["checks"]["local_inventory"] = {"status": "passed", "files": len(inventory)}
-        if args.probe:
-            if (
-                not args.expected_commit
-                or not re.fullmatch(r"[0-9a-f]{40}", args.expected_commit)
-                or not 0 < args.timeout <= 30
-            ):
-                raise VerificationError(
-                    "Probe requires a reviewed full commit and a positive timeout at most 30 seconds"
-                )
-            api = validate_origin(args.api_base or "", args.allow_loopback_http)
-            web = validate_origin(args.web_base or "", args.allow_loopback_http)
-            report["expected_commit"] = args.expected_commit
 
-            def fetch(url):
-                return fetch_json(url, timeout=args.timeout)
 
-            report["checks"]["api_health"] = probe_health(
-                fetch, api, args.expected_commit, args.expect_model_mode
-            )
-            report["checks"]["web_proxy_health"] = probe_health(
-                fetch, web, args.expected_commit, args.expect_model_mode
-            )
-            if bool(args.expect_loop) != bool(args.session_token_file) or bool(
-                args.expect_loop
-            ) != bool(args.user_id):
-                raise VerificationError(
-                    "Loop expectation, token file and QA user ID must be supplied together"
-                )
-            if args.expect_loop:
-                if not args.session_token_file or not args.user_id:
-                    raise VerificationError(
-                        "Loop verification needs explicit owner-token file and matching QA user ID"
-                    )
-                token = read_session_token(args.session_token_file)
+def _timeout_ok(timeout: float) -> bool:
+    return 0 < timeout <= MAX_PROBE_TIMEOUT_S
 
-                def authenticated(url):
-                    return fetch_json(url, timeout=args.timeout, token=token)
 
-                report["checks"]["loop_status"] = probe_loop(
-                    authenticated, api, args.user_id, args.expect_loop
-                )
-                token = ""
-        elif args.expect_loop or args.session_token_file or args.user_id:
+def _probe_loop_status(args, api: str, report: dict) -> None:
+    """The authenticated loop-status probe, when its three inputs came together."""
+    if bool(args.expect_loop) != bool(args.session_token_file) or bool(args.expect_loop) != bool(
+        args.user_id
+    ):
+        raise VerificationError(
+            "Loop expectation, token file and QA user ID must be supplied together"
+        )
+    if not args.expect_loop:
+        return
+    if not args.session_token_file or not args.user_id:
+        raise VerificationError(
+            "Loop verification needs explicit owner-token file and matching QA user ID"
+        )
+    token = read_session_token(args.session_token_file)
+
+    def authenticated(url):
+        return fetch_json(url, timeout=args.timeout, token=token)
+
+    report["checks"]["loop_status"] = probe_loop(authenticated, api, args.user_id, args.expect_loop)
+    token = ""
+
+
+def _run_probes(args, report: dict) -> None:
+    """--probe: the health of both origins, then the loop status."""
+    if not args.probe:
+        if args.expect_loop or args.session_token_file or args.user_id:
             raise VerificationError("Credentials and loop expectations require explicit --probe")
-        if args.db_audit:
-            if (
-                not args.expected_db_host
-                or not args.expected_db_port
-                or not re.fullmatch(r"[A-Z][A-Z0-9_]*", args.db_url_env)
-            ):
-                raise VerificationError(
-                    "Database audit needs explicit expected host/port and URL variable name"
-                )
-            report["checks"]["database_metadata"] = database_audit(
-                args, inventory, required_rpcs(directory)
-            )
-        elif args.expected_db_host or args.expected_db_port or args.migration_reference:
+        return
+    if (
+        not args.expected_commit
+        or not re.fullmatch(r"[0-9a-f]{40}", args.expected_commit)
+        or not _timeout_ok(args.timeout)
+    ):
+        raise VerificationError(
+            "Probe requires a reviewed full commit and a positive timeout at most "
+            f"{MAX_PROBE_TIMEOUT_S} seconds"
+        )
+    api = validate_origin(args.api_base or "", args.allow_loopback_http)
+    web = validate_origin(args.web_base or "", args.allow_loopback_http)
+    report["expected_commit"] = args.expected_commit
+
+    def fetch(url):
+        return fetch_json(url, timeout=args.timeout)
+
+    report["checks"]["api_health"] = probe_health(
+        fetch, api, args.expected_commit, args.expect_model_mode
+    )
+    report["checks"]["web_proxy_health"] = probe_health(
+        fetch, web, args.expected_commit, args.expect_model_mode
+    )
+    _probe_loop_status(args, api, report)
+
+
+def _run_db_audit(args, report: dict, inventory: dict[str, str], directory: Path) -> None:
+    if not args.db_audit:
+        if args.expected_db_host or args.expected_db_port or args.migration_reference:
             raise VerificationError(
                 "Database target/reference arguments require explicit --db-audit"
             )
-        if args.rest_float_probe:
-            if (
-                not args.expected_rest_host
-                or not re.fullmatch(r"[A-Z][A-Z0-9_]*", args.rest_url_env)
-                or not re.fullmatch(r"[A-Z][A-Z0-9_]*", args.rest_key_env)
-                or not 0 < args.timeout <= 30
-            ):
-                raise VerificationError(
-                    "Float probe needs an expected host, URL and key variable names and a "
-                    "positive timeout at most 30 seconds"
-                )
-            report["checks"]["rest_float_round_trip"] = rest_float_audit(args)
-        elif args.expected_rest_host:
-            raise VerificationError("PostgREST target arguments require explicit --rest-float-probe")
-        for index, path in enumerate(args.log):
-            report["checks"][f"log_{index + 1}"] = audit_log(path)
-        if migration_inventory(directory) != inventory:
-            raise VerificationError("Migration files changed during verification")
-        report["status"] = (
-            "attention"
-            if any(
-                value["status"] in {"failed", "attention"} for value in report["checks"].values()
-            )
-            else (
-                "requested_checks_passed_not_release_approval"
-                if args.probe or args.db_audit or args.rest_float_probe or args.log
-                else "plan_only_no_live_checks"
-            )
+        return
+    if (
+        not args.expected_db_host
+        or not args.expected_db_port
+        or not ENV_NAME_PATTERN.fullmatch(args.db_url_env)
+    ):
+        raise VerificationError(
+            "Database audit needs explicit expected host/port and URL variable name"
         )
+    report["checks"]["database_metadata"] = database_audit(
+        args, inventory, required_rpcs(directory)
+    )
+
+
+def _run_float_probe(args, report: dict) -> None:
+    if not args.rest_float_probe:
+        if args.expected_rest_host:
+            raise VerificationError("PostgREST target arguments require explicit --rest-float-probe")
+        return
+    if (
+        not args.expected_rest_host
+        or not ENV_NAME_PATTERN.fullmatch(args.rest_url_env)
+        or not ENV_NAME_PATTERN.fullmatch(args.rest_key_env)
+        or not _timeout_ok(args.timeout)
+    ):
+        raise VerificationError(
+            "Float probe needs an expected host, URL and key variable names and a "
+            f"positive timeout at most {MAX_PROBE_TIMEOUT_S} seconds"
+        )
+    report["checks"]["rest_float_round_trip"] = rest_float_audit(args)
+
+
+def _overall_status(args, report: dict) -> str:
+    if any(value["status"] in {"failed", "attention"} for value in report["checks"].values()):
+        return "attention"
+    if args.probe or args.db_audit or args.rest_float_probe or args.log:
+        return "requested_checks_passed_not_release_approval"
+    return "plan_only_no_live_checks"
+
+
+def _run_checks(args, report: dict) -> None:
+    directory = BACKEND / "db" / "migrations"
+    inventory = migration_inventory(directory)
+    report["migration_sha256"] = inventory
+    report["checks"]["local_inventory"] = {"status": "passed", "files": len(inventory)}
+    _run_probes(args, report)
+    _run_db_audit(args, report, inventory, directory)
+    _run_float_probe(args, report)
+    for index, path in enumerate(args.log):
+        report["checks"][f"log_{index + 1}"] = audit_log(path)
+    if migration_inventory(directory) != inventory:
+        raise VerificationError("Migration files changed during verification")
+    report["status"] = _overall_status(args, report)
+
+
+def main(argv=None) -> int:
+    args = _parse_args(argv)
+    report = _new_report()
+    try:
+        _run_checks(args, report)
     except Exception as error:
         report["status"] = "failed"
         report["error_type"] = type(error).__name__

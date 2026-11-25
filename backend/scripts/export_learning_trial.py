@@ -83,6 +83,10 @@ from learning_trial.table import (  # noqa: E402
     CONTROL,
     ITEM_MATCHES,
     ITEM_SOURCES,
+    NOT_POSED,
+    REPORTED_ITEM,
+    RETIRED_ITEM,
+    RUNG0,
     STATUSES,
     TREATMENT,
     TrialRow,
@@ -338,7 +342,7 @@ def _number(value) -> float | None:
 _MATCHES = frozenset(m for m in ITEM_MATCHES if m)
 _SOURCES = frozenset(s for s in ITEM_SOURCES if s)
 #: statuses with an answer given by the data lock (its telemetry is exported)
-_ANSWERED = frozenset({"rung0", "assisted", "unrecorded"})
+_ANSWERED = frozenset({RUNG0, "assisted", "unrecorded"})
 
 
 def _pose_record(pose: dict | None, status: str) -> dict:
@@ -369,11 +373,11 @@ def _pose_record(pose: dict | None, status: str) -> dict:
 def pose_status(pose: dict | None, as_of: datetime) -> str:
     """A112/A89 outcome state of one window's pose, as of `as_of`."""
     if pose is None:
-        return "not_posed"
+        return NOT_POSED
     answered = _ts(pose.get("answered_at"))
     if answered is not None and answered <= as_of:
         if posttest_outcome(pose) is not None:
-            return "rung0"
+            return RUNG0
         return "assisted" if isinstance(pose.get("correct"), bool) else "unrecorded"
     posed = _ts(pose.get("posed_at"))
     if posed is not None and posed >= as_of - timedelta(hours=POSTTEST_POSE_TTL_HOURS):
@@ -407,7 +411,7 @@ class ExportSummary:
                 lines.append(
                     f"{w:>6} {arm:<9} {due:>5}  "
                     + "  ".join(f"{self.flow[(w, arm, s)]:>10}" for s in STATUSES)
-                    + f"  {self.excluded[(w, arm, 'retired_item')]:>7}  {self.excluded[(w, arm, 'reported_item')]:>8}"
+                    + f"  {self.excluded[(w, arm, RETIRED_ITEM)]:>7}  {self.excluded[(w, arm, REPORTED_ITEM)]:>8}"
                     + f"  {self.pretests[(w, arm)]:>7}"
                 )
         if self.skipped:
@@ -419,20 +423,12 @@ class ExportSummary:
         return "\n".join(lines)
 
 
-def build_rows(
-    data: TrialData,
-    *,
-    label: str,
-    treatment_variant: str,
-    as_of: datetime,
-    pseudonymize: Callable[..., str],
-    windows: Iterable[int] = POSTTEST_WINDOWS_DAYS,
-) -> tuple[list[TrialRow], ExportSummary]:
-    """The long table from what `read_trial` read. One node per (student,
-    course, concept key): when normalization makes two of a student's nodes
-    one concept, the earlier-anchored one stands and the other is counted."""
-    windows = tuple(windows)
-    summary = ExportSummary(students_labelled=len(data.students))
+_UNEXPORTED_POSES = "poses_of_unexported_concepts"
+
+
+def _choose_nodes(data: TrialData, summary: ExportSummary) -> dict[tuple[str, str, str], dict]:
+    """One node per (student, course, concept key), the earlier-anchored one
+    standing; what is left out is counted in the summary's notes."""
     chosen: dict[tuple[str, str, str], dict] = {}
     for node in data.nodes:
         span = data.spans.get(str(node["id"]))
@@ -450,13 +446,88 @@ def build_rows(
                 continue
         chosen[key] = node
     used_nodes = {str(n["id"]) for n in chosen.values()}
-    summary.notes["poses_of_unexported_concepts"] = sum(1 for node_id, _ in data.poses if node_id not in used_nodes)
-    if not summary.notes["poses_of_unexported_concepts"]:
-        del summary.notes["poses_of_unexported_concepts"]
+    summary.notes[_UNEXPORTED_POSES] = sum(1 for node_id, _ in data.poses if node_id not in used_nodes)
+    if not summary.notes[_UNEXPORTED_POSES]:
+        del summary.notes[_UNEXPORTED_POSES]
+    return chosen
+
+
+def _window_row(
+    data: TrialData,
+    unit: tuple[str, str, str],
+    node_id: str,
+    *,
+    arm: str,
+    pretest: bool | None,
+    window: int,
+    as_of: datetime,
+    pseudonymize: Callable[..., str],
+) -> TrialRow:
+    """One (student, concept, opened window) row, as of the data lock."""
+    user_id, course_id, ckey = unit
+    pose = data.poses.get((node_id, window))
+    if pose is not None and (_ts(pose.get("posed_at")) or as_of) > as_of:
+        pose = None  # posed after the data lock: not posed as of then
+    status = pose_status(pose, as_of)
+    item = None
+    if pose is not None and pose.get("question_hash"):
+        item = (str(pose.get("course_id") or course_id), str(pose["question_hash"]))
+    exclusion = RETIRED_ITEM if item in data.retired else REPORTED_ITEM if item in data.reported else ""
+    delay = pose.get("days_since_evidence") if pose is not None else None
+    record = _pose_record(pose, status)
+    skip = data.skips.get((node_id, window)) if status == NOT_POSED else None
+    if skip is not None and (skip[1] is None or skip[1] > as_of):
+        skip = None  # recorded after the data lock (or with no readable time)
+    return TrialRow(
+        student=pseudonymize("student", user_id),
+        course=pseudonymize("course", course_id),
+        concept=pseudonymize("concept", course_id, ckey),
+        arm=arm,
+        window=window,
+        pretest=pretest,
+        posttest=posttest_outcome(pose) if status == RUNG0 else None,
+        status=status,
+        exclusion=exclusion,
+        item=pseudonymize("item", *item) if item else "",
+        days_since_evidence=round(float(delay), 1)
+        if isinstance(delay, (int, float)) and not isinstance(delay, bool)
+        else None,
+        skip_reason=skip[0] if skip is not None else "",
+        **record,
+    )
+
+
+def _count_row(summary: ExportSummary, row: TrialRow) -> None:
+    w, arm = row.window, row.arm
+    summary.flow[(w, arm, row.status)] += 1
+    if row.skip_reason:
+        summary.skipped[(w, arm, row.skip_reason)] += 1
+    if row.exclusion:
+        summary.excluded[(w, arm, row.exclusion)] += 1
+    if row.pretest is not None:
+        summary.pretests[(w, arm)] += 1
+
+
+def build_rows(
+    data: TrialData,
+    *,
+    label: str,
+    treatment_variant: str,
+    as_of: datetime,
+    pseudonymize: Callable[..., str],
+    windows: Iterable[int] = POSTTEST_WINDOWS_DAYS,
+) -> tuple[list[TrialRow], ExportSummary]:
+    """The long table from what `read_trial` read. One node per (student,
+    course, concept key): when normalization makes two of a student's nodes
+    one concept, the earlier-anchored one stands and the other is counted."""
+    windows = tuple(windows)
+    summary = ExportSummary(students_labelled=len(data.students))
+    chosen = _choose_nodes(data, summary)
     rows: list[TrialRow] = []
     students: set[str] = set()
     units = 0
-    for (user_id, course_id, ckey), node in chosen.items():
+    for unit, node in chosen.items():
+        user_id = unit[0]
         node_id = str(node["id"])
         anchor_id, anchor_at = data.spans[node_id]
         arm = TREATMENT if variant_for(user_id, node_id, label) == treatment_variant else CONTROL
@@ -466,46 +537,18 @@ def build_rows(
             units += 1
             students.add(user_id)
         for w in due:
-            pose = data.poses.get((node_id, w))
-            if pose is not None and (_ts(pose.get("posed_at")) or as_of) > as_of:
-                pose = None  # posed after the data lock: not posed as of then
-            status = pose_status(pose, as_of)
-            item = None
-            if pose is not None and pose.get("question_hash"):
-                item = (str(pose.get("course_id") or course_id), str(pose["question_hash"]))
-            exclusion = (
-                "retired_item" if item in data.retired else "reported_item" if item in data.reported else ""
-            )
-            delay = pose.get("days_since_evidence") if pose is not None else None
-            record = _pose_record(pose, status)
-            skip = data.skips.get((node_id, w)) if status == "not_posed" else None
-            if skip is not None and (skip[1] is None or skip[1] > as_of):
-                skip = None  # recorded after the data lock (or with no readable time)
-            row = TrialRow(
-                student=pseudonymize("student", user_id),
-                course=pseudonymize("course", course_id),
-                concept=pseudonymize("concept", course_id, ckey),
+            row = _window_row(
+                data,
+                unit,
+                node_id,
                 arm=arm,
-                window=w,
                 pretest=pretest,
-                posttest=posttest_outcome(pose) if status == "rung0" else None,
-                status=status,
-                exclusion=exclusion,
-                item=pseudonymize("item", *item) if item else "",
-                days_since_evidence=round(float(delay), 1)
-                if isinstance(delay, (int, float)) and not isinstance(delay, bool)
-                else None,
-                skip_reason=skip[0] if skip is not None else "",
-                **record,
+                window=w,
+                as_of=as_of,
+                pseudonymize=pseudonymize,
             )
             rows.append(row)
-            summary.flow[(w, arm, status)] += 1
-            if row.skip_reason:
-                summary.skipped[(w, arm, row.skip_reason)] += 1
-            if exclusion:
-                summary.excluded[(w, arm, exclusion)] += 1
-            if pretest is not None:
-                summary.pretests[(w, arm)] += 1
+            _count_row(summary, row)
     rows.sort(key=lambda r: (r.student, r.concept, r.window))
     summary.students_exported = len(students)
     summary.concepts = units
