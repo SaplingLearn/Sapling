@@ -34,6 +34,9 @@ from services.session_modes import NOT_REVIEW
 from services.loop.constants import (
     _BUDGET_DETAIL,
     _FEEDBACK_PENDING,
+    _MC_REASON,
+    _NEEDS_ANSWER,
+    _NEEDS_SELECTED_OPTION,
     _NOT_ENABLED,
     _STATE_CONFLICT,
 )
@@ -183,6 +186,15 @@ def _item_like(item):
     service hands back decrypted CheckItem models. A dict is validated into
     CheckItem."""
     return CheckItem.model_validate(item) if isinstance(item, dict) else item
+
+
+def _require_answer_fields(fmt: str, *, selected_option, answer) -> None:
+    """422 when an answer lacks the field its item's format requires: an
+    mc_reason answer its selected option, any other format its text."""
+    if fmt == _MC_REASON and not selected_option:
+        raise HTTPException(status_code=422, detail=_NEEDS_SELECTED_OPTION)
+    if fmt != _MC_REASON and not answer:
+        raise HTTPException(status_code=422, detail=_NEEDS_ANSWER)
 
 
 # ── Loop state: PKG-06's JSON document ─────────────────────────────────────

@@ -25,8 +25,16 @@ from services.academics import user_offering_ids_for_course
 from services.check_item_service import get_check_item
 from services import varied_practice
 
-from services.loop.constants import _ALREADY_GRADED, _WITHDRAWN_ITEM
-from services.loop.state import _agate, _gate, _gate_value, _item_like, _request_id, _StateConflict
+from services.loop.constants import _ALREADY_GRADED, _SESSION_MISMATCH, _WITHDRAWN_ITEM
+from services.loop.state import (
+    _agate,
+    _gate,
+    _gate_value,
+    _item_like,
+    _request_id,
+    _require_answer_fields,
+    _StateConflict,
+)
 from services.loop.learner import _node_for_item
 from services.loop.reveals import _ledger, _refloor, _reveal_floor
 
@@ -132,7 +140,7 @@ def _review_session(
             user_id, course_id, now, tz_offset_min=tz_offset_min
         )
     except PermissionError:
-        raise HTTPException(status_code=403, detail="Session user mismatch") from None
+        raise HTTPException(status_code=403, detail=_SESSION_MISMATCH) from None
 
 
 def _serve_review_item(user_id: str, item, loop_state: dict, session_id: str, now: datetime):
@@ -233,53 +241,30 @@ async def review_answer(body: ReviewAnswerBody, request: Request) -> dict:
     # #117: every sync PostgREST read and write below hops off the event loop
     if body.kind == "check":  # the one review body that runs a model (the grader)
         await asyncio.to_thread(ai_budget.enforce_rate_limit_for, body.user_id)
-        # #866 K16: at the grader cap no answer can be graded until it lifts —
-        # the cap's 429 before any claim (nothing is graded or written; spec §3.5)
-        if (capped := await asyncio.to_thread(_grading_cap, body.user_id)) is not None:
-            raise ai_budget.AIBudgetExceeded(capped)
+        await _raise_at_grading_cap(body.user_id)
     await asyncio.to_thread(_review_course, body.user_id, body.course_id)
     now = _review_now()
     tz = body.tz_offset_min  # #866 K17: the student's day, not the UTC one
     if body.session_id != review.review_session_id(body.user_id, body.course_id, now, tz_offset_min=tz):
         raise HTTPException(status_code=409, detail=_REVIEW_EXPIRED)  # the student's new day began
     sid, loop_state = await asyncio.to_thread(_review_session, body.user_id, body.course_id, now, tz)
-    check = card_row = deps = None
+    check = card_row = deps = node_id = None
     if body.kind == "check":
-        check = await asyncio.to_thread(get_check_item, body.item_id)
-        node_id = (  # #117: off the event loop
-            await asyncio.to_thread(_node_for_item, body.user_id, check)
-            if check is not None else None
-        )
-        if node_id is None:
-            raise HTTPException(status_code=404, detail=_REVIEW_NOT_FOUND)
-        if check.format == "mc_reason" and not body.selected_option:
-            raise HTTPException(status_code=422, detail="an mc_reason answer needs selected_option")
-        if check.format != "mc_reason" and not body.answer:
-            raise HTTPException(status_code=422, detail="a free answer needs answer")
+        check, node_id = await _load_review_check(body)
         deps = _review_deps(body.user_id, body.course_id, sid, _request_id(request), loop_on)
     else:
-        card_row = await asyncio.to_thread(review.load_card, body.user_id, body.item_id)
-        if card_row is None:
-            raise HTTPException(status_code=404, detail=_REVIEW_NOT_FOUND)
-    try:  # a stored fsrs_s that is not a finite positive number → 422 (InvalidStability)
-        item = (
-            await asyncio.to_thread(review.item_for_check, body.user_id, check, node_id, now)
-            if check is not None
-            else review.item_for_card(card_row, body.course_id, now)
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from None
-    # #866 K54: the item's own course's target (the Flashcards page's rating uses
-    # the same), never the session scope's: Study reads its queue unscoped
-    if check is not None:
-        retention = await asyncio.to_thread(review.course_retention, body.user_id, check.course_id)
-    else:
-        retention = await asyncio.to_thread(review.card_retention, body.user_id, card_row or {})
+        card_row = await _load_review_card(body)
+    item = await _review_item_for(body, check, node_id, card_row, now)
+    retention = await _answer_retention(body.user_id, check, card_row)
     claim = str(uuid.uuid4())
     try:
         operation_id = await asyncio.to_thread(
             review.claim_item, sid, review.sr_key(item), item.id, claim, now
         )
+        # spec §13 A140: the interleave's anchor records the graded difficulty
+        varied = {"varied": True} if await asyncio.to_thread(varied_practice.varied_on, body.user_id) else {}
+        # A88/A93: an item with recorded help anywhere has no unassisted credit
+        review_floor = await _review_floor(body.user_id, check, loop_state, item)
         outcome = await review.grade_review(
             body.user_id,
             item,
@@ -299,16 +284,8 @@ async def review_answer(body: ReviewAnswerBody, request: Request) -> dict:
             claim=claim,
             # #866 review A4: the serving's evidence identity, kept across a released claim
             operation_id=operation_id,
-            # spec §13 A140: the interleave's anchor records the graded difficulty
-            **({"varied": True} if await asyncio.to_thread(varied_practice.varied_on, body.user_id) else {}),
-            # A88/A93: an item with recorded help anywhere has no unassisted credit
-            max_rung=(review_floor := (
-                await asyncio.to_thread(
-                    _reveal_floor, body.user_id, check, _review_posed_at(loop_state, item)
-                )
-                if check is not None
-                else 0
-            )),
+            **varied,
+            max_rung=review_floor,
             # A93: re-read inside the claim, right before the one write
             refloor=(
                 (lambda ev: _refloor([ev], body.user_id, check, _review_posed_at(loop_state, item), review_floor))
@@ -318,22 +295,102 @@ async def review_answer(body: ReviewAnswerBody, request: Request) -> dict:
         )
         if check is not None and not outcome.unavailable:
             await asyncio.to_thread(_ledger, mark_graded, body.user_id, check.question_hash)
-    except review.ReviewClaimRefused as exc:
-        raise HTTPException(status_code=409, detail=_REVIEW_CLAIM_DETAIL[exc.reason]) from None
-    except EvidenceItemRetired:
+    except _REVIEW_GRADE_ERRORS as exc:
+        raise _review_grade_error(exc) from None
+    return _review_answer_body(body, outcome, check, loop_state)
+
+
+async def _raise_at_grading_cap(user_id: str) -> None:
+    """#866 K16: at the grader cap no answer can be graded until it lifts — the
+    cap's 429 before any claim (nothing is graded or written; spec §3.5)."""
+    if (capped := await asyncio.to_thread(_grading_cap, user_id)) is not None:
+        raise ai_budget.AIBudgetExceeded(capped)
+
+
+async def _load_review_check(body: ReviewAnswerBody):
+    """The answered check item and its node (A2), re-loaded; 404 when either is
+    gone, 422 when the answer lacks its format's field."""
+    check = await asyncio.to_thread(get_check_item, body.item_id)
+    node_id = (  # #117: off the event loop
+        await asyncio.to_thread(_node_for_item, body.user_id, check)
+        if check is not None else None
+    )
+    if node_id is None:
+        raise HTTPException(status_code=404, detail=_REVIEW_NOT_FOUND)
+    _require_answer_fields(check.format, selected_option=body.selected_option, answer=body.answer)
+    return check, node_id
+
+
+async def _load_review_card(body: ReviewAnswerBody) -> dict:
+    """The answered flashcard's row, re-loaded; 404 when it is gone."""
+    card_row = await asyncio.to_thread(review.load_card, body.user_id, body.item_id)
+    if card_row is None:
+        raise HTTPException(status_code=404, detail=_REVIEW_NOT_FOUND)
+    return card_row
+
+
+async def _review_item_for(body: ReviewAnswerBody, check, node_id, card_row, now: datetime):
+    """The review item the answer grades; a stored fsrs_s that is not a finite
+    positive number → 422 (InvalidStability)."""
+    try:
+        return (
+            await asyncio.to_thread(review.item_for_check, body.user_id, check, node_id, now)
+            if check is not None
+            else review.item_for_card(card_row, body.course_id, now)
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+
+
+async def _answer_retention(user_id: str, check, card_row) -> float:
+    """#866 K54: the item's own course's target (the Flashcards page's rating
+    uses the same), never the session scope's: Study reads its queue unscoped."""
+    if check is not None:
+        return await asyncio.to_thread(review.course_retention, user_id, check.course_id)
+    return await asyncio.to_thread(review.card_retention, user_id, card_row or {})
+
+
+async def _review_floor(user_id: str, check, loop_state: dict, item) -> int:
+    """A88/A93: a check's help floor since today's serving (0 for a flashcard)."""
+    if check is None:
+        return 0
+    return await asyncio.to_thread(_reveal_floor, user_id, check, _review_posed_at(loop_state, item))
+
+
+#: What a claimed review grade can raise that maps to an HTTP answer.
+_REVIEW_GRADE_ERRORS = (
+    review.ReviewClaimRefused,
+    EvidenceItemRetired,
+    PlanningPersistenceUnavailable,
+    GradeDeadlineExceeded,
+    LoopStateConflict,
+    ValueError,
+)
+
+
+def _review_grade_error(exc: Exception) -> HTTPException:
+    """The HTTP answer to a claimed review grade's failure, checked in the
+    order the handler's except clauses always ran."""
+    if isinstance(exc, review.ReviewClaimRefused):
+        return HTTPException(status_code=409, detail=_REVIEW_CLAIM_DETAIL[exc.reason])
+    if isinstance(exc, EvidenceItemRetired):
         # A123: staff retired the item while it was graded: nothing was written
         # (the grade is void) and the claim was released; the queue moves on
-        raise HTTPException(status_code=409, detail=_WITHDRAWN_ITEM) from None
-    except (PlanningPersistenceUnavailable, GradeDeadlineExceeded):
+        return HTTPException(status_code=409, detail=_WITHDRAWN_ITEM)
+    if isinstance(exc, (PlanningPersistenceUnavailable, GradeDeadlineExceeded)):
         # the evidence store did not answer (or the grade outlived its claim):
         # nothing is recorded as graded and the claim was released, so the
         # same answer may be sent again — under the serving's operation id
         # (#866 review A4), so an ambiguous earlier write is never journaled twice
-        raise HTTPException(status_code=503, detail=_REVIEW_UNAVAILABLE) from None
-    except LoopStateConflict:
-        raise _StateConflict() from None
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from None
+        return HTTPException(status_code=503, detail=_REVIEW_UNAVAILABLE)
+    if isinstance(exc, LoopStateConflict):
+        return _StateConflict()
+    return HTTPException(status_code=422, detail=str(exc))
+
+
+def _review_answer_body(body: ReviewAnswerBody, outcome, check, loop_state: dict) -> dict:
+    """The answer's response; W2.5: a high-confidence wrong check answer holds
+    Next for corrective feedback (`feedback_dwell_ms`)."""
     body_out = {
         "correct": outcome.correct,
         "hint": outcome.hint,
@@ -344,7 +401,6 @@ async def review_answer(body: ReviewAnswerBody, request: Request) -> dict:
         "unavailable": outcome.unavailable,
         "refused": outcome.refused,
     }
-    # W2.5: high-confidence wrong on a check → Next holds for corrective feedback
     if check is not None and outcome.correct is False and not outcome.unavailable:
         dwell = policy.hypercorrection_feedback_dwell_ms(
             correct=False,
@@ -373,7 +429,7 @@ def review_summary(
             user_id, course_id, now, tz_offset_min=tz_offset_min  # #866 K17
         )
     except PermissionError:
-        raise HTTPException(status_code=403, detail="Session user mismatch") from None
+        raise HTTPException(status_code=403, detail=_SESSION_MISMATCH) from None
     body = review.summary(
         user_id,
         course_id,

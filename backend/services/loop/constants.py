@@ -89,3 +89,17 @@ _LOOP_OPENER_TEMPLATE = LOOP_PROBE_OPENER
 
 
 _WITHDRAWN_ITEM = "check item withdrawn"
+
+
+#: The check-item format answered with a chosen option and a one-sentence
+#: reason (learning.params.CHECK_ITEM_FORMATS); every other format is free text.
+_MC_REASON = "mc_reason"
+
+
+#: The 422 details for an answer that lacks the field its format requires.
+_NEEDS_SELECTED_OPTION = "an mc_reason answer needs selected_option"
+_NEEDS_ANSWER = "a free answer needs answer"
+
+
+#: The 403 detail when a session row belongs to another student.
+_SESSION_MISMATCH = "Session user mismatch"
