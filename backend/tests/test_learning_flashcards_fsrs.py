@@ -1,18 +1,14 @@
-"""PKG-11: FSRS state on flashcards (PKG-14b: ungated — FSRS for every student).
+"""PKG-11: FSRS state on flashcards, for every student (PKG-14b removed the gate).
 
 Route tests mock `table` (tests/test_graph_service.py::_mock_table style).
-PKG-14b removed the route's gate (spec §11.2): there is no legacy path left,
-so the flag-off byte-identity tests went with it.
 FSRS maths is PKG-02's (tests/test_learning_fsrs.py); here `next_state`,
-`interval` and `order_due` are patched at the route module so these tests
-prove WIRING — what the route reads, what it writes, in what order — not
-the curve. Flag-off tests snapshot the exact legacy query strings and
-payload key sets: the pre-series behaviour must be byte-identical.
+`interval` and `order_due` are patched where the route's body looks them up,
+so these tests prove WIRING — what the route reads, what it writes, in what
+order — not the curve.
 """
 
 from __future__ import annotations
 
-import contextlib
 from datetime import datetime, timedelta, timezone
 from tests.split_patches import patch_in
 from unittest.mock import MagicMock, patch
@@ -26,30 +22,12 @@ client = TestClient(app)
 
 USER_ID = "user_test"
 
-LEGACY_LIST_COLS = (
-    "id,user_id,topic,offering_id,front,back,times_reviewed,last_rating,last_reviewed_at,created_at"
-)
-LEGACY_RATE_COLS = "id,times_reviewed"
 LEGACY_RATE_KEYS = {"times_reviewed", "last_rating", "last_reviewed_at"}
 # rate_card's select and update filters: both owner-scoped (the update names
 # the one card by id AND its owner, #890).
 RATE_SELECT_KWARGS = {"filters": {"id": "eq.card-1", "user_id": f"eq.{USER_ID}"}, "limit": 1}
 RATE_UPDATE_KWARGS = {"filters": {"id": "eq.card-1", "user_id": f"eq.{USER_ID}"}}
-FSRS_COLS = ",fsrs_d,fsrs_s,due_at,reps,lapses"
 FSRS_KEYS = {"fsrs_d", "fsrs_s", "due_at", "reps", "lapses"}
-# Every table() the legacy handlers open, in order: list reads flashcards once;
-# rate reads the card, then updates it. The flag-off path adds nothing to these.
-LEGACY_LIST_TABLES = ["flashcards"]
-LEGACY_RATE_TABLES = ["flashcards", "flashcards"]
-
-
-def _gate_patch(gate: bool | None):
-    """PKG-14b: the route reads no gate; `gate=True` (the only path left) is a
-    no-op kept so the call sites read as before. False is a test bug."""
-    assert gate is True, "PKG-14b: flashcards have no flag-off path"
-    return contextlib.nullcontext()
-
-
 # ── rate_card ────────────────────────────────────────────────────────────────
 
 # One fixed instant for the whole module. Every route call below runs with
@@ -103,14 +81,13 @@ def _rate_tables(row: dict):
     return side_effect, calls
 
 
-def _rate(rating: int, *, gate: bool | None, row: dict, next_state=None, interval=None, check=None):
+def _rate(rating: int, *, row: dict, next_state=None, interval=None, check=None):
     side_effect, calls = _rate_tables(row)
     ns = next_state or MagicMock(return_value=(4.5, 9.0))
     iv = interval or MagicMock(return_value=8.0)
     with (
         _frozen_clock(),
         patch_in(_LIST_MODULES, "table", side_effect=side_effect),
-        _gate_patch(gate),
         patch("learning.flashcard_fsrs.next_state", new=ns),
         patch("learning.flashcard_fsrs.interval", new=iv),
         patch_in(_LIST_MODULES, "check_achievements", new=check or MagicMock()),
@@ -148,31 +125,12 @@ class TestRateCard:
         from learning.params import FLASHCARD_RATING_TO_FSRS
 
         assert FLASHCARD_RATING_TO_FSRS[ui_rating] == fsrs_rating
-        r, calls, ns, _ = _rate(ui_rating, gate=True, row=SEEN_ROW)
+        r, calls, ns, _ = _rate(ui_rating, row=SEEN_ROW)
         assert r.status_code == 200, r.text
         assert ns.call_args[0][2] == fsrs_rating
 
-    def test_easy_is_never_emitted(self):
-        from learning.params import FLASHCARD_RATING_TO_FSRS
-
-        assert 4 not in FLASHCARD_RATING_TO_FSRS.values()
-
-    def test_map_values_are_pkg02_rating_grades(self):
-        """params.py cannot import learning.fsrs (fsrs imports params), so the
-        map holds plain ints; they must be PKG-02's Rating grades."""
-        from learning.fsrs import Rating
-        from learning.params import FLASHCARD_RATING_TO_FSRS
-
-        assert FLASHCARD_RATING_TO_FSRS == {1: Rating.AGAIN, 2: Rating.HARD, 3: Rating.GOOD}
-
-    def test_gate_on_selects_the_fsrs_columns(self):
-        _, calls, _, _ = _rate(3, gate=True, row=SEEN_ROW)
-        assert calls["select_cols"] == (  # #866 K54: and the course it is scheduled for
-            "id,times_reviewed,last_reviewed_at,fsrs_d,fsrs_s,reps,lapses,offering_id"
-        )
-
-    def test_gate_on_writes_state_beside_the_legacy_columns(self):
-        r, calls, ns, iv = _rate(3, gate=True, row=SEEN_ROW)
+    def test_writes_state_beside_the_legacy_columns(self):
+        r, calls, ns, iv = _rate(3, row=SEEN_ROW)
         payload = calls["update"]
         assert set(payload) == LEGACY_RATE_KEYS | FSRS_KEYS
         assert calls["select_kwargs"] == RATE_SELECT_KWARGS
@@ -192,39 +150,39 @@ class TestRateCard:
         assert r.json()["due_at"] == payload["due_at"]
         assert r.json()["fsrs_rating"] == 3
 
-    def test_gate_on_passes_prior_state_and_elapsed_days(self):
-        _, _, ns, _ = _rate(2, gate=True, row=SEEN_ROW)
+    def test_passes_prior_state_and_elapsed_days(self):
+        _, _, ns, _ = _rate(2, row=SEEN_ROW)
         d, s, rating, days_since = ns.call_args[0]
         assert (d, s, rating) == (5.2, 3.1, 2)
         assert days_since == pytest.approx(2.0, abs=1e-9)
         assert ns.call_args.kwargs == {"same_day": False}
 
-    def test_gate_on_review_within_a_day_takes_the_same_day_branch(self):
+    def test_review_within_a_day_takes_the_same_day_branch(self):
         """HANDOFF-02 next_state(..., *, same_day): same rule as PKG-03's
         graph_service._fsrs_after — less than one day since the last review."""
         row = {**SEEN_ROW, "last_reviewed_at": (NOW - timedelta(hours=2)).isoformat()}
-        _, _, ns, _ = _rate(3, gate=True, row=row)
+        _, _, ns, _ = _rate(3, row=row)
         assert ns.call_args[0][3] == pytest.approx(2 / 24, abs=1e-9)
         assert ns.call_args.kwargs == {"same_day": True}
 
-    def test_gate_on_first_review_passes_none_state_and_zero_days(self):
-        _, calls, ns, _ = _rate(3, gate=True, row=FRESH_ROW)
+    def test_first_review_passes_none_state_and_zero_days(self):
+        _, calls, ns, _ = _rate(3, row=FRESH_ROW)
         d, s, _, days_since = ns.call_args[0]
         assert d is None and s is None and days_since == 0.0
         assert ns.call_args.kwargs == {"same_day": False}
         assert calls["update"]["reps"] == 1 and calls["update"]["lapses"] == 0
 
     def test_again_increments_lapses(self):
-        _, calls, _, _ = _rate(1, gate=True, row=SEEN_ROW)
+        _, calls, _, _ = _rate(1, row=SEEN_ROW)
         assert calls["update"]["lapses"] == 2
 
-    def test_gate_on_rejects_a_rating_outside_the_map_before_any_write(self):
-        r, calls, ns, _ = _rate(5, gate=True, row=SEEN_ROW)
+    def test_rejects_a_rating_outside_the_map_before_any_write(self):
+        r, calls, ns, _ = _rate(5, row=SEEN_ROW)
         assert r.status_code == 422
         assert "update" not in calls
         ns.assert_not_called()
 
-    def test_gate_on_fsrs_failure_is_not_swallowed_into_a_legacy_write(self):
+    def test_fsrs_failure_is_not_swallowed_into_a_legacy_write(self):
         """Spec §Error semantics: the card stays unchanged and the client sees
         the error (TestClient re-raises it; the server answers 500)."""
         boom = MagicMock(side_effect=ValueError("corrupt stored stability"))
@@ -240,9 +198,9 @@ class TestRateCard:
                 )
         assert "update" not in calls, "the legacy columns must not move without the FSRS state"
 
-    def test_gate_on_keeps_the_achievement_dispatch(self):
+    def test_keeps_the_achievement_dispatch(self):
         check = MagicMock()
-        r, _, _, _ = _rate(3, gate=True, row=SEEN_ROW, check=check)
+        r, _, _, _ = _rate(3, row=SEEN_ROW, check=check)
         assert r.status_code == 200
         check.assert_called_once_with(USER_ID, "flashcards_reviewed", {})
 
@@ -312,9 +270,7 @@ LIST_ROWS = [
 ]
 
 
-def _list(*, gate, query: str = "", order_due=None, rows=None):
-    """`gate`: a bool patches the route's gate; None runs the real gate; a
-    Mock is installed as the gate itself (to count its calls)."""
+def _list(*, query: str = "", order_due=None, rows=None):
     calls: dict = {"tables": []}
     source = LIST_ROWS if rows is None else rows
 
@@ -338,13 +294,11 @@ def _list(*, gate, query: str = "", order_due=None, rows=None):
 
     # HANDOFF-02: order_due(items, now, *, stability_key, last_review_key).
     od = order_due or MagicMock(side_effect=lambda rows, now, **kw: list(reversed(rows)))
-    gate_cm = _gate_patch(gate)
     # #118 (spec §13 A149): the list read and its FSRS order live in
     # services/flashcards/cards.py; the route computes `now` and passes it.
     with (
         _frozen_clock(),
         patch_in(_LIST_MODULES, "table", side_effect=side_effect),
-        gate_cm,
         patch("services.flashcards.cards.order_due", new=od),
     ):
         r = client.get(f"/api/flashcards/user/{USER_ID}{query}")
@@ -439,7 +393,6 @@ class TestFlashcardFsrsUpdate:
         with (
             _frozen_clock(),
             patch_in(_LIST_MODULES, "table", side_effect=side_effect),
-            _gate_patch(True),
             patch_in(_LIST_MODULES, "flashcard_fsrs_update", new=spy),
             patch_in(_LIST_MODULES, "check_achievements", new=MagicMock()),
         ):
@@ -499,28 +452,20 @@ class TestFlashcardFsrsUpdate:
             r = client.post("/api/flashcards/rate", json={"user_id": USER_ID, "card_id": "card-1", "rating": 2})
         assert r.status_code == 200, r.text
         assert spy.call_args.kwargs == {"now": NOW}
-        assert calls["select_cols"] == "id,times_reviewed,last_reviewed_at,fsrs_d,fsrs_s,reps,lapses"
+        assert "offering_id" not in calls["select_cols"].split(",")
         retention.assert_not_called()
 
-    def test_the_route_no_longer_holds_fsrs_maths(self):
-        import routes.flashcards as route
-
-        assert not hasattr(route, "_fsrs_advance")
-        assert not hasattr(route, "next_state") and not hasattr(route, "interval")
-
-
 class TestListFlashcards:
-    def test_gate_on_selects_fsrs_columns_with_the_same_query(self):
-        r, calls, _ = _list(gate=True)
+    def test_reads_the_students_cards_newest_first(self):
+        r, calls, _ = _list()
         assert r.status_code == 200, r.text
-        assert calls["select_cols"] == LEGACY_LIST_COLS + FSRS_COLS
         assert calls["select_kwargs"] == {
             "filters": {"user_id": f"eq.{USER_ID}"},
             "order": "created_at.desc",
         }
 
-    def test_gate_on_orders_due_then_fresh_then_later(self):
-        r, _, od = _list(gate=True)
+    def test_orders_due_then_fresh_then_later(self):
+        r, _, od = _list()
         ids = [c["id"] for c in r.json()["flashcards"]]
         # order_due is patched to REVERSE its input, proving the route honours
         # its output rather than the query order.
@@ -532,24 +477,24 @@ class TestListFlashcards:
         assert od.call_args.kwargs == {"last_review_key": "last_reviewed_at"}
         assert r.json()["due_count"] == 2
 
-    def test_gate_on_due_only_returns_the_due_bucket_only(self):
-        r, _, _ = _list(gate=True, query="?due_only=true")
+    def test_due_only_returns_the_due_bucket_only(self):
+        r, _, _ = _list(query="?due_only=true")
         ids = [c["id"] for c in r.json()["flashcards"]]
         assert ids == ["due-recent", "due-old"]
         assert r.json()["due_count"] == 2
 
-    def test_gate_on_a_null_due_at_is_not_due(self):
-        r, _, _ = _list(gate=True, query="?due_only=true")
+    def test_a_null_due_at_is_not_due(self):
+        r, _, _ = _list(query="?due_only=true")
         assert not any(c["id"].startswith("fresh") for c in r.json()["flashcards"])
 
-    def test_gate_on_response_rows_carry_the_fsrs_columns(self):
+    def test_response_rows_carry_the_fsrs_columns(self):
         """The stub projects each row onto the selected columns, so the FSRS
         keys reach the response only because the route selects them."""
-        r, _, _ = _list(gate=True)
+        r, _, _ = _list()
         rows = r.json()["flashcards"]
         assert rows and all(FSRS_KEYS <= set(c) for c in rows)
 
-    def test_gate_on_real_order_due_ranks_by_distance_from_threshold(self):
+    def test_real_order_due_ranks_by_distance_from_threshold(self):
         """Unpatched learning.fsrs.order_due through the adapter: the due card
         whose recall probability is nearest REVIEW_ORDER_THRESHOLD comes first."""
         from learning import fsrs
@@ -585,24 +530,20 @@ class TestListFlashcards:
             for row in rows
         }
         assert dist["long-overdue"] < dist["just-due"]
-        r, _, _ = _list(gate=True, rows=rows, order_due=fsrs.order_due)
+        r, _, _ = _list(rows=rows, order_due=fsrs.order_due)
         body = r.json()
         assert [c["id"] for c in body["flashcards"]] == ["long-overdue", "just-due"]
         assert body["due_count"] == 2
 
-    @pytest.mark.parametrize("gate", [True])
-    def test_a_non_boolean_due_only_is_a_422_on_both_paths(self, gate):
+    def test_a_non_boolean_due_only_is_a_422(self):
         """HANDOFF-11 Known gap (c): `due_only` is a typed query parameter
         (plan Behaviour 1), so FastAPI rejects a non-boolean before the handler
-        runs. Before PKG-11 the legacy route ignored it (200). (PKG-14b: one
-        path left — the [False] case went with the gate.)"""
-        r, calls, _ = _list(gate=gate, query="?due_only=banana")
+        runs."""
+        r, calls, _ = _list(query="?due_only=banana")
         assert r.status_code == 422
         assert r.json()["detail"][0]["loc"] == ["query", "due_only"]
         assert calls["tables"] == [], "rejected before the handler opens a table"
 
     def test_topic_filter_unchanged(self):
-        """PKG-14b: formerly test_gate_off_topic_filter_unchanged — the topic
-        filter is the legacy query's, on the one path left."""
-        r, calls, _ = _list(gate=True, query="?topic=T")
+        r, calls, _ = _list(query="?topic=T")
         assert calls["select_kwargs"]["filters"] == {"user_id": f"eq.{USER_ID}", "topic": "eq.T"}

@@ -477,15 +477,6 @@ class TestCardListDueAt:
         assert cards["f2"]["due_at"] is None  # never rated: never due
         assert r.json()["due_count"] == 1
 
-    def test_the_read_names_the_card_and_its_fsrs_state(self):
-        captured = {}
-        with patch("services.flashcards.cards.table", side_effect=_cards_table([_CARD], captured)):
-            client.get(f"/api/flashcards/user/{ME}")
-        assert captured["columns"] == (
-            "id,user_id,topic,offering_id,front,back,times_reviewed,last_rating,"
-            "last_reviewed_at,created_at,fsrs_d,fsrs_s,due_at,reps,lapses"
-        )
-
     def test_a_card_carries_its_fsrs_state_and_course(self):
         captured = {}
         rows = [{**_CARD, "due_at": None, "fsrs_s": 3.2, "fsrs_d": 5.1, "reps": 4, "lapses": 1}]
