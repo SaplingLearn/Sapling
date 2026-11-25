@@ -145,13 +145,10 @@ def _pre_done_events(data: dict) -> list[SaplingEvent]:
     return evs
 
 
-async def _unplanned_event(turn: _LoopTurn, exc: Exception) -> SaplingEvent:
+async def _unplanned_event(turn: _LoopTurn, refused: SaplingEvent | None) -> SaplingEvent:
     """ADR 0024 honest degrade for a turn that could not be planned: nothing was
     shown or written — one terminal error: the refusal itself when the request
     was refused (#866 K11)."""
-    refused = refusal_event(exc, turn.request_id)
-    if refused is None:
-        logger.exception("Loop turn could not be planned")
     await asyncio.shield(asyncio.to_thread(turn.touch_served_at))
     return refused or _stream_error(turn, _STREAM_UNAVAILABLE)
 
@@ -262,7 +259,10 @@ async def _stream_turn(turn: _LoopTurn):
         )
         await asyncio.to_thread(turn.plan, decision)
     except Exception as exc:
-        yield sapling_event_to_sse(await _unplanned_event(turn, exc))
+        refused = refusal_event(exc, turn.request_id)
+        if refused is None:
+            logger.exception("Loop turn could not be planned")
+        yield sapling_event_to_sse(await _unplanned_event(turn, refused))
         return
     for ev in turn.pre_events():
         yield sapling_event_to_sse(ev)
