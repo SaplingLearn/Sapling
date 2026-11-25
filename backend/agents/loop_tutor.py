@@ -102,9 +102,13 @@ _ITEM_PHASES: tuple[Phase, ...] = ("hint", "feedback")
 
 # ── Tier slots (spec §3.5, A15) ────────────────────────────────────────────
 
+_STANDARD_SLOT = "loop_tutor"  # the standard tier's model slot, and the agent's name
+_PROMPT_HASH_CHARS = 12  # hex chars of a prompt's sha256 kept as its version
+_NONCE_BYTES = 12  # random bytes in one envelope delimiter (24 hex chars)
+
 LOOP_TIER_SLOTS: dict[str, str] = {
     "lite": "loop_tutor_lite",
-    "standard": "loop_tutor",
+    "standard": _STANDARD_SLOT,
     "deep": "loop_tutor_deep",
 }
 _TIER_ORDER: tuple[str, ...] = ("lite", "standard", "deep")
@@ -294,7 +298,7 @@ _PROMPT_HASH = hashlib.sha256(
     (
         _LOOP_SYSTEM_PROMPT + "\x00" + LOOP_OUTPUT_TEMPLATE + "\x00" + _TOOL_DEFS_JSON
     ).encode("utf-8")
-).hexdigest()[:12]
+).hexdigest()[:_PROMPT_HASH_CHARS]
 
 
 # ── Per-turn prefix (user-message side) ────────────────────────────────────
@@ -742,6 +746,123 @@ def item_visible(ceiling: int, answer_released: bool) -> bool:
     return answer_released or int(ceiling) >= int(Rung.H2)
 
 
+def _check_prefix_args(
+    *,
+    phase,
+    band,
+    item_prompt,
+    answer_released,
+    verdict,
+    attempt_first,
+    v2,
+    plan_reason,
+    prequestion_block,
+) -> None:
+    """`phase_prefix`'s argument rules, in order: ValueError on the first broken one."""
+    if prequestion_block is not None and phase != "teach":
+        raise ValueError("a prequestion is explained on a teach turn")
+    if plan_reason is not None and (not v2 or phase != "teach"):
+        raise ValueError("a plan focus is a v2 teach turn's (loop_tutor_v2)")
+    if plan_reason is not None and plan_reason not in PLAN_FOCUS_REASONS:
+        raise ValueError(f"unknown plan focus reason {plan_reason!r}")
+    if phase not in LOOP_PHASES:
+        raise ValueError(
+            f"unknown loop phase {phase!r}; the model sees {LOOP_PHASES} "
+            "(the check pose is ladder.check_pose)"
+        )
+    if band not in _BANDS:
+        raise ValueError(f"unknown band {band!r}")
+    if not attempt_first and band != "novice":
+        raise ValueError("only the novice band has a worked-example-first format")
+    _check_feedback_args(
+        phase=phase, item_prompt=item_prompt, answer_released=answer_released, verdict=verdict
+    )
+
+
+def _check_feedback_args(*, phase, item_prompt, answer_released, verdict) -> None:
+    """The verdict / release / item rules of `_check_prefix_args`, in its order."""
+    if (verdict is not None) != (phase == "feedback"):
+        raise ValueError("verdict is required in the feedback phase and illegal elsewhere")
+    if verdict is not None and verdict not in _VERDICTS:
+        raise ValueError(f"unknown verdict {verdict!r}")
+    if answer_released and phase != "feedback":
+        raise ValueError("answer_released is only meaningful in the feedback phase")
+    if phase in _ITEM_PHASES and not item_prompt:
+        raise ValueError(f"{phase} phase requires item_prompt")
+
+
+def _shape_lines(phase, band, rung: Rung, limits, *, attempt_first: bool, v2: bool) -> list[str]:
+    """The prefix's fixed head: phase, rule, format, turn shape, math, ceiling."""
+    question = (
+        _NO_QUESTION_CLAUSE
+        if v2 and not limits.question
+        else _QUESTION_CLAUSE.format(n=STEP_QUESTIONS_PER_TURN)
+    )
+    rule = _VERDICT_FEEDBACK_RULE if v2 and phase == "feedback" else _PHASE_RULES[phase]
+    return [
+        f"[LOOP PHASE: {phase}]",
+        rule,
+        _BAND_FORMATS[band] if attempt_first else NOVICE_WORKED_FIRST_FORMAT,
+        (
+            f"Turn shape (at most {STEP_MAX_SENTENCES} sentences in all): "
+            "key_idea: one declarative sentence naming the single idea of "
+            f"this turn; body: at most {limits.body_max_sentences} "
+            f"sentence{'s' if limits.body_max_sentences != 1 else ''}, no "
+            f"question; {question} No asides. Never auto-advance."
+        ),
+        (
+            "Math: LaTeX is allowed this turn."
+            if limits.latex_ok
+            else "Math: plain text only (x^2, (a+b)/c) — no LaTeX."
+        ),
+        (
+            f"Rung ceiling: you may emit at most rung H{int(rung)}: "
+            f"{intent(rung)} Anything above H{int(rung)} is forbidden this turn."
+        ),
+    ]
+
+
+def _ceiling_guide_line(phase, rung: Rung, *, v2: bool) -> str | None:
+    """The rung's guide line, or None. H6 (released) needs no guide; teach
+    H4/H5 follow the band format."""
+    guide = TEACH_CEILING_GUIDE if phase == "teach" else CEILING_GUIDE
+    if int(rung) in guide:
+        if v2 and guide is CEILING_GUIDE and int(rung) == 0:
+            return _VERDICT_H0_GUIDE
+        return guide[int(rung)]
+    if int(rung) in CEILING_GUIDE:
+        return CEILING_GUIDE[int(rung)]
+    return None
+
+
+def _flagged_lines(limits, *, plan_reason, prequestion_block, self_explain_ack) -> list[str]:
+    """The flag-gated lines (A121 plan focus and answer check, A138, A139), in order."""
+    lines: list[str] = []
+    if plan_reason is not None:
+        lines.append(plan_focus_line(plan_reason))
+    if limits.answer_check:
+        lines.append(ANSWER_CHECK_LINE)
+    if prequestion_block is not None:
+        lines.append(PREQUESTION_LINE)
+        lines.append(prequestion_block)
+    if self_explain_ack:
+        lines.append(SELF_EXPLAIN_ACK_LINE)
+    return lines
+
+
+def _check_item_line(item_prompt, item_format, rung: Rung, answer_released: bool) -> str:
+    """The [CHECK ITEM] block of a hint or feedback turn."""
+    fmt = f" (format: {item_format})" if item_format else ""
+    # Z07: the drafted stem is DATA under the trusted heading; withheld,
+    # the heading carries the server's own line
+    shown = (
+        item_text(item_prompt, source=CHECK_ITEM_SOURCE)
+        if item_prompt and item_visible(rung, answer_released)  # non-empty: checked above
+        else ITEM_WITHHELD
+    )
+    return f"[CHECK ITEM]{fmt}\n{shown}"
+
+
 def phase_prefix(
     *,
     phase: Phase,
@@ -790,29 +911,17 @@ def phase_prefix(
     `self_explain_ack` adds the [SELF-EXPLANATION] line. Both off by default:
     the prefix is unchanged.
     """
-    if prequestion_block is not None and phase != "teach":
-        raise ValueError("a prequestion is explained on a teach turn")
-    if plan_reason is not None and (not v2 or phase != "teach"):
-        raise ValueError("a plan focus is a v2 teach turn's (loop_tutor_v2)")
-    if plan_reason is not None and plan_reason not in PLAN_FOCUS_REASONS:
-        raise ValueError(f"unknown plan focus reason {plan_reason!r}")
-    if phase not in LOOP_PHASES:
-        raise ValueError(
-            f"unknown loop phase {phase!r}; the model sees {LOOP_PHASES} "
-            "(the check pose is ladder.check_pose)"
-        )
-    if band not in _BANDS:
-        raise ValueError(f"unknown band {band!r}")
-    if not attempt_first and band != "novice":
-        raise ValueError("only the novice band has a worked-example-first format")
-    if (verdict is not None) != (phase == "feedback"):
-        raise ValueError("verdict is required in the feedback phase and illegal elsewhere")
-    if verdict is not None and verdict not in _VERDICTS:
-        raise ValueError(f"unknown verdict {verdict!r}")
-    if answer_released and phase != "feedback":
-        raise ValueError("answer_released is only meaningful in the feedback phase")
-    if phase in _ITEM_PHASES and not item_prompt:
-        raise ValueError(f"{phase} phase requires item_prompt")
+    _check_prefix_args(
+        phase=phase,
+        band=band,
+        item_prompt=item_prompt,
+        answer_released=answer_released,
+        verdict=verdict,
+        attempt_first=attempt_first,
+        v2=v2,
+        plan_reason=plan_reason,
+        prequestion_block=prequestion_block,
+    )
     rung = Rung(ceiling)
     limits = turn_limits(
         phase,
@@ -822,64 +931,24 @@ def phase_prefix(
         answer_check=answer_check,
         v2=v2,
     )
-    question = (
-        _NO_QUESTION_CLAUSE
-        if v2 and not limits.question
-        else _QUESTION_CLAUSE.format(n=STEP_QUESTIONS_PER_TURN)
+    lines = _shape_lines(phase, band, rung, limits, attempt_first=attempt_first, v2=v2)
+    guide_line = _ceiling_guide_line(phase, rung, v2=v2)
+    if guide_line is not None:
+        lines.append(guide_line)
+    lines.extend(
+        _flagged_lines(
+            limits,
+            plan_reason=plan_reason,
+            prequestion_block=prequestion_block,
+            self_explain_ack=self_explain_ack,
+        )
     )
-    rule = _VERDICT_FEEDBACK_RULE if v2 and phase == "feedback" else _PHASE_RULES[phase]
-    lines = [
-        f"[LOOP PHASE: {phase}]",
-        rule,
-        _BAND_FORMATS[band] if attempt_first else NOVICE_WORKED_FIRST_FORMAT,
-        (
-            f"Turn shape (at most {STEP_MAX_SENTENCES} sentences in all): "
-            "key_idea: one declarative sentence naming the single idea of "
-            f"this turn; body: at most {limits.body_max_sentences} "
-            f"sentence{'s' if limits.body_max_sentences != 1 else ''}, no "
-            f"question; {question} No asides. Never auto-advance."
-        ),
-        (
-            "Math: LaTeX is allowed this turn."
-            if limits.latex_ok
-            else "Math: plain text only (x^2, (a+b)/c) — no LaTeX."
-        ),
-        (
-            f"Rung ceiling: you may emit at most rung H{int(rung)}: "
-            f"{intent(rung)} Anything above H{int(rung)} is forbidden this turn."
-        ),
-    ]
-    guide = TEACH_CEILING_GUIDE if phase == "teach" else CEILING_GUIDE
-    if int(rung) in guide:  # H6 (released) needs no guide; teach H4/H5 follow the band format
-        text = guide[int(rung)]
-        if v2 and guide is CEILING_GUIDE and int(rung) == 0:
-            text = _VERDICT_H0_GUIDE
-        lines.append(text)
-    elif int(rung) in CEILING_GUIDE:
-        lines.append(CEILING_GUIDE[int(rung)])
-    if plan_reason is not None:
-        lines.append(plan_focus_line(plan_reason))
-    if limits.answer_check:
-        lines.append(ANSWER_CHECK_LINE)
-    if prequestion_block is not None:
-        lines.append(PREQUESTION_LINE)
-        lines.append(prequestion_block)
-    if self_explain_ack:
-        lines.append(SELF_EXPLAIN_ACK_LINE)
     if verdict is not None:
         lines.append(f"[VERDICT: {verdict}] {_VERDICT_SENTENCES[verdict]}")
     if answer_released:
         lines.append(_ANSWER_RELEASED)
     if phase in _ITEM_PHASES:
-        fmt = f" (format: {item_format})" if item_format else ""
-        # Z07: the drafted stem is DATA under the trusted heading; withheld,
-        # the heading carries the server's own line
-        shown = (
-            item_text(item_prompt, source=CHECK_ITEM_SOURCE)
-            if item_prompt and item_visible(rung, answer_released)  # non-empty: checked above
-            else ITEM_WITHHELD
-        )
-        lines.append(f"[CHECK ITEM]{fmt}\n{shown}")
+        lines.append(_check_item_line(item_prompt, item_format, rung, answer_released))
     return "\n".join(lines)
 
 
@@ -901,7 +970,7 @@ _ENVELOPE_OPEN = "<<student_text {nonce}>>"
 _ENVELOPE_CLOSE = "<<end_student_text {nonce}>>"
 def new_nonce() -> str:
     """A fresh, unguessable envelope delimiter (one per model call)."""
-    return secrets.token_hex(12)
+    return secrets.token_hex(_NONCE_BYTES)
 
 
 def student_envelope(text: str, *, nonce: str) -> str:
@@ -1082,7 +1151,7 @@ _V2_PROMPT_HASH = hashlib.sha256(
         + "\x00"
         + _TOOL_DEFS_JSON
     ).encode("utf-8")
-).hexdigest()[:12]
+).hexdigest()[:_PROMPT_HASH_CHARS]
 
 
 def variant_run_args(v2: bool) -> dict:
@@ -1191,7 +1260,7 @@ def _native_output_when_toolless(
 # ── Agent ──────────────────────────────────────────────────────────────────
 
 loop_tutor_agent = Agent[SaplingDeps, LoopTurnOut](
-    model=model_for("loop_tutor"),
+    model=model_for(_STANDARD_SLOT),
     deps_type=SaplingDeps,
     # spec §13 A121: the validator runs inside the output function (see above),
     # and a flag-on run swaps in LOOP_V2_OUTPUT (`variant_run_args`)
@@ -1202,7 +1271,7 @@ loop_tutor_agent = Agent[SaplingDeps, LoopTurnOut](
     # after the opener has one; instructions ride every request of every run
     # (history turns, output retries, the stream, the tool-less continuation).
     instructions=_LOOP_SYSTEM_PROMPT,
-    metadata={"prompt_version": _PROMPT_HASH, "agent": "loop_tutor"},
+    metadata={"prompt_version": _PROMPT_HASH, "agent": _STANDARD_SLOT},
     tools=_build_tools(learning_loop=True),
     capabilities=[
         PrepareTools(_tools_until_first_round),
