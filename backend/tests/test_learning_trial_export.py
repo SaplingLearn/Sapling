@@ -163,6 +163,13 @@ def test_main_is_a_dry_run_by_default_and_writes_only_on_out(monkeypatch, tmp_pa
     assert len(read_csv(target)) == len(_build()[0])
 
 
+def test_main_refuses_an_unsafe_label():
+    """The arm label is spliced into a PostgREST filter: a filter-injection
+    shaped label is refused before any read."""
+    with pytest.raises(SystemExit):
+        export.main(["--arm-label", "x),or(", "--treatment-variant", "A"])
+
+
 def test_the_export_carries_the_pose_record_and_the_skip_reasons():
     """A126's record of each pose leaves as enums, rounded durations and a count:
     how the item matched the pretest item and where it came from, and the answer
