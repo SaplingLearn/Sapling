@@ -279,6 +279,10 @@ describe("what the redesign adds, end to end", () => {
     expect(bar.textContent).toContain("1 Selected");
 
     fireEvent.click(within(bar).getByText("Clear"));
-    expect(screen.queryByTestId("library-bulk-bar")).toBeNull();
+    // It plays its exit before it goes (BulkBarReveal), still reading what it
+    // read, and then it is gone.
+    expect(screen.getByTestId("library-bulk-reveal").dataset.phase).toBe("out");
+    expect(bar.textContent).toContain("1 Selected");
+    await waitFor(() => expect(screen.queryByTestId("library-bulk-bar")).toBeNull());
   });
 });

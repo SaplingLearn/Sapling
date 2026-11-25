@@ -1,7 +1,8 @@
 "use client";
 /**
  * The three small regions the Library shows around its list: the bulk-action
- * bar, the empty state, and the undo toast.
+ * bar (and the reveal that animates it in and out), the empty state, and the
+ * undo toast.
  */
 import React from "react";
 
@@ -9,13 +10,99 @@ import type { DocFolder } from "@/lib/types";
 import type { EnrolledCourse } from "@/lib/api";
 import { courseLabel } from "./libraryModel";
 import {
-  FolderIcon, Glyph, MENU_HEADING, MENU_SURFACE,
+  FolderIcon, Glyph, MENU_HEADING, MENU_IN, MENU_OUT, MENU_SURFACE,
 } from "./primitives";
+
+/**
+ * The selection bar's entrance and exit. The same curves the Library already
+ * uses: the 0.2/0.7 ease-out every entrance runs on, and the ease-in its exits
+ * (`sapRowOut`, `sapModalOut`, `sapMenuOut`) leave on. The timers below match
+ * the keyframes, so the bar is unmounted the moment its exit finishes.
+ */
+export const BULK_IN_MS = 220;
+export const BULK_OUT_MS = 160;
+const BULK_IN_EASE = "cubic-bezier(0.2, 0.7, 0.2, 1)";
+const BULK_OUT_EASE = "cubic-bezier(0.4, 0, 1, 1)";
+
+/** `in` and `out` are animating; `idle` is the bar at rest, with no animation. */
+export type RevealPhase = "in" | "idle" | "out";
+
+/**
+ * Keeps the selection bar on screen through its exit, and opens and closes the
+ * row it sits in so the list below glides rather than jumps.
+ *
+ * Two wrappers, both inert at rest: the outer is a one-row grid whose track
+ * tweens 0fr <-> 1fr (`sapBulkRow*`), the inner clips the bar while the track
+ * is short and fades/drops it (`sapBulk*`). At rest the animation and the clip
+ * are removed, so the bar's look, position and spacing are exactly the bar
+ * alone — and the Move To menu can hang below it unclipped.
+ *
+ * While the bar leaves it shows what it showed last ("2 Selected"), not the
+ * cleared selection. A count change while open re-renders the same element
+ * with the same animation, so it never replays the entrance. Reduced motion is
+ * the Library's own rule in library-notes.css: every animation under
+ * `[data-sap-surface]` runs for 1ms, so both ends snap.
+ */
+export function BulkBarReveal({ open, children }: { open: boolean; children: React.ReactNode }) {
+  const [phase, setPhase] = React.useState<RevealPhase | null>(open ? "in" : null);
+  const [wasOpen, setWasOpen] = React.useState(open);
+  const [held, setHeld] = React.useState<React.ReactNode>(open ? children : null);
+
+  // React's "adjust state when a prop changes" pattern: no extra commit, so
+  // the frame the selection clears already renders the exit, never a gap.
+  if (open !== wasOpen) {
+    setWasOpen(open);
+    setPhase(open ? "in" : "out");
+  }
+  if (open && held !== children) setHeld(children);
+
+  React.useEffect(() => {
+    if (phase === "in") {
+      const t = setTimeout(() => setPhase("idle"), BULK_IN_MS);
+      return () => clearTimeout(t);
+    }
+    if (phase === "out") {
+      const t = setTimeout(() => { setPhase(null); setHeld(null); }, BULK_OUT_MS);
+      return () => clearTimeout(t);
+    }
+  }, [phase]);
+
+  if (phase === null) return null;
+  const moving = phase !== "idle";
+  const [ms, ease] = phase === "out" ? [BULK_OUT_MS, BULK_OUT_EASE] : [BULK_IN_MS, BULK_IN_EASE];
+  const dir = phase === "out" ? "Out" : "In";
+  return (
+    <div
+      data-testid="library-bulk-reveal"
+      data-phase={phase}
+      style={{
+        // The column is the full width, as the bar alone was (LibraryBody's
+        // stack sizes its grid the same way).
+        display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gridTemplateRows: "1fr",
+        ...(moving ? { animation: `sapBulkRow${dir} ${ms}ms ${ease} both` } : null),
+      }}
+    >
+      {/* The clip is what lets the row close past the bar's own height; a
+          clipping grid item may shrink to 0, so no min-height is needed. */}
+      <div style={{
+        ...(moving ? {
+          overflow: "hidden", transformOrigin: "50% 0",
+          animation: `sapBulk${dir} ${ms}ms ${ease} both`,
+        } : null),
+        ...(phase === "out" ? { pointerEvents: "none" as const } : null),
+      }}>
+        {open ? children : held}
+      </div>
+    </div>
+  );
+}
 
 export interface BulkBarProps {
   count: number;
   isTrash: boolean;
   menuOpen: boolean;
+  /** The Move To menu is playing its exit, as every Library menu does. */
+  menuClosing?: boolean;
   onMenu: (open: boolean) => void;
   courses: EnrolledCourse[];
   folders: DocFolder[];
@@ -29,8 +116,8 @@ export interface BulkBarProps {
 
 export function BulkBar(props: BulkBarProps) {
   const {
-    count, isTrash, menuOpen, onMenu, courses, folders, onMoveCourse, onMoveFolder,
-    onRestore, onDelete, deleteConfirm, onClear,
+    count, isTrash, menuOpen, menuClosing = false, onMenu, courses, folders,
+    onMoveCourse, onMoveFolder, onRestore, onDelete, deleteConfirm, onClear,
   } = props;
 
   const deleteLabel = isTrash
@@ -61,9 +148,11 @@ export function BulkBar(props: BulkBarProps) {
             <Glyph name="chevronDown" size={10} />
           </button>
           {menuOpen && (
-            <div style={{
+            <div data-testid="library-bulk-menu" style={{
               position: "absolute", right: 0, top: 40, width: 240, color: "#1A1814",
               zIndex: 6, maxHeight: 320, overflowY: "auto", ...MENU_SURFACE,
+              // It hangs from the Move To button, so it grows from that corner.
+              transformOrigin: "top right", animation: menuClosing ? MENU_OUT : MENU_IN,
             }}>
               <span style={MENU_HEADING}>Course</span>
               {courses.map(c => (

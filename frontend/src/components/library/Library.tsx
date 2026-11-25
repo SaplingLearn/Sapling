@@ -22,7 +22,7 @@ import { useToast } from "../ToastProvider";
 import { useUser } from "@/context/UserContext";
 
 import { DocMenu, menuPositionFor } from "./DocMenu";
-import { BulkBar, UndoToast } from "./LibraryBits";
+import { BulkBar, BulkBarReveal, UndoToast } from "./LibraryBits";
 import { LibraryBody } from "./LibraryBody";
 import { LibraryHeader } from "./LibraryHeader";
 import { LibraryScopeBar } from "./LibraryScopeBar";
@@ -259,11 +259,14 @@ export function Library() {
           }}
         >
 
-          {scope.checkedIds.length > 0 && (
+          {/* Mounted through its exit: it animates in and out, and the list
+              below glides with it (see BulkBarReveal). */}
+          <BulkBarReveal open={scope.checkedIds.length > 0}>
             <BulkBar
               count={scope.checkedIds.length}
               isTrash={scope.isTrash}
               menuOpen={ui.bulkMenu}
+              menuClosing={ui.closing}
               onMenu={ui.openBulkMenu}
               courses={courses}
               folders={data.folders}
@@ -284,7 +287,7 @@ export function Library() {
               deleteConfirm={ui.bulkConfirm}
               onClear={ui.clearChecked}
             />
-          )}
+          </BulkBarReveal>
 
           <LibraryBody
             view={ui.view}

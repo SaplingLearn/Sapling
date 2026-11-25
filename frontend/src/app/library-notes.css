@@ -52,6 +52,15 @@
    across. The slide owns the frame; the per-row entrance returns next time the
    list is built for any other reason. */
 [data-sliding] [role="row"], [data-sliding] [data-card] { animation: none !important; }
+/* The selection bar ("2 Selected · Move To · …"). It used to pop in and out on
+   one frame, shoving the list down and back. Now its row opens (the grid track
+   tweens 0fr -> 1fr, so the list below glides instead of jumping) while the bar
+   itself drops in like a menu does; leaving runs the same two backwards. Only
+   the in-between frames are new: both ends are the bar exactly as designed. */
+@keyframes sapBulkRowIn  { from { grid-template-rows: 0fr; } to { grid-template-rows: 1fr; } }
+@keyframes sapBulkRowOut { from { grid-template-rows: 1fr; } to { grid-template-rows: 0fr; } }
+@keyframes sapBulkIn  { from { opacity: 0; transform: translateY(-6px) scale(0.98); } to { opacity: 1; transform: none; } }
+@keyframes sapBulkOut { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateY(-6px) scale(0.98); } }
 @keyframes sapFadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 @keyframes sapSlideUp { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { [data-sap-surface], [data-sap-surface] * { animation-duration: 1ms !important; animation-delay: 0ms !important; } }
