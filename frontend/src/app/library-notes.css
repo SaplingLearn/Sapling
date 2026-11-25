@@ -67,6 +67,14 @@
 @keyframes sapBulkRowOut { from { grid-template-rows: 1fr; } to { grid-template-rows: 0fr; } }
 @keyframes sapBulkIn  { from { opacity: 0; transform: translateY(-6px) scale(0.98); } to { opacity: 1; transform: none; } }
 @keyframes sapBulkOut { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateY(-6px) scale(0.98); } }
+/* The List / Panel switcher's pill slides to the chosen tab (ViewSwitcher.tsx)
+   on the Library's 220ms entrance curve, and the labels recolour with it.
+   Transitions, not animations, so the reduced-motion rule below cannot reach
+   them; they carry their own. Scoped under the surface so they outrank its
+   `[data-sap-surface] *` scrollbar transition. */
+[data-sap-surface] .sapSwitchThumb { transition: transform 220ms cubic-bezier(0.2, 0.7, 0.2, 1), width 220ms cubic-bezier(0.2, 0.7, 0.2, 1); }
+[data-sap-surface] .sapSwitchTab { transition: color 220ms cubic-bezier(0.2, 0.7, 0.2, 1); }
+@media (prefers-reduced-motion: reduce) { [data-sap-surface] .sapSwitchThumb, [data-sap-surface] .sapSwitchTab { transition: none; } }
 @keyframes sapFadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 @keyframes sapSlideUp { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { [data-sap-surface], [data-sap-surface] * { animation-duration: 1ms !important; animation-delay: 0ms !important; } }

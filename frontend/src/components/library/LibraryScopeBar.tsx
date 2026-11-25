@@ -14,6 +14,7 @@ import { Icon } from "../Icon";
 import {
   FONT_SERIF, Glyph, MENU_IN, MENU_OUT, MENU_SURFACE, MenuDivider, MenuScrim, TrashIcon,
 } from "./primitives";
+import { ViewSwitcher, type ViewSwitcherOption } from "./ViewSwitcher";
 
 export interface ScopeOption {
   /** "All Documents", a course code, or "No Course". */
@@ -167,54 +168,32 @@ function ScopeSwitcher({
   );
 }
 
-/** List ⇄ Panel. */
-function ViewToggle({
-  view, onView,
-}: {
-  view: "list" | "panel";
-  onView: (v: "list" | "panel") => void;
-}) {
-  const tab = (key: "list" | "panel", label: string, icon: React.ReactNode) => (
-    <button
-      role="tab"
-      data-testid={`library-view-${key}`}
-      aria-selected={view === key}
-      onClick={() => onView(key)}
-      style={{
-        display: "inline-flex", alignItems: "center", gap: 7, border: 0, padding: "0 14px",
-        borderRadius: 9, font: "inherit", fontSize: 14, fontWeight: 600, cursor: "pointer",
-        background: view === key ? "#FDFCF9" : "transparent",
-        color: view === key ? "#1A1814" : "#6F6857",
-        boxShadow: view === key ? "0 1px 2px rgba(25,37,11,0.10)" : "none",
-      }}
-    >
-      {icon}
-      {label}
-    </button>
-  );
-  return (
-    <div role="tablist" aria-label="Layout" style={{
-      display: "flex", gap: 2, marginLeft: 16, padding: 4, height: 40, flexShrink: 0,
-      boxSizing: "border-box", background: "#F4F1EA", borderRadius: 12,
-    }}>
-      {tab("list", "List", (
-        <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-          <rect x="1" y="2" width="14" height="2.4" rx="1" />
-          <rect x="1" y="6.8" width="14" height="2.4" rx="1" />
-          <rect x="1" y="11.6" width="14" height="2.4" rx="1" />
-        </svg>
-      ))}
-      {tab("panel", "Panel", (
-        <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-          <rect x="1" y="1" width="6" height="6" rx="1.4" />
-          <rect x="9" y="1" width="6" height="6" rx="1.4" />
-          <rect x="1" y="9" width="6" height="6" rx="1.4" />
-          <rect x="9" y="9" width="6" height="6" rx="1.4" />
-        </svg>
-      ))}
-    </div>
-  );
-}
+/** List ⇄ Panel: the two layouts, as the switcher's options. */
+const VIEW_OPTIONS: ViewSwitcherOption<"list" | "panel">[] = [
+  {
+    key: "list",
+    label: "List",
+    icon: (
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+        <rect x="1" y="2" width="14" height="2.4" rx="1" />
+        <rect x="1" y="6.8" width="14" height="2.4" rx="1" />
+        <rect x="1" y="11.6" width="14" height="2.4" rx="1" />
+      </svg>
+    ),
+  },
+  {
+    key: "panel",
+    label: "Panel",
+    icon: (
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+        <rect x="1" y="1" width="6" height="6" rx="1.4" />
+        <rect x="9" y="1" width="6" height="6" rx="1.4" />
+        <rect x="1" y="9" width="6" height="6" rx="1.4" />
+        <rect x="9" y="9" width="6" height="6" rx="1.4" />
+      </svg>
+    ),
+  },
+];
 
 /** Rename / Delete Folder, shown only while a folder is open. */
 function FolderActions({ onRename, onDelete }: { onRename: () => void; onDelete: () => void }) {
@@ -355,7 +334,14 @@ export function LibraryScopeBar(props: LibraryScopeBarProps) {
         </span>
       )}
 
-      <ViewToggle view={view} onView={onView} />
+      <ViewSwitcher
+        options={VIEW_OPTIONS}
+        value={view}
+        onChange={onView}
+        label="Layout"
+        testIdPrefix="library-view"
+        style={{ marginLeft: 16 }}
+      />
     </div>
   );
 }
