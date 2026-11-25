@@ -5650,8 +5650,9 @@ class TestMcReasonEval:
         McOptionsValid (every recorded mc_reason draft passes every A37 option
         rule) and FinalAnswerValid (A34). The yields (McReasonValid,
         McCorrectNotLongest) are measurements a re-record moves, not
-        contracts, so they are not pinned here. This stays red until the owed
-        Claude re-record: the current baseline's McOptionsValid is 0.875."""
+        contracts, so they are not pinned here. The Claude recording of
+        2026-11-24 scored McOptionsValid 0.875; the three-run re-record of
+        2026-11-25 (after the option-less retry) holds both at 1.0."""
         baselines = pathlib.Path(__file__).parent / "evals" / "baselines.json"
         scores = json.loads(baselines.read_text())["check_items"]
         assert scores["McOptionsValidEvaluator"] == 1.0

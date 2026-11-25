@@ -9,11 +9,11 @@
         ],
         "concept": "Limits",
         "difficulty": 1,
-        "final_answer": "the value the function approaches as the input approaches a point",
+        "final_answer": "the value the function approaches as the input approaches the point",
         "format": "free",
         "options": [],
-        "prompt": "What does a limit of a function describe?",
-        "reference_answer": "A limit describes the value a function approaches as the input approaches a given point. Final answer: the value the function approaches as the input approaches a point.",
+        "prompt": "In your own words, what does a limit of a function at a point describe?",
+        "reference_answer": "A limit describes the value a function approaches as the input approaches a given point. Final answer: the value the function approaches as the input approaches the point.",
         "rubric": [
           "States that a limit is a value the function approaches",
           "Mentions the input approaching a point"
@@ -24,7 +24,7 @@
           "limit_is_value_at_point"
         ],
         "wrong_texts": [
-          "Says the limit is just the function's value at the point."
+          "Claims the limit must equal the function's value at the point itself."
         ]
       },
       {
@@ -32,27 +32,26 @@
         "canonical_answer": "",
         "chunk_ids": [
           "eval-doc-1:c0",
-          "eval-doc-1:c1",
-          "eval-doc-1:c2"
+          "eval-doc-1:c1"
         ],
         "concept": "Limits",
         "difficulty": 2,
-        "final_answer": "the derivative is defined as a limit of difference quotients",
+        "final_answer": "the derivative definition is built on a limit",
         "format": "free",
         "options": [],
-        "prompt": "Why do the notes treat limits as the foundation for defining the derivative? Answer in 1-2 sentences.",
-        "reference_answer": "The derivative is defined as a limit of difference quotients, so it depends on the limit idea to describe the slope as the input change shrinks. Final answer: the derivative is defined as a limit of difference quotients.",
+        "prompt": "Why do we need limits before we can define the slope of a tangent line at a single point?",
+        "reference_answer": "The derivative is defined as a limit of difference quotients, so limits give a way to make sense of a rate of change at one point. Final answer: the derivative definition is built on a limit.",
         "rubric": [
-          "Links the derivative definition to difference quotients",
-          "States that the derivative is obtained through a limit"
+          "Links limits to the definition of the derivative",
+          "Mentions difference quotients or the tangent slope"
         ],
         "stepwise": false,
         "tolerance": "",
         "wrong_keys": [
-          "derivative_independent_of_limits"
+          "limits_unrelated_to_derivative"
         ],
         "wrong_texts": [
-          "Thinks derivatives are defined without limits."
+          "Treats limits as a separate topic unrelated to the derivative definition."
         ]
       },
       {
@@ -64,22 +63,22 @@
         ],
         "concept": "Limits",
         "difficulty": 3,
-        "final_answer": "use the value the quotients approach rather than evaluating at zero change",
+        "final_answer": "the claim is false, since derivatives are defined as limits",
         "format": "free",
         "options": [],
-        "prompt": "A difference quotient cannot be evaluated directly when the change in input is exactly zero. How does the limit idea resolve this for finding a slope at a point?",
-        "reference_answer": "Instead of setting the input change to zero, we ask what value the difference quotients approach as the input approaches the point. That approached value is the slope at the point. Final answer: use the value the quotients approach rather than evaluating at zero change.",
+        "prompt": "A classmate says limits are just a side topic that could be skipped without affecting derivatives. Evaluate this claim using the course's description of derivatives.",
+        "reference_answer": "The claim is wrong. The derivative is defined as a limit of difference quotients, so without limits the derivative has no definition. Final answer: the claim is false, since derivatives are defined as limits.",
         "rubric": [
-          "Says the limit uses the value approached, not the value at zero change",
-          "Connects this value to the slope at the point"
+          "Rejects the claim",
+          "Cites that derivatives are defined as limits of difference quotients"
         ],
         "stepwise": false,
         "tolerance": "",
         "wrong_keys": [
-          "plug_in_zero"
+          "limits_optional"
         ],
         "wrong_texts": [
-          "Believes the quotient is simply evaluated at zero change."
+          "Believes derivatives can be defined without limits."
         ]
       },
       {
@@ -94,11 +93,10 @@
         "format": "teachback",
         "options": [],
         "prompt": "Explain to a classmate who missed the lecture what a limit is.",
-        "reference_answer": "A limit is the value a function approaches as its input gets close to a point. It is the foundation of the derivative definition. Final answer: a limit is the value a function approaches as the input approaches a point.",
+        "reference_answer": "A limit is the value a function approaches as its input approaches a point. It is the foundation of the derivative definition. Final answer: a limit is the value a function approaches as the input approaches a point.",
         "rubric": [
           "Defines limit as a value approached",
-          "Mentions that input approaches a point",
-          "Mentions its role in derivative definition"
+          "Mentions input approaching a point"
         ],
         "stepwise": false,
         "tolerance": "",
@@ -106,7 +104,7 @@
           "limit_is_value_at_point"
         ],
         "wrong_texts": [
-          "Equates the limit with the function's value at the point."
+          "Says a limit is just the function's value at the point."
         ]
       },
       {
@@ -118,49 +116,49 @@
         ],
         "concept": "Limits",
         "difficulty": 2,
-        "final_answer": "derivatives are limits of difference quotients",
+        "final_answer": "the derivative is the limit of difference quotients",
         "format": "teachback",
         "options": [],
-        "prompt": "Explain to a classmate who missed the lecture how limits connect to derivatives.",
-        "reference_answer": "The derivative is defined as a limit of difference quotients, so limits are what let us define instantaneous rate of change. Final answer: derivatives are limits of difference quotients.",
+        "prompt": "Explain to a classmate who missed the lecture how limits are used when we define the derivative.",
+        "reference_answer": "The derivative is defined by taking the limit of difference quotients, so limits are the foundation of the derivative. Final answer: the derivative is the limit of difference quotients.",
         "rubric": [
-          "Says the derivative is defined by a limit",
-          "Mentions difference quotients"
+          "Mentions difference quotients",
+          "States the derivative is defined as a limit"
         ],
         "stepwise": false,
         "tolerance": "",
         "wrong_keys": [
-          "derivative_independent_of_limits"
+          "limits_unrelated_to_derivative"
         ],
         "wrong_texts": [
-          "Treats derivatives as unrelated to limits."
+          "Does not connect limits to the derivative definition."
         ]
       },
       {
         "answer_kind": "free",
         "canonical_answer": "",
         "chunk_ids": [
-          "eval-doc-1:c2",
-          "eval-doc-1:c1"
+          "eval-doc-1:c1",
+          "eval-doc-1:c2"
         ],
         "concept": "Limits",
         "difficulty": 3,
-        "final_answer": "the limit of difference quotients turns average rates into an instantaneous rate",
+        "final_answer": "without limits the derivative would have no definition",
         "format": "teachback",
         "options": [],
-        "prompt": "Explain to a classmate who missed the lecture why instantaneous rate of change needs limits rather than just a ratio of changes.",
-        "reference_answer": "A ratio of changes gives an average rate over an interval. To get the rate at a single point we take the limit of the difference quotients as the interval shrinks. Final answer: the limit of difference quotients turns average rates into an instantaneous rate.",
+        "prompt": "Explain to a classmate who missed the lecture why limits are called the foundation of calculus ideas like the tangent slope, and what would be missing without them.",
+        "reference_answer": "The tangent slope is defined as a limit of difference quotients, so limits are what make a rate of change at one point meaningful. Without them the derivative would lack a definition. Final answer: without limits the derivative would have no definition.",
         "rubric": [
-          "Distinguishes an average rate from an instantaneous rate",
-          "Says a limit of difference quotients gives the instantaneous rate"
+          "Connects tangent slope to a limit of difference quotients",
+          "States derivative would be undefined without limits"
         ],
         "stepwise": false,
         "tolerance": "",
         "wrong_keys": [
-          "average_equals_instantaneous"
+          "limits_optional"
         ],
         "wrong_texts": [
-          "Treats the average rate over an interval as the instantaneous rate."
+          "Thinks derivatives are independent of limits."
         ]
       },
       {
@@ -171,39 +169,39 @@
         ],
         "concept": "Limits",
         "difficulty": 1,
-        "final_answer": "The value the function approaches near the point",
+        "final_answer": "The value approached as input nears the point",
         "format": "mc_reason",
         "options": [
           {
             "is_correct": true,
             "misconception_key": null,
             "misconception_text": null,
-            "text": "The value the function approaches near the point"
+            "text": "The value approached as input nears the point"
           },
           {
             "is_correct": false,
             "misconception_key": "limit_is_value_at_point",
             "misconception_text": "Confuses the limit with the function's value at the point.",
-            "text": "The function's exact value at the point"
+            "text": "The function's value exactly at the point"
           },
           {
             "is_correct": false,
-            "misconception_key": "limit_is_slope",
-            "misconception_text": "Confuses a limit with a slope.",
-            "text": "The steepest slope of the function"
+            "misconception_key": "limit_is_derivative",
+            "misconception_text": "Confuses the limit with the derivative.",
+            "text": "The slope of the tangent line"
           },
           {
             "is_correct": false,
             "misconception_key": "limit_is_maximum",
-            "misconception_text": "Confuses a limit with a maximum value.",
-            "text": "The largest output the function reaches"
+            "misconception_text": "Treats the limit as a maximum value.",
+            "text": "The largest output the function takes"
           }
         ],
-        "prompt": "Which option best states what a limit of a function at a point gives? Pick one and give your reason.",
-        "reference_answer": "The notes define a limit by what the function approaches as the input approaches a point, not by its value at the point. Final answer: The value the function approaches near the point.",
+        "prompt": "Which option best describes what a limit of a function at a point is? Pick one and give your reason.",
+        "reference_answer": "A limit concerns where the outputs head as the input gets close to a point, and it underlies the derivative definition. Final answer: The value approached as input nears the point.",
         "rubric": [
-          "Refers to the function approaching a value as the input approaches the point",
-          "Does not equate the limit to the value at the point or a slope"
+          "Says a limit is about approaching a value",
+          "Refers to input nearing a point"
         ],
         "stepwise": false,
         "tolerance": "",
@@ -218,14 +216,14 @@
         ],
         "concept": "Limits",
         "difficulty": 2,
-        "final_answer": "Taking their limit",
+        "final_answer": "Taking a limit",
         "format": "mc_reason",
         "options": [
           {
             "is_correct": true,
             "misconception_key": null,
             "misconception_text": null,
-            "text": "Taking their limit"
+            "text": "Taking a limit"
           },
           {
             "is_correct": false,
@@ -236,21 +234,21 @@
           {
             "is_correct": false,
             "misconception_key": "multiply_by_input",
-            "misconception_text": "Thinks a multiplication produces the derivative.",
+            "misconception_text": "Believes a multiplication gives the derivative.",
             "text": "Multiplying by the input"
           },
           {
             "is_correct": false,
-            "misconception_key": "confuses_with_chain_rule",
-            "misconception_text": "Confuses the definition with composition.",
-            "text": "Composing with another function"
+            "misconception_key": "limit_is_maximum",
+            "misconception_text": "Treats the derivative as a maximum of the quotients.",
+            "text": "Taking the maximum"
           }
         ],
-        "prompt": "The derivative is built from difference quotients. Which operation turns them into the derivative? Pick one and give your reason.",
-        "reference_answer": "The notes define the derivative as a limit of difference quotients, giving the tangent slope. Final answer: Taking their limit.",
+        "prompt": "The derivative is defined using difference quotients. What operation is applied to the difference quotients to get the derivative? Pick one and give your reason.",
+        "reference_answer": "The notes define the derivative as a limit of difference quotients, giving the tangent slope. Final answer: Taking a limit.",
         "rubric": [
-          "States the derivative is defined as a limit of difference quotients",
-          "Does not suggest summing or composing"
+          "States the derivative is defined via a limit of difference quotients",
+          "Links to tangent slope or instantaneous rate"
         ],
         "stepwise": false,
         "tolerance": "",
@@ -266,39 +264,39 @@
         ],
         "concept": "Limits",
         "difficulty": 3,
-        "final_answer": "A limit as the points merge",
+        "final_answer": "A limit of difference quotients",
         "format": "mc_reason",
         "options": [
           {
             "is_correct": true,
             "misconception_key": null,
             "misconception_text": null,
-            "text": "A limit as the points merge"
+            "text": "A limit of difference quotients"
           },
           {
             "is_correct": false,
-            "misconception_key": "needs_composition",
-            "misconception_text": "Thinks a composite function is needed.",
-            "text": "A second composite function"
+            "misconception_key": "single_quotient",
+            "misconception_text": "Thinks one difference quotient gives an instantaneous rate.",
+            "text": "A single difference quotient"
           },
           {
             "is_correct": false,
-            "misconception_key": "larger_gap",
-            "misconception_text": "Thinks widening the interval helps.",
-            "text": "A larger gap between points"
+            "misconception_key": "limit_is_value_at_point",
+            "misconception_text": "Confuses function value with rate of change.",
+            "text": "The function's value at the point"
           },
           {
             "is_correct": false,
-            "misconception_key": "sum_of_slopes",
-            "misconception_text": "Thinks adding slopes gives instantaneous slope.",
-            "text": "A sum of several slopes"
+            "misconception_key": "confuses_chain_rule",
+            "misconception_text": "Confuses composition with instantaneous rate.",
+            "text": "A composite of two functions"
           }
         ],
-        "prompt": "A student computes only the average slope between two separate points and calls it the slope at a point. What is missing? Pick one and give your reason.",
-        "reference_answer": "The average slope is a difference quotient; the instantaneous slope is its limit as the input change approaches zero, i.e., the tangent slope. Final answer: A limit as the points merge.",
+        "prompt": "A student wants a rate of change at a single instant, not over an interval. Which tool from the course makes this meaningful? Pick one and give your reason.",
+        "reference_answer": "Instantaneous rate of change is the derivative, defined as a limit of difference quotients; a limit lets the interval shrink to a point. Final answer: A limit of difference quotients.",
         "rubric": [
-          "Notes a difference quotient is only an average slope",
-          "Says a limit gives the tangent or instantaneous slope"
+          "Identifies instantaneous rate as the derivative",
+          "Explains it arises from a limit of difference quotients"
         ],
         "stepwise": false,
         "tolerance": "",
@@ -313,14 +311,14 @@
         ],
         "concept": "Derivatives",
         "difficulty": 1,
-        "final_answer": "instantaneous rate of change",
+        "final_answer": "the instantaneous rate of change",
         "format": "free",
         "options": [],
         "prompt": "What does a derivative measure?",
-        "reference_answer": "A derivative measures instantaneous rate of change, the slope of the tangent line. Final answer: instantaneous rate of change.",
+        "reference_answer": "A derivative is the instantaneous rate of change, i.e. the slope of the tangent line. Final answer: the instantaneous rate of change.",
         "rubric": [
-          "Mentions instantaneous rate of change",
-          "Optionally mentions tangent slope"
+          "States instantaneous rate of change",
+          "May mention tangent slope"
         ],
         "stepwise": false,
         "tolerance": "",
@@ -328,7 +326,7 @@
           "average_rate"
         ],
         "wrong_texts": [
-          "Describes an average rate over an interval."
+          "Describes it as an average rate over an interval."
         ]
       },
       {
@@ -339,22 +337,22 @@
         ],
         "concept": "Derivatives",
         "difficulty": 2,
-        "final_answer": "it is the limit of difference quotients",
+        "final_answer": "the slope of the tangent line",
         "format": "free",
         "options": [],
-        "prompt": "How is the derivative defined in terms of difference quotients?",
-        "reference_answer": "The derivative is the limit of the difference quotients. Final answer: it is the limit of difference quotients.",
+        "prompt": "On a graph, what geometric quantity at a point corresponds to the derivative there, and how is it defined?",
+        "reference_answer": "It is the slope of the tangent line, defined as a limit of difference quotients. Final answer: the slope of the tangent line.",
         "rubric": [
-          "Says the derivative is a limit",
-          "Refers to difference quotients"
+          "Names slope of the tangent line",
+          "Mentions limit of difference quotients"
         ],
         "stepwise": false,
         "tolerance": "",
         "wrong_keys": [
-          "derivative_is_single_quotient"
+          "secant_slope"
         ],
         "wrong_texts": [
-          "Says the derivative is just one difference quotient."
+          "Says it is the slope of a line through two distinct points."
         ]
       },
       {
@@ -365,22 +363,22 @@
         ],
         "concept": "Derivatives",
         "difficulty": 3,
-        "final_answer": "the slope of the tangent line at that point",
+        "final_answer": "take the limit of the difference quotients",
         "format": "free",
         "options": [],
-        "prompt": "Geometrically, what does the derivative at a point tell you about the graph, and how does that follow from its definition?",
-        "reference_answer": "It gives the slope of the tangent line at the point, since the difference quotients are slopes of lines through nearby points and their limit is the tangent slope. Final answer: the slope of the tangent line at that point.",
+        "prompt": "A difference quotient gives a rate of change over an interval. What must happen to turn it into an instantaneous rate, and why does that give the derivative?",
+        "reference_answer": "Take the limit of the difference quotients, which is the derivative's definition, giving the instantaneous rate at a point. Final answer: take the limit of the difference quotients.",
         "rubric": [
-          "States the derivative is the tangent slope",
-          "Explains it arises as the limit of difference quotient slopes"
+          "Says take a limit",
+          "Connects result to instantaneous rate or tangent slope"
         ],
         "stepwise": false,
         "tolerance": "",
         "wrong_keys": [
-          "secant_slope"
+          "average_rate"
         ],
         "wrong_texts": [
-          "Says the derivative is the slope between two distinct points."
+          "Believes the difference quotient itself is the instantaneous rate."
         ]
       },
       {
@@ -395,10 +393,10 @@
         "format": "teachback",
         "options": [],
         "prompt": "Explain to a classmate who missed the lecture what a derivative is.",
-        "reference_answer": "A derivative is the instantaneous rate of change, equal to the slope of the tangent line, defined as a limit of difference quotients. Final answer: the derivative is the instantaneous rate of change.",
+        "reference_answer": "A derivative is the instantaneous rate of change, the slope of the tangent line, defined as a limit of difference quotients. Final answer: the derivative is the instantaneous rate of change.",
         "rubric": [
           "States instantaneous rate of change",
-          "Mentions tangent slope or limit of difference quotients"
+          "Mentions tangent slope or limit"
         ],
         "stepwise": false,
         "tolerance": "",
@@ -406,34 +404,33 @@
           "average_rate"
         ],
         "wrong_texts": [
-          "Confuses it with an average rate of change."
+          "Confuses the derivative with an average rate of change."
         ]
       },
       {
         "answer_kind": "free",
         "canonical_answer": "",
         "chunk_ids": [
-          "eval-doc-1:c2",
-          "eval-doc-1:c0"
+          "eval-doc-1:c2"
         ],
         "concept": "Derivatives",
         "difficulty": 2,
-        "final_answer": "take the limit of the difference quotients",
+        "final_answer": "the derivative is the limit of difference quotients",
         "format": "teachback",
         "options": [],
-        "prompt": "Explain to a classmate who missed the lecture how the derivative is obtained from difference quotients.",
-        "reference_answer": "A difference quotient is a slope between nearby inputs. Taking its limit gives the derivative, the tangent slope. Final answer: take the limit of the difference quotients.",
+        "prompt": "Explain to a classmate who missed the lecture how the derivative is defined from difference quotients.",
+        "reference_answer": "Difference quotients give slopes over intervals; taking their limit gives the slope of the tangent line, the derivative. Final answer: the derivative is the limit of difference quotients.",
         "rubric": [
-          "Describes the difference quotient as a slope",
-          "Says the limit gives the derivative"
+          "Mentions difference quotients",
+          "Says limit gives tangent slope"
         ],
         "stepwise": false,
         "tolerance": "",
         "wrong_keys": [
-          "derivative_is_single_quotient"
+          "no_limit_step"
         ],
         "wrong_texts": [
-          "Stops at one difference quotient without a limit."
+          "Omits the limit and stops at a difference quotient."
         ]
       },
       {
@@ -444,22 +441,22 @@
         ],
         "concept": "Derivatives",
         "difficulty": 3,
-        "final_answer": "the limit gives one quantity that is both instantaneous rate and tangent slope",
+        "final_answer": "both are the limit of difference quotients",
         "format": "teachback",
         "options": [],
-        "prompt": "Explain to a classmate who missed the lecture why the derivative can be called both a rate of change and a tangent slope.",
-        "reference_answer": "Difference quotients are both average rates and slopes of lines. Their limit is the instantaneous rate, which is the slope of the tangent line. Final answer: the limit gives one quantity that is both instantaneous rate and tangent slope.",
+        "prompt": "Explain to a classmate who missed the lecture why the derivative can be seen both as a rate of change and as a geometric slope, and what links them.",
+        "reference_answer": "Both views come from the same limit of difference quotients: instantaneous rate of change and tangent slope are the same quantity. Final answer: both are the limit of difference quotients.",
         "rubric": [
-          "Says the difference quotient is both a rate and a slope",
-          "Says the limit yields the instantaneous rate equal to the tangent slope"
+          "Mentions rate of change and tangent slope",
+          "Names the limit of difference quotients as the link"
         ],
         "stepwise": false,
         "tolerance": "",
         "wrong_keys": [
-          "rate_and_slope_unrelated"
+          "separate_ideas"
         ],
         "wrong_texts": [
-          "Treats rate of change and slope as unrelated ideas."
+          "Treats rate of change and tangent slope as unrelated ideas."
         ]
       },
       {
@@ -481,28 +478,28 @@
           },
           {
             "is_correct": false,
-            "misconception_key": "accumulation",
-            "misconception_text": "Confuses the derivative with accumulation.",
-            "text": "Total accumulated change"
-          },
-          {
-            "is_correct": false,
             "misconception_key": "average_rate",
-            "misconception_text": "Confuses it with an average.",
-            "text": "Average value over an interval"
+            "misconception_text": "Confuses derivative with average rate.",
+            "text": "Average rate over an interval"
           },
           {
             "is_correct": false,
-            "misconception_key": "value_at_zero",
-            "misconception_text": "Confuses it with a function value.",
-            "text": "Function value at zero"
+            "misconception_key": "area_confusion",
+            "misconception_text": "Confuses derivative with area.",
+            "text": "Total accumulated area"
+          },
+          {
+            "is_correct": false,
+            "misconception_key": "function_value",
+            "misconception_text": "Confuses derivative with function value.",
+            "text": "Value of the function at a point"
           }
         ],
         "prompt": "Which option describes the derivative? Pick one and give your reason.",
-        "reference_answer": "The notes say the derivative is the slope of the tangent line, defined by a limit of difference quotients. Final answer: Instantaneous rate of change.",
+        "reference_answer": "The derivative is the slope of the tangent line, defined as a limit of difference quotients. Final answer: Instantaneous rate of change.",
         "rubric": [
-          "Refers to tangent slope or limit of difference quotients",
-          "Distinguishes it from an average"
+          "Refers to tangent slope or limit",
+          "Distinguishes from average rate"
         ],
         "stepwise": false,
         "tolerance": "",
@@ -517,39 +514,39 @@
         ],
         "concept": "Derivatives",
         "difficulty": 2,
-        "final_answer": "The tangent line there",
+        "final_answer": "The tangent line",
         "format": "mc_reason",
         "options": [
           {
             "is_correct": true,
             "misconception_key": null,
             "misconception_text": null,
-            "text": "The tangent line there"
+            "text": "The tangent line"
           },
           {
             "is_correct": false,
-            "misconception_key": "origin_line",
-            "misconception_text": "Thinks the line to the origin gives the slope.",
-            "text": "The line through the origin"
-          },
-          {
-            "is_correct": false,
-            "misconception_key": "axis",
-            "misconception_text": "Thinks the axis gives the slope.",
-            "text": "The horizontal axis"
+            "misconception_key": "axis_confusion",
+            "misconception_text": "Thinks an axis gives the derivative.",
+            "text": "The vertical axis"
           },
           {
             "is_correct": false,
             "misconception_key": "secant_slope",
-            "misconception_text": "Uses a secant not shrunk by a limit.",
+            "misconception_text": "Uses a secant instead of the tangent.",
             "text": "A line through two far points"
+          },
+          {
+            "is_correct": false,
+            "misconception_key": "asymptote_confusion",
+            "misconception_text": "Confuses derivative with an asymptote.",
+            "text": "The horizontal asymptote"
           }
         ],
         "prompt": "Which geometric object has slope equal to the derivative at a point? Pick one and give your reason.",
-        "reference_answer": "The derivative is the slope of the tangent line, obtained as the limit of difference quotients. Final answer: The tangent line there.",
+        "reference_answer": "The derivative is defined as the slope of the tangent line, found as a limit of difference quotients. Final answer: The tangent line.",
         "rubric": [
-          "Identifies the tangent slope via the limit definition",
-          "Rejects a fixed-gap secant"
+          "Names tangent slope",
+          "Mentions limit of difference quotients"
         ],
         "stepwise": false,
         "tolerance": "",
@@ -564,39 +561,39 @@
         ],
         "concept": "Derivatives",
         "difficulty": 3,
-        "final_answer": "The instantaneous rate of change of position",
+        "final_answer": "Take its limit",
         "format": "mc_reason",
         "options": [
           {
             "is_correct": true,
             "misconception_key": null,
             "misconception_text": null,
-            "text": "The instantaneous rate of change of position"
+            "text": "Take its limit"
+          },
+          {
+            "is_correct": false,
+            "misconception_key": "scale_value",
+            "misconception_text": "Thinks scaling gives the derivative.",
+            "text": "Double its value"
           },
           {
             "is_correct": false,
             "misconception_key": "average_rate",
-            "misconception_text": "Confuses instantaneous with average rate.",
-            "text": "The average rate over the whole trip"
+            "misconception_text": "Keeps an average rate rather than an instantaneous one.",
+            "text": "Keep the two inputs apart"
           },
           {
             "is_correct": false,
-            "misconception_key": "accumulation",
-            "misconception_text": "Confuses derivative with accumulated total.",
-            "text": "The total distance traveled"
-          },
-          {
-            "is_correct": false,
-            "misconception_key": "value_at_zero",
-            "misconception_text": "Confuses derivative with a function value.",
-            "text": "The starting position"
+            "misconception_key": "confuses_chain_rule",
+            "misconception_text": "Confuses composition with the derivative definition.",
+            "text": "Compose it with itself"
           }
         ],
-        "prompt": "A car's position is tracked over time. Which quantity does the derivative of position at one instant represent? Pick one and give your reason.",
-        "reference_answer": "The derivative is the instantaneous rate of change, a limit of difference quotients, so for position it is the rate of change at that instant. Final answer: The instantaneous rate of change of position.",
+        "prompt": "A difference quotient gives a slope between two inputs. What do we do to it to obtain the derivative at one point? Pick one and give your reason.",
+        "reference_answer": "The derivative is defined as a limit of difference quotients, giving the instantaneous rate. Final answer: Take its limit.",
         "rubric": [
-          "Applies instantaneous rate of change to position",
-          "Distinguishes from an average over an interval"
+          "States the derivative is a limit of difference quotients",
+          "Contrasts with an average rate"
         ],
         "stepwise": false,
         "tolerance": "",
@@ -614,19 +611,19 @@
         "final_answer": "d/dx f(g(x)) = f'(g(x)) * g'(x)",
         "format": "free",
         "options": [],
-        "prompt": "What kind of function does the chain rule differentiate, and what is its formula?",
+        "prompt": "What is the chain rule used for, and what is its formula?",
         "reference_answer": "It differentiates composite functions: d/dx f(g(x)) = f'(g(x)) * g'(x). Final answer: d/dx f(g(x)) = f'(g(x)) * g'(x).",
         "rubric": [
-          "Identifies composite functions",
-          "Gives the formula f'(g(x)) * g'(x)"
+          "Says it is for composite functions",
+          "Gives f'(g(x)) times g'(x)"
         ],
         "stepwise": false,
         "tolerance": "",
         "wrong_keys": [
-          "forgets_inner_derivative"
+          "drops_inner_derivative"
         ],
         "wrong_texts": [
-          "Omits the factor g'(x)."
+          "Forgets to multiply by g'(x)."
         ]
       },
       {
@@ -637,22 +634,24 @@
         ],
         "concept": "Chain Rule",
         "difficulty": 2,
-        "final_answer": "outer sin, inner x^2, multiply f'(g(x)) by g'(x)",
+        "final_answer": "18x",
         "format": "free",
         "options": [],
-        "prompt": "Identify the outer function f and inner function g in the composite sin(x^2), and say which factors the chain rule multiplies.",
-        "reference_answer": "The outer function is f = sin and the inner is g = x^2. The chain rule multiplies f'(g(x)) by g'(x). Final answer: outer sin, inner x^2, multiply f'(g(x)) by g'(x).",
+        "prompt": "Using the chain rule, write the derivative of f(g(x)) where f(u)=u^2 and g(x)=3x.",
+        "reference_answer": "f'(u)=2u, so f'(g(x))=2(3x)=6x, and g'(x)=3. The product is 18x. Final answer: 18x.",
         "rubric": [
-          "Identifies sin as outer and x^2 as inner",
-          "States the product of f' at g(x) and g'(x)"
+          "Computes f'(g(x)) = 6x",
+          "Multiplies by g'(x)=3 to get 18x"
         ],
         "stepwise": false,
         "tolerance": "",
         "wrong_keys": [
-          "swaps_inner_outer"
+          "drops_inner_derivative",
+          "evaluates_f_prime_at_x"
         ],
         "wrong_texts": [
-          "Swaps the inner and outer functions."
+          "Gives 6x by omitting g'(x).",
+          "Evaluates f' at x instead of g(x)."
         ]
       },
       {
@@ -663,22 +662,22 @@
         ],
         "concept": "Chain Rule",
         "difficulty": 3,
-        "final_answer": "evaluate f' at g(x), giving f'(g(x)) * g'(x)",
+        "final_answer": "use f'(g(x)) * g'(x)",
         "format": "free",
         "options": [],
-        "prompt": "A student differentiates f(g(x)) as f'(x) * g'(x). What is wrong, and how should it be corrected?",
-        "reference_answer": "The outer derivative must be evaluated at the inner function g(x), not at x. The correct form is f'(g(x)) * g'(x). Final answer: evaluate f' at g(x), giving f'(g(x)) * g'(x).",
+        "prompt": "A student differentiates f(g(x)) and writes f'(x) * g'(x). Identify the error and correct it.",
+        "reference_answer": "The outer derivative must be evaluated at the inner function g(x), not at x. Final answer: use f'(g(x)) * g'(x).",
         "rubric": [
-          "Points out f' must be evaluated at g(x)",
-          "Gives the corrected formula"
+          "Identifies f' evaluated at x as the error",
+          "Gives f'(g(x)) * g'(x)"
         ],
         "stepwise": false,
         "tolerance": "",
         "wrong_keys": [
-          "outer_derivative_at_x"
+          "evaluates_f_prime_at_x"
         ],
         "wrong_texts": [
-          "Evaluates the outer derivative at x instead of g(x)."
+          "Thinks f' is evaluated at x rather than g(x)."
         ]
       },
       {
@@ -689,22 +688,22 @@
         ],
         "concept": "Chain Rule",
         "difficulty": 1,
-        "final_answer": "the derivative of f(g(x)) is f'(g(x)) * g'(x)",
+        "final_answer": "d/dx f(g(x)) = f'(g(x)) * g'(x)",
         "format": "teachback",
         "options": [],
         "prompt": "Explain to a classmate who missed the lecture what the chain rule says.",
-        "reference_answer": "The chain rule differentiates a composite function: the derivative of f(g(x)) is f'(g(x)) times g'(x). Final answer: the derivative of f(g(x)) is f'(g(x)) * g'(x).",
+        "reference_answer": "For a composite function, differentiate the outer function at the inner function and multiply by the inner derivative. Final answer: d/dx f(g(x)) = f'(g(x)) * g'(x).",
         "rubric": [
-          "Says it applies to composite functions",
-          "States the product formula"
+          "Mentions composite functions",
+          "States outer derivative times inner derivative"
         ],
         "stepwise": false,
         "tolerance": "",
         "wrong_keys": [
-          "forgets_inner_derivative"
+          "drops_inner_derivative"
         ],
         "wrong_texts": [
-          "Gives only the outer derivative."
+          "Leaves out the inner derivative factor."
         ]
       },
       {
@@ -715,22 +714,22 @@
         ],
         "concept": "Chain Rule",
         "difficulty": 2,
-        "final_answer": "5(3x+1)^4 * 3",
+        "final_answer": "6(2x+1)^2",
         "format": "teachback",
         "options": [],
-        "prompt": "Explain to a classmate who missed the lecture how to use the chain rule on (3x+1)^5.",
-        "reference_answer": "The outer function is the fifth power and the inner is 3x+1. Multiply the outer derivative evaluated at the inner by the inner derivative: 5(3x+1)^4 * 3. Final answer: 5(3x+1)^4 * 3.",
+        "prompt": "Explain to a classmate who missed the lecture how to apply the chain rule to differentiate (2x+1)^3.",
+        "reference_answer": "Outer is u^3 with derivative 3u^2 evaluated at 2x+1, inner is 2x+1 with derivative 2. Product: 6(2x+1)^2. Final answer: 6(2x+1)^2.",
         "rubric": [
-          "Identifies the outer and inner functions",
-          "Multiplies by the inner derivative 3"
+          "Identifies outer and inner functions",
+          "Multiplies 3(2x+1)^2 by 2"
         ],
         "stepwise": false,
         "tolerance": "",
         "wrong_keys": [
-          "forgets_inner_derivative"
+          "drops_inner_derivative"
         ],
         "wrong_texts": [
-          "Gives 5(3x+1)^4 without multiplying by 3."
+          "Gives 3(2x+1)^2 without the factor 2."
         ]
       },
       {
@@ -741,22 +740,22 @@
         ],
         "concept": "Chain Rule",
         "difficulty": 3,
-        "final_answer": "nested functions need the outer rate at g(x) times the inner rate",
+        "final_answer": "f'(g(x)) times g'(x)",
         "format": "teachback",
         "options": [],
-        "prompt": "Explain to a classmate who missed the lecture why the chain rule has two factors and when you would need it instead of differentiating directly.",
-        "reference_answer": "When one function is nested in another, the output depends on x through two stages. We take the outer rate at the inner value and multiply by the inner rate, f'(g(x)) * g'(x). Final answer: nested functions need the outer rate at g(x) times the inner rate.",
+        "prompt": "Explain to a classmate who missed the lecture why differentiating f(g(x)) needs two derivative factors, and where each is evaluated.",
+        "reference_answer": "The function has an outer and an inner part, so each contributes: f' evaluated at g(x), and g' evaluated at x. Final answer: f'(g(x)) times g'(x).",
         "rubric": [
-          "Recognizes composition as the situation for the chain rule",
-          "Explains the two factors as outer at g(x) and inner derivative"
+          "Explains outer and inner contributions",
+          "States f' is evaluated at g(x)"
         ],
         "stepwise": false,
         "tolerance": "",
         "wrong_keys": [
-          "swaps_inner_outer"
+          "evaluates_f_prime_at_x"
         ],
         "wrong_texts": [
-          "Mixes up which function is evaluated at which input."
+          "Evaluates the outer derivative at x."
         ]
       },
       {
@@ -778,28 +777,28 @@
           },
           {
             "is_correct": false,
-            "misconception_key": "outer_derivative_at_x",
+            "misconception_key": "evaluates_f_prime_at_x",
             "misconception_text": "Evaluates the outer derivative at x.",
             "text": "f'(x) * g'(x)"
           },
           {
             "is_correct": false,
-            "misconception_key": "forgets_inner_derivative",
-            "misconception_text": "Omits the inner derivative factor.",
+            "misconception_key": "drops_inner_derivative",
+            "misconception_text": "Omits the inner derivative.",
             "text": "f'(g(x))"
           },
           {
             "is_correct": false,
-            "misconception_key": "swaps_inner_outer",
-            "misconception_text": "Applies f to the derivative of g.",
+            "misconception_key": "misplaces_derivative",
+            "misconception_text": "Applies the derivative to the wrong function.",
             "text": "f(g'(x))"
           }
         ],
-        "prompt": "Which expression gives d/dx f(g(x)) by the chain rule? Pick one and give your reason.",
-        "reference_answer": "The chain rule for composite functions multiplies the outer derivative at g(x) by the inner derivative g'(x). Final answer: f'(g(x)) * g'(x).",
+        "prompt": "Which expression gives d/dx f(g(x))? Pick one and give your reason.",
+        "reference_answer": "The chain rule for composites multiplies the outer derivative at g(x) by g'(x). Final answer: f'(g(x)) * g'(x).",
         "rubric": [
-          "States the outer derivative is evaluated at g(x)",
-          "Includes the factor g'(x)"
+          "Cites the chain rule for composites",
+          "Explains outer derivative at g(x) times inner derivative"
         ],
         "stepwise": false,
         "tolerance": "",
@@ -814,39 +813,39 @@
         ],
         "concept": "Chain Rule",
         "difficulty": 2,
-        "final_answer": "2x",
+        "final_answer": "6x^5",
         "format": "mc_reason",
         "options": [
           {
             "is_correct": true,
             "misconception_key": null,
             "misconception_text": null,
-            "text": "2x"
+            "text": "6x^5"
           },
           {
             "is_correct": false,
-            "misconception_key": "reuses_outer_power",
-            "misconception_text": "Reuses the outer exponent as the extra factor.",
-            "text": "3"
+            "misconception_key": "drops_inner_derivative",
+            "misconception_text": "Omits the inner derivative 2x.",
+            "text": "3x^4"
           },
           {
             "is_correct": false,
-            "misconception_key": "inner_not_differentiated",
-            "misconception_text": "Uses the inner function itself instead of its derivative.",
-            "text": "x^2+1"
+            "misconception_key": "wrong_inner_derivative",
+            "misconception_text": "Uses the wrong inner derivative factor.",
+            "text": "3x^5"
           },
           {
             "is_correct": false,
-            "misconception_key": "forgets_inner_derivative",
-            "misconception_text": "Thinks no extra factor is needed.",
-            "text": "1"
+            "misconception_key": "wrong_exponent",
+            "misconception_text": "Misapplies the power when multiplying.",
+            "text": "6x^6"
           }
         ],
-        "prompt": "For h(x) = (x^2+1)^3, which factor must multiply 3(x^2+1)^2 by the chain rule? Pick one and give your reason.",
-        "reference_answer": "The inner function is x^2+1, and the chain rule multiplies by its derivative g'(x) = 2x. Final answer: 2x.",
+        "prompt": "Differentiate sin-free composite h(x)=(x^2)^3 using the chain rule with outer u^3 and inner x^2. Which result is correct? Pick one and give your reason.",
+        "reference_answer": "Outer derivative is 3u^2 at u=x^2, giving 3x^4; the inner derivative is 2x; the product is 6x^5. Final answer: 6x^5.",
         "rubric": [
-          "Identifies x^2+1 as the inner function",
-          "Says the factor is the inner function's derivative"
+          "Computes outer derivative 3x^4",
+          "Multiplies by inner derivative 2x"
         ],
         "stepwise": false,
         "tolerance": "",
@@ -861,39 +860,39 @@
         ],
         "concept": "Chain Rule",
         "difficulty": 3,
-        "final_answer": "Multiply by 5",
+        "final_answer": "Multiplication by g'(x)",
         "format": "mc_reason",
         "options": [
           {
             "is_correct": true,
             "misconception_key": null,
             "misconception_text": null,
-            "text": "Multiply by 5"
+            "text": "Multiplication by g'(x)"
           },
           {
             "is_correct": false,
-            "misconception_key": "outer_derivative_at_x",
-            "misconception_text": "Evaluates the outer derivative at x instead of the inner function.",
-            "text": "Replace 5x with x"
+            "misconception_key": "adds_inner",
+            "misconception_text": "Thinks the inner function is added.",
+            "text": "Addition of g(x)"
           },
           {
             "is_correct": false,
-            "misconception_key": "sign_error",
-            "misconception_text": "Blames the sign rather than the missing factor.",
-            "text": "Change the sign to positive"
+            "misconception_key": "divides_outer",
+            "misconception_text": "Thinks the result is divided by the outer function.",
+            "text": "Division by f(x)"
           },
           {
             "is_correct": false,
-            "misconception_key": "extra_differentiation",
-            "misconception_text": "Differentiates the outer function again.",
-            "text": "Differentiate sin a second time"
+            "misconception_key": "drops_inner_derivative",
+            "misconception_text": "Believes the outer derivative alone suffices.",
+            "text": "Nothing is missing"
           }
         ],
-        "prompt": "A student differentiates cos(5x) and gets -sin(5x). Which fix does the chain rule call for? Pick one and give your reason.",
-        "reference_answer": "The inner function is g(x) = 5x with g'(x) = 5, and the chain rule multiplies f'(g(x)) = -sin(5x) by g'(x). Final answer: Multiply by 5.",
+        "prompt": "A student differentiates a composite and gets only the outer derivative evaluated at the inner function. What is missing? Pick one and give your reason.",
+        "reference_answer": "The rule is f'(g(x)) * g'(x); the outer derivative alone lacks the inner derivative factor. Final answer: Multiplication by g'(x).",
         "rubric": [
-          "Identifies 5x as the inner function with derivative 5",
-          "Says the inner derivative factor is missing"
+          "States the full formula",
+          "Identifies g'(x) as the missing factor"
         ],
         "stepwise": false,
         "tolerance": "",
