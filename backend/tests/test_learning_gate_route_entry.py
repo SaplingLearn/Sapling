@@ -1,15 +1,10 @@
 """Owner decision 00 (OWNER-DECISIONS-A38.md): the learning-loop gate is
 computed ONCE at route entry and carried on `SaplingDeps.learning_loop`.
 
-Two halves:
-- `learning.gate.learning_loop_for_request` is the named route-entry helper
-  (PKG-14b: the env kill switch alone — default ON, no read in either state).
-- only `backend/routes/` may call the gate. Agents, tools, services and the
-  rest of `learning/` read the already-computed `deps.learning_loop` instead
-  of doing their own per-call `user_settings` read.
-
-Lives in its own module so the `tests/test_learning_gate.py` count (13) and
-the invariants count that later package prompts pin do not move.
+Only `backend/routes/` may call the gate. Agents, tools, services and the
+rest of `learning/` read the already-computed `deps.learning_loop` instead of
+doing their own per-call read. The gate's own truth table lives in
+`tests/test_learning_loop_flag.py`.
 """
 
 from __future__ import annotations
@@ -18,58 +13,11 @@ import ast
 import pathlib
 
 import pytest
-from test_learning_loop_invariants import db_client_calls, reload_gate
 
 BACKEND = pathlib.Path(__file__).resolve().parents[1]
 GATE_FUNCS = frozenset({"learning_loop_active", "learning_loop_for_request"})
 GATE_MODULE = "learning/gate.py"
 SCANNED_DIRS = ("agents", "services", "learning")
-
-
-class _RaisingTable:
-    def __init__(self):
-        self.calls = []
-
-    def select(self, cols, filters=None):
-        self.calls.append((cols, filters))
-        raise RuntimeError("pg down")
-
-
-class _Table:
-    def __init__(self, rows):
-        self.rows, self.calls = rows, []
-
-    def select(self, cols, filters=None):
-        self.calls.append((cols, filters))
-        return self.rows
-
-
-# PKG-14b (spec §7 "After launch"): the gate is the env kill switch alone —
-# default ON, no read in either state.
-
-
-@pytest.mark.parametrize("env_value", ["false", "0", "off", "no", " False "])
-def test_route_entry_env_off_is_false_without_any_read(monkeypatch, env_value):
-    gate = reload_gate(monkeypatch, env_value)
-    t = _Table(rows=[{"learning_loop_beta": True}])
-    monkeypatch.setattr("db.connection.table", lambda name: t)
-    before = db_client_calls()
-    assert gate.learning_loop_for_request("user_andres") is False
-    assert t.calls == []
-    assert db_client_calls()[len(before) :] == [], "flag off, yet the DB client was called"
-
-
-@pytest.mark.parametrize("env_value", [None, "", "true", "1"])
-@pytest.mark.parametrize("table_cls", [_Table, _RaisingTable])
-def test_route_entry_env_on_is_true_without_any_read(monkeypatch, env_value, table_cls):
-    gate = reload_gate(monkeypatch, env_value)
-    t = table_cls([{"learning_loop_beta": False}]) if table_cls is _Table else table_cls()
-    monkeypatch.setattr("db.connection.table", lambda name: t)
-    before = db_client_calls()
-    assert not hasattr(gate, "table")
-    assert gate.learning_loop_for_request("user_andres") is True
-    assert t.calls == []
-    assert db_client_calls()[len(before) :] == []
 
 
 def _gate_references(source: str) -> list[tuple[int, str]]:
