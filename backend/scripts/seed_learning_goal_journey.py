@@ -21,14 +21,13 @@ never learner priors, exposures or observations, to exercise honest preflight.
 from __future__ import annotations
 
 import argparse
-import os
-from urllib.parse import urlsplit
 
 from db import seed_helpers as h
 from db.connection import table
 from db.seed_local_rich import COURSE_CS, USER_LOOP, loop_node_id
 from learning.checks import question_hash
 from services.encryption import bind, decrypt_if_present, encrypt_if_present
+from scripts._project import require_local_test_db
 
 SLUGS = ("binary", "bitwise")
 DIAGNOSTIC_COUNTS = {1: 1, 2: 6, 3: 3}
@@ -37,12 +36,7 @@ READINESS_CONCEPT = "Binary Place Value"
 
 
 def _require_local() -> None:
-    host = urlsplit(os.getenv("SUPABASE_URL", "")).hostname
-    if host not in {"127.0.0.1", "localhost", "::1"} or os.getenv("APP_ENV") not in {
-        "local",
-        "test",
-    }:
-        raise RuntimeError("Goal journey fixtures require a local/test loopback database")
+    require_local_test_db("Goal journey fixtures")
 
 
 def _template(item_id: str) -> dict:

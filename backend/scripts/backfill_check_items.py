@@ -41,7 +41,6 @@ import argparse
 import sys
 import time
 from pathlib import Path
-from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 
@@ -52,6 +51,7 @@ sys.path.insert(0, str(BASE))
 
 import config  # noqa: E402
 from agents._providers import model_mode  # noqa: E402
+from scripts._project import project_ref  # noqa: E402
 from db.connection import SUPABASE_URL, page_all, pg_quote_value, table  # noqa: E402
 from learning.checks import rank_chunks_for_concept  # noqa: E402
 from learning.params import (  # noqa: E402
@@ -72,19 +72,14 @@ from services.check_item_service import (  # noqa: E402
     source_chunks,
 )
 
-_LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "0.0.0.0", "host.docker.internal"}
-_SUPABASE_SUFFIX = ".supabase.co"
+#: Seconds between courses on a live run, to stay under the generation quota.
+COURSE_PAUSE_S = 1.0
 
 
 def _project_ref() -> str:
     """The project SUPABASE_URL points at: `<ref>` of `<ref>.supabase.co`,
     `local` for a loopback URL, else the bare host."""
-    host = (urlparse(SUPABASE_URL).hostname or "").lower()
-    if not host or host in _LOCAL_HOSTS:
-        return "local"
-    if host.endswith(_SUPABASE_SUFFIX):
-        return host[: -len(_SUPABASE_SUFFIX)].split(".")[0]
-    return host
+    return project_ref(SUPABASE_URL)
 
 
 class _GraphNodesRead:
@@ -207,7 +202,7 @@ def main(argv: list[str] | None = None) -> None:
     items = attempted = skipped = unmatched = unavailable = 0
     for n, course in enumerate(_courses(args)):
         if n and not args.dry_run:
-            time.sleep(1.0)  # stay under the generation quota between courses
+            time.sleep(COURSE_PAUSE_S)
         names = _concept_names(course)
         offerings = course_offering_ids(course)
         if offerings is None:

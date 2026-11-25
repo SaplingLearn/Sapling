@@ -56,7 +56,6 @@ import sys
 from collections import Counter, defaultdict
 from datetime import UTC, datetime
 from pathlib import Path
-from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 
@@ -65,6 +64,7 @@ load_dotenv(BASE / ".env")
 sys.path.insert(0, str(BASE))
 
 from agents._providers import model_mode  # noqa: E402
+from scripts._project import project_ref  # noqa: E402
 from db.connection import SUPABASE_URL  # noqa: E402
 from learning.checks import KEY_DISPUTED, KEY_UNSOLVED  # noqa: E402
 from learning.params import CHECK_ITEM_CONCEPTS_PER_CALL  # noqa: E402
@@ -78,8 +78,6 @@ from services.check_item_service import (  # noqa: E402
     key_check_update,
 )
 
-_LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "0.0.0.0", "host.docker.internal"}
-_SUPABASE_SUFFIX = ".supabase.co"
 
 # Why an item is left unchecked (codes only — never item text).
 _NO_PASSAGES = "no_passages"
@@ -90,13 +88,8 @@ _MC_REASON = "mc_reason"
 
 
 def _project_ref() -> str:
-    """The project SUPABASE_URL points at (scripts/backfill_check_items.py's rule)."""
-    host = (urlparse(SUPABASE_URL).hostname or "").lower()
-    if not host or host in _LOCAL_HOSTS:
-        return "local"
-    if host.endswith(_SUPABASE_SUFFIX):
-        return host[: -len(_SUPABASE_SUFFIX)].split(".")[0]
-    return host
+    """The project SUPABASE_URL points at (scripts/_project.py::project_ref)."""
+    return project_ref(SUPABASE_URL)
 
 
 def _passages_for(keys: list[str], passages: dict[str, list[dict]]) -> list[dict]:

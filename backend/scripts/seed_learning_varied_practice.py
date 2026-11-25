@@ -32,25 +32,19 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import uuid
-from urllib.parse import urlsplit
 
 from db import seed_helpers as h
 from db.connection import table
 from db.seed_local_rich import COURSE_CS, OFF_CS_S26, USER_LOOP
+from scripts._project import require_local_test_db
 
 INITIAL_PRIOR = 0.99  # Test input, never a claim earned by these questions.
 FINAL = "The size of each parameter update step"
 
 
 def _require_local() -> None:
-    host = urlsplit(os.getenv("SUPABASE_URL", "")).hostname
-    if host not in {"127.0.0.1", "localhost", "::1"} or os.getenv("APP_ENV") not in {
-        "local",
-        "test",
-    }:
-        raise RuntimeError("Varied-practice fixtures require a local/test loopback database")
+    require_local_test_db("Varied-practice fixtures")
 
 
 def _draft(concept: str, prompt: str, fmt: str = "free", difficulty: int = 2, **surface):

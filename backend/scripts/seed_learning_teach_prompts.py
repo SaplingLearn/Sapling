@@ -26,14 +26,12 @@ not db/: spec §13 A149)
 
 from __future__ import annotations
 
-import os
-from urllib.parse import urlsplit
-
 from db import seed_helpers as h
 from db.connection import table
 from db.seed_local_rich import COURSE_CS, LOOP_NODES
 from learning.checks import question_hash
 from services.encryption import bind, encrypt_if_present, encrypt_json
+from scripts._project import require_local_test_db
 
 #: (n, difficulty) of the cloned items.
 VARIANTS = ((1, 1), (2, 1), (3, 2))
@@ -42,9 +40,7 @@ CORRECT = "B"
 
 
 def _require_local() -> None:
-    host = urlsplit(os.getenv("SUPABASE_URL", "")).hostname
-    if host not in {"127.0.0.1", "localhost", "::1"} or os.getenv("APP_ENV") not in {"local", "test"}:
-        raise RuntimeError("Teach-prompt fixtures require a local/test loopback database")
+    require_local_test_db("Teach-prompt fixtures")
 
 
 def options(final_answer: str) -> list[tuple[str, str, str | None]]:

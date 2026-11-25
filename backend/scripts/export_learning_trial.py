@@ -64,7 +64,6 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 
@@ -72,6 +71,7 @@ BASE = Path(__file__).parent.parent
 load_dotenv(BASE / ".env")
 sys.path.insert(0, str(BASE))
 
+from scripts._project import project_ref  # noqa: E402
 from db.connection import SUPABASE_URL, page_all, pg_quote_value, table  # noqa: E402
 from learning import void_store  # noqa: E402
 from learning.arms import variant_for  # noqa: E402
@@ -89,8 +89,6 @@ from learning_trial.table import (  # noqa: E402
     write_csv,
 )
 
-_LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "0.0.0.0", "host.docker.internal"}
-_SUPABASE_SUFFIX = ".supabase.co"
 #: an arm label safe inside a PostgREST `eq.` filter (the owner sets it in SQL)
 _LABEL = re.compile(r"^[A-Za-z0-9._:-]{1,64}$")
 #: ids per `in.(…)` read, so a GET URL stays well under common proxy limits
@@ -112,13 +110,8 @@ _ANCHOR_COLS = (
 
 
 def _project_ref() -> str:
-    """The project SUPABASE_URL points at (scripts/backfill_check_items.py's rule)."""
-    host = (urlparse(SUPABASE_URL).hostname or "").lower()
-    if not host or host in _LOCAL_HOSTS:
-        return "local"
-    if host.endswith(_SUPABASE_SUFFIX):
-        return host[: -len(_SUPABASE_SUFFIX)].split(".")[0]
-    return host
+    """The project SUPABASE_URL points at (scripts/_project.py::project_ref)."""
+    return project_ref(SUPABASE_URL)
 
 
 def _ts(raw) -> datetime | None:
