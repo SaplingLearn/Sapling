@@ -44,6 +44,11 @@ from services.graph_update_model import (  # noqa: F401  (_coerce_unit: re-expor
 
 logger = logging.getLogger(__name__)
 
+_SCORE_DECIMALS = 4  # decimals a mastery score, delta or velocity is reported to
+_VELOCITY_WINDOW_DAYS = 14  # the learning velocity's look-back window
+_SUBJECT_EDGE_STRENGTH = 0.7  # display weight of a subject root's edge to its concepts
+_ANCHOR_EDGE_STRENGTH = 0.5  # display weight of a new concept's edge to its anchor
+
 
 def _reshape_enrollment(r: dict) -> dict:
     """Flatten an enrollments→course_offerings→courses/terms join row into the
@@ -179,7 +184,7 @@ def _compute_velocity(events: list) -> float:
     """
     if not events:
         return 0.0
-    cutoff = datetime.now(timezone.utc) - timedelta(days=14)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=_VELOCITY_WINDOW_DAYS)
     recent = []
     for e in events:
         try:
@@ -197,7 +202,7 @@ def _compute_velocity(events: list) -> float:
         days = max(1, (datetime.now(timezone.utc) - first_ts).days)
     except Exception:
         days = 1
-    return round(positive_gain / days, 4)
+    return round(positive_gain / days, _SCORE_DECIMALS)
 
 
 def _semester_course_ids(user_id: str, semester: str | None) -> set[str] | None:
@@ -425,7 +430,7 @@ def _assemble_graph(
         n["mastery_events"] = [{k: v for k, v in e.items() if k != "id"} for e in events[-5:]]
         if week_deltas is not None:
             # Summed over the whole week, not the five kept above.
-            n["week_delta"] = round(week_deltas.get(n["id"], 0.0), 4) + 0.0  # never -0.0
+            n["week_delta"] = round(week_deltas.get(n["id"], 0.0), _SCORE_DECIMALS) + 0.0  # never -0.0
 
     mastered   = sum(1 for n in nodes if n["mastery_tier"] == "mastered")
     learning   = sum(1 for n in nodes if n["mastery_tier"] == "learning")
@@ -433,7 +438,7 @@ def _assemble_graph(
     unexplored = sum(1 for n in nodes if n["mastery_tier"] == "unexplored")
 
     velocities = [n["learning_velocity"] for n in nodes if n["learning_velocity"] > 0]
-    avg_velocity = round(sum(velocities) / len(velocities), 4) if velocities else 0.0
+    avg_velocity = round(sum(velocities) / len(velocities), _SCORE_DECIMALS) if velocities else 0.0
 
     streak = effective_streak(user_rows[0] if user_rows else None)
 
@@ -501,7 +506,7 @@ def _assemble_graph(
             "id": root_id,
             "user_id": user_id,
             "concept_name": subject_label,
-            "mastery_score": round(avg_mastery, 4),
+            "mastery_score": round(avg_mastery, _SCORE_DECIMALS),
             "mastery_tier": "subject_root",
             "course_id": course_id,
             "subject": course_name,
@@ -516,7 +521,7 @@ def _assemble_graph(
                 "id": f"subject_edge__{root_id}__{n['id']}",
                 "source": root_id,
                 "target": n["id"],
-                "strength": 0.7,
+                "strength": _SUBJECT_EDGE_STRENGTH,
                 "relationship_type": "related",
             })
 
@@ -953,7 +958,7 @@ def add_node(
         anchor_name = (anchor_rows[0].get("concept_name") if anchor_rows else "") or ""
         if anchor_name and _normalize_concept(anchor_name) != norm:
             update["new_edges"] = [
-                {"source": anchor_name, "target": name, "relationship_type": "related", "strength": 0.5},
+                {"source": anchor_name, "target": name, "relationship_type": "related", "strength": _ANCHOR_EDGE_STRENGTH},
             ]
 
     apply_graph_update(user_id, update, course_id=course_id)
@@ -1134,22 +1139,7 @@ def _calculate_evidence(user_id: str, evidences: list[Evidence], prepared, reten
                 ev.node_id, user_id,
             )
             continue
-        if ev.session_id and ev.question_hash:
-            key = (ev.session_id, ev.question_hash)
-            if (key in seen_checks or prepared.prior_check(ev)) and not ev.same_session_recheck:
-                ev = Evidence.model_validate({**ev.model_dump(), "same_session_recheck": True})
-            seen_checks.add(key)
-        if ev.question_hash:
-            already_exposed = ev.question_hash in exposed_hashes or prepared.prior_exposure(ev)
-            if (already_exposed and ev.planning_provenance is not None
-                    and not ev.planning_provenance.previously_seen):
-                ev = Evidence.model_validate({
-                    **ev.model_dump(),
-                    "planning_provenance": {
-                        **ev.planning_provenance.model_dump(), "previously_seen": True,
-                    },
-                })
-            exposed_hashes.add(ev.question_hash)
+        ev = _marked_repeat(ev, prepared, seen_checks, exposed_hashes)
         w = evidence_weight(ev)
 
         st = states[ev.node_id]
@@ -1199,26 +1189,7 @@ def _calculate_evidence(user_id: str, evidences: list[Evidence], prepared, reten
             "same_session_recheck": ev.same_session_recheck,
             "propagated_to": [target_id for target_id, *_ in targets],
         }
-        if row_seeds:
-            # Spec §13 A150: what the replay starts these nodes from. Absent on
-            # a row that starts no node, so its plan is the row it was before.
-            event_row["seeds"] = row_seeds
-        if ev.student_confidence is not None:
-            # Spec §13 A127: the student's stated confidence, beside the
-            # grader's `confidence` (never the same column). Absent when none
-            # was stated, so an evidence row without one is the row it was
-            # before A127 — its plan, and its operation's fingerprint, unchanged.
-            event_row["student_confidence"] = ev.student_confidence
-        if ev.multi_concept:
-            # Spec §13 A141: the row a multi-concept item graded says so in the
-            # journal itself — the item's own row may later be withdrawn (A23)
-            # or retired (A123), and the item statistics must still tell it
-            # from the apex's own items. Absent on every other row, so its
-            # plan, and its operation's fingerprint, are unchanged.
-            event_row["multi_concept"] = True
-        provenance = planning_observation(ev)
-        if provenance is not None:
-            event_row["planning_observation"] = provenance
+        _add_optional_journal_fields(event_row, ev, row_seeds)
 
         times = (row.get("times_studied") or 0) + 1
         mirror = {
@@ -1235,25 +1206,78 @@ def _calculate_evidence(user_id: str, evidences: list[Evidence], prepared, reten
         seq += 1
         changes.append({"concept": row["concept_name"], "before": p_before, "after": p_after})
 
-        for target_id, channel, target_correct, weight in targets:
-            trow = by_id[target_id]
-            tst = states[target_id]
-            # tst.p_known stays the belief AT now (a later evidence in this
-            # call reads it); the row is stored against the kept anchor.
-            p_stored = evidence_replay.propagate(
-                tst, channel=channel, correct=target_correct, weight=weight,
-                source_weight=w, now=now,
-            )
-            prepared.state_rows[tst.node_id] = state_row(replace(tst, p_known=p_stored), now)
-            tst.exists = True
-            # #866 K22: a never-studied neighbour keeps its unexplored map score
-            shown = evidence_replay.propagated_mirror(
-                bkt.stored_score(trow.get("mastery_score")), tst.p_known
-            )
-            mirror = {"mastery_score": shown, "mastery_tier": bkt.tier_for(shown)}
-            prepared.mirrors[target_id] = {**prepared.mirrors.get(target_id, {}), "id": target_id, **mirror}
-            trow["mastery_score"] = shown
+        _propagate_to(targets, prepared, states, w, now)
     return changes
+
+
+def _marked_repeat(ev: Evidence, prepared, seen_checks: set, exposed_hashes: set[str]) -> Evidence:
+    """The evidence marked a same-session recheck when its check was already
+    seen this session, and its planning provenance `previously_seen` when the
+    question was already exposed; the seen sets are updated."""
+    if ev.session_id and ev.question_hash:
+        key = (ev.session_id, ev.question_hash)
+        if (key in seen_checks or prepared.prior_check(ev)) and not ev.same_session_recheck:
+            ev = Evidence.model_validate({**ev.model_dump(), "same_session_recheck": True})
+        seen_checks.add(key)
+    if ev.question_hash:
+        already_exposed = ev.question_hash in exposed_hashes or prepared.prior_exposure(ev)
+        if (already_exposed and ev.planning_provenance is not None
+                and not ev.planning_provenance.previously_seen):
+            ev = Evidence.model_validate({
+                **ev.model_dump(),
+                "planning_provenance": {
+                    **ev.planning_provenance.model_dump(), "previously_seen": True,
+                },
+            })
+        exposed_hashes.add(ev.question_hash)
+    return ev
+
+
+def _add_optional_journal_fields(event_row: dict, ev: Evidence, row_seeds: dict) -> None:
+    """The journal row's fields that are present only when they say something."""
+    if row_seeds:
+        # Spec §13 A150: what the replay starts these nodes from. Absent on
+        # a row that starts no node, so its plan is the row it was before.
+        event_row["seeds"] = row_seeds
+    if ev.student_confidence is not None:
+        # Spec §13 A127: the student's stated confidence, beside the
+        # grader's `confidence` (never the same column). Absent when none
+        # was stated, so an evidence row without one is the row it was
+        # before A127 — its plan, and its operation's fingerprint, unchanged.
+        event_row["student_confidence"] = ev.student_confidence
+    if ev.multi_concept:
+        # Spec §13 A141: the row a multi-concept item graded says so in the
+        # journal itself — the item's own row may later be withdrawn (A23)
+        # or retired (A123), and the item statistics must still tell it
+        # from the apex's own items. Absent on every other row, so its
+        # plan, and its operation's fingerprint, are unchanged.
+        event_row["multi_concept"] = True
+    provenance = planning_observation(ev)
+    if provenance is not None:
+        event_row["planning_observation"] = provenance
+
+
+def _propagate_to(targets, prepared, states: dict, w: float, now) -> None:
+    """One-hop propagation of one evidence: learner_state and the mirror only."""
+    by_id = prepared.nodes
+    for target_id, channel, target_correct, weight in targets:
+        trow = by_id[target_id]
+        tst = states[target_id]
+        # tst.p_known stays the belief AT now (a later evidence in this
+        # call reads it); the row is stored against the kept anchor.
+        p_stored = evidence_replay.propagate(
+            tst, channel=channel, correct=target_correct, weight=weight,
+            source_weight=w, now=now,
+        )
+        prepared.state_rows[tst.node_id] = state_row(replace(tst, p_known=p_stored), now)
+        tst.exists = True
+        # #866 K22: a never-studied neighbour keeps its unexplored map score
+        shown = evidence_replay.propagated_mirror(
+            bkt.stored_score(trow.get("mastery_score")), tst.p_known
+        )
+        mirror = {"mastery_score": shown, "mastery_tier": bkt.tier_for(shown)}
+        prepared.mirrors[target_id] = {**prepared.mirrors.get(target_id, {}), "id": target_id, **mirror}
+        trow["mastery_score"] = shown
 
 
 # ── §13 A123: void + recompute (a branch of the same single writer) ─────────
