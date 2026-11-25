@@ -51,6 +51,10 @@ COX_DIVISOR = 1.65
 #: the primary outcome's window (spec §13 A112: the 7-day post-test)
 PRIMARY_WINDOWS = (7,)
 DEFAULT_SEED = 20261108
+#: bootstrap resamples for the paired analysis's CIs
+DEFAULT_N_BOOT = 2000
+#: re-randomizations for the randomization test
+DEFAULT_N_PERM = 2000
 
 CLUSTERINGS = ("two-way", "student", "concept")
 
@@ -351,7 +355,7 @@ def paired_difference(
     rows: Iterable[TrialRow],
     *,
     windows: Sequence[int] = PRIMARY_WINDOWS,
-    n_boot: int = 2000,
+    n_boot: int = DEFAULT_N_BOOT,
     seed: int = DEFAULT_SEED,
     alpha: float = ALPHA,
 ) -> PairedResult:
@@ -426,7 +430,7 @@ def randomization_test(
     rows: Iterable[TrialRow],
     *,
     windows: Sequence[int] = PRIMARY_WINDOWS,
-    n_perm: int = 2000,
+    n_perm: int = DEFAULT_N_PERM,
     seed: int = DEFAULT_SEED,
     **primary_kwargs,
 ) -> RandomizationResult:
