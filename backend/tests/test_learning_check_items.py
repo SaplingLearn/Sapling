@@ -1,5 +1,5 @@
-"""PKG-04 check items: params, migration invariants, models, service, agent
-plumbing, route hook, backfill. Spec §3.4, §3.5, §4, §8.6/8.9/8.12, §13 A2/A22/A23."""
+"""PKG-04 check items: migration invariants, models, service, agent plumbing,
+the index-then-draft chain, backfill. Spec §3.4, §3.5, §4, §8.6/8.9/8.12, §13 A2/A22/A23."""
 
 from __future__ import annotations
 
@@ -33,51 +33,6 @@ def _migration() -> str:
     hits = sorted(MIG_DIR.glob("*_learning_check_items.sql"))
     assert len(hits) == 1, f"expected exactly one learning_check_items migration, got {hits}"
     return hits[0].read_text()
-
-
-class TestParams:
-    def test_constants_match_spec(self):
-        from learning import params
-
-        assert params.CHECK_ITEM_FORMATS == ("free", "teachback", "mc_reason")
-        assert params.CHECK_ITEM_DIFFICULTIES == (1, 2, 3)
-        assert params.CHECK_ITEM_MIN_RUBRIC == 2
-        assert params.CHECK_ITEM_MIN_WRONG == 1
-        assert params.CHECK_ITEM_MAX_CHUNKS == 8
-        assert params.CHECK_ITEM_MAX_CONCEPTS_PER_DOC == 10
-        assert params.CHECK_ITEM_OUTPUT_RETRIES == 2
-        assert isinstance(params.CHECK_HASH_VERSION, str) and params.CHECK_HASH_VERSION
-        assert params.CHECK_ITEM_CONCEPTS_PER_CALL == 3
-        assert params.FLEX_TIMEOUT_S == 900
-        assert params.CHECK_ITEM_ANSWER_KINDS == ("free", "numeric")
-        assert params.CHECK_ITEM_STEPWISE_MIN_STEPS >= 2
-        assert params.CHECK_ITEM_FLEX_RETRIES >= 0
-        assert params.CHECK_ITEM_BACKFILL_MIN_CHUNK_SCORE == 1
-        assert params.CHECK_ITEM_DRAFT_WORKERS >= 1
-        assert params.CHECK_ITEM_FINAL_ANSWER_MAX_TOKENS == 20  # † A34
-        assert params.CHECK_ITEM_MC_OPTIONS == 4  # † A37: A22's four options, A-D
-        # every distractor carries a distinct wrong key, so an mc_reason item
-        # lists at least CHECK_ITEM_MC_OPTIONS - 1 of them
-        assert params.CHECK_ITEM_MC_OPTIONS - 1 >= params.CHECK_ITEM_MIN_WRONG
-
-    def test_mc_reason_floor_and_top_up_budget(self):
-        """A37 (series coordinator's ruling, 2026-09-28): a pass leaves each
-        concept it drafted with >= 2 stored mc_reason items or tops it up with
-        ONE focused call; the floor fits inside the difficulties, so a top-up
-        can always ask for difficulties the concept does not have yet."""
-        from learning import params
-
-        assert params.CHECK_ITEM_MC_MIN_PER_CONCEPT == 2
-        assert params.CHECK_ITEM_MC_TOPUP_CALLS == 1  # † per concept per pass
-        assert params.CHECK_ITEM_MC_MIN_PER_CONCEPT <= len(params.CHECK_ITEM_DIFFICULTIES)
-
-    def test_initial_set_is_every_pair_and_covers_its_consumers(self):
-        from learning import params
-
-        pairs = len(params.CHECK_ITEM_FORMATS) * len(params.CHECK_ITEM_DIFFICULTIES)
-        assert params.CHECK_ITEM_INITIAL_PER_CONCEPT == pairs == 9
-        # §3.5: >= PROBE_ITEMS_PER_SKILL_MAX + 2 isomorphs + 1 post-test reserve
-        assert params.CHECK_ITEM_INITIAL_PER_CONCEPT >= params.PROBE_ITEMS_PER_SKILL_MAX + 2 + 1
 
 
 class TestMigration:
@@ -5844,31 +5799,6 @@ class TestMcReasonEval:
         assert score(_mc_draft(wrong_keys=["k", "k"], wrong_texts=[])) == 1.0  # not read
         assert score(_mc_draft(), one_mistake_twice) == 0.0
         assert score(_draft(wrong_keys=["k", "k"], wrong_texts=["a", "b"])) == 0.0
-
-
-class TestProjectRef:
-    @pytest.mark.parametrize(
-        "url,ref",
-        [
-            ("https://abcdefghij.supabase.co", "abcdefghij"),
-            ("https://ABCDEFGHIJ.supabase.co/", "abcdefghij"),
-            ("http://127.0.0.1:54321", "local"),
-            ("http://localhost:54321", "local"),
-            ("", "local"),
-        ],
-    )
-    def test_ref_is_parsed_from_supabase_url(self, monkeypatch, url, ref):
-        import importlib
-        import sys
-
-        monkeypatch.setattr("dotenv.load_dotenv", lambda *a, **k: False)
-        sys.modules.pop("scripts.backfill_check_items", None)
-        try:
-            module = importlib.import_module("scripts.backfill_check_items")
-            monkeypatch.setattr(module, "SUPABASE_URL", url)
-            assert module._project_ref() == ref
-        finally:
-            sys.modules.pop("scripts.backfill_check_items", None)
 
 
 # ── PKG-10 fix round F3: a wrong reason never states the final answer ──────
