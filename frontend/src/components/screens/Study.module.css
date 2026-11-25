@@ -13,7 +13,7 @@
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   align-items: start;
-  gap: 16px;
+  gap: var(--sp-8);
   padding: 0;
 }
 
@@ -23,5 +23,15 @@
 }
 
 @container studyreviews (max-width: 700px) {
-  .reviews { gap: 12px; }
+  .reviews { gap: var(--sp-6); }
+}
+
+/* A failed loop-status read: a notice in the reviews slot, not the grid. */
+.statusNotice {
+  display: block;
+  font-size: var(--fs-md);
+}
+
+.statusNotice p {
+  margin: 0 0 var(--sp-4);
 }

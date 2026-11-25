@@ -34,6 +34,7 @@
  */
 
 import React from "react";
+import { AnimatePresence, motion } from "framer-motion";
 import { TopBar } from "../TopBar";
 import { useToast } from "../ToastProvider";
 import { useUser } from "@/context/UserContext";
@@ -60,6 +61,9 @@ import {
   type ItemStatsFlag,
   type LoopReportReason,
 } from "@/lib/api";
+import { useMotionPresets } from "@/lib/motion";
+import { StaggerList, presetProps } from "./admin/adminMotion";
+import s from "./AdminCheckItems.module.css";
 
 export const LINT_FLAG_LABELS: Record<CheckItemLintFlag, string> = {
   correct_longest: "Key is the longest option",
@@ -137,7 +141,7 @@ export function AdminCheckItems() {
     return (
       <div>
         <TopBar breadcrumb="Admin" title="Check-item review" subtitle="Staff only" />
-        <div style={{ padding: 60, textAlign: "center", color: "var(--text-muted)" }}>
+        <div className={s.denied}>
           You don&apos;t have admin access.
         </div>
       </div>
@@ -147,7 +151,10 @@ export function AdminCheckItems() {
 }
 
 function ReviewBody() {
+  const m = useMotionPresets();
   const [view, setView] = React.useState<View>("queue");
+  // The view fades in on a tab switch, never on the page's first paint.
+  const [switched, setSwitched] = React.useState(false);
   return (
     <div>
       <TopBar
@@ -156,7 +163,7 @@ function ReviewBody() {
         subtitle="Learning-loop questions the linter flagged, a key check held or students reported"
         actions={<span className="chip chip--err">Staff only</span>}
       />
-      <div role="tablist" style={{ display: "flex", gap: 4, padding: "0 32px", borderBottom: "1px solid var(--border)" }}>
+      <div role="tablist" className={s.tabs}>
         {VIEWS.map((v) => (
           <button
             key={v.value}
@@ -164,19 +171,16 @@ function ReviewBody() {
             data-testid={`admin-items-tab-${v.value}`}
             role="tab"
             aria-selected={view === v.value}
-            onClick={() => setView(v.value)}
-            style={{
-              padding: "10px 16px", fontSize: 13, fontWeight: view === v.value ? 600 : 500,
-              color: view === v.value ? "var(--text)" : "var(--text-dim)",
-              borderBottom: `2px solid ${view === v.value ? "var(--accent)" : "transparent"}`,
-              marginBottom: -1,
-            }}
+            onClick={() => { setView(v.value); setSwitched(true); }}
+            className={s.tab}
           >
             {v.label}
           </button>
         ))}
       </div>
-      {view === "queue" ? <QueueBody /> : <AuditBody />}
+      <motion.div key={view} {...presetProps(m.fade)} {...(switched ? {} : { initial: false as const })}>
+        {view === "queue" ? <QueueBody /> : <AuditBody />}
+      </motion.div>
     </div>
   );
 }
@@ -288,10 +292,10 @@ function QueueBody() {
   const courseId = statsCourse.trim();
   const showData = filter === "data" && stats !== null;
   return (
-    <div data-testid="admin-items" style={{ padding: "24px 32px", display: "grid", gap: 16, maxWidth: 960 }}>
+    <div data-testid="admin-items" className={s.body}>
       <form
         aria-label="Item statistics"
-        style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}
+        className={s.form}
         onSubmit={(e) => { e.preventDefault(); void loadStats(courseId); }}
       >
         <input
@@ -300,11 +304,7 @@ function QueueBody() {
           placeholder="Course id for item statistics"
           value={statsCourse}
           onChange={(e) => setStatsCourse(e.target.value)}
-          style={{
-            flex: 1, maxWidth: 320, padding: "7px 12px",
-            border: "1px solid var(--border)", borderRadius: "var(--r-sm)",
-            fontSize: 13, background: "var(--bg-input)",
-          }}
+          className={s.field}
         />
         <button
           type="submit"
@@ -316,20 +316,20 @@ function QueueBody() {
         </button>
       </form>
       {statsError && (
-        <div role="alert" data-testid="admin-items-stats-error" style={{ color: "var(--text-muted)", fontSize: 13 }}>
+        <div role="alert" data-testid="admin-items-stats-error" className={s.muted}>
           {statsError}
         </div>
       )}
       {stats && (
         <>
-          <div data-testid="admin-items-stats-summary" style={{ color: "var(--text-muted)", fontSize: 13 }}>
+          <div data-testid="admin-items-stats-summary" className={s.muted}>
             Item statistics for {stats.course_id}: each question&apos;s students&apos; first unassisted
             attempts, from {stats.rows_scanned} graded answer{stats.rows_scanned === 1 ? "" : "s"}. A
             question is flagged only from {stats.min_n} students; a flag asks you to look — nothing is
             changed until you approve or retire it.
             {stats.truncated ? " The read hit its limit, so the newest answers are not counted." : ""}
           </div>
-          <div role="group" aria-label="Which questions to show" style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <div role="group" aria-label="Which questions to show" className={s.row}>
             <button
               type="button"
               data-testid="admin-items-filter-queue"
@@ -354,7 +354,7 @@ function QueueBody() {
       {showData ? (
         stats.flagged.length === 0 && stats.flagged_count > 0 ? (
           // every question of the page was decided; more are flagged beyond it
-          <div data-testid="admin-items-data-more" style={{ display: "flex", alignItems: "center", gap: 12, color: "var(--text-muted)", fontSize: 13 }}>
+          <div data-testid="admin-items-data-more" className={s.inlineAlert}>
             <span>{stats.flagged_count} more flagged — load the statistics again to see them.</span>
             <button
               type="button"
@@ -367,63 +367,71 @@ function QueueBody() {
             </button>
           </div>
         ) : stats.flagged.length === 0 ? (
-          <div data-testid="admin-items-data-empty" style={{ color: "var(--text-muted)", fontSize: 14 }}>
+          <div data-testid="admin-items-data-empty" className={s.empty}>
             The numbers flag no question in {stats.course_id}.
           </div>
         ) : (
           <>
             {stats.flagged_count > stats.flagged.length && (
-              <div style={{ color: "var(--text-muted)", fontSize: 13 }}>
+              <div className={s.muted}>
                 Showing the first {stats.flagged.length} of {stats.flagged_count}.
               </div>
             )}
-            {stats.flagged.map((entry) => (
-              <QueueRow
-                key={entry.id}
-                entry={entry}
-                stats={entry.stats}
-                minN={stats.min_n}
-                busy={busyId === entry.id}
-                onApprove={() => void act(entry, "approve")}
-                onRetire={() => void act(entry, "retire")}
-              />
-            ))}
+            <StaggerList key="data" className={s.rows}>
+              <AnimatePresence>
+                {stats.flagged.map((entry) => (
+                  <QueueRow
+                    key={entry.id}
+                    entry={entry}
+                    stats={entry.stats}
+                    minN={stats.min_n}
+                    busy={busyId === entry.id}
+                    onApprove={() => void act(entry, "approve")}
+                    onRetire={() => void act(entry, "retire")}
+                  />
+                ))}
+              </AnimatePresence>
+            </StaggerList>
           </>
         )
       ) : error && !queue ? (
-        <div role="alert" style={{ display: "flex", alignItems: "center", gap: 12, color: "var(--text-muted)", fontSize: 13 }}>
+        <div role="alert" className={s.inlineAlert}>
           <span>{error}</span>
           <button type="button" data-testid="admin-items-retry" className="btn btn--sm" onClick={() => void load()}>
             Try again
           </button>
         </div>
       ) : !queue ? (
-        <div style={{ color: "var(--text-muted)", fontSize: 13 }}>Loading…</div>
+        <div className={s.muted}>Loading…</div>
       ) : pageDone ? (
         <NextPage count={queue.count} error={error} onRetry={() => void load()} />
       ) : queue.items.length === 0 ? (
-        <div data-testid="admin-items-empty" style={{ color: "var(--text-muted)", fontSize: 14 }}>
+        <div data-testid="admin-items-empty" className={s.empty}>
           Nothing to review: no flagged, held or reported question is waiting.
         </div>
       ) : (
         <>
-          <div data-testid="admin-items-count" style={{ color: "var(--text-muted)", fontSize: 13 }}>
+          <div data-testid="admin-items-count" className={s.muted}>
             {queue.count} to review
             {queue.count > queue.items.length ? ` — showing the first ${queue.items.length}` : ""}. Reports
             from {queue.quarantine_min_reporters} different students hide a question from everyone until
             you approve or retire it. Retiring voids every student&apos;s results on it.
           </div>
-          {queue.items.map((entry) => (
-            <QueueRow
-              key={entry.id}
-              entry={entry}
-              stats={statsFor(entry)}
-              minN={stats?.min_n}
-              busy={busyId === entry.id}
-              onApprove={() => void act(entry, "approve")}
-              onRetire={() => void act(entry, "retire")}
-            />
-          ))}
+          <StaggerList key="queue" className={s.rows}>
+            <AnimatePresence>
+              {queue.items.map((entry) => (
+                <QueueRow
+                  key={entry.id}
+                  entry={entry}
+                  stats={statsFor(entry)}
+                  minN={stats?.min_n}
+                  busy={busyId === entry.id}
+                  onApprove={() => void act(entry, "approve")}
+                  onRetire={() => void act(entry, "retire")}
+                />
+              ))}
+            </AnimatePresence>
+          </StaggerList>
         </>
       )}
     </div>
@@ -436,7 +444,7 @@ const pctStat = (v: number | null) => (v === null ? "—" : `${Math.round(v * 10
  *  waiting: say how many, while the next page is read (or why it was not). */
 function NextPage({ count, error, onRetry }: { count: number; error: string | null; onRetry: () => void }) {
   return (
-    <div data-testid="admin-items-more" role={error ? "alert" : "status"} style={{ display: "flex", alignItems: "center", gap: 12, color: "var(--text-muted)", fontSize: 13 }}>
+    <div data-testid="admin-items-more" role={error ? "alert" : "status"} className={s.inlineAlert}>
       <span>{count} more to review — {error ?? "loading them…"}</span>
       {error && (
         <button type="button" data-testid="admin-items-retry" className="btn btn--sm" onClick={onRetry}>
@@ -451,8 +459,8 @@ function NextPage({ count, error, onRetry }: { count: number; error: string | nu
  *  95% interval, the item–rest discrimination — and what they flag. */
 function ItemStatsLine({ id, stats, minN }: { id: string; stats: ItemStats; minN?: number }) {
   return (
-    <div data-testid={`admin-items-stats-${id}`} style={{ display: "grid", gap: 6, fontSize: 13 }}>
-      <div style={{ color: "var(--text-muted)" }}>
+    <div data-testid={`admin-items-stats-${id}`} className={s.statsLine}>
+      <div className={s.dim}>
         {stats.n === 0 ? (
           "No unassisted first attempt yet."
         ) : (
@@ -469,7 +477,7 @@ function ItemStatsLine({ id, stats, minN }: { id: string; stats: ItemStats; minN
         )}
       </div>
       {stats.flags.length > 0 && (
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <div className={s.row}>
           {stats.flags.map((f) => (
             <span key={f} className="chip chip--err" data-testid={`admin-items-data-flag-${id}-${f}`}>
               {ITEM_STATS_FLAG_LABELS[f] ?? f}
@@ -486,14 +494,14 @@ function ItemText({ item }: { item: AdminCheckItemText }) {
   return (
     <>
       {item.prompt === null ? (
-        <div style={{ color: "var(--text-muted)", fontSize: 13 }}>This question could not be read.</div>
+        <div className={s.muted}>This question could not be read.</div>
       ) : (
-        <div style={{ fontSize: 15, lineHeight: 1.5, whiteSpace: "pre-wrap" }}>{item.prompt}</div>
+        <div className={s.prompt}>{item.prompt}</div>
       )}
       {item.options && (
-        <ol style={{ margin: 0, paddingLeft: 0, listStyle: "none", display: "grid", gap: 4, fontSize: 14 }}>
+        <ol className={s.options}>
           {item.options.map((o) => (
-            <li key={o.letter} style={{ fontWeight: o.correct ? 600 : 400 }}>
+            <li key={o.letter} className={o.correct ? s.key : undefined}>
               {o.letter}. {o.text}
               {o.correct ? " — key" : ""}
             </li>
@@ -501,22 +509,22 @@ function ItemText({ item }: { item: AdminCheckItemText }) {
         </ol>
       )}
       {item.final_answer && (
-        <div style={{ fontSize: 13 }}>
+        <div className={s.line}>
           <span className="label-micro">Final answer </span>
           {item.final_answer}
         </div>
       )}
       {item.canonical_answer && (
-        <div style={{ fontSize: 13 }}>
+        <div className={s.line}>
           <span className="label-micro">Numeric key </span>
           {item.canonical_answer}
           {item.tolerance ? ` ± ${item.tolerance}` : " (exact)"}
         </div>
       )}
       {item.reference_answer && (
-        <details style={{ fontSize: 13 }}>
-          <summary style={{ cursor: "pointer", color: "var(--text-muted)" }}>Reference answer</summary>
-          <div style={{ whiteSpace: "pre-wrap", marginTop: 6 }}>{item.reference_answer}</div>
+        <details className={s.line}>
+          <summary className={s.refSummary}>Reference answer</summary>
+          <div className={s.refBody}>{item.reference_answer}</div>
         </details>
       )}
     </>
@@ -534,15 +542,18 @@ function QueueRow({
   onApprove: () => void;
   onRetire: () => void;
 }) {
+  const m = useMotionPresets();
   const retire = useConfirm(onRetire);
   const reasons = REASONS.filter((r) => entry.reports[r] > 0);
   return (
-    <section
+    // Arrives with the list's stagger; a decided question collapses out.
+    <motion.section
       data-testid={`admin-items-row-${entry.id}`}
-      className="card"
-      style={{ padding: "var(--pad-lg)", display: "grid", gap: 10 }}
+      className={`card ${s.card}`}
+      variants={m.list.item}
+      exit={m.collapse.exit}
     >
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", fontSize: 12 }}>
+      <div className={s.meta}>
         <span className="label-micro">{entry.course_id} · {conceptLabel(entry.concept_key, entry.components)}</span>
         <span className="chip">{entry.format} · difficulty {entry.difficulty}</span>
         {entry.retire_pending && <span className="chip chip--err">Retire not finished — retire again</span>}
@@ -565,7 +576,7 @@ function QueueRow({
       </div>
       <ItemText item={entry} />
       {stats && <ItemStatsLine id={entry.id} stats={stats} minN={minN} />}
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+      <div className={s.row}>
         {!entry.retire_pending && (
           <button
             type="button"
@@ -587,7 +598,7 @@ function QueueRow({
           {retire.armed ? "Click again to retire and void its results" : "Retire"}
         </button>
       </div>
-    </section>
+    </motion.section>
   );
 }
 
@@ -640,9 +651,9 @@ function AuditBody() {
 
   const courseId = course.trim();
   return (
-    <div data-testid="admin-audit" style={{ padding: "24px 32px", display: "grid", gap: 16, maxWidth: 960 }}>
+    <div data-testid="admin-audit" className={s.body}>
       <form
-        style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}
+        className={s.form}
         onSubmit={(e) => { e.preventDefault(); void draw(courseId); }}
       >
         <input
@@ -651,52 +662,50 @@ function AuditBody() {
           placeholder="Course id"
           value={course}
           onChange={(e) => setCourse(e.target.value)}
-          style={{
-            flex: 1, maxWidth: 320, padding: "7px 12px",
-            border: "1px solid var(--border)", borderRadius: "var(--r-sm)",
-            fontSize: 13, background: "var(--bg-input)",
-          }}
+          className={s.field}
         />
         <button type="submit" data-testid="admin-audit-draw" className="btn btn--sm" disabled={!courseId || loading}>
           Draw sample
         </button>
       </form>
       {error ? (
-        <div role="alert" style={{ display: "flex", alignItems: "center", gap: 12, color: "var(--text-muted)", fontSize: 13 }}>
+        <div role="alert" className={s.inlineAlert}>
           <span>{error}</span>
           <button type="button" data-testid="admin-audit-retry" className="btn btn--sm" onClick={() => void draw(courseId)}>
             Try again
           </button>
         </div>
       ) : !sample ? (
-        <div style={{ color: "var(--text-muted)", fontSize: 13 }}>
+        <div className={s.muted}>
           {loading
             ? "Loading…"
             : "Name a course to draw a sample of its stored keys, spread over formats, difficulties and concepts."}
         </div>
       ) : (
         <>
-          <div data-testid="admin-audit-summary" style={{ display: "grid", gap: 4, fontSize: 13 }}>
+          <div data-testid="admin-audit-summary" className={s.summary}>
             <div>{rateLine(sample.summary)}</div>
-            <div style={{ color: "var(--text-muted)" }}>
+            <div className={s.dim}>
               {sample.items.length} of {sample.population} stored question{sample.population === 1 ? "" : "s"} sampled.
               {" "}Verified by the solve: {pct(sample.summary.by_key_status.verified.key_error.rate)} wrong
               {" "}({sample.summary.by_key_status.verified.audited} audited).
             </div>
           </div>
           {sample.items.length === 0 ? (
-            <div data-testid="admin-audit-empty" style={{ color: "var(--text-muted)", fontSize: 14 }}>
+            <div data-testid="admin-audit-empty" className={s.empty}>
               This course has no stored questions to audit.
             </div>
           ) : (
-            sample.items.map((item) => (
-              <AuditRow
-                key={item.id}
-                item={item}
-                busy={busyId === item.id}
-                onJudge={(v) => void judge(item, v)}
-              />
-            ))
+            <StaggerList className={s.rows}>
+              {sample.items.map((item) => (
+                <AuditRow
+                  key={item.id}
+                  item={item}
+                  busy={busyId === item.id}
+                  onJudge={(v) => void judge(item, v)}
+                />
+              ))}
+            </StaggerList>
           )}
         </>
       )}
@@ -711,13 +720,10 @@ function AuditRow({
   busy: boolean;
   onJudge: (verdict: CheckItemAuditVerdict) => void;
 }) {
+  const m = useMotionPresets();
   return (
-    <section
-      data-testid={`admin-audit-row-${item.id}`}
-      className="card"
-      style={{ padding: "var(--pad-lg)", display: "grid", gap: 10 }}
-    >
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", fontSize: 12 }}>
+    <motion.section data-testid={`admin-audit-row-${item.id}`} className={`card ${s.card}`} variants={m.list.item}>
+      <div className={s.meta}>
         <span className="label-micro">{conceptLabel(item.concept_key)}</span>
         <span className="chip">{item.format} · difficulty {item.difficulty}</span>
         <span
@@ -728,7 +734,7 @@ function AuditRow({
         </span>
       </div>
       <ItemText item={item} />
-      <div role="group" aria-label="Verdict on the key" style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+      <div role="group" aria-label="Verdict on the key" className={s.row}>
         {VERDICTS.map((v) => (
           <button
             key={v}
@@ -743,6 +749,6 @@ function AuditRow({
           </button>
         ))}
       </div>
-    </section>
+    </motion.section>
   );
 }

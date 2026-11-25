@@ -29,15 +29,25 @@ import { render, screen, cleanup, fireEvent, waitFor } from "@testing-library/re
 
 const EM_DASH = "—"; // WeekView's empty-day filler
 
-// Passthrough framer-motion so the keyed body renders synchronously.
+// Passthrough framer-motion so the keyed body renders synchronously: each
+// motion.<tag> renders its own tag with its DOM props (class names, roles,
+// handlers), dropping the animation props.
 type Kids = { children?: React.ReactNode };
+const MOTION_PROPS = new Set(["initial", "animate", "exit", "transition", "variants", "layout"]);
 vi.mock("framer-motion", () => ({
   AnimatePresence: ({ children }: Kids) => <>{children}</>,
   motion: new Proxy(
     {},
-    { get: () => ({ children }: Kids) => <div>{children}</div> },
+    {
+      get: (_t, tag: string) => (props: Record<string, unknown>) => {
+        const dom = Object.fromEntries(Object.entries(props).filter(([k]) => !MOTION_PROPS.has(k)));
+        return React.createElement(tag, dom);
+      },
+    },
   ),
   useReducedMotion: () => false,
+  MotionConfig: ({ children }: Kids) => <>{children}</>,
+  MotionGlobalConfig: {},
 }));
 
 // Stable across renders, as the real hooks' values are (between URL changes).

@@ -1,0 +1,317 @@
+/* The Library screen (Library.tsx): the search and filters, the document
+   grid and list, the courses rail, and the document detail modal with its
+   concept list. Every value is a token from app/globals.css; the layout
+   dimensions with no token are named locally below. */
+
+/* The screen's roots: the main column, the courses rail beside it, and the
+   detail modal (portalled to <body>, so it inherits nothing from the screen). */
+.screen,
+.rail,
+.scrim,
+.detailSide {
+  /* Layout dimensions, not design tokens. */
+  --lib-search-w: 220px;
+  --lib-card-min-w: 280px;
+  --lib-rail-w: 240px;
+  --lib-detail-w: 360px;
+  --lib-modal-w: 820px;
+  --lib-modal-max-h: 88vh;
+  --lib-empty-max-w: 440px;
+  /* The empty states' top/bottom air: between --sp-28 (56) and --sp-32 (64). */
+  --lib-empty-pad-y: 60px;
+  --lib-tile-w: 40px;
+  --lib-tile-h: 48px;
+  --lib-row-tile-w: 28px;
+  --lib-row-tile-h: 36px;
+  --lib-row-date-w: 80px;
+  --lib-dot: 8px;
+  --lib-chev: 12px;
+  /* The detail heading sits between --fs-xl (18) and --fs-2xl (22). */
+  --lib-detail-title-size: 20px;
+}
+
+.screen {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+/* ---- Top bar and filters ------------------------------------------------ */
+
+.searchWrap { position: relative; }
+.search {
+  padding: var(--sp-3) var(--sp-6);
+  font-size: var(--fs-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--r-full);
+  background: var(--bg-panel);
+  width: var(--lib-search-w);
+  transition: border-color var(--dur-fast) var(--ease);
+}
+.search:focus-visible { border-color: var(--focus-ring); }
+
+.filters {
+  padding: var(--sp-7) var(--sp-16);
+  display: flex;
+  gap: var(--sp-3);
+  align-items: center;
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+.spacer { flex: 1; }
+
+.main { flex: 1; display: flex; min-height: 0; }
+.content { flex: 1; overflow-y: auto; padding: var(--sp-12) var(--sp-16); }
+
+/* ---- Empty and error states --------------------------------------------- */
+
+.empty {
+  text-align: center;
+  padding: var(--lib-empty-pad-y) var(--sp-10);
+  color: var(--text-muted);
+  max-width: var(--lib-empty-max-w);
+  margin: 0 auto;
+}
+.emptyTitle { font-size: var(--fs-2xl); color: var(--text); }
+.emptyBody { font-size: var(--fs-base); margin-top: var(--sp-4); line-height: 1.6; }
+.emptyAction { margin-top: var(--sp-8); }
+
+.staleNotice {
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+  margin-bottom: var(--sp-6);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+}
+
+/* ---- Documents ---------------------------------------------------------- */
+
+/* A document's category colour, set per document as --cat. */
+.tile,
+.rowTile {
+  background: var(--cat);
+  color: var(--text-on-fill);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.tile { width: var(--lib-tile-w); height: var(--lib-tile-h); border-radius: var(--r-sm); }
+.rowTile { width: var(--lib-row-tile-w); height: var(--lib-row-tile-h); border-radius: var(--r-xs); }
+.capitalize { text-transform: capitalize; }
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(var(--lib-card-min-w), 1fr));
+  gap: var(--sp-8);
+}
+.docCard {
+  padding: var(--pad-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-5);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease);
+}
+.docCard:hover { border-color: var(--border-strong); }
+.docCard.selected { border-color: var(--accent-border); background: var(--accent-soft); }
+.docCardHead { display: flex; justify-content: space-between; align-items: flex-start; }
+.docTitle {
+  font-size: var(--fs-lg);
+  line-height: 1.3;
+  color: var(--text);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.docMeta { font-size: var(--fs-xs); color: var(--text-muted); margin-top: var(--sp-1); }
+.docSummary {
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.listCard { padding: 0; }
+.listRow {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-8);
+  padding: var(--sp-7) var(--sp-10);
+  text-align: left;
+  cursor: pointer;
+  background: transparent;
+  border: none;
+  transition: background var(--dur-fast) var(--ease);
+}
+.listRow + .listRow { border-top: 1px solid var(--border); }
+.listRow:hover { background: var(--bg-subtle); }
+.listRow.selected { background: var(--accent-soft); }
+.listText { flex: 1; min-width: 0; }
+.truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.listTitle { font-size: var(--fs-base); font-weight: 500; color: var(--text); }
+.listSub { font-size: var(--fs-xs); color: var(--text-muted); }
+.noShrink { flex-shrink: 0; }
+.listDate {
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+  width: var(--lib-row-date-w);
+  text-align: right;
+  flex-shrink: 0;
+}
+
+/* ---- Courses rail ------------------------------------------------------- */
+
+.rail {
+  width: var(--lib-rail-w);
+  border-left: 1px solid var(--border);
+  flex-shrink: 0;
+  background: var(--bg-subtle);
+  padding: var(--sp-8);
+  overflow-y: auto;
+}
+.railLabel { margin-bottom: var(--sp-5); }
+
+.courseRow {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  padding: var(--sp-4) var(--sp-5);
+  border-radius: var(--r-sm);
+  margin-bottom: var(--sp-2);
+  background: transparent;
+  border: 1px solid transparent;
+  text-align: left;
+  transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+}
+.courseRow:hover { background: color-mix(in srgb, var(--bg-panel) 60%, transparent); }
+.courseRow.active { background: var(--bg-panel); border-color: var(--border); }
+/* A course's colour, set per row as --course. */
+.courseDot {
+  width: var(--lib-dot);
+  height: var(--lib-dot);
+  border-radius: 50%;
+  background: var(--course, var(--text-muted));
+}
+.courseText { flex: 1; min-width: 0; }
+.courseLabel { font-size: var(--fs-sm); font-weight: 500; }
+.courseRow.active .courseLabel { font-weight: 600; }
+.courseSub { font-size: var(--fs-2xs); color: var(--text-muted); }
+.courseCount { font-size: var(--fs-xs); color: var(--text-muted); }
+
+/* ---- Detail modal ------------------------------------------------------- */
+
+.scrim {
+  position: fixed;
+  inset: 0;
+  background: var(--scrim);
+  z-index: var(--z-modal);
+  display: grid;
+  place-items: center;
+  padding: var(--sp-10);
+}
+.modal {
+  width: min(var(--lib-modal-w), 100%);
+  max-height: var(--lib-modal-max-h);
+  overflow: hidden;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+.modalScroll { overflow-y: auto; }
+
+.detail { padding: var(--sp-10); }
+.detailSide {
+  width: var(--lib-detail-w);
+  border-left: 1px solid var(--border);
+  padding: var(--sp-10);
+  background: var(--bg-subtle);
+  overflow-y: auto;
+  flex-shrink: 0;
+}
+.detailHead { display: flex; justify-content: space-between; align-items: center; }
+.detailTitle {
+  font-size: var(--lib-detail-title-size);
+  margin: var(--sp-5) 0 var(--sp-3);
+  font-weight: 500;
+}
+.detailMeta { font-size: var(--fs-xs); color: var(--text-muted); margin-bottom: var(--sp-8); }
+.section { margin-bottom: var(--sp-8); }
+.sectionLabel { margin-bottom: var(--sp-2); }
+.summary { font-size: var(--fs-md); line-height: 1.55; color: var(--text-dim); }
+
+.scanBox {
+  margin: var(--sp-5) 0;
+  padding: var(--sp-6);
+  border-radius: var(--r-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-panel);
+}
+.scanRow { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-4); }
+.scanText { display: flex; flex-direction: column; gap: var(--sp-1); min-width: 0; }
+.scanNote { font-size: var(--fs-xs); color: var(--text-muted); line-height: 1.4; }
+
+.delete {
+  width: 100%;
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+.delete.armed { background: var(--err-soft); color: var(--err); }
+
+/* ---- Concept list ------------------------------------------------------- */
+
+.conceptsHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--sp-4);
+}
+.toggleAll { font-size: var(--fs-xs); }
+.concepts { display: flex; flex-direction: column; gap: var(--sp-3); }
+.concept {
+  border-radius: var(--r-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-panel);
+  overflow: hidden;
+}
+.conceptToggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-5);
+  padding: var(--sp-5) var(--sp-6);
+  background: transparent;
+  border: none;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease);
+}
+.conceptToggle:hover { background: var(--bg-subtle); }
+.chev {
+  display: inline-flex;
+  color: var(--text-muted);
+  transition: transform var(--dur-fast) var(--ease);
+}
+.chev.open { transform: rotate(90deg); }
+.conceptName {
+  font-size: var(--fs-base);
+  font-weight: 600;
+  color: var(--text);
+  flex: 1;
+  min-width: 0;
+}
+/* Indented under the name: the toggle's inset + the chevron + its gap. */
+.conceptBody {
+  padding: var(--sp-5) var(--sp-6) var(--sp-6) calc(var(--sp-6) + var(--lib-chev) + var(--sp-5));
+  font-size: var(--fs-md);
+  color: var(--text-dim);
+  border-top: 1px solid var(--border);
+}

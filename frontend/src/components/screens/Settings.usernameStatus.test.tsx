@@ -109,7 +109,7 @@ const style = (el: Element) => el.getAttribute("style") ?? "";
 describe("Settings username status display (characterization)", () => {
   it("idle: neutral border and no message", async () => {
     const input = await typeUsername("orig");
-    expect(style(input)).toContain("border: 1px solid var(--border)");
+    expect(style(input)).toContain("--username-border: var(--border)");
     expect(screen.queryByText("Available")).toBeNull();
     expect(checkUsername).not.toHaveBeenCalled();
   });
@@ -117,7 +117,7 @@ describe("Settings username status display (characterization)", () => {
   it("checking: neutral border, no message line yet", async () => {
     vi.mocked(checkUsername).mockReturnValue(new Promise(() => {}));
     const input = await typeUsername("alice");
-    expect(style(input)).toContain("border: 1px solid var(--border)");
+    expect(style(input)).toContain("--username-border: var(--border)");
     expect(screen.queryByText("Checking…")).toBeNull();
     expect(input.parentElement!.nextElementSibling).toBeNull();
   });
@@ -126,8 +126,8 @@ describe("Settings username status display (characterization)", () => {
     vi.mocked(checkUsername).mockResolvedValue({ available: true });
     const input = await typeUsername("alice");
     const msg = await screen.findByText("Available");
-    expect(style(input)).toContain("border: 1px solid var(--border)");
-    expect(style(msg)).toContain("color: var(--accent)");
+    expect(style(input)).toContain("--username-border: var(--border)");
+    expect(style(msg)).toContain("--username-msg: var(--accent)");
     expect(checkUsername).toHaveBeenCalledWith("alice", "u1");
   });
 
@@ -135,16 +135,16 @@ describe("Settings username status display (characterization)", () => {
     vi.mocked(checkUsername).mockResolvedValue({ available: false, reason: "taken" });
     const input = await typeUsername("bob");
     const msg = await screen.findByText("Already taken");
-    expect(style(input)).toContain("border: 1px solid var(--err)");
-    expect(style(msg)).toContain("color: var(--err)");
+    expect(style(input)).toContain("--username-border: var(--err)");
+    expect(style(msg)).toContain("--username-msg: var(--err)");
   });
 
   it("invalid: error border and error rules message", async () => {
     vi.mocked(checkUsername).mockResolvedValue({ available: false, reason: "invalid" });
     const input = await typeUsername("X!");
     const msg = await screen.findByText("3–24 chars, lowercase letters, digits, or _");
-    expect(style(input)).toContain("border: 1px solid var(--err)");
-    expect(style(msg)).toContain("color: var(--err)");
+    expect(style(input)).toContain("--username-border: var(--err)");
+    expect(style(msg)).toContain("--username-msg: var(--err)");
     expect(checkUsername).toHaveBeenCalledWith("x!", "u1");
   });
 
@@ -152,7 +152,7 @@ describe("Settings username status display (characterization)", () => {
     vi.mocked(checkUsername).mockRejectedValue(new Error("500"));
     const input = await typeUsername("carol");
     await waitFor(() => expect(checkUsername).toHaveBeenCalled());
-    await waitFor(() => expect(style(input)).toContain("border: 1px solid var(--border)"));
+    await waitFor(() => expect(style(input)).toContain("--username-border: var(--border)"));
     expect(input.parentElement!.nextElementSibling).toBeNull();
   });
 });

@@ -1,0 +1,6 @@
+/* Help abuse on the hint ladder (HelpAbusePanel.tsx). */
+
+/* "Show all students" sits at the start of the stack, not stretched across it. */
+.toggle {
+  justify-self: start;
+}

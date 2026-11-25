@@ -9,17 +9,17 @@
   min-height: 100%;
   display: flex;
   flex-direction: column;
-  padding: 18px 32px 24px;
+  padding: var(--sp-9) var(--sp-16) var(--sp-12);
   box-sizing: border-box;
   font-size: var(--fs-md);
   color: var(--text);
 }
 
 /* Title, course field, actions: the hub's header row and line box. */
-.head { display: flex; align-items: center; gap: 16px; padding: 6px 0 18px; flex-wrap: wrap; }
-.actions { display: flex; align-items: center; gap: 8px; margin-left: auto; flex-wrap: wrap; }
+.head { display: flex; align-items: center; gap: var(--sp-8); padding: var(--sp-3) 0 var(--sp-9); flex-wrap: wrap; }
+.actions { display: flex; align-items: center; gap: var(--sp-4); margin-left: auto; flex-wrap: wrap; }
 /* The Dashboard's header action (.btn .btn--sm at 40px). */
-.action { height: 40px; padding: 0 16px; font-size: var(--fs-md); white-space: nowrap; }
+.action { --action-h: 40px; height: var(--action-h); padding: 0 var(--sp-8); font-size: var(--fs-md); white-space: nowrap; }
 
 /* In a review the course field gives way to what is being reviewed: a set's
    name, the one concept, or "6 concepts". */
@@ -30,6 +30,23 @@
 }
 
 @media (max-width: 768px) {
-  .page { padding: 8px 20px 16px; }
-  .head { padding: 14px 0; }
+  .page { padding: var(--sp-4) var(--sp-10) var(--sp-8); }
+  .head { padding: var(--sp-7) 0; }
 }
+
+/* The page title: the hub's display size, above the type scale's top step
+   (--fs-5xl, 32px), so it is named here rather than borrowed. */
+.title {
+  --title-size: 42px;
+  margin: 0;
+  font-size: var(--title-size);
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+  color: var(--text);
+}
+.titleMobile { --title-size: 34px; }
+
+/* The arriving / failed-load message inside the review stage. */
+.messageTitle { font-size: var(--fs-2xl); color: var(--text); }
+.messageBody { margin-top: var(--sp-3); }
+.messageAction { margin-top: var(--sp-8); }

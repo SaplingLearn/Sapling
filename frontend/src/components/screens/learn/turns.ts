@@ -33,10 +33,12 @@ export function removeInterruptedTurn(
 // error); only an error with no code at all — an older backend — falls back
 // to the bare 409.
 export const SESSION_ENDED_CODE = "SESSION_ENDED";
+/** HTTP 409 Conflict: the status of every refused turn read here. */
+const HTTP_CONFLICT = 409;
 export function isSessionEndedError(err: unknown): boolean {
   const code = err !== null && typeof err === "object" ? (err as { code?: unknown }).code : undefined;
   if (typeof code === "string") return code === SESSION_ENDED_CODE;
-  return statusOf(err) === 409;
+  return statusOf(err) === HTTP_CONFLICT;
 }
 
 /**
@@ -51,7 +53,7 @@ export function isSessionEndedError(err: unknown): boolean {
  */
 export function answeredByTheLoop(err: unknown): boolean {
   if (budgetPauseOf(err)) return true;
-  return statusOf(err) === 409 && errorCodeOf(err) !== SESSION_ENDED_CODE;
+  return statusOf(err) === HTTP_CONFLICT && errorCodeOf(err) !== SESSION_ENDED_CODE;
 }
 
 /** A budget pause as the tutor's pause, with its reset time, instead of the

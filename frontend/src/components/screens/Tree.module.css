@@ -1,0 +1,212 @@
+/* The Knowledge Tree (Tree.tsx): the toolbar, the graph row with its corner
+   Fullscreen button, the selected concept's panel (a desktop aside, a mobile
+   bottom sheet) and the fullscreen map. Every value is a token; the layout
+   dimensions that are not tokens are named here once. */
+
+.root {
+  --search-w: 220px;
+  /* The toolbar's pill inputs sit 5px inside their border: no --sp-* step,
+     and rounding would change the toolbar's height. */
+  --field-pad-y: 5px;
+  --add-input-w: 180px;
+  --panel-w: 320px;
+  --course-dot: 10px;
+  --close-size: 28px;
+  /* The concept's name: between --fs-2xl (22) and --fs-3xl (26). */
+  --node-title-fs: 24px;
+  /* The graph's own controls (its zoom stack) sit on layer 5, above the
+     canvas and the course key; the Fullscreen button joins them. No --z-*
+     token sits between --z-raised (1) and --z-sticky (20). */
+  --graph-control-z: 5;
+  /* The mobile sheet's scrim: under the nav's popovers (--z-popover, 100),
+     above sticky chrome. No --z-* token for that layer. */
+  --sheet-z: 90;
+  --sheet-max-h: 80vh;
+}
+
+/* ── Toolbar ────────────────────────────────────────────────────────────── */
+
+.toolbar {
+  padding: var(--sp-7) var(--sp-16);
+  display: flex;
+  gap: var(--sp-5);
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+  align-items: center;
+  /* Intrinsic height: the graph row below is the only flexible child. */
+  flex-shrink: 0;
+}
+
+.search { position: relative; flex: 0 1 var(--search-w); }
+
+.field {
+  font-size: var(--fs-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--r-full);
+  background: var(--bg-panel);
+  transition: border-color var(--dur-fast) var(--ease);
+}
+.field:hover { border-color: var(--border-strong); }
+
+.searchInput {
+  width: 100%;
+  padding: var(--field-pad-y) var(--sp-5) var(--field-pad-y) var(--sp-14);
+}
+
+.searchIcon {
+  position: absolute;
+  left: var(--sp-5);
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+.pillsSlot { margin-left: auto; }
+
+.addConcept { display: inline-flex; gap: var(--sp-3); align-items: center; }
+.addInput { padding: var(--field-pad-y) var(--sp-5); width: var(--add-input-w); }
+
+/* ── Graph row ──────────────────────────────────────────────────────────── */
+
+.graphRow { display: flex; flex: 1; min-height: 0; }
+.graphArea { flex: 1; min-width: 0; position: relative; }
+
+/* The graph's top-right corner, sized from FULLSCREEN_BTN (Tree.tsx), which
+   also places the zoom stack under it. */
+.fullscreenBtn {
+  position: absolute;
+  top: calc(var(--btn-top) * 1px);
+  right: calc(var(--btn-top) * 1px);
+  z-index: var(--graph-control-z);
+  width: calc(var(--btn-w) * 1px);
+  height: calc(var(--btn-h) * 1px);
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  box-shadow: var(--shadow-sm);
+}
+
+.aside {
+  width: var(--panel-w);
+  border-left: 1px solid var(--border);
+  padding: var(--sp-10);
+  background: var(--bg-subtle);
+  overflow-y: auto;
+}
+
+/* ── Mobile sheet ───────────────────────────────────────────────────────── */
+
+.scrim {
+  position: fixed;
+  inset: 0;
+  z-index: var(--sheet-z);
+  background: var(--scrim);
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+
+.sheet {
+  background: var(--bg-panel);
+  border-top-left-radius: var(--r-lg);
+  border-top-right-radius: var(--r-lg);
+  padding: var(--sp-10);
+  max-height: var(--sheet-max-h);
+  overflow-y: auto;
+}
+
+/* ── Fullscreen ─────────────────────────────────────────────────────────── */
+
+.fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-overlay);
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+}
+
+.fullscreenHead {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--sp-7) var(--sp-10);
+  border-bottom: 1px solid var(--border);
+}
+.fullscreenTitle { font-size: var(--fs-xl); }
+.fullscreenGraph { flex: 1; position: relative; }
+
+/* ── The concept panel ──────────────────────────────────────────────────── */
+
+.panelHead { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-4); }
+.panelCourse { display: flex; align-items: center; gap: var(--sp-4); min-width: 0; }
+
+.dot {
+  width: var(--course-dot);
+  height: var(--course-dot);
+  border-radius: 50%;
+  background: var(--node-color, transparent);
+  flex-shrink: 0;
+}
+
+.ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.close {
+  flex-shrink: 0;
+  margin-right: calc(-1 * var(--sp-3));
+  width: var(--close-size);
+  height: var(--close-size);
+  padding: 0;
+  place-content: center;
+}
+
+.nodeTitle { font-size: var(--node-title-fs); margin: var(--sp-3) 0 var(--sp-6); font-weight: 500; }
+
+.tiles { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-5); margin-bottom: var(--sp-8); }
+.tile { padding: var(--sp-6); }
+.mastery { font-size: var(--fs-2xl); color: var(--node-color, inherit); }
+.tier { font-size: var(--fs-base); font-weight: 500; margin-top: var(--sp-2); text-transform: capitalize; }
+
+.lastStudied { margin-bottom: var(--sp-6); }
+.lastStudiedLabel { margin-bottom: var(--sp-3); }
+.lastStudiedValue { font-size: var(--fs-md); }
+
+.actions { display: grid; grid-template-columns: 1fr; gap: var(--sp-4); margin-bottom: var(--sp-2); }
+.actions[data-cols="2"] { grid-template-columns: 1fr 1fr; }
+.actionBtn { width: 100%; }
+
+.section { margin-top: var(--sp-9); }
+.sectionLabel { margin-bottom: var(--sp-4); }
+.note { font-size: var(--fs-sm); color: var(--text-muted); }
+
+/* A session (a button) or a recent quiz (a row): one card-ish line. */
+.row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  padding: var(--sp-4) var(--sp-5);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  margin-bottom: var(--sp-3);
+  text-align: left;
+}
+
+.sessionBtn {
+  transition: border-color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease);
+}
+.sessionBtn:hover { border-color: var(--border-strong); background: var(--bg-subtle); }
+
+.sessionText { font-size: var(--fs-sm); min-width: 0; overflow: hidden; }
+.sessionMode { font-weight: 500; text-transform: capitalize; }
+.sessionMeta { font-size: var(--fs-2xs); color: var(--text-muted); }
+
+.quizRow { gap: var(--sp-4); }
+.quizWhen { font-size: var(--fs-sm); }
+.quizScore { font-size: var(--fs-xs); color: var(--text-muted); }

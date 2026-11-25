@@ -11,17 +11,16 @@
  * reads "unbounded".
  */
 
-import React from "react";
 import type { LoopCostBlock, LoopCostPerGain, LoopCostWindow } from "@/lib/types";
+import { AnimatedNumber } from "./AnimatedNumber";
+import { StaggerBody, StaggerRow } from "./admin/adminMotion";
+import t from "./admin/adminTable.module.css";
+import s from "./AdminLoopCost.module.css";
 
-const th: React.CSSProperties = {
-  textAlign: "left", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em",
-  color: "var(--text-muted)", padding: "4px 8px",
-};
-const thNum: React.CSSProperties = { ...th, textAlign: "right" };
-const td: React.CSSProperties = { fontSize: 13, padding: "6px 8px", borderTop: "1px solid var(--border)" };
-const tdNum: React.CSSProperties = { ...td, textAlign: "right", fontVariantNumeric: "tabular-nums" };
-const muted: React.CSSProperties = { color: "var(--text-muted)", fontSize: 13, margin: 0 };
+const th = t.th;
+const thNum = `${t.th} ${t.num}`;
+const td = t.td;
+const tdNum = `${t.td} ${t.num}`;
 
 /** Dollars: cents from $1 up, three significant digits below (sub-cent costs
  *  stay readable), and a floor below $0.0001. */
@@ -37,15 +36,16 @@ function fmtCi(ci: [number | null, number | null] | null): string | null {
   return `${fmtUsd(ci[0])} to ${ci[1] == null ? "unbounded" : fmtUsd(ci[1])}`;
 }
 
+/** A headline dollar figure; it tweens when the range changes ("—" with none). */
 function Figure({ label, value, n, testid, note }: {
-  label: string; value: string; n: string; testid: string; note?: string;
+  label: string; value: number | null | undefined; n: string; testid: string; note?: string;
 }) {
   return (
     <div data-testid={testid}>
       <div className="label-micro">{label}</div>
-      <div style={{ fontSize: 22, fontWeight: 600 }}>{value}</div>
-      <div style={{ fontSize: 12, color: "var(--text-muted)" }}>{n}</div>
-      {note && <div style={{ fontSize: 12, color: "var(--text-muted)" }}>{note}</div>}
+      <div className={s.figure}>{value == null ? fmtUsd(value) : <AnimatedNumber value={value} format={fmtUsd} />}</div>
+      <div className={t.statNote}>{n}</div>
+      {note && <div className={t.statNote}>{note}</div>}
     </div>
   );
 }
@@ -58,35 +58,35 @@ function WindowRow({ w, testid }: { w: LoopCostWindow; testid: string }) {
   const pairCi = fmtCi(w.per_pair_ci);
   const gainCi = fmtCi(w.per_gain_point_ci);
   return (
-    <tr data-testid={testid}>
-      <td style={td}>{`${w.window_days} days`}</td>
-      <td style={tdNum}>{`${w.pairs} (${plural(w.students, "student")})`}</td>
-      <td style={tdNum}>{w.gain_points > 0 ? `+${w.gain_points}` : w.gain_points}</td>
-      <td style={tdNum}>
+    <StaggerRow data-testid={testid}>
+      <td className={td}>{`${w.window_days} days`}</td>
+      <td className={tdNum}>{`${w.pairs} (${plural(w.students, "student")})`}</td>
+      <td className={tdNum}>{w.gain_points > 0 ? `+${w.gain_points}` : w.gain_points}</td>
+      <td className={tdNum}>
         <span>{fmtUsd(w.per_pair)}</span>
-        {pairCi && <div data-testid={`${testid}-pair-ci`} style={{ fontSize: 11, color: "var(--text-muted)" }}>{pairCi}</div>}
+        {pairCi && <div data-testid={`${testid}-pair-ci`} className={s.ci}>{pairCi}</div>}
       </td>
-      <td style={tdNum}>
+      <td className={tdNum}>
         <span data-testid={`${testid}-gain`}>{w.per_gain_point == null ? (w.pairs ? "no net gain" : "—") : fmtUsd(w.per_gain_point)}</span>
-        {gainCi && <div data-testid={`${testid}-gain-ci`} style={{ fontSize: 11, color: "var(--text-muted)" }}>{gainCi}</div>}
+        {gainCi && <div data-testid={`${testid}-gain-ci`} className={s.ci}>{gainCi}</div>}
       </td>
-    </tr>
+    </StaggerRow>
   );
 }
 
 function CourseRow({ c, firstWindow }: { c: LoopCostBlock; firstWindow: number | undefined }) {
   const w = c.windows.find(x => x.window_days === firstWindow);
   return (
-    <tr data-testid={`admin-loop-cost-course-${c.course_id}`}>
-      <td style={td}><code>{c.course_id}</code></td>
-      <td style={tdNum}>{fmtUsd(c.cost_usd)}</td>
-      <td style={tdNum}>{fmtUsd(c.drafting_usd)}</td>
-      <td style={tdNum}>{c.active_students}</td>
-      <td style={tdNum}>{fmtUsd(c.per_active_student_month)}</td>
-      <td style={tdNum}>{`${fmtUsd(c.per_session)} (${c.sessions})`}</td>
-      <td style={tdNum}>{w ? `${w.pairs} / ${w.gain_points > 0 ? `+${w.gain_points}` : w.gain_points}` : "—"}</td>
-      <td style={tdNum}>{w ? fmtUsd(w.per_gain_point) : "—"}</td>
-    </tr>
+    <StaggerRow data-testid={`admin-loop-cost-course-${c.course_id}`}>
+      <td className={td}><code>{c.course_id}</code></td>
+      <td className={tdNum}>{fmtUsd(c.cost_usd)}</td>
+      <td className={tdNum}>{fmtUsd(c.drafting_usd)}</td>
+      <td className={tdNum}>{c.active_students}</td>
+      <td className={tdNum}>{fmtUsd(c.per_active_student_month)}</td>
+      <td className={tdNum}>{`${fmtUsd(c.per_session)} (${c.sessions})`}</td>
+      <td className={tdNum}>{w ? `${w.pairs} / ${w.gain_points > 0 ? `+${w.gain_points}` : w.gain_points}` : "—"}</td>
+      <td className={tdNum}>{w ? fmtUsd(w.per_gain_point) : "—"}</td>
+    </StaggerRow>
   );
 }
 
@@ -94,7 +94,7 @@ export function LoopCostPanel({ cost }: { cost: LoopCostPerGain | null | undefin
   if (cost === undefined) return null; // a pre-A137 backend
   if (cost === null) {
     return (
-      <p data-testid="admin-loop-cost-unavailable" style={muted}>
+      <p data-testid="admin-loop-cost-unavailable" className={t.muted}>
         The loop&apos;s spend could not be read for this range.
       </p>
     );
@@ -103,80 +103,80 @@ export function LoopCostPanel({ cost }: { cost: LoopCostPerGain | null | undefin
   const target = fmtUsd(cost.target_usd_per_student_month);
   const firstWindow = o.windows[0]?.window_days;
   return (
-    <div data-testid="admin-loop-cost" style={{ display: "grid", gap: 12 }}>
-      <div style={{ display: "flex", gap: 24, flexWrap: "wrap" }}>
+    <div data-testid="admin-loop-cost" className={t.stack}>
+      <div className={s.figures}>
         <Figure
           testid="admin-loop-cost-student-month"
           label="Per active student-month"
-          value={fmtUsd(o.per_active_student_month)}
+          value={o.per_active_student_month}
           n={plural(o.active_students, "active student")}
           note={o.target_ratio == null ? `target ${target}` : `${o.target_ratio.toFixed(1)}× the ${target} target`}
         />
         <Figure
           testid="admin-loop-cost-tutor-month"
           label="Tutor only, per student-month"
-          value={fmtUsd(o.tutor_per_active_student_month)}
+          value={o.tutor_per_active_student_month}
           n={`what the ${target} target prices`}
         />
         <Figure
           testid="admin-loop-cost-session"
           label="Per session"
-          value={fmtUsd(o.per_session)}
+          value={o.per_session}
           n={plural(o.sessions, "session")}
         />
         <Figure
           testid="admin-loop-cost-total"
           label="Loop spend in range"
-          value={fmtUsd(o.cost_usd)}
+          value={o.cost_usd}
           n={`${plural(o.rows, "model call")}, drafting ${fmtUsd(o.drafting_usd)}`}
           note={o.unpriced_rows ? `${plural(o.unpriced_rows, "call")} on an unpriced model not counted` : undefined}
         />
       </div>
-      <div style={{ overflowX: "auto" }}>
-        <table data-testid="admin-loop-cost-windows" style={{ borderCollapse: "collapse", minWidth: 520 }}>
+      <div className={t.scrollX}>
+        <table data-testid="admin-loop-cost-windows" className={`${t.table} ${t.minLoopWindows}`}>
           <thead>
             <tr>
-              <th style={th}>Window</th>
-              <th style={thNum}>Pairs</th>
-              <th style={thNum}>Gain points</th>
-              <th style={thNum}>Per pair</th>
-              <th style={thNum}>Per gain point</th>
+              <th className={th}>Window</th>
+              <th className={thNum}>Pairs</th>
+              <th className={thNum}>Gain points</th>
+              <th className={thNum}>Per pair</th>
+              <th className={thNum}>Per gain point</th>
             </tr>
           </thead>
-          <tbody>
+          <StaggerBody>
             {o.windows.map(w => <WindowRow key={w.window_days} w={w} testid={`admin-loop-cost-window-${w.window_days}`} />)}
-          </tbody>
+          </StaggerBody>
         </table>
       </div>
       {cost.courses.length > 0 && (
-        <div style={{ overflowX: "auto" }}>
-          <table data-testid="admin-loop-cost-courses" style={{ borderCollapse: "collapse", minWidth: 640 }}>
+        <div className={t.scrollX}>
+          <table data-testid="admin-loop-cost-courses" className={`${t.table} ${t.minLoopCourses}`}>
             <thead>
               <tr>
-                <th style={th}>Course</th>
-                <th style={thNum}>Spend</th>
-                <th style={thNum}>Drafting</th>
-                <th style={thNum}>Active students</th>
-                <th style={thNum}>Per student-month</th>
-                <th style={thNum}>Per session (n)</th>
-                <th style={thNum}>{`Pairs / gain, ${firstWindow ?? "—"} days`}</th>
-                <th style={thNum}>Per gain point</th>
+                <th className={th}>Course</th>
+                <th className={thNum}>Spend</th>
+                <th className={thNum}>Drafting</th>
+                <th className={thNum}>Active students</th>
+                <th className={thNum}>Per student-month</th>
+                <th className={thNum}>Per session (n)</th>
+                <th className={thNum}>{`Pairs / gain, ${firstWindow ?? "—"} days`}</th>
+                <th className={thNum}>Per gain point</th>
               </tr>
             </thead>
-            <tbody>
+            <StaggerBody>
               {cost.courses.map(c => <CourseRow key={c.course_id} c={c} firstWindow={firstWindow} />)}
-            </tbody>
+            </StaggerBody>
           </table>
         </div>
       )}
       {cost.unattributed.rows > 0 && (
-        <p data-testid="admin-loop-cost-unattributed" style={muted}>
+        <p data-testid="admin-loop-cost-unattributed" className={t.muted}>
           {/* #866 K60: every loop call records its course now; an older call that
               named it only through its session loses it with the session */}
           {`${fmtUsd(cost.unattributed.cost_usd)} over ${plural(cost.unattributed.rows, "call")} has no course on record: the call did not record its course, and its session (if it named one) has since been deleted or never had a course. It is in the totals, not in any course.`}
         </p>
       )}
-      <p data-testid="admin-loop-cost-note" style={{ ...muted, fontSize: 12 }}>
+      <p data-testid="admin-loop-cost-note" className={t.small}>
         {`A gain point is one concept answered right at the post-test that was wrong at the pretest (the reverse counts −1). Under each figure: a ${Math.round(cost.ci.level * 100)}% interval from a ${cost.ci.resamples.toLocaleString()}-resample bootstrap over students; none below two students. Post-tests measure sessions 7 to 28 or more days earlier, so read this over a range much longer than the windows.`}
       </p>
     </div>

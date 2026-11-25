@@ -1,0 +1,157 @@
+/* The admin analytics page (AdminAnalytics.tsx). Its tables and section
+   prose use admin/adminTable.module.css. */
+
+/* The chart series by role, for the lazy AnalyticsCharts: the brand line on
+   its soft fill for counts and cost, the error hue for errors. */
+.page {
+  --series-line: var(--brand-forest);
+  --series-fill: var(--sap-100);
+  --series-error: var(--err);
+}
+
+.denied {
+  padding: calc(var(--sp-28) + var(--sp-2));
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.rangeBar {
+  padding: var(--sp-6) var(--sp-16);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  gap: var(--sp-4);
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.dateInput {
+  font-size: var(--fs-md);
+}
+
+.body {
+  padding: var(--sp-12) var(--sp-16);
+  display: grid;
+  gap: var(--sp-8);
+}
+
+/* Headline stats: type carries the hierarchy, no card chrome. */
+.headline {
+  display: flex;
+  gap: var(--sp-20);
+  flex-wrap: wrap;
+  padding: var(--sp-2) var(--sp-1);
+}
+
+.panel {
+  padding: var(--pad-lg);
+}
+
+.panelTitle {
+  font-size: var(--fs-xl);
+  margin-bottom: var(--sp-6);
+}
+
+.inlineAlert {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-6);
+  color: var(--text-muted);
+  font-size: var(--fs-md);
+}
+
+.chartTitle {
+  margin: var(--sp-8) 0 var(--sp-4);
+}
+
+/* A "View data" table twin under a chart. */
+.details {
+  margin-top: var(--sp-6);
+}
+
+.summary {
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color var(--dur-fast) var(--ease);
+}
+
+.summary:hover {
+  color: var(--text);
+}
+
+.detailsTable {
+  margin-top: var(--sp-4);
+}
+
+.below {
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+  margin-top: var(--sp-2);
+}
+
+.spacer {
+  height: var(--sp-6);
+}
+
+.badgeRow {
+  margin-bottom: var(--sp-4);
+}
+
+/* The users table's sort headers: plain header text that is a button. */
+.sort {
+  font: inherit;
+  color: inherit;
+  text-transform: inherit;
+  letter-spacing: inherit;
+  transition: color var(--dur-fast) var(--ease);
+}
+
+.sort:hover {
+  color: var(--text);
+}
+
+.sortActive {
+  font-weight: 700;
+}
+
+.groupBar {
+  display: flex;
+  gap: var(--sp-3);
+  align-items: center;
+  margin-bottom: var(--sp-6);
+}
+
+.group {
+  transition:
+    border-color var(--dur-fast) var(--ease),
+    font-weight var(--dur-fast) var(--ease);
+}
+
+/* Two classes, so it wins over .btn's own border colour. */
+.group.groupActive {
+  font-weight: 600;
+  border-color: var(--accent);
+}
+
+.slotWarnings {
+  margin-bottom: var(--sp-8);
+  padding: var(--sp-5) var(--sp-7);
+  border-radius: var(--r-md);
+  background: var(--warn-soft);
+  font-size: var(--fs-md);
+}
+
+.slotList {
+  margin: var(--sp-3) 0 0;
+  padding-left: var(--sp-9);
+}
+
+.itemsLink {
+  color: var(--text-muted);
+  font-size: var(--fs-md);
+  margin: var(--sp-8) 0 0;
+}
+
+.link {
+  color: var(--accent);
+}

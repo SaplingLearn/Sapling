@@ -1,15 +1,11 @@
 "use client";
 import React from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { AnimatePresence, motion, MotionGlobalConfig, useReducedMotion } from "framer-motion";
-import { IS_TEST_MODE } from "@/lib/testMode";
-
-// Deterministic DOM for browser tests (#383): framer-motion's own test
-// seam jumps every animation straight to its final keyframe. No-op in
-// production builds (flag inlined to false at build time). Same gate as
-// Study.tsx / HowItWorks.tsx — the flag is module-side-effect scoped, so
-// every framer-motion consumer must set it for direct-navigation runs.
-if (IS_TEST_MODE) MotionGlobalConfig.skipAnimations = true;
+import { AnimatePresence, motion, type MotionProps } from "framer-motion";
+// Importing lib/motion also sets framer's test-mode skip (#383): every
+// framer-motion consumer needs it for direct-navigation browser runs.
+import { useMotionPresets, type MotionPreset } from "@/lib/motion";
+import styles from "./Calendar.module.css";
 import { TopBar } from "../TopBar";
 import { Icon } from "../Icon";
 import { useScrollLock } from "@/lib/useScrollLock";
@@ -39,6 +35,11 @@ import { now } from "@/lib/testMode";
 import { humanizeError } from "@/lib/errorMessage";
 import { CALENDAR_ERROR_PARAM, calendarConnectError } from "@/lib/calendarConnect";
 
+// lib/motion types a preset's `initial` as TargetAndTransition, which
+// motion.div's `initial` prop does not accept as written; the values are the
+// same shape, so view one as the other.
+const asProps = (p: MotionPreset): MotionProps => p as MotionProps;
+
 type View = "month" | "week" | "day" | "table";
 
 const TYPE_COLOR: Record<string, string> = {
@@ -49,6 +50,17 @@ const TYPE_COLOR: Record<string, string> = {
   reading: "var(--c-plum)",
   other: "var(--text-muted)",
 };
+
+/** How far ahead "View Google events" looks, in days (the modal's copy says it too). */
+const GOOGLE_EVENTS_DAYS = 60;
+/** A syllabus's assignments land after the upload returns; reload once more after this. */
+const SYLLABUS_RELOAD_DELAY_MS = 1500;
+/** A Google event's description is cut to this many characters in the modal. */
+const DESCRIPTION_PREVIEW_CHARS = 140;
+/** Assignments a month cell lists before "+N more". */
+const MONTH_ITEMS_SHOWN = 3;
+/** Six weeks of seven days: every month fits. */
+const MONTH_CELLS = 42;
 
 const TYPE_OPTIONS = [
   { value: "homework", label: "Homework" },
@@ -81,10 +93,8 @@ export function Calendar() {
   const search = useSearchParams();
   const toast = useToast();
   const { userId, userReady } = useUser();
-  // Disable the view-swap fade/slide for users who ask for reduced motion.
-  // The global CSS reduced-motion rule only neutralises CSS transitions;
-  // framer's JS-driven animations need this explicit opt-out.
-  const prefersReduced = useReducedMotion();
+  // The view-swap fade/rise; already opacity-only under reduced motion.
+  const m = useMotionPresets();
 
   const [assignments, setAssignments] = React.useState<Assignment[]>([]);
   const [courses, setCourses] = React.useState<EnrolledCourse[]>([]);
@@ -204,7 +214,7 @@ export function Calendar() {
   const doImport = async () => {
     setImportingGoogle(true);
     try {
-      const res = await importGoogleEvents(userId, 60);
+      const res = await importGoogleEvents(userId, GOOGLE_EVENTS_DAYS);
       setGoogleEvents(res.events || []);
     } catch (err) {
       toast.error(humanizeError(err, "Couldn't import those events."));
@@ -281,9 +291,8 @@ export function Calendar() {
             <Icon name="cal" size={12} /> {importingGoogle ? "Loading…" : "View Google events"}
           </button>
           <button
-            className="btn btn--sm"
+            className={`btn btn--sm${disconnectConfirm.armed ? ` ${styles.armed}` : ""}`}
             onClick={disconnectConfirm.trigger}
-            style={disconnectConfirm.armed ? { background: "var(--err-soft)", color: "var(--err)" } : undefined}
           >
             {disconnectConfirm.armed ? "Click again" : "Disconnect"}
           </button>
@@ -299,23 +308,21 @@ export function Calendar() {
   const rangeLabel = formatRange(cursor, view);
 
   return (
-    <div>
+    <div className={styles.screen}>
       <TopBar
         title="Calendar"
         subtitle={`${rangeLabel} · ${assignments.length} assignment${assignments.length === 1 ? "" : "s"}`}
         actions={topActions}
       />
 
-      {/* Crossfade/slide the calendar body when the view (or load state)
-          changes, keyed on that state. Mirrors Study.tsx's mode="wait"
-          pattern so the swap settles instead of snapping (#295). */}
+      {/* Crossfade/rise the calendar body when the view, the range (Prev /
+          Today / Next) or the load state changes, keyed on that state.
+          Mirrors Study.tsx's mode="wait" pattern so the swap settles instead
+          of snapping (#295); no animation on the first paint. */}
       <AnimatePresence mode="wait" initial={false}>
         <motion.div
-          key={loading ? "loading" : loadError ? "error" : view}
-          initial={prefersReduced ? false : { opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={prefersReduced ? { opacity: 1 } : { opacity: 0, y: -8 }}
-          transition={{ duration: prefersReduced ? 0 : 0.22, ease: [0.2, 0.85, 0.35, 1] }}
+          key={loading ? "loading" : loadError ? "error" : `${view}:${rangeLabel}`}
+          {...asProps(m.fadeUp)}
         >
           {loading ? (
             <CalendarMonthSkeleton />
@@ -350,18 +357,21 @@ export function Calendar() {
           const hasSyllabus = items.some(it => it.category === "syllabus");
           await load();
           if (hasSyllabus) {
-            setTimeout(load, 1500);
+            setTimeout(load, SYLLABUS_RELOAD_DELAY_MS);
             toast.success("Syllabus processed — new assignments added.");
           }
         }}
       />
 
-      {googleEvents !== null && (
-        <GoogleEventsModal
-          events={googleEvents}
-          onClose={() => setGoogleEvents(null)}
-        />
-      )}
+      <AnimatePresence>
+        {googleEvents !== null && (
+          <GoogleEventsModal
+            key="google-events"
+            events={googleEvents}
+            onClose={() => setGoogleEvents(null)}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }
@@ -370,34 +380,17 @@ export function Calendar() {
 // Mirrors the Gradebook course ErrorBanner: what went wrong + a retry.
 function LoadErrorBanner({ message, onRetry }: { message: string; onRetry: () => void }) {
   return (
-    <div style={{ padding: "20px 32px" }}>
-      <div
-        role="alert"
-        data-testid="calendar-load-error"
-        style={{
-          padding: "20px 24px",
-          borderRadius: "var(--r-md)",
-          background: "var(--err-soft)",
-          border: "1px solid color-mix(in oklab, var(--err) 20%, transparent)",
-          display: "flex",
-          gap: 16,
-          alignItems: "center",
-          justifyContent: "space-between",
-          flexWrap: "wrap",
-        }}
-      >
+    <div className={styles.body}>
+      <div role="alert" data-testid="calendar-load-error" className={styles.errorBanner}>
         <div>
-          <div style={{ fontWeight: 600, color: "var(--err)", marginBottom: 4 }}>
-            We couldn&apos;t load your calendar.
-          </div>
-          <div style={{ fontSize: 13, color: "var(--text-dim)" }}>{message}</div>
+          <div className={styles.errorTitle}>We couldn&apos;t load your calendar.</div>
+          <div className={styles.errorMessage}>{message}</div>
         </div>
         <button
           type="button"
-          className="btn btn--primary"
+          className={`btn btn--primary ${styles.retry}`}
           data-testid="calendar-load-retry"
           onClick={onRetry}
-          style={{ padding: "8px 16px" }}
         >
           Try again
         </button>
@@ -423,72 +416,63 @@ function GoogleEventsModal({
     };
   }, [onClose]);
 
+  const m = useMotionPresets();
   return (
-    <div
+    <motion.div
       role="dialog"
       aria-modal="true"
       onClick={onClose}
-      style={{
-        position: "fixed", inset: 0, zIndex: 120,
-        background: "rgba(25, 37, 11,0.45)",
-        display: "flex", alignItems: "center", justifyContent: "center", padding: 24,
-      }}
+      className={styles.scrim}
+      {...asProps(m.fade)}
     >
-      <div
-        onClick={e => e.stopPropagation()}
-        style={{
-          background: "var(--bg)", borderRadius: "var(--r-lg)",
-          border: "1px solid var(--border)", maxWidth: 640, width: "100%",
-          maxHeight: "82vh", overflow: "auto",
-        }}
-      >
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 20px", borderBottom: "1px solid var(--border)", position: "sticky", top: 0, background: "var(--bg)" }}>
+      <motion.div onClick={e => e.stopPropagation()} className={styles.modal} {...asProps(m.scaleIn)}>
+        <div className={styles.modalHead}>
           <div className="label-micro">Upcoming Google Calendar events</div>
           <button className="btn btn--sm btn--ghost" onClick={onClose} aria-label="Close">
             <Icon name="x" size={12} /> Close
           </button>
         </div>
-        <div style={{ padding: 20 }}>
+        <div className={styles.modalBody}>
           {events.length === 0 ? (
-            <div style={{ color: "var(--text-muted)", fontSize: 13, textAlign: "center", padding: 28 }}>
-              No upcoming events in the next 60 days.
-            </div>
+            <div className={styles.modalEmpty}>No upcoming events in the next {GOOGLE_EVENTS_DAYS} days.</div>
           ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <motion.div
+              className={styles.eventList}
+              variants={m.list.container}
+              initial="hidden"
+              animate="shown"
+            >
               {events.map(e => (
-                <div key={e.google_event_id} className="card" style={{ padding: 12 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10 }}>
-                    <div style={{ fontWeight: 600, fontSize: 13 }}>{e.title}</div>
-                    <span className="chip" style={{ fontSize: 10 }}>
+                <motion.div key={e.google_event_id} className={`card ${styles.event}`} variants={m.list.item}>
+                  <div className={styles.eventHead}>
+                    <div className={styles.eventTitle}>{e.title}</div>
+                    <span className={`chip ${styles.eventTime}`}>
                       {e.all_day ? "All day" : e.start_datetime?.slice(11, 16) || ""}
                     </span>
                   </div>
-                  <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>
+                  <div className={styles.eventWhen}>
                     {e.start_date} {e.end_date && e.end_date !== e.start_date ? `→ ${e.end_date}` : ""}
                     {e.location ? ` · ${e.location}` : ""}
                   </div>
                   {e.description && (
-                    <div style={{ fontSize: 12, color: "var(--text-dim)", marginTop: 6, lineHeight: 1.5 }}>
-                      {e.description.length > 140 ? e.description.slice(0, 140) + "…" : e.description}
+                    <div className={styles.eventDesc}>
+                      {e.description.length > DESCRIPTION_PREVIEW_CHARS
+                        ? e.description.slice(0, DESCRIPTION_PREVIEW_CHARS) + "…"
+                        : e.description}
                     </div>
                   )}
                   {e.html_link && (
-                    <a
-                      href={e.html_link}
-                      target="_blank"
-                      rel="noreferrer"
-                      style={{ fontSize: 11, color: "var(--accent)", marginTop: 6, display: "inline-block" }}
-                    >
+                    <a href={e.html_link} target="_blank" rel="noreferrer" className={styles.eventLink}>
                       Open in Google Calendar →
                     </a>
                   )}
-                </div>
+                </motion.div>
               ))}
-            </div>
+            </motion.div>
           )}
         </div>
-      </div>
-    </div>
+      </motion.div>
+    </motion.div>
   );
 }
 
@@ -522,10 +506,17 @@ function startOfWeekMon(d: Date) {
   return x;
 }
 
+/** An assignment's dot: its course colour, else its type's. */
+function dotStyle(a: Assignment, courseColor: Map<string, string | null | undefined>): React.CSSProperties {
+  const color = TYPE_COLOR[a.assignment_type || "other"];
+  const dot = a.course_id ? courseColor.get(a.course_id) || color : color;
+  return { "--dot": dot } as React.CSSProperties;
+}
+
 function MonthView({ cursor, byDate, today, courses }: { cursor: Date; byDate: Map<string, Assignment[]>; today: Date; courses: EnrolledCourse[] }) {
   const first = new Date(cursor.getFullYear(), cursor.getMonth(), 1);
   const start = startOfWeekMon(first);
-  const cells: Date[] = Array.from({ length: 42 }, (_, i) => {
+  const cells: Date[] = Array.from({ length: MONTH_CELLS }, (_, i) => {
     const d = new Date(start);
     d.setDate(start.getDate() + i);
     return d;
@@ -533,53 +524,33 @@ function MonthView({ cursor, byDate, today, courses }: { cursor: Date; byDate: M
   const weekdays = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
   const courseColor = new Map(courses.map(c => [c.course_id, c.color]));
   return (
-    <div style={{ padding: "20px 32px" }}>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4, marginBottom: 4 }}>
-        {weekdays.map(d => <div key={d} className="label-micro" style={{ padding: 6 }}>{d}</div>)}
+    <div className={styles.body}>
+      <div className={styles.monthHead}>
+        {weekdays.map(d => <div key={d} className={`label-micro ${styles.weekday}`}>{d}</div>)}
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4 }}>
+      <div className={styles.monthGrid}>
         {cells.map((d, i) => {
           const key = dateKey(d);
           const items = byDate.get(key) || [];
           const inMonth = d.getMonth() === cursor.getMonth();
           const isToday = d.getTime() === today.getTime();
+          const cls = [
+            "card",
+            styles.monthCell,
+            inMonth ? "" : styles.outside,
+            isToday ? styles.today : "",
+          ].filter(Boolean).join(" ");
           return (
-            <div
-              key={i}
-              className="card"
-              style={{
-                padding: 8, minHeight: 96, display: "flex", flexDirection: "column", gap: 4,
-                opacity: inMonth ? 1 : 0.45,
-                background: isToday ? "var(--accent-soft)" : "var(--bg-panel)",
-                borderColor: isToday ? "var(--accent-border)" : "var(--border)",
-              }}
-            >
-              <div style={{ fontSize: 11, fontWeight: 600, color: isToday ? "var(--accent)" : "var(--text-dim)" }}>
-                {d.getDate()}
-              </div>
-              {items.slice(0, 3).map(a => {
-                const color = TYPE_COLOR[a.assignment_type || "other"];
-                const dotColor = a.course_id ? courseColor.get(a.course_id) || color : color;
-                return (
-                  <div
-                    key={a.id}
-                    style={{
-                      fontSize: 10, padding: "3px 6px", borderRadius: "var(--r-xs)",
-                      background: "transparent", color: "var(--text)",
-                      display: "flex", alignItems: "center", gap: 5,
-                      overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                    }}
-                    title={a.title}
-                  >
-                    <span aria-hidden style={{
-                      width: 6, height: 6, borderRadius: "50%", background: dotColor, flexShrink: 0,
-                    }} />
-                    <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{a.title}</span>
-                  </div>
-                );
-              })}
-              {items.length > 3 && (
-                <div style={{ fontSize: 10, color: "var(--text-muted)" }}>+{items.length - 3} more</div>
+            <div key={i} className={cls}>
+              <div className={styles.monthDate}>{d.getDate()}</div>
+              {items.slice(0, MONTH_ITEMS_SHOWN).map(a => (
+                <div key={a.id} className={styles.monthItem} title={a.title}>
+                  <span aria-hidden className={styles.dot} style={dotStyle(a, courseColor)} />
+                  <span className={styles.ellipsis}>{a.title}</span>
+                </div>
+              ))}
+              {items.length > MONTH_ITEMS_SHOWN && (
+                <div className={styles.more}>+{items.length - MONTH_ITEMS_SHOWN} more</div>
               )}
             </div>
           );
@@ -596,51 +567,28 @@ function WeekView({ cursor, byDate, today, courses }: { cursor: Date; byDate: Ma
   });
   const courseColor = new Map(courses.map(c => [c.course_id, c.color]));
   return (
-    <div style={{ padding: "20px 32px" }}>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 8 }}>
+    <div className={styles.body}>
+      <div className={styles.weekGrid}>
         {days.map((d, i) => {
           const key = dateKey(d);
           const items = byDate.get(key) || [];
           const isToday = d.getTime() === today.getTime();
           return (
-            <div
-              key={i}
-              className="card"
-              style={{
-                padding: 10, minHeight: 200,
-                background: isToday ? "var(--accent-soft)" : "var(--bg-panel)",
-                borderColor: isToday ? "var(--accent-border)" : "var(--border)",
-              }}
-            >
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 8 }}>
-                <span className="h-serif" style={{ fontSize: 20 }}>{d.getDate()}</span>
+            <div key={i} className={`card ${styles.weekCell}${isToday ? ` ${styles.today}` : ""}`}>
+              <div className={styles.weekHead}>
+                <span className={`h-serif ${styles.weekNum}`}>{d.getDate()}</span>
                 <span className="label-micro">{d.toLocaleDateString("en-US", { weekday: "short" })}</span>
               </div>
-              {items.length === 0 && <div style={{ fontSize: 11, color: "var(--text-muted)" }}>—</div>}
-              {items.map(a => {
-                const color = TYPE_COLOR[a.assignment_type || "other"];
-                const dotColor = a.course_id ? courseColor.get(a.course_id) || color : color;
-                return (
-                  <div
-                    key={a.id}
-                    style={{
-                      fontSize: 11, padding: "6px 0", marginBottom: 6,
-                      display: "flex", gap: 8, alignItems: "flex-start",
-                    }}
-                  >
-                    <span aria-hidden style={{
-                      width: 6, height: 6, borderRadius: "50%",
-                      background: dotColor, marginTop: 5, flexShrink: 0,
-                    }} />
-                    <div style={{ minWidth: 0 }}>
-                      <div style={{ fontWeight: 600, color: "var(--text)" }}>{a.title}</div>
-                      <div style={{ color: "var(--text-muted)", fontSize: 10 }}>
-                        {a.course_code || a.course_name}
-                      </div>
-                    </div>
+              {items.length === 0 && <div className={styles.weekEmpty}>—</div>}
+              {items.map(a => (
+                <div key={a.id} className={styles.weekItem}>
+                  <span aria-hidden className={styles.dot} style={dotStyle(a, courseColor)} />
+                  <div className={styles.minW0}>
+                    <div className={styles.itemTitle}>{a.title}</div>
+                    <div className={styles.itemCourse}>{a.course_code || a.course_name}</div>
                   </div>
-                );
-              })}
+                </div>
+              ))}
             </div>
           );
         })}
@@ -653,39 +601,33 @@ function DayView({ cursor, byDate, courses }: { cursor: Date; byDate: Map<string
   const key = dateKey(cursor);
   const items = byDate.get(key) || [];
   const courseColor = new Map(courses.map(c => [c.course_id, c.color]));
+  const m = useMotionPresets();
   return (
-    <div style={{ padding: "20px 32px", maxWidth: 720 }}>
-      <div className="h-serif" style={{ fontSize: 24, fontWeight: 500, marginBottom: 16 }}>
+    <div className={`${styles.body} ${styles.dayBody}`}>
+      <div className={`h-serif ${styles.dayTitle}`}>
         {cursor.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}
       </div>
-      {items.length === 0 && (
-        <div className="card" style={{ padding: "var(--pad-lg)", textAlign: "center", color: "var(--text-muted)" }}>
-          Nothing scheduled.
-        </div>
-      )}
-      {items.map(a => {
-        const color = TYPE_COLOR[a.assignment_type || "other"];
-        const dotColor = a.course_id ? courseColor.get(a.course_id) || color : color;
-        const dl = dueLabel(a.due_date);
-        return (
-          <div key={a.id} className="card" style={{ padding: "var(--pad-lg)", marginBottom: 10, display: "flex", gap: 14, alignItems: "flex-start" }}>
-            <span aria-hidden style={{
-              width: 8, height: 8, borderRadius: "50%",
-              background: dotColor, marginTop: 8, flexShrink: 0,
-            }} />
-            <div style={{ flex: 1 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-                <strong>{a.title}</strong>
-                <span className={`chip ${dl.cls}`}>{dl.label}</span>
+      {items.length === 0 && <div className={`card ${styles.dayEmpty}`}>Nothing scheduled.</div>}
+      <motion.div variants={m.list.container} initial="hidden" animate="shown">
+        {items.map(a => {
+          const dl = dueLabel(a.due_date);
+          return (
+            <motion.div key={a.id} className={`card ${styles.dayItem}`} variants={m.list.item}>
+              <span aria-hidden className={styles.dot} style={dotStyle(a, courseColor)} />
+              <div className={styles.grow}>
+                <div className={styles.dayItemHead}>
+                  <strong>{a.title}</strong>
+                  <span className={`chip ${dl.cls}`}>{dl.label}</span>
+                </div>
+                <div className={styles.dayMeta}>
+                  {a.course_code || a.course_name || "—"} · {a.assignment_type || "task"}
+                </div>
+                {a.notes && <div className={styles.dayNotes}>{a.notes}</div>}
               </div>
-              <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
-                {a.course_code || a.course_name || "—"} · {a.assignment_type || "task"}
-              </div>
-              {a.notes && <div style={{ fontSize: 12, color: "var(--text-dim)", marginTop: 6 }}>{a.notes}</div>}
-            </div>
-          </div>
-        );
-      })}
+            </motion.div>
+          );
+        })}
+      </motion.div>
     </div>
   );
 }
@@ -711,6 +653,7 @@ function AssignmentTable({
   type SortKey = "due_date" | "title" | "course" | "type";
   const [sortKey, setSortKey] = React.useState<SortKey>("due_date");
   const [sortDir, setSortDir] = React.useState<"asc" | "desc">("asc");
+  const m = useMotionPresets();
 
   const sorted = React.useMemo(() => {
     const copy = [...assignments];
@@ -804,13 +747,13 @@ function AssignmentTable({
   };
 
   return (
-    <div style={{ padding: "20px 32px" }}>
-      <div style={{ display: "flex", gap: 8, marginBottom: 12, alignItems: "center", flexWrap: "wrap" }}>
+    <div className={styles.body}>
+      <div className={styles.toolbar}>
         <div className="label-micro">{selected.size} of {assignments.length} selected</div>
-        <div style={{ flex: 1 }} />
-        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <span className="label-micro" style={{ fontSize: 10 }}>Sort</span>
-          <div style={{ minWidth: 140 }}>
+        <div className={styles.spacer} />
+        <div className={styles.sortGroup}>
+          <span className={`label-micro ${styles.sortLabel}`}>Sort</span>
+          <div className={styles.sortSelect}>
             <CustomSelect
               ariaLabel="Sort"
               size="sm"
@@ -847,40 +790,42 @@ function AssignmentTable({
           </button>
         )}
       </div>
-      <div className="card" style={{ padding: 0, overflow: "hidden" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+      <div className={`card ${styles.tableCard}`}>
+        <table className={styles.table}>
           <thead>
-            <tr style={{ background: "var(--bg-subtle)", textAlign: "left" }}>
-              <th style={{ padding: 10, width: 32 }}>
+            <tr className={styles.headRow}>
+              <th className={styles.colCheck}>
                 <input type="checkbox" aria-label="Select all assignments" checked={selected.size === assignments.length && assignments.length > 0} onChange={toggleAll} />
               </th>
-              <th style={{ padding: 10 }}>Title</th>
-              <th style={{ padding: 10 }}>Course</th>
-              <th style={{ padding: 10 }}>Type</th>
-              <th style={{ padding: 10 }}>Due</th>
-              <th style={{ padding: 10, width: 90 }}></th>
+              <th>Title</th>
+              <th>Course</th>
+              <th>Type</th>
+              <th>Due</th>
+              <th className={styles.colActions}></th>
             </tr>
           </thead>
-          <tbody>
-            {sorted.map((a, i) => {
+          {/* Rows arrive with the list stagger: on the view swap and when a
+              reload adds one; a re-sort keeps its rows (stable keys). */}
+          <motion.tbody variants={m.list.container} initial="hidden" animate="shown">
+            {sorted.map(a => {
               const editingThis = editing === a.id;
               return (
-                <tr key={a.id} style={{ borderTop: i === 0 ? "none" : "1px solid var(--border)" }}>
-                  <td style={{ padding: 10 }}>
+                <motion.tr key={a.id} className={styles.row} variants={m.list.item}>
+                  <td>
                     <input type="checkbox" aria-label={`Select ${a.title}`} checked={selected.has(a.id)} onChange={() => toggleOne(a.id)} />
                   </td>
-                  <td style={{ padding: 10 }}>
+                  <td>
                     {editingThis ? (
                       <input
                         value={draft.title || ""}
                         onChange={e => setDraft(d => ({ ...d, title: e.target.value }))}
-                        style={{ padding: "4px 6px", border: "1px solid var(--border)", borderRadius: "var(--r-xs)", fontSize: 12, width: "100%" }}
+                        className={`${styles.input} ${styles.inputWide}`}
                       />
                     ) : (
                       <strong>{a.title}</strong>
                     )}
                   </td>
-                  <td style={{ padding: 10 }}>
+                  <td>
                     {editingThis ? (
                       <CustomSelect
                         ariaLabel="Course"
@@ -894,7 +839,7 @@ function AssignmentTable({
                       a.course_code || a.course_name || "—"
                     )}
                   </td>
-                  <td style={{ padding: 10 }}>
+                  <td>
                     {editingThis ? (
                       <CustomSelect
                         ariaLabel="Type"
@@ -905,22 +850,22 @@ function AssignmentTable({
                         placeholder="—"
                       />
                     ) : (
-                      <span style={{ textTransform: "capitalize" }}>{a.assignment_type || "—"}</span>
+                      <span className={styles.capitalize}>{a.assignment_type || "—"}</span>
                     )}
                   </td>
-                  <td style={{ padding: 10 }}>
+                  <td>
                     {editingThis ? (
                       <input
                         type="date"
                         value={(draft.due_date || "").slice(0, 10)}
                         onChange={e => setDraft(d => ({ ...d, due_date: e.target.value }))}
-                        style={{ padding: "4px 6px", border: "1px solid var(--border)", borderRadius: "var(--r-xs)", fontSize: 12 }}
+                        className={styles.input}
                       />
                     ) : (
                       a.due_date || "No date"
                     )}
                   </td>
-                  <td style={{ padding: 10, display: "flex", gap: 4 }}>
+                  <td className={styles.actions}>
                     {editingThis ? (
                       <>
                         <button className="btn btn--sm btn--primary" onClick={saveEdit} disabled={saving}>
@@ -934,28 +879,27 @@ function AssignmentTable({
                           <Icon name="pencil" size={11} />
                         </button>
                         <button
-                          className="btn btn--sm btn--ghost"
+                          className={`btn btn--sm btn--ghost ${styles.danger}`}
                           onClick={() => removeOne(a)}
                           disabled={deletingId === a.id}
                           title="Delete"
-                          style={{ color: "var(--err)" }}
                         >
                           {deletingId === a.id ? "…" : <Icon name="x" size={11} />}
                         </button>
                       </>
                     )}
                   </td>
-                </tr>
+                </motion.tr>
               );
             })}
             {assignments.length === 0 && (
               <tr>
-                <td colSpan={6} style={{ padding: 32, textAlign: "center", color: "var(--text-muted)" }}>
+                <td colSpan={6} className={styles.emptyRow}>
                   No assignments yet.
                 </td>
               </tr>
             )}
-          </tbody>
+          </motion.tbody>
         </table>
       </div>
     </div>

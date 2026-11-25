@@ -24,7 +24,11 @@ import { listAttempts } from "@/lib/quiz/api";
 import { relativeStudied } from "@/lib/quiz/relativeTime";
 import type { AttemptSummary } from "@/lib/quiz/types";
 import { treeNodeActions, type TreeNodeAction } from "@/lib/treeNodeActions";
+import { motion } from "framer-motion";
+import { useMotionPresets } from "@/lib/motion";
 import { deleteButtonStyle, highlightIdFor, selectedCourseIdOf } from "./treeHelpers";
+import { AnimatedNumber } from "./AnimatedNumber";
+import styles from "./Tree.module.css";
 
 type Tier = "all" | "mastered" | "learning" | "struggling" | "unexplored";
 
@@ -354,7 +358,7 @@ export function Tree() {
   const highlightId = highlightIdFor(suggestId, selected);
 
   return (
-    <FullHeightScreen>
+    <FullHeightScreen className={styles.root}>
       <TopBar
         title="Your Knowledge Tree"
         subtitle="The living map of what you've learned, organized by course."
@@ -364,32 +368,16 @@ export function Tree() {
           course). Right: the mastery-status pills, kept as pills because their
           colours double as the graph's legend. Course is a dropdown so the row
           never wraps however many courses a student has. */}
-      <div
-        data-testid="tree-toolbar"
-        style={{
-          padding: "14px 32px",
-          display: "flex",
-          gap: 10,
-          borderBottom: "1px solid var(--border)",
-          flexWrap: "wrap",
-          alignItems: "center",
-          // Intrinsic height: the graph row below is the only flexible child.
-          flexShrink: 0,
-        }}
-      >
-        <div style={{ position: "relative", flex: "0 1 220px" }}>
+      <div data-testid="tree-toolbar" className={styles.toolbar}>
+        <div className={styles.search}>
           <input
             value={query}
             onChange={e => setQuery(e.target.value)}
             placeholder="Search concepts…"
             aria-label="Search concepts"
-            style={{
-              width: "100%", padding: "5px 10px 5px 28px", fontSize: 12,
-              border: "1px solid var(--border)", borderRadius: "var(--r-full)",
-              background: "var(--bg-panel)",
-            }}
+            className={`${styles.field} ${styles.searchInput}`}
           />
-          <span style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "var(--text-muted)", pointerEvents: "none" }}>
+          <span className={styles.searchIcon}>
             <Icon name="search" size={12} />
           </span>
         </div>
@@ -405,7 +393,7 @@ export function Tree() {
           />
         )}
         {/* Right side: the mastery-status filter (its colours are the legend). */}
-        <div style={{ marginLeft: "auto" }}>
+        <div className={styles.pillsSlot}>
           <FilterPills
             options={[
               { value: "all" as Tier, label: "All" },
@@ -428,8 +416,8 @@ export function Tree() {
           contentRect becomes <KnowledgeGraph width height>, so a hardcoded
           `calc(100vh - …)` mis-sized the CANVAS in whichever shell layout the
           constant wasn't calibrated for (#341). */}
-      <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
-        <div ref={ref} style={{ flex: 1, minWidth: 0, position: "relative" }}>
+      <div className={styles.graphRow}>
+        <div ref={ref} className={styles.graphArea}>
           {loading || !size ? (
             <GraphPanelSkeleton />
           ) : (
@@ -469,15 +457,9 @@ export function Tree() {
                 data-testid="graph-fullscreen"
                 aria-label="Fullscreen"
                 title="Fullscreen"
-                className="btn btn--ghost btn--sm"
                 onClick={() => setFullscreen(true)}
-                style={{
-                  position: "absolute", top: FULLSCREEN_BTN.top, right: 12, zIndex: 5,
-                  width: FULLSCREEN_BTN.w, height: FULLSCREEN_BTN.h, padding: 0,
-                  display: "inline-flex", alignItems: "center", justifyContent: "center",
-                  background: "var(--bg-panel)", border: "1px solid var(--border)",
-                  borderRadius: "var(--r-sm)", boxShadow: "var(--shadow-sm)",
-                }}
+                className={`btn btn--ghost btn--sm ${styles.fullscreenBtn}`}
+                style={FULLSCREEN_BTN_VARS}
               >
                 <Icon name="max" size={13} />
               </button>
@@ -485,15 +467,9 @@ export function Tree() {
           )}
         </div>
         {selected && !isMobile && (
-          <aside
-            style={{
-              width: 320,
-              borderLeft: "1px solid var(--border)",
-              padding: 20,
-              background: "var(--bg-subtle)",
-              overflowY: "auto",
-            }}
-          >
+          // Keyed by the concept: picking another node fades its panel in
+          // afresh rather than swapping the content in place.
+          <aside key={selected.id} className={`fade-in ${styles.aside}`}>
             {detailPanel}
           </aside>
         )}
@@ -502,18 +478,11 @@ export function Tree() {
       {selected && isMobile && (
         <div
           onClick={() => setSelected(null)}
-          style={{
-            position: "fixed", inset: 0, zIndex: 90, background: "rgba(25, 37, 11,0.35)",
-            display: "flex", flexDirection: "column", justifyContent: "flex-end",
-          }}
+          className={`fade-in ${styles.scrim}`}
         >
           <div
             onClick={e => e.stopPropagation()}
-            className="slide-up"
-            style={{
-              background: "var(--bg-panel)", borderTopLeftRadius: "var(--r-lg)", borderTopRightRadius: "var(--r-lg)",
-              padding: 20, maxHeight: "80vh", overflowY: "auto",
-            }}
+            className={`slide-up ${styles.sheet}`}
           >
             {detailPanel}
           </div>
@@ -521,11 +490,11 @@ export function Tree() {
       )}
 
       {fullscreen && (
-        <div style={{ position: "fixed", inset: 0, zIndex: 150, background: "var(--bg)", display: "flex", flexDirection: "column" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 20px", borderBottom: "1px solid var(--border)" }}>
+        <div className={`fade-in ${styles.fullscreen}`}>
+          <div className={styles.fullscreenHead}>
             <div>
               <div className="label-micro">Knowledge tree — fullscreen</div>
-              <div className="h-serif" style={{ fontSize: 18 }}>Press Esc to exit</div>
+              <div className={`h-serif ${styles.fullscreenTitle}`}>Press Esc to exit</div>
             </div>
             <button className="btn btn--ghost btn--sm" onClick={() => setFullscreen(false)}>
               <Icon name="x" size={14} />
@@ -557,7 +526,7 @@ function AddConceptControl({
   onCancel: () => void;
 }) {
   return adding ? (
-    <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
+    <span className={`fade-in ${styles.addConcept}`}>
       <input
         data-testid="graph-add-concept-input"
         autoFocus
@@ -568,10 +537,7 @@ function AddConceptControl({
           if (e.key === "Enter") onSubmit();
           if (e.key === "Escape") onCancel();
         }}
-        style={{
-          fontSize: 12, padding: "5px 10px", border: "1px solid var(--border)",
-          borderRadius: "var(--r-full)", background: "var(--bg-panel)", width: 180,
-        }}
+        className={`${styles.field} ${styles.addInput}`}
       />
       <button
         data-testid="graph-add-concept-submit"
@@ -615,45 +581,45 @@ function NodeDetailPanel({
   onAction: (href: string) => void;
   onOpenSession: (sessionId: string) => void;
 }) {
+  const m = useMotionPresets();
   return (
     <>
       {/* Course on the left, close in the top-right corner. */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-          <span style={{ width: 10, height: 10, borderRadius: "50%", background: node.color, flexShrink: 0 }} />
-          <span className="label-micro" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+      <div className={styles.panelHead}>
+        <div className={styles.panelCourse}>
+          <span className={styles.dot} style={nodeColorVar(node.color)} />
+          <span className={`label-micro ${styles.ellipsis}`}>
             {node.subject}
           </span>
         </div>
         <button
-          className="btn btn--ghost btn--sm"
           onClick={onClose}
           aria-label="Close detail panel"
-          style={{ flexShrink: 0, marginRight: -6, width: 28, height: 28, padding: 0, placeContent: "center" }}
+          className={`btn btn--ghost btn--sm ${styles.close}`}
         >
           <Icon name="x" size={14} />
         </button>
       </div>
-      <h2 className="h-serif" style={{ fontSize: 24, margin: "6px 0 12px", fontWeight: 500 }}>
+      <h2 className={`h-serif ${styles.nodeTitle}`}>
         {node.name}
       </h2>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 16 }}>
-        <div className="card" style={{ padding: 12 }}>
+      <div className={styles.tiles}>
+        <div className={`card ${styles.tile}`}>
           <div className="label-micro">Mastery</div>
-          <div className="mono" style={{ fontSize: 22, color: node.color }}>
-            {Math.round((node.mastery_score || 0) * 100)}%
+          <div className={`mono ${styles.mastery}`} style={nodeColorVar(node.color)}>
+            <AnimatedNumber value={Math.round((node.mastery_score || 0) * 100)} format={formatPct} />
           </div>
         </div>
-        <div className="card" style={{ padding: 12 }}>
+        <div className={`card ${styles.tile}`}>
           <div className="label-micro">Tier</div>
-          <div style={{ fontSize: 14, fontWeight: 500, marginTop: 4, textTransform: "capitalize" }}>
+          <div className={styles.tier}>
             {node.mastery_tier}
           </div>
         </div>
       </div>
-      <div style={{ marginBottom: 12 }}>
-        <div className="label-micro" style={{ marginBottom: 6 }}>Last studied</div>
-        <div style={{ fontSize: 13 }}>
+      <div className={styles.lastStudied}>
+        <div className={`label-micro ${styles.lastStudiedLabel}`}>Last studied</div>
+        <div className={styles.lastStudiedValue}>
           {node.last_studied_at ? new Date(node.last_studied_at).toLocaleString() : "never"}
         </div>
       </div>
@@ -661,20 +627,15 @@ function NodeDetailPanel({
       <nav
         aria-label={`Study ${node.name}`}
         data-testid="tree-node-actions"
-        style={{
-          display: "grid",
-          gridTemplateColumns: actions.length > 2 ? "1fr 1fr" : "1fr",
-          gap: 8,
-          marginBottom: 4,
-        }}
+        className={styles.actions}
+        data-cols={actions.length > 2 ? 2 : 1}
       >
         {actions.map(ac => (
           <button
             key={ac.key}
             type="button"
-            className={ac.primary ? "btn btn--primary" : "btn"}
+            className={`${ac.primary ? "btn btn--primary" : "btn"} ${styles.actionBtn}`}
             data-testid={`tree-node-action-${ac.key}`}
-            style={{ width: "100%" }}
             onClick={() => onAction(ac.href)}
           >
             <Icon name={ACTION_ICON[ac.key]} size={14} /> {ac.label}
@@ -694,33 +655,38 @@ function NodeDetailPanel({
         <RecentQuizzes attempts={attempts} recentQuizzes={recentQuizzes} />
       )}
       {sessions.length > 0 && (
-        <div style={{ marginTop: 18 }}>
-          <div className="label-micro" style={{ marginBottom: 8 }}>Sessions for this concept</div>
-          {sessions.slice(0, 4).map(s => (
-            <button
-              key={s.id}
-              onClick={() => onOpenSession(s.id)}
-              style={{
-                display: "flex", justifyContent: "space-between", alignItems: "center",
-                width: "100%", padding: "8px 10px",
-                background: "var(--bg-panel)", border: "1px solid var(--border)",
-                borderRadius: "var(--r-sm)", marginBottom: 6, textAlign: "left",
-              }}
-            >
-              <div style={{ fontSize: 12, minWidth: 0, overflow: "hidden" }}>
-                <div style={{ fontWeight: 500, textTransform: "capitalize" }}>{s.mode}</div>
-                <div style={{ fontSize: 10, color: "var(--text-muted)" }}>
-                  {s.message_count} msgs · {new Date(s.started_at).toLocaleDateString()}
+        <div className={styles.section}>
+          <div className={`label-micro ${styles.sectionLabel}`}>Sessions for this concept</div>
+          <motion.div variants={m.list.container} initial="hidden" animate="shown">
+            {sessions.slice(0, 4).map(s => (
+              <motion.button
+                key={s.id}
+                variants={m.list.item}
+                onClick={() => onOpenSession(s.id)}
+                className={`${styles.row} ${styles.sessionBtn}`}
+              >
+                <div className={styles.sessionText}>
+                  <div className={styles.sessionMode}>{s.mode}</div>
+                  <div className={styles.sessionMeta}>
+                    {s.message_count} msgs · {new Date(s.started_at).toLocaleDateString()}
+                  </div>
                 </div>
-              </div>
-              <Icon name="chev" size={12} />
-            </button>
-          ))}
+                <Icon name="chev" size={12} />
+              </motion.button>
+            ))}
+          </motion.div>
         </div>
       )}
     </>
   );
 }
+
+/** The concept's colour as a custom property (its dot and Mastery figure). */
+function nodeColorVar(color: string | null | undefined): React.CSSProperties | undefined {
+  return color ? ({ "--node-color": color } as React.CSSProperties) : undefined;
+}
+
+const formatPct = (v: number) => `${Math.round(v)}%`;
 
 /** The node panel's "Recent quizzes" block. `attempts === null` is "not
  *  fetched yet", never "none". */
@@ -730,39 +696,40 @@ function RecentQuizzes({
   attempts: AttemptSummary[] | null;
   recentQuizzes: AttemptSummary[];
 }) {
+  const m = useMotionPresets();
   return (
-    <div data-testid="tree-node-recent-quizzes" style={{ marginTop: 18 }}>
-      <div className="label-micro" style={{ marginBottom: 8 }}>Recent quizzes</div>
+    <div data-testid="tree-node-recent-quizzes" className={styles.section}>
+      <div className={`label-micro ${styles.sectionLabel}`}>Recent quizzes</div>
       {attempts === null ? (
-        <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Loading…</div>
+        <div className={styles.note}>Loading…</div>
       ) : recentQuizzes.length === 0 ? (
         // No second CTA here on purpose: the Quiz action is a few pixels up
         // and is the action this empty state would ask for.
-        <div style={{ fontSize: 12, color: "var(--text-muted)" }}>No quizzes yet</div>
+        <div className={styles.note}>No quizzes yet</div>
       ) : (
-        recentQuizzes.map(a => (
-          <div
+        // The history arrives after the panel opens ("Loading…" first), so
+        // its rows stagger in.
+        <motion.div variants={m.list.container} initial="hidden" animate="shown">
+        {recentQuizzes.map(a => (
+          <motion.div
             key={a.quiz_id}
+            variants={m.list.item}
             data-testid={`tree-node-recent-quiz-${a.quiz_id}`}
-            style={{
-              display: "flex", justifyContent: "space-between", alignItems: "center",
-              gap: 8, padding: "8px 10px",
-              background: "var(--bg-panel)", border: "1px solid var(--border)",
-              borderRadius: "var(--r-sm)", marginBottom: 6,
-            }}
+            className={`${styles.row} ${styles.quizRow}`}
           >
             {/* Not a link: there is no finished-attempt review endpoint —
                 `GET /attempts/{id}` answers `resumable: false, questions: []`
                 for a completed row (gap G5). A row that navigated nowhere
                 would be a broken promise. */}
-            <span style={{ fontSize: 12 }}>
+            <span className={styles.quizWhen}>
               {relativeStudied(a.completed_at || a.created_at)}
             </span>
-            <span className="mono" style={{ fontSize: 11, color: "var(--text-muted)" }}>
+            <span className={`mono ${styles.quizScore}`}>
               {a.score ?? "—"}/{a.total ?? "—"} · {formatMasteryDelta(a.p_delta)} mastery
             </span>
-          </div>
-        ))
+          </motion.div>
+        ))}
+        </motion.div>
       )}
     </div>
   );
@@ -777,7 +744,7 @@ function FullscreenGraph({
 }) {
   const [ref, size] = useGraphSize<HTMLDivElement>({ w: 1200, h: 700 });
   return (
-    <div ref={ref} style={{ flex: 1, position: "relative" }}>
+    <div ref={ref} className={styles.fullscreenGraph}>
       {size && (
         <KnowledgeGraph
           nodes={nodes}
@@ -796,4 +763,10 @@ function FullscreenGraph({
 /** The graph-corner Fullscreen icon: as wide as the 2D zoom stack (36px:
  *  4px padding + 26px buttons + 1px borders) so the two read as one column. */
 const FULLSCREEN_BTN = { top: 12, w: 36, h: 32 };
+/** FULLSCREEN_BTN for Tree.module.css's .fullscreenBtn (unitless px). */
+const FULLSCREEN_BTN_VARS = {
+  "--btn-top": FULLSCREEN_BTN.top,
+  "--btn-w": FULLSCREEN_BTN.w,
+  "--btn-h": FULLSCREEN_BTN.h,
+} as React.CSSProperties;
 

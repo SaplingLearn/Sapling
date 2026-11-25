@@ -13,19 +13,16 @@
  * n; a value with nothing behind it reads "—", never a zero.
  */
 
-import React from "react";
+import type React from "react";
 import type { LoopSelfExplainNext, LoopSelfExplanation } from "@/lib/types";
+import { AnimatedNumber } from "../AnimatedNumber";
+import { StaggerBody, StaggerRow } from "./adminMotion";
+import t from "./adminTable.module.css";
 
-const th: React.CSSProperties = {
-  textAlign: "left", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em",
-  color: "var(--text-muted)", padding: "4px 8px",
-};
-const thNum: React.CSSProperties = { ...th, textAlign: "right" };
-const td: React.CSSProperties = { fontSize: 13, padding: "6px 8px", borderTop: "1px solid var(--border)" };
-const tdNum: React.CSSProperties = { ...td, textAlign: "right", fontVariantNumeric: "tabular-nums" };
-const muted: React.CSSProperties = { color: "var(--text-muted)", fontSize: 13, margin: "0 0 12px" };
-const statValue: React.CSSProperties = { fontSize: 24, fontWeight: 600 };
-const statNote: React.CSSProperties = { fontSize: 12, color: "var(--text-muted)" };
+const th = t.th;
+const thNum = `${t.th} ${t.num}`;
+const td = t.td;
+const tdNum = `${t.td} ${t.num}`;
 
 export const JUNCTURE_LABEL: Record<string, string> = {
   worked_example: "After a worked example",
@@ -37,33 +34,41 @@ const pct = (v: number | null) => (v == null ? "—" : `${Number((v * 100).toFix
 /** "3 of 4 (75%)": right with no help, of the prompts that had a next item. */
 const nextShare = (x: LoopSelfExplainNext) => (x.n ? `${x.unassisted} of ${x.n} (${pct(x.rate)})` : "—");
 
-function Stat({ label, value, note, testid }: { label: string; value: string; note: string; testid: string }) {
+function Stat({ label, value, note, testid }: { label: string; value: React.ReactNode; note: string; testid: string }) {
   return (
     <div data-testid={testid}>
       <div className="label-micro">{label}</div>
-      <div style={statValue}>{value}</div>
-      <div style={statNote}>{note}</div>
+      <div className={t.statValue}>{value}</div>
+      <div className={t.statNote}>{note}</div>
     </div>
   );
 }
+
+/** A figure that tweens when the range changes; "—" when there is none. */
+function Figure({ value, format }: { value: number | null; format: (v: number) => string }) {
+  return value == null ? <>—</> : <AnimatedNumber value={value} format={format} />;
+}
+
+const pctOf = (v: number) => pct(v);
+const chars = (v: number) => `${Math.round(v)} chars`;
 
 /** The section for LearningLoopPanelBody. `data` undefined: the backend
  *  predates A139 (nothing renders); null: its reads failed for this range. */
 export function SelfExplanationPanel({ data }: { data: LoopSelfExplanation | null | undefined }) {
   if (data === undefined) return null;
-  const heading = <h3 className="h-serif" style={{ fontSize: 15, margin: "16px 0 8px" }}>Do students explain their steps?</h3>;
+  const heading = <h3 className={`h-serif ${t.heading}`}>Do students explain their steps?</h3>;
   if (data === null) {
     return (
       <section data-testid="admin-loop-self-explain">
         {heading}
-        <p data-testid="admin-loop-self-explain-unavailable" style={muted}>
+        <p data-testid="admin-loop-self-explain-unavailable" className={t.lede}>
           Self-explanation data could not be read for this range.
         </p>
       </section>
     );
   }
   const intro = (
-    <p style={muted}>
+    <p className={t.lede}>
       The tutor asks a &ldquo;why does this follow?&rdquo; question at a key moment — after a worked example, after
       a shown solution, or after a first unaided correct answer — at most once per concept a session. Replies are
       kept for diagnosis only: never graded and never counted as evidence. The next-item figures compare the
@@ -76,7 +81,7 @@ export function SelfExplanationPanel({ data }: { data: LoopSelfExplanation | nul
       <section data-testid="admin-loop-self-explain">
         {heading}
         {intro}
-        <p data-testid="admin-loop-self-explain-empty" style={muted}>No self-explanation prompts in this range.</p>
+        <p data-testid="admin-loop-self-explain-empty" className={t.lede}>No self-explanation prompts in this range.</p>
       </section>
     );
   }
@@ -85,18 +90,18 @@ export function SelfExplanationPanel({ data }: { data: LoopSelfExplanation | nul
     <section data-testid="admin-loop-self-explain">
       {heading}
       {intro}
-      <div style={{ display: "flex", gap: 24, flexWrap: "wrap", marginBottom: 12 }}>
+      <div className={t.stats}>
         <Stat
           testid="admin-loop-self-explain-shown"
           label="Prompts shown"
-          value={String(data.shown)}
+          value={<AnimatedNumber value={data.shown} />}
           note={`${data.replied} replied · ${data.skipped} skipped · ${data.open} unanswered`}
         />
-        <Stat testid="admin-loop-self-explain-reply-rate" label="Reply rate" value={pct(data.reply_rate)} note={`n = ${data.shown}`} />
+        <Stat testid="admin-loop-self-explain-reply-rate" label="Reply rate" value={<Figure value={data.reply_rate} format={pctOf} />} note={`n = ${data.shown}`} />
         <Stat
           testid="admin-loop-self-explain-reply-chars"
           label="Reply length (median)"
-          value={data.reply_chars.median == null ? "—" : `${Math.round(data.reply_chars.median)} chars`}
+          value={<Figure value={data.reply_chars.median} format={chars} />}
           note={`n = ${data.reply_chars.n}`}
         />
         <Stat
@@ -113,33 +118,33 @@ export function SelfExplanationPanel({ data }: { data: LoopSelfExplanation | nul
         />
       </div>
       {data.by_juncture.length > 0 && (
-        <div data-testid="admin-loop-self-explain-by-juncture" style={{ overflowX: "auto" }}>
-          <table style={{ borderCollapse: "collapse", minWidth: 640 }}>
+        <div data-testid="admin-loop-self-explain-by-juncture" className={t.scrollX}>
+          <table className={`${t.table} ${t.minJuncture}`}>
             <thead>
               <tr>
-                <th style={th}>Juncture</th>
-                <th style={thNum}>Shown</th>
-                <th style={thNum}>Reply rate</th>
-                <th style={thNum}>Next right unaided, after a reply</th>
-                <th style={thNum}>Next right unaided, no reply</th>
+                <th className={th}>Juncture</th>
+                <th className={thNum}>Shown</th>
+                <th className={thNum}>Reply rate</th>
+                <th className={thNum}>Next right unaided, after a reply</th>
+                <th className={thNum}>Next right unaided, no reply</th>
               </tr>
             </thead>
-            <tbody>
+            <StaggerBody>
               {data.by_juncture.map((j) => (
-                <tr key={j.juncture} data-testid={`admin-loop-self-explain-juncture-${j.juncture}`}>
-                  <td style={td}>{JUNCTURE_LABEL[j.juncture] ?? j.juncture}</td>
-                  <td style={tdNum}>{j.shown}</td>
-                  <td style={tdNum}>{j.shown ? `${pct(j.reply_rate)} (${j.replied} of ${j.shown})` : "—"}</td>
-                  <td style={tdNum}>{nextShare(j.next_item.replied)}</td>
-                  <td style={tdNum}>{nextShare(j.next_item.not_replied)}</td>
-                </tr>
+                <StaggerRow key={j.juncture} data-testid={`admin-loop-self-explain-juncture-${j.juncture}`}>
+                  <td className={td}>{JUNCTURE_LABEL[j.juncture] ?? j.juncture}</td>
+                  <td className={tdNum}>{j.shown}</td>
+                  <td className={tdNum}>{j.shown ? `${pct(j.reply_rate)} (${j.replied} of ${j.shown})` : "—"}</td>
+                  <td className={tdNum}>{nextShare(j.next_item.replied)}</td>
+                  <td className={tdNum}>{nextShare(j.next_item.not_replied)}</td>
+                </StaggerRow>
               ))}
-            </tbody>
+            </StaggerBody>
           </table>
         </div>
       )}
       {data.truncated && (
-        <p style={{ ...muted, margin: "8px 0 0" }}>Partial: a scan limit cut this range short.</p>
+        <p className={t.tail}>Partial: a scan limit cut this range short.</p>
       )}
     </section>
   );

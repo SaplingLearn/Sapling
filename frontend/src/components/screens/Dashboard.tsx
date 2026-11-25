@@ -34,7 +34,7 @@ import type { GraphNode as ApiNode, GraphEdge as ApiEdge } from "@/lib/types";
 import { apiToGraphNode, learnHrefForNode, type GraphNode, type GraphEdge } from "@/lib/data";
 import { IS_TEST_MODE, now } from "@/lib/testMode";
 import { buildQuizHref } from "@/lib/quiz/source";
-import { DashboardActions, PANEL_GAP, TodayColumn } from "../dashboard/TodayColumn";
+import { DashboardActions, TodayColumn } from "../dashboard/TodayColumn";
 import { LearnNextCard, type Recommendation } from "../dashboard/LearnNextCard";
 import { fetchLearnNext, type LearnNext } from "../dashboard/learnNext";
 import {
@@ -45,17 +45,19 @@ import {
   type DashboardStats,
 } from "../dashboard/dashboardModel";
 import { StreakMark, getWeekDays } from "../dashboard/StreakMark";
+import { AnimatedNumber } from "./AnimatedNumber";
+import styles from "./Dashboard.module.css";
 
 /** An assignment known to have a due date (gradebook/Gradescope items may not). */
 type DatedAssignment = Assignment & { due_date: string };
 const hasDueDate = (a: Assignment): a is DatedAssignment => !!a.due_date;
 
-// The desktop greeting's line box. The header actions centre on this line,
-// so both read from one place.
-const HERO_PAD_TOP = 6;
-const HERO_PAD_BOTTOM = 18;
-const HERO_FONT = 42;
-const HERO_LINE_HEIGHT = 1.15;
+// The typewriter greeting's rhythm (the pre-revamp hero's, below). Its own
+// clock, not a transition: one character per tick, a blinking caret, and a
+// short settle before the caret goes and the quote fades in.
+const TYPE_TICK_MS = 55;
+const CARET_BLINK_MS = 530;
+const TYPE_SETTLE_MS = 300;
 
 const QUOTES = [
   "Learning is the only thing the mind never exhausts, never fears, and never regrets. — da Vinci",
@@ -91,7 +93,7 @@ function getGreetingPrefix(d: Date) {
 //    the greeting settles.
 function Typewriter({
   text,
-  speed = 55,
+  speed = TYPE_TICK_MS,
   onDone,
 }: {
   text: string;
@@ -121,7 +123,7 @@ function Typewriter({
         settleTimer = setTimeout(() => {
           setDone(true);
           onDoneRef.current?.();
-        }, 300);
+        }, TYPE_SETTLE_MS);
       }
     }, speed);
     return () => {
@@ -132,23 +134,14 @@ function Typewriter({
 
   React.useEffect(() => {
     if (done) { setCursorOn(false); return; }
-    const blink = setInterval(() => setCursorOn((v) => !v), 530);
+    const blink = setInterval(() => setCursorOn((v) => !v), CARET_BLINK_MS);
     return () => clearInterval(blink);
   }, [done]);
 
   return (
     <span>
       {shown}
-      <span
-        aria-hidden
-        style={{
-          opacity: done ? 0 : cursorOn ? 1 : 0,
-          marginLeft: 1,
-          color: "var(--accent)",
-          fontWeight: 200,
-          transition: "opacity 0.1s",
-        }}
-      >
+      <span aria-hidden className={styles.cursor} data-on={!done && cursorOn}>
         |
       </span>
     </span>
@@ -429,7 +422,7 @@ export function Dashboard() {
 
   if (loading && !courses.length) {
     return (
-      <div style={{ minHeight: "100%", display: "flex", flexDirection: "column" }}>
+      <div className={styles.root}>
         <DashboardSkeleton />
       </div>
     );
@@ -439,8 +432,8 @@ export function Dashboard() {
     return (
       <div>
         <TopBar title="Couldn't load dashboard" />
-        <div style={{ padding: 32, fontSize: 13 }}>
-          <div style={{ color: "var(--err)", marginBottom: 10 }}>{loadError}</div>
+        <div className={styles.error}>
+          <div className={styles.errorText}>{loadError}</div>
           <button className="btn btn--primary" onClick={load}>Retry</button>
         </div>
       </div>
@@ -451,7 +444,7 @@ export function Dashboard() {
   const highlightId = suggestNode?.id;
 
   const graphPanel = (
-    <div style={{ display: "flex", flexDirection: "column", gap: 16, minWidth: 0, flex: 1, minHeight: 0 }}>
+    <div className={styles.graphPanel}>
       {renderGraphCard({
         stats,
         nodes,
@@ -465,7 +458,7 @@ export function Dashboard() {
           // The card grows with its content, so the graph's own height counts:
           // at least 420, as it has always opened (the pre-measurement guess
           // used to hold the card at that height).
-          <div ref={gRefCb} style={{ position: "relative", flex: 1, minHeight: 420 }}>
+          <div ref={gRefCb} className={styles.graphArea}>
             {size && renderGraphLayers({
               nodes,
               edges,
@@ -521,7 +514,7 @@ export function Dashboard() {
       openCourses={() => setCoursesOpen(true)}
       courseRows={
         courseProgress.length > 0
-          ? courseProgress.map((entry) => <CourseProgressRow key={entry.course.course_id} entry={entry} spacing={0} />)
+          ? courseProgress.map((entry) => <CourseProgressRow key={entry.course.course_id} entry={entry} spaced={false} />)
           : undefined
       }
     />
@@ -544,16 +537,7 @@ export function Dashboard() {
   const retentionBlock = renderRetentionCard({ due: retentionDue, courseIds: retentionCourseIds, navigate });
 
   const mainColumn = (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        gap: 14,
-        minWidth: 0,
-        minHeight: 0,
-        alignSelf: "stretch",
-      }}
-    >
+    <div className={styles.mainColumn}>
       {heroBlock}
       {renderMobileMetaRow({ isMobile, navigate })}
       {retentionBlock}
@@ -563,7 +547,7 @@ export function Dashboard() {
   );
 
   return (
-    <div style={{ minHeight: "100%", display: "flex", flexDirection: "column" }}>
+    <div className={styles.root}>
       {isMobile && useLegacyPanels && renderMobileTabs({ mobileTab, setMobileTab })}
 
       {useLegacyPanels ? (
@@ -589,7 +573,7 @@ export function Dashboard() {
           }),
         })
       ) : isMobile ? (
-        <div style={{ padding: "8px 20px 16px", display: "grid", gap: 16, gridTemplateColumns: "1fr", alignItems: "start" }}>
+        <div className={styles.mobileStack}>
           {mainColumn}
           {rightPanel}
         </div>
@@ -597,29 +581,18 @@ export function Dashboard() {
         // Desktop sidebar layout: the greeting and the actions share one header
         // row, so the graph and the right column start on the same line and
         // stretch to the same bottom edge.
-        <div style={{ padding: "18px 32px 24px", display: "flex", flexDirection: "column", gap: 14, flex: 1, minHeight: 0 }}>
-          <div style={{ display: "flex", alignItems: "stretch", justifyContent: "space-between", gap: 16 }}>
-            <div style={{ minWidth: 0 }}>{heroBlock}</div>
+        <div className={styles.desktop}>
+          <div className={styles.desktopHeader}>
+            <div className={styles.minW0}>{heroBlock}</div>
             {/* Bottom-aligned with the quote: both sides of the header end on
                 one line, the same distance above the cards. */}
-            <div
-              style={{
-                paddingBottom: HERO_PAD_BOTTOM,
-                display: "flex", alignItems: "flex-end", flexShrink: 0,
-              }}
-            >
+            <div className={styles.headerActions}>
               <DashboardActions navigate={navigate} />
             </div>
           </div>
           {retentionBlock}
           {suggestBlock}
-          <div
-            style={{
-              display: "grid", gap: PANEL_GAP,
-              gridTemplateColumns: "minmax(0, 1fr) minmax(280px, 360px)",
-              alignItems: "stretch", flex: 1, minHeight: 0,
-            }}
-          >
+          <div className={styles.desktopGrid}>
             {graphPanel}
             {rightPanel}
           </div>
@@ -667,23 +640,15 @@ function renderGraphCard({
     // Flex-column so the inner gRef can flex: 1 and fill whatever
     // height the grid row decides (courses + upcoming stacked on the
     // left determines the row height via align-items: stretch).
-    <div
-      className="card"
-      style={{
-        padding: 0, overflow: "hidden", position: "relative",
-        minHeight: 420,
-        display: "flex", flexDirection: "column",
-        flex: 1,
-      }}
-    >
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 22px", borderBottom: "1px solid var(--border)" }}>
+    <div className={`card ${styles.graphCard}`}>
+      <div className={styles.graphCardHead}>
         <div>
           <div className="label-micro">Your knowledge map</div>
-          <div className="h-serif" style={{ fontSize: 20, marginTop: 2 }}>
+          <div className={`h-serif ${styles.graphTitle}`}>
             {`${conceptCount} ${conceptCount === 1 ? "concept" : "concepts"} across ${scopedCourses.length} ${scopedCourses.length === 1 ? "course" : "courses"}`}
           </div>
         </div>
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+        <div className={styles.chips}>
           {useLegacyPanels && scopedCourses.slice(0, 5).map((c) => {
             const lit = (keyHoverCourse ?? graphHoverCourse ?? zoomedCourse) === c.course_id;
             return (
@@ -699,13 +664,10 @@ function renderGraphCard({
                 onFocus={() => setKeyHoverCourse(c.course_id)}
                 onBlur={() => setKeyHoverCourse(null)}
                 onClick={() => zoomToCourse(c.course_id)}
-                style={{
-                  display: "flex", alignItems: "center", gap: 6, fontSize: 11,
-                  color: lit ? "var(--text)" : "var(--text-dim)", fontWeight: lit ? 600 : 400,
-                  background: "transparent", border: 0, padding: "2px 4px", cursor: "pointer", fontFamily: "inherit",
-                }}
+                className={styles.chip}
+                data-lit={lit}
               >
-                <span style={{ width: 10, height: 10, borderRadius: "50%", background: c.color || "var(--accent)" }} />
+                <span className={styles.dot} style={dotColor(c.color)} />
                 {c.course_code || c.course_name}
               </button>
             );
@@ -782,41 +744,15 @@ function renderHeroBlock({
   quote: string;
 }) {
   return (
-    <div
-      style={{
-        textAlign: centered ? "center" : "left",
-        padding: isMobile ? "14px 4px 14px" : `${HERO_PAD_TOP}px 0 ${HERO_PAD_BOTTOM}px`,
-      }}
-    >
-      <h1
-        className="h-serif"
-        style={{
-          margin: 0,
-          fontSize: isMobile ? 34 : HERO_FONT,
-          fontWeight: 600,
-          color: "var(--text)",
-          letterSpacing: "-0.02em",
-          lineHeight: HERO_LINE_HEIGHT,
-        }}
-      >
+    <div className={styles.hero} data-centered={centered} data-mobile={isMobile}>
+      <h1 className={`h-serif ${styles.heroTitle}`}>
         <Typewriter text={greetingText} onDone={onGreetingDone} />
       </h1>
       {quote && (
         <p
           aria-hidden={!greetingDone}
-          className="body-serif"
-          style={{
-            margin: centered ? "8px auto 0" : "8px 0 0",
-            maxWidth: 640,
-            fontSize: 14,
-            fontStyle: "italic",
-            color: "var(--text-dim)",
-            lineHeight: 1.55,
-            opacity: greetingDone ? 1 : 0,
-            transform: greetingDone ? "translateY(0)" : "translateY(-6px)",
-            transition:
-              "opacity 0.55s var(--ease) 0.15s, transform 0.55s var(--ease) 0.15s",
-          }}
+          className={`body-serif ${styles.quote}`}
+          data-shown={greetingDone}
         >
           "{quote}"
         </p>
@@ -828,20 +764,11 @@ function renderHeroBlock({
 function renderMobileMetaRow({ isMobile, navigate }: { isMobile: boolean; navigate: Navigate }) {
   if (!isMobile) return null;
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "flex-end",
-          gap: 8,
-          flexWrap: "wrap",
-        }}
-      >
+    <div className={styles.metaRow}>
+      <div className={styles.metaActions}>
         <button
-          className="btn btn--sm btn--primary"
+          className={`btn btn--sm btn--primary ${styles.startBtn}`}
           onClick={() => navigate("/learn")}
-          style={{ padding: "7px 14px", fontSize: 12 }}
         >
           <Icon name="sparkle" size={13} /> Start learning
         </button>
@@ -859,11 +786,11 @@ function renderSuggestCard({
 }) {
   if (!node) return null;
   return (
-    <div className="card fade-in" style={{ padding: "14px 18px", display: "flex", gap: 14, alignItems: "center", borderColor: "var(--accent-border)", background: "var(--accent-soft)" }}>
+    <div className={`card fade-in ${styles.nudge}`}>
       <Icon name="sparkle" size={16} />
-      <div style={{ flex: 1, fontSize: 13 }}>
+      <div className={styles.nudgeText}>
         <strong>Try this next:</strong> {node.name}
-        {node.subject && <span style={{ color: "var(--text-dim)" }}> · {node.subject}</span>}
+        {node.subject && <span className={styles.dim}> · {node.subject}</span>}
       </div>
       <button
         className="btn btn--sm btn--primary"
@@ -887,13 +814,12 @@ function renderRetentionCard({ due, courseIds, navigate }: { due: boolean; cours
   if (!due) return null;
   return (
     <div
-      className="card fade-in"
       data-testid="dashboard-retention-due"
       role="status"
-      style={{ padding: "14px 18px", display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap", borderColor: "var(--accent-border)", background: "var(--accent-soft)" }}
+      className={`card fade-in ${styles.nudge} ${styles.nudgeWrap}`}
     >
       <Icon name="bell" size={16} />
-      <div style={{ flex: 1, minWidth: 180, fontSize: 13 }}>
+      <div className={`${styles.nudgeText} ${styles.nudgeTextMin}`}>
         <strong>A retention check is due.</strong> A few questions on what you studied a while ago, with no hints.
       </div>
       <button
@@ -914,18 +840,13 @@ function renderMobileTabs({
   setMobileTab: (t: "courses" | "stats") => void;
 }) {
   return (
-    <div style={{ display: "flex", gap: 6, padding: "14px 20px 0" }}>
+    <div className={styles.mobileTabs}>
       {(["courses", "stats"] as const).map(t => (
         <button
           key={t}
           onClick={() => setMobileTab(t)}
-          style={{
-            flex: 1, padding: "8px 12px", borderRadius: "var(--r-sm)",
-            background: mobileTab === t ? "var(--accent-soft)" : "var(--bg-panel)",
-            color: mobileTab === t ? "var(--accent)" : "var(--text-dim)",
-            border: "1px solid var(--border)", fontSize: 12, fontWeight: 600,
-            textTransform: "capitalize",
-          }}
+          className={styles.mobileTab}
+          data-active={mobileTab === t}
         >
           {t === "courses" ? "My Courses" : "Stats & More"}
         </button>
@@ -948,16 +869,7 @@ function renderLegacyGrid({
   rightPanel: React.ReactNode;
 }) {
   return (
-    <div
-      style={{
-        padding: isMobile ? "8px 20px 16px" : "18px 32px 24px",
-        display: "grid", gap: 16,
-        gridTemplateColumns: isMobile ? "1fr" : "minmax(240px, 280px) minmax(0, 1fr) minmax(240px, 300px)",
-        alignItems: isMobile ? "start" : "stretch",
-        flex: isMobile ? "0 0 auto" : 1,
-        minHeight: 0,
-      }}
-    >
+    <div className={styles.legacyGrid} data-mobile={isMobile}>
       {isMobile ? (
         mobileTab === "courses" ? (
           <>
@@ -991,18 +903,18 @@ function renderLegacyCoursesPanel({
   navigate: Navigate;
 }) {
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 16, minWidth: 0 }}>
-      <div className="card" style={{ padding: "var(--pad-lg)" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+    <div className={styles.panelColumn}>
+      <div className={`card ${styles.legacyCard}`}>
+        <div className={styles.legacyCardHead}>
           <div className="label-micro">My courses</div>
           <button className="btn btn--ghost btn--sm" onClick={onOpenCourses}>
             <Icon name="cog" size={12} /> Courses & Semesters
           </button>
         </div>
         {!hasCourses ? (
-          <div style={{ fontSize: 12, color: "var(--text-muted)" }}>No enrolled courses yet.</div>
+          <div className={styles.empty}>No enrolled courses yet.</div>
         ) : courseProgress.length === 0 ? (
-          <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
+          <div className={styles.empty}>
             Nothing enrolled this semester.
           </div>
         ) : null}
@@ -1011,21 +923,21 @@ function renderLegacyCoursesPanel({
         ))}
       </div>
 
-      <div className="card" style={{ padding: "var(--pad-lg)" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+      <div className={`card ${styles.legacyCard}`}>
+        <div className={styles.legacyCardHead}>
           <div className="label-micro">Upcoming</div>
           <button className="btn btn--ghost btn--sm" onClick={() => navigate("/calendar")}>Calendar →</button>
         </div>
         {assignments.length === 0 && (
-          <div style={{ fontSize: 12, color: "var(--text-muted)" }}>No upcoming assignments.</div>
+          <div className={styles.empty}>No upcoming assignments.</div>
         )}
         {assignments.slice(0, 4).map((a) => {
           const { chipClass, label } = assignmentUrgency(a.due_date, now());
           return (
-            <div key={a.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 0", borderBottom: "1px solid var(--border)" }}>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 13, fontWeight: 500 }}>{a.title}</div>
-                <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
+            <div key={a.id} className={styles.assignment}>
+              <div className={styles.assignmentBody}>
+                <div className={styles.assignmentTitle}>{a.title}</div>
+                <div className={styles.assignmentMeta}>
                   {a.course_name || "—"} · {a.assignment_type || "task"}
                 </div>
               </div>
@@ -1050,36 +962,35 @@ function renderLegacyRightPanel({
   navigate: Navigate;
 }) {
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 16, minWidth: 0 }}>
+    <div className={styles.panelColumn}>
       {!isMobile && (
-        <div style={{ padding: "0 2px", display: "flex", justifyContent: "flex-end", gap: 8, minHeight: 28 }}>
+        <div className={styles.legacyActions}>
           <button
-            className="btn btn--sm btn--primary"
+            className={`btn btn--sm btn--primary ${styles.startBtn}`}
             onClick={() => navigate("/learn")}
-            style={{ padding: "7px 14px", fontSize: 12 }}
           >
             <Icon name="sparkle" size={13} /> Start learning
           </button>
         </div>
       )}
-      <div className="card" style={{ padding: "var(--pad-lg)" }}>
-        <div className="label-micro" style={{ marginBottom: 8 }}>This week</div>
-        <div className="body-serif" style={{ fontSize: 16, marginBottom: 14, color: "var(--text)" }}>
+      <div className={`card ${styles.legacyCard}`}>
+        <div className={`label-micro ${styles.weekLabel}`}>This week</div>
+        <div className={`body-serif ${styles.weekLine}`}>
           {stats.streak > 0 ? (
-            <>You&apos;re on a <span className="h-serif" style={{ color: "var(--warn)", fontWeight: 600 }}>{stats.streak}-day</span> streak.</>
+            <>You&apos;re on a <span className={`h-serif ${styles.streakDays}`}>{stats.streak}-day</span> streak.</>
           ) : (
             <>Ready when you are. Open any session to begin a streak.</>
           )}
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 6 }}>
+        <div className={styles.weekGrid}>
           {weekDays.map(d => {
             const key = d.toISOString().slice(0, 10);
             return (
-              <div key={key} style={{ textAlign: "center" }}>
-                <div className="label-micro" style={{ fontSize: 9 }}>
+              <div key={key} className={styles.weekDay}>
+                <div className={`label-micro ${styles.weekDayLabel}`}>
                   {d.toLocaleDateString("en-US", { weekday: "short" }).slice(0, 2)}
                 </div>
-                <div style={{ marginTop: 6, display: "grid", placeItems: "center" }}>
+                <div className={styles.weekMark}>
                   <StreakMark state={streakMarkState(d, today, activeDays)} day={d.getDate()} />
                 </div>
               </div>
@@ -1088,15 +999,15 @@ function renderLegacyRightPanel({
         </div>
       </div>
 
-      <div className="card" style={{ padding: 0, display: "grid", gridTemplateColumns: "1fr 1fr" }}>
+      <div className={`card ${styles.statsCard}`}>
         <MiniStat
           label="Mastered"
-          value={stats.mastered}
+          value={<AnimatedNumber value={stats.mastered} />}
           sub={stats.total ? `of ${stats.total} concepts` : undefined}
         />
         <MiniStat
           label="Learning"
-          value={stats.learning + stats.struggling}
+          value={<AnimatedNumber value={stats.learning + stats.struggling} />}
           sub={`${stats.unexplored} unexplored`}
         />
       </div>
@@ -1116,16 +1027,11 @@ function renderFullscreenOverlay({
   onNodeClick: (n: GraphNode) => void;
 }) {
   return (
-    <div
-      style={{
-        position: "fixed", inset: 0, zIndex: 150, background: "var(--bg)",
-        display: "flex", flexDirection: "column",
-      }}
-    >
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 20px", borderBottom: "1px solid var(--border)" }}>
+    <div className={`fade-in ${styles.fullscreen}`}>
+      <div className={styles.fullscreenHead}>
         <div>
           <div className="label-micro">Knowledge map — fullscreen</div>
-          <div className="h-serif" style={{ fontSize: 18 }}>Press Esc to exit</div>
+          <div className={`h-serif ${styles.fullscreenTitle}`}>Press Esc to exit</div>
         </div>
         <button className="btn btn--ghost btn--sm" onClick={onClose}>
           <Icon name="x" size={14} />
@@ -1150,7 +1056,7 @@ function FullscreenGraph({
 }) {
   const [ref, size] = useGraphSize<HTMLDivElement>({ w: 1200, h: 700 });
   return (
-    <div ref={ref} style={{ flex: 1, position: "relative" }}>
+    <div ref={ref} className={styles.fullscreenGraph}>
       {size && (
         <KnowledgeGraph
           legible
@@ -1167,15 +1073,22 @@ function FullscreenGraph({
 }
 
 
+/** A course's colour as the dot's custom property (the dot falls back to
+ *  --accent when the course has none). */
+function dotColor(color: string | null | undefined): React.CSSProperties | undefined {
+  return color ? ({ "--dot-color": color } as React.CSSProperties) : undefined;
+}
+
 // One "My courses" line: colour dot, course code, mastery percentage and the
-// four-segment mastery bar.
+// four-segment mastery bar. The percentage counts and the segments slide when
+// a reload moves the course's mix.
 function CourseProgressRow({
   entry,
-  spacing = 12,
+  spaced = true,
 }: {
   entry: CourseProgressEntry;
-  /** Space below the row. 0 when the parent spaces its rows itself. */
-  spacing?: number;
+  /** Space below the row. false when the parent spaces its rows itself. */
+  spaced?: boolean;
 }) {
   const { course, mastered, learning, struggling, unexplored, total, progress } = entry;
   const pct = Math.round(progress * 100);
@@ -1187,48 +1100,39 @@ function CourseProgressRow({
     { key: "unexplored", count: unexplored, color: "var(--bg-soft)", opacity: 1, label: "Unexplored" },
   ];
 
-  const body = (
-    <>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12, marginBottom: 4 }}>
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-          <span style={{ width: 10, height: 10, borderRadius: "50%", background: baseColor, flexShrink: 0 }} />
-          <strong style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+  return (
+    <div className={styles.courseRow} data-spaced={spaced}>
+      <div className={styles.courseHead}>
+        <span className={styles.courseName}>
+          <span className={styles.dot} style={dotColor(course.color)} />
+          <strong className={styles.ellipsis}>
             {course.course_code || course.course_name}
           </strong>
         </span>
-        <span className="mono" style={{ color: "var(--text-dim)", fontSize: 11, flexShrink: 0, marginLeft: 8 }}>
-          {pct}%
-        </span>
+        <AnimatedNumber className={`mono ${styles.coursePct}`} value={pct} format={formatPct} />
       </div>
       {total > 0 ? (
         <div
-          style={{
-            display: "flex",
-            height: 8,
-            background: "var(--bg-soft)",
-            borderRadius: "var(--r-full)",
-            overflow: "hidden",
-          }}
+          className={styles.bar}
           title={segments.filter(s => s.count > 0).map(s => `${s.label}: ${s.count}`).join(" · ")}
         >
           {segments.map((s) => s.count > 0 && (
             <div
               key={s.key}
+              className={styles.segment}
               style={{
-                width: `${(s.count / total) * 100}%`,
-                background: s.color,
-                opacity: s.opacity,
-                transition: "width var(--dur) var(--ease)",
-              }}
+                "--seg-w": `${(s.count / total) * 100}%`,
+                "--seg-color": s.color,
+                "--seg-opacity": s.opacity,
+              } as React.CSSProperties}
             />
           ))}
         </div>
       ) : (
-        <div style={{ height: 8, background: "var(--bg-soft)", borderRadius: "var(--r-full)" }} />
+        <div className={styles.bar} />
       )}
-    </>
+    </div>
   );
-
-  return <div style={{ marginBottom: spacing }}>{body}</div>;
 }
 
+const formatPct = (v: number) => `${Math.round(v)}%`;
