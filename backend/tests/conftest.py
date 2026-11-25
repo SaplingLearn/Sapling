@@ -387,17 +387,6 @@ def _reset_ocr_fallback_warning():
 
 
 @pytest.fixture(autouse=True)
-def _reset_ocr_fallback_warning():
-    """Forget extraction_service's once-per-process "Docling not installed"
-    warning around every test, so which test runs first can't decide whether
-    a later test sees it."""
-    from services import extraction_service
-    extraction_service.reset_docling_fallback_state()
-    yield
-    extraction_service.reset_docling_fallback_state()
-
-
-@pytest.fixture(autouse=True)
 def _reset_events_service():
     """#118/#116: reset the observability queue, drop-counter, and one-time
     pricing-warning state around every test, so a queued row, a tripped
