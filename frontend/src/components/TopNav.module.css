@@ -1,0 +1,298 @@
+/* The top navigation bar (TopNav.tsx). Hover, open and active states are
+   attributes the component sets (`data-active`, `aria-expanded`), styled
+   here; the panels are mounted on open, so they animate in and unmount at
+   once. The global reduced-motion reset collapses every animation here. */
+
+.nav {
+  /* TOP_NAV_HEIGHT (56px) in TopNav.tsx. */
+  height: var(--sp-28);
+  min-height: var(--sp-28);
+  /* --bg-topbar from the pre-revamp palette is a deliberately greener tint
+     than --bg-subtle so the nav reads as its own surface without needing a
+     border or shadow to announce it. */
+  background: var(--bg-topbar);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-10);
+  padding: 0 var(--sp-10);
+  position: sticky;
+  top: 0;
+  z-index: var(--z-sticky);
+
+  /* The minimum touch target for the bar's icon buttons and menu rows. */
+  --nav-tap: 44px;
+}
+
+.navMobile {
+  gap: var(--sp-4);
+  padding: 0 var(--sp-6);
+}
+
+/* ── mobile menu button ─────────────────────────────────────────────── */
+
+.menuWrap {
+  position: relative;
+}
+
+.burger {
+  padding: var(--sp-3);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--sp-2);
+  min-width: var(--nav-tap);
+  min-height: var(--nav-tap);
+  align-items: center;
+  position: relative;
+}
+
+.burgerBar {
+  /* The three bars of the menu glyph. */
+  --burger-bar-w: 18px;
+  --burger-bar-h: 2px;
+
+  width: var(--burger-bar-w);
+  height: var(--burger-bar-h);
+  border-radius: var(--r-full);
+  background: var(--text-dim);
+  transition:
+    transform var(--dur) var(--ease-in-out),
+    opacity var(--dur-fast) var(--ease);
+}
+
+/* Open: the outer bars cross into an X, the middle one fades. */
+.burger[aria-expanded="true"] .barTop {
+  transform: rotate(45deg) translateY(var(--sp-2));
+}
+
+.burger[aria-expanded="true"] .barMid {
+  opacity: 0;
+}
+
+.burger[aria-expanded="true"] .barBottom {
+  transform: rotate(-45deg) translateY(calc(-1 * var(--sp-2)));
+}
+
+.logo {
+  display: flex;
+  align-items: center;
+  text-decoration: none;
+}
+
+/* ── right-hand cluster ─────────────────────────────────────────────── */
+
+.right {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+}
+
+.rightMobile {
+  margin-left: auto;
+}
+
+.admin {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--nav-tap);
+  height: var(--nav-tap);
+  border-radius: var(--r-sm);
+  color: var(--text-muted);
+  transition:
+    background var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease),
+    transform var(--dur-instant) var(--ease-out);
+}
+
+.admin[data-active="true"] {
+  color: var(--text);
+}
+
+.admin:hover {
+  background: var(--bg-soft);
+  color: var(--text);
+}
+
+.admin:active {
+  transform: scale(0.94);
+}
+
+.account {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  padding: var(--sp-1);
+  border-radius: var(--r-full);
+}
+
+/* ── desktop groups ─────────────────────────────────────────────────── */
+
+.groups {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex: 1;
+  min-width: 0;
+}
+
+.groupWrap {
+  position: relative;
+}
+
+.trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-3) var(--sp-5);
+  border-radius: var(--r-sm);
+  font-size: var(--fs-md);
+  font-weight: 500;
+  color: var(--text-muted);
+  white-space: nowrap;
+  transition:
+    color var(--dur-fast) var(--ease),
+    background var(--dur-fast) var(--ease);
+  cursor: pointer;
+  background: transparent;
+  border: none;
+}
+
+.trigger:hover {
+  color: var(--text-dim);
+}
+
+/* Declared after :hover so an open or active group keeps its full ink. */
+.trigger[aria-expanded="true"],
+.trigger[data-active="true"] {
+  color: var(--text);
+}
+
+.trigger[data-active="true"] {
+  font-weight: 700;
+}
+
+.chev {
+  display: inline-flex;
+  transition: transform var(--dur) var(--ease-in-out);
+  transform: rotate(90deg);
+  color: currentColor;
+  opacity: 0.6;
+  /* An optical nudge onto the label's baseline. */
+  margin-top: calc(var(--sp-1) / 2);
+}
+
+.trigger[aria-expanded="true"] .chev {
+  transform: rotate(180deg);
+}
+
+/* Touches the trigger's bottom edge (no margin) so the cursor stays inside
+   the wrapper's mouse-event bounds on its way down. */
+.panel {
+  --nav-panel-min-w: 200px;
+
+  position: absolute;
+  top: 100%;
+  left: 0;
+  min-width: var(--nav-panel-min-w);
+  padding: var(--sp-3);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  z-index: var(--z-popover);
+  transform-origin: top left;
+  animation: nav-panel-in var(--dur-fast) var(--ease-out) both;
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-5);
+  padding: var(--sp-4) var(--sp-5);
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-dim);
+  font-size: var(--fs-md);
+  font-weight: 400;
+  text-decoration: none;
+  transition:
+    background var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
+}
+
+.item[data-active="true"] {
+  background: var(--bg-soft);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.item:hover {
+  background: var(--bg-soft);
+  color: var(--text);
+}
+
+.itemLabel {
+  flex: 1;
+}
+
+/* ── mobile panel ───────────────────────────────────────────────────── */
+
+.mobilePanel {
+  --nav-mobile-panel-min-w: 240px;
+
+  position: absolute;
+  top: calc(100% + var(--sp-3));
+  left: 0;
+  min-width: var(--nav-mobile-panel-min-w);
+  padding: var(--sp-3) 0;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-md);
+  z-index: var(--z-popover);
+  transform-origin: top left;
+  animation: nav-panel-in var(--dur) var(--ease-out) both;
+}
+
+.divider {
+  height: 1px;
+  background: var(--border);
+  margin: var(--sp-3) var(--sp-4);
+}
+
+.mobileHeading {
+  padding: var(--sp-4) var(--sp-7) var(--sp-2);
+}
+
+.mobileItem {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-5);
+  padding: var(--sp-5) var(--sp-7);
+  min-height: var(--nav-tap);
+  box-sizing: border-box;
+  font-size: var(--fs-base);
+  font-weight: 500;
+  color: var(--text-dim);
+  text-decoration: none;
+  transition: background var(--dur-fast) var(--ease);
+}
+
+.mobileItem[data-active="true"] {
+  font-weight: 700;
+  color: var(--text);
+}
+
+.mobileItem:hover {
+  background: var(--bg-soft);
+}
+
+@keyframes nav-panel-in {
+  from { opacity: 0; transform: translateY(calc(-1 * var(--sp-2))) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
