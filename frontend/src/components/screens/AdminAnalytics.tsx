@@ -14,6 +14,7 @@
 
 import React from "react";
 import dynamic from "next/dynamic";
+import { useReducedMotion } from "framer-motion";
 import Link from "next/link";
 import { TopBar } from "../TopBar";
 import { useToast } from "../ToastProvider";
@@ -24,6 +25,10 @@ import { SelfExplanationPanel } from "./admin/SelfExplanationPanel";
 import { MultiConceptPanel } from "./admin/MultiConceptPanel";
 import { LoopCostPanel } from "./AdminLoopCost";
 import { AdminReauthBanner } from "./admin/AdminReauthBanner";
+import { FadeIn, StaggerBody, StaggerRow } from "./admin/adminMotion";
+import { AnimatedNumber } from "./AnimatedNumber";
+import t from "./admin/adminTable.module.css";
+import s from "./AdminAnalytics.module.css";
 import { useUser } from "@/context/UserContext";
 import { errorRateSeries, formatCompactCount, zeroFillDays, type DayPointValue } from "@/lib/daySeries";
 
@@ -67,15 +72,17 @@ const PRESETS = [
 
 const GROUPS: LlmCostGroupBy[] = ["feature", "user", "model"];
 
-const th: React.CSSProperties = {
-  textAlign: "left", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em",
-  color: "var(--text-muted)", padding: "4px 8px",
-};
-const td: React.CSSProperties = { fontSize: 13, padding: "6px 8px", borderTop: "1px solid var(--border)" };
-const tdNum: React.CSSProperties = { ...td, textAlign: "right", fontVariantNumeric: "tabular-nums" };
-// Panel tables keep a minWidth so columns stay readable; this wrapper lets
-// narrow viewports scroll the table instead of overflowing the page.
-const scrollX: React.CSSProperties = { overflowX: "auto" };
+const th = t.th;
+const thNum = `${t.th} ${t.num}`;
+const td = t.td;
+const tdNum = `${t.td} ${t.num}`;
+const tdStrong = `${t.td} ${t.strong}`;
+const tdNumStrong = `${t.td} ${t.num} ${t.strong}`;
+const tdMono = `${t.td} ${t.mono}`;
+
+// The chart series, as roles (AdminAnalytics.module.css defines them on the
+// page from the brand and error tokens).
+const SERIES = { line: "var(--series-line)", fill: "var(--series-fill)", error: "var(--series-error)" } as const;
 // Tiny nonzero rates floor at "<0.1%" so the tooltip/table never reads as
 // "no errors" when errors exist.
 const formatPct = (v: number) => (v > 0 && v < 0.1 ? "<0.1%" : `${Number(v.toFixed(1))}%`);
@@ -95,9 +102,14 @@ function Stat({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div>
       <div className="label-micro">{label}</div>
-      <div style={{ fontSize: 24, fontWeight: 600 }}>{value}</div>
+      <div className={t.statValue}>{value}</div>
     </div>
   );
+}
+
+/** A figure that tweens when the range changes; "—" while there is none. */
+function Num({ value, format }: { value: number | null | undefined; format?: (v: number) => string }) {
+  return value == null ? <>—</> : <AnimatedNumber value={value} format={format ?? String} />;
 }
 
 /** "View data" table twin for the day-series charts (#122 a11y): the chart
@@ -113,26 +125,26 @@ function DaySeriesTable({ label, columns }: {
   if (dates.length === 0) return null;
   const byDate = columns.map((c) => new Map(c.points.map((p) => [p.date, p.value])));
   return (
-    <details style={{ marginTop: 12 }}>
-      <summary style={{ fontSize: 12, color: "var(--text-muted)", cursor: "pointer" }}>View data: {label}</summary>
-      <div style={scrollX}>
-        <table style={{ borderCollapse: "collapse", minWidth: 280, marginTop: 8 }}>
+    <details className={s.details}>
+      <summary className={s.summary}>View data: {label}</summary>
+      <div className={t.scrollX}>
+        <table className={`${t.table} ${t.minDaySeries} ${s.detailsTable}`}>
           <thead>
             <tr>
-              <th style={th}>Date</th>
+              <th className={th}>Date</th>
               {columns.map((c) => (
-                <th key={c.label} style={{ ...th, textAlign: "right" }}>{c.label}</th>
+                <th key={c.label} className={thNum}>{c.label}</th>
               ))}
             </tr>
           </thead>
           <tbody>
             {dates.map((date) => (
               <tr key={date}>
-                <td style={td}>{date}</td>
+                <td className={td}>{date}</td>
                 {columns.map((c, i) => {
                   const value = byDate[i].get(date);
                   return (
-                    <td key={c.label} style={tdNum}>
+                    <td key={c.label} className={tdNum}>
                       {value == null ? "—" : (c.format ?? String)(value)}
                     </td>
                   );
@@ -153,24 +165,25 @@ function Panel<T>({ title, query, testid, children }: {
   children: (data: T) => React.ReactNode;
 }) {
   return (
-    <section className="card" style={{ padding: "var(--pad-lg)" }}>
-      <h2 className="h-serif" style={{ fontSize: 18, marginBottom: 12 }}>{title}</h2>
+    <section className={`card ${s.panel}`}>
+      <h2 className={`h-serif ${s.panelTitle}`}>{title}</h2>
       {query.error && !query.data ? (
-        <div role="alert" style={{ display: "flex", alignItems: "center", gap: 12, color: "var(--text-muted)", fontSize: 13 }}>
+        <FadeIn key="error" role="alert" className={s.inlineAlert}>
           <span>{query.error}</span>
           <button data-testid={`${testid}-retry`} className="btn btn--sm" onClick={query.reload}>
             Try again
           </button>
-        </div>
+        </FadeIn>
       ) : !query.data ? (
-        <div style={{ color: "var(--text-muted)", fontSize: 13 }}>Loading…</div>
+        <div className={t.muted}>Loading…</div>
       ) : (
-        children(query.data)
+        <FadeIn key="data">{children(query.data)}</FadeIn>
       )}
     </section>
   );
 }
 
+const fmtDollars = (v: number) => `$${v.toFixed(2)}`;
 const fmtRate = (v: number | null) => (v == null ? "—" : formatPct(v * 100));
 const fmtNum = (v: number | null, digits = 3) => (v == null ? "—" : v.toFixed(digits));
 
@@ -180,38 +193,38 @@ const fmtNum = (v: number | null, digits = 3) => (v == null ? "—" : v.toFixed(
 function CalibrationTable({ title, report, testid }: { title: string; report: LoopCalibrationReport; testid: string }) {
   return (
     <div data-testid={testid}>
-      <div className="label-micro" style={{ marginBottom: 6 }}>{title}</div>
+      <div className={`label-micro ${t.label}`}>{title}</div>
       {report.n === 0 ? (
-        <div style={{ color: "var(--text-muted)", fontSize: 13 }}>No independent observations in this range.</div>
+        <div className={t.muted}>No independent observations in this range.</div>
       ) : (
         <>
-          <div style={{ display: "flex", gap: 24, flexWrap: "wrap", marginBottom: 8 }}>
-            <Stat label="Observations" value={report.n} />
-            <Stat label="Predicted" value={fmtRate(report.mean_predicted)} />
-            <Stat label="Observed" value={fmtRate(report.observed_rate)} />
-            <Stat label="Brier" value={fmtNum(report.brier)} />
-            <Stat label="ECE" value={fmtNum(report.ece)} />
+          <div className={`${t.stats} ${t.statsTight}`}>
+            <Stat label="Observations" value={<Num value={report.n} />} />
+            <Stat label="Predicted" value={<Num value={report.mean_predicted} format={fmtRate} />} />
+            <Stat label="Observed" value={<Num value={report.observed_rate} format={fmtRate} />} />
+            <Stat label="Brier" value={<Num value={report.brier} format={fmtNum} />} />
+            <Stat label="ECE" value={<Num value={report.ece} format={fmtNum} />} />
           </div>
-          <div style={scrollX}>
-            <table style={{ borderCollapse: "collapse", minWidth: 360 }}>
+          <div className={t.scrollX}>
+            <table className={`${t.table} ${t.minCalibration}`}>
               <thead>
                 <tr>
-                  <th style={th}>Predicted P(correct)</th>
-                  <th style={{ ...th, textAlign: "right" }}>n</th>
-                  <th style={{ ...th, textAlign: "right" }}>Mean predicted</th>
-                  <th style={{ ...th, textAlign: "right" }}>Observed</th>
+                  <th className={th}>Predicted P(correct)</th>
+                  <th className={thNum}>n</th>
+                  <th className={thNum}>Mean predicted</th>
+                  <th className={thNum}>Observed</th>
                 </tr>
               </thead>
-              <tbody>
+              <StaggerBody>
                 {report.bins.map(b => (
-                  <tr key={`${b.lo}-${b.hi}`}>
-                    <td style={td}>{`${b.lo.toFixed(1)}–${b.hi.toFixed(1)}`}</td>
-                    <td style={tdNum}>{b.n}</td>
-                    <td style={tdNum}>{fmtRate(b.mean_predicted)}</td>
-                    <td style={tdNum}>{fmtRate(b.observed)}</td>
-                  </tr>
+                  <StaggerRow key={`${b.lo}-${b.hi}`}>
+                    <td className={td}>{`${b.lo.toFixed(1)}–${b.hi.toFixed(1)}`}</td>
+                    <td className={tdNum}>{b.n}</td>
+                    <td className={tdNum}>{fmtRate(b.mean_predicted)}</td>
+                    <td className={tdNum}>{fmtRate(b.observed)}</td>
+                  </StaggerRow>
                 ))}
-              </tbody>
+              </StaggerBody>
             </table>
           </div>
         </>
@@ -245,22 +258,22 @@ function ConfidenceRows({ id, label, report }: { id: string; label: string; repo
       {report.levels.map((lv) => {
         const name = lv.level == null ? `Other (${fmtRate(lv.stated)})` : (LEVEL_LABEL[lv.level] ?? lv.level);
         return (
-          <tr key={`${id}-${lv.level ?? lv.stated}`} data-testid={`admin-loop-confidence-${id}-${lv.level ?? "other"}`}>
-            <td style={td}>{label}</td>
-            <td style={td}>{name}</td>
-            <td style={tdNum}>{lv.n}</td>
-            <td style={tdNum}>{fmtRate(lv.stated)}</td>
-            <td style={tdNum}>{fmtRate(lv.observed)}</td>
-          </tr>
+          <StaggerRow key={`${id}-${lv.level ?? lv.stated}`} data-testid={`admin-loop-confidence-${id}-${lv.level ?? "other"}`}>
+            <td className={td}>{label}</td>
+            <td className={td}>{name}</td>
+            <td className={tdNum}>{lv.n}</td>
+            <td className={tdNum}>{fmtRate(lv.stated)}</td>
+            <td className={tdNum}>{fmtRate(lv.observed)}</td>
+          </StaggerRow>
         );
       })}
-      <tr data-testid={`admin-loop-confidence-${id}-all`}>
-        <td style={td}>{label}</td>
-        <td style={{ ...td, fontWeight: 600 }}>All</td>
-        <td style={tdNum}>{report.n}</td>
-        <td style={tdNum}>{fmtRate(report.mean_stated)}</td>
-        <td style={tdNum}>{fmtRate(report.observed_rate)}</td>
-      </tr>
+      <StaggerRow data-testid={`admin-loop-confidence-${id}-all`}>
+        <td className={td}>{label}</td>
+        <td className={tdStrong}>All</td>
+        <td className={tdNum}>{report.n}</td>
+        <td className={tdNum}>{fmtRate(report.mean_stated)}</td>
+        <td className={tdNum}>{fmtRate(report.observed_rate)}</td>
+      </StaggerRow>
     </>
   );
 }
@@ -273,34 +286,34 @@ function ConfidenceCalibrationTable({ data }: { data: LearningLoopKpisData["conf
   const all = data.all;
   return (
     <div data-testid="admin-loop-confidence">
-      <div className="label-micro" style={{ marginBottom: 6 }}>Students&apos; stated confidence</div>
+      <div className={`label-micro ${t.label}`}>Students&apos; stated confidence</div>
       {all.n === 0 ? (
-        <div style={{ color: "var(--text-muted)", fontSize: 13 }}>No answers with a stated confidence in this range.</div>
+        <div className={t.muted}>No answers with a stated confidence in this range.</div>
       ) : (
         <>
-          <div style={{ display: "flex", gap: 24, flexWrap: "wrap", marginBottom: 8 }}>
-            <Stat label="Answers" value={all.n} />
-            <Stat label="Stated" value={fmtRate(all.mean_stated)} />
-            <Stat label="Correct" value={fmtRate(all.observed_rate)} />
-            <Stat label="Overconfidence" value={fmtPp(all.overconfidence)} />
-            <Stat label="Brier" value={fmtNum(all.brier)} />
+          <div className={`${t.stats} ${t.statsTight}`}>
+            <Stat label="Answers" value={<Num value={all.n} />} />
+            <Stat label="Stated" value={<Num value={all.mean_stated} format={fmtRate} />} />
+            <Stat label="Correct" value={<Num value={all.observed_rate} format={fmtRate} />} />
+            <Stat label="Overconfidence" value={<Num value={all.overconfidence} format={fmtPp} />} />
+            <Stat label="Brier" value={<Num value={all.brier} format={fmtNum} />} />
           </div>
-          <div style={scrollX}>
-            <table style={{ borderCollapse: "collapse", minWidth: 480 }}>
+          <div className={t.scrollX}>
+            <table className={`${t.table} ${t.minConfidence}`}>
               <thead>
                 <tr>
-                  <th style={th}>Channel</th>
-                  <th style={th}>Stated confidence</th>
-                  <th style={{ ...th, textAlign: "right" }}>Answers</th>
-                  <th style={{ ...th, textAlign: "right" }}>Stated</th>
-                  <th style={{ ...th, textAlign: "right" }}>Correct</th>
+                  <th className={th}>Channel</th>
+                  <th className={th}>Stated confidence</th>
+                  <th className={thNum}>Answers</th>
+                  <th className={thNum}>Stated</th>
+                  <th className={thNum}>Correct</th>
                 </tr>
               </thead>
-              <tbody>
+              <StaggerBody>
                 {data.channels.map((c) => (
                   <ConfidenceRows key={c.channel} id={c.channel} label={CHANNEL_LABEL[c.channel] ?? c.channel} report={c} />
                 ))}
-              </tbody>
+              </StaggerBody>
             </table>
           </div>
         </>
@@ -313,7 +326,7 @@ function ConfidenceCalibrationTable({ data }: { data: LearningLoopKpisData["conf
 function CiLine({ ci, fmt, testid }: { ci?: [number, number] | null; fmt: (v: number) => string; testid: string }) {
   if (!ci) return null;
   return (
-    <div data-testid={testid} style={{ fontSize: 11, color: "var(--text-muted)", whiteSpace: "nowrap" }}>
+    <div data-testid={testid} className={t.sub}>
       {`${fmt(ci[0])} to ${fmt(ci[1])}`}
     </div>
   );
@@ -329,24 +342,24 @@ function GainRow({ testid, label, s, posttests, excludedRetired, postCi, diffCi 
   diffCi?: [number, number] | null;
 }) {
   return (
-    <tr data-testid={testid}>
-      <td style={td}>{label}</td>
-      <td style={tdNum}>{posttests ?? "—"}</td>
-      <td style={tdNum} data-testid={excludedRetired == null ? undefined : `${testid}-excluded`}>
+    <StaggerRow data-testid={testid}>
+      <td className={td}>{label}</td>
+      <td className={tdNum}>{posttests ?? "—"}</td>
+      <td className={tdNum} data-testid={excludedRetired == null ? undefined : `${testid}-excluded`}>
         {excludedRetired ?? "—"}
       </td>
-      <td style={tdNum}>{s.n}</td>
-      <td style={tdNum}>{fmtRate(s.pre_correct_rate)}</td>
-      <td style={tdNum}>
+      <td className={tdNum}>{s.n}</td>
+      <td className={tdNum}>{fmtRate(s.pre_correct_rate)}</td>
+      <td className={tdNum}>
         <span>{fmtRate(s.post_correct_rate)}</span>
         <CiLine ci={postCi} fmt={(v) => fmtRate(v)} testid={`${testid}-post-ci`} />
       </td>
-      <td style={tdNum}>
+      <td className={tdNum}>
         <span>{fmtPp(s.paired_difference)}</span>
         <CiLine ci={diffCi} fmt={(v) => fmtPp(v)} testid={`${testid}-diff-ci`} />
       </td>
-      <td style={tdNum}>{`${s.improved} / ${s.same} / ${s.worse}`}</td>
-    </tr>
+      <td className={tdNum}>{`${s.improved} / ${s.same} / ${s.worse}`}</td>
+    </StaggerRow>
   );
 }
 
@@ -361,63 +374,60 @@ const SKIP_REASON_LABEL: Record<string, string> = {
 function FunnelTable({ funnel }: { funnel: LearningLoopKpisData["learning_gain"]["funnel"] }) {
   if (funnel == null) {
     return (
-      <div data-testid="admin-loop-funnel" style={{ color: "var(--text-muted)", fontSize: 13 }}>
+      <div data-testid="admin-loop-funnel" className={t.muted}>
         The windows that came due could not be read; the funnel is unknown for this range.
       </div>
     );
   }
   return (
-    <div data-testid="admin-loop-funnel" style={scrollX}>
-      <table style={{ borderCollapse: "collapse", minWidth: 560 }}>
+    <div data-testid="admin-loop-funnel" className={t.scrollX}>
+      <table className={`${t.table} ${t.minFunnel}`}>
         <thead>
           <tr>
-            <th style={th}>Window</th>
-            <th style={{ ...th, textAlign: "right" }}>Due</th>
-            <th style={{ ...th, textAlign: "right" }}>Opened</th>
-            <th style={{ ...th, textAlign: "right" }}>Answered (unaided)</th>
-            <th style={{ ...th, textAlign: "right" }}>Expired</th>
-            <th style={{ ...th, textAlign: "right" }}>Open now</th>
-            <th style={{ ...th, textAlign: "right" }}>Skipped</th>
-            <th style={{ ...th, textAlign: "right" }}>Never opened</th>
-            <th style={{ ...th, textAlign: "right" }}>Window still open</th>
+            <th className={th}>Window</th>
+            <th className={thNum}>Due</th>
+            <th className={thNum}>Opened</th>
+            <th className={thNum}>Answered (unaided)</th>
+            <th className={thNum}>Expired</th>
+            <th className={thNum}>Open now</th>
+            <th className={thNum}>Skipped</th>
+            <th className={thNum}>Never opened</th>
+            <th className={thNum}>Window still open</th>
           </tr>
         </thead>
-        <tbody>
+        <StaggerBody>
           {funnel.map(f => {
             const reasons = Object.entries(f.skip_reasons).filter(([, n]) => n > 0);
             return (
-              <tr key={f.window_days} data-testid={`admin-loop-funnel-${f.window_days}`}>
-                <td style={td}>{`${f.window_days} days`}</td>
-                <td style={tdNum}>{f.due}</td>
-                <td style={tdNum}>{f.opened}</td>
-                <td style={tdNum}>
+              <StaggerRow key={f.window_days} data-testid={`admin-loop-funnel-${f.window_days}`}>
+                <td className={td}>{`${f.window_days} days`}</td>
+                <td className={tdNum}>{f.due}</td>
+                <td className={tdNum}>{f.opened}</td>
+                <td className={tdNum}>
                   <span>{`${f.answered} (${f.unassisted})`}</span>
                   {/* spec §13 A123: answers to a question staff retired are void */}
                   {(f.excluded_retired ?? 0) > 0 && (
-                    <div
-                      data-testid={`admin-loop-funnel-${f.window_days}-retired`}
-                      style={{ fontSize: 11, color: "var(--text-muted)", whiteSpace: "nowrap" }}
-                    >
+                    <div data-testid={`admin-loop-funnel-${f.window_days}-retired`} className={t.sub}>
                       {`+${f.excluded_retired} on retired questions, left out`}
                     </div>
                   )}
                 </td>
-                <td style={tdNum}>{f.expired}</td>
-                <td style={tdNum}>{f.open}</td>
-                <td style={tdNum} data-testid={`admin-loop-funnel-${f.window_days}-skipped`}>
+                <td className={tdNum}>{f.expired}</td>
+                <td className={tdNum}>{f.open}</td>
+                <td className={tdNum} data-testid={`admin-loop-funnel-${f.window_days}-skipped`}>
                   <span>{f.skipped}</span>
                   {reasons.length > 0 && (
-                    <div style={{ fontSize: 11, color: "var(--text-muted)", whiteSpace: "nowrap" }}>
+                    <div className={t.sub}>
                       {reasons.map(([r, n]) => `${SKIP_REASON_LABEL[r] ?? r}: ${n}`).join(", ")}
                     </div>
                   )}
                 </td>
-                <td style={tdNum}>{f.not_opened}</td>
-                <td style={tdNum}>{f.still_open}</td>
-              </tr>
+                <td className={tdNum}>{f.not_opened}</td>
+                <td className={tdNum}>{f.still_open}</td>
+              </StaggerRow>
             );
           })}
-        </tbody>
+        </StaggerBody>
       </table>
     </div>
   );
@@ -426,31 +436,31 @@ function FunnelTable({ funnel }: { funnel: LearningLoopKpisData["learning_gain"]
 /** A126: every window's pairs by the delay the outcome actually had. */
 function DelayTable({ gain }: { gain: LearningLoopKpisData["learning_gain"] }) {
   return (
-    <div data-testid="admin-loop-delay" style={scrollX}>
-      <table style={{ borderCollapse: "collapse", minWidth: 420 }}>
+    <div data-testid="admin-loop-delay" className={t.scrollX}>
+      <table className={`${t.table} ${t.minDelay}`}>
         <thead>
           <tr>
-            <th style={th}>Days from first graded answer</th>
-            <th style={{ ...th, textAlign: "right" }}>Post-tests</th>
-            <th style={{ ...th, textAlign: "right" }}>Pairs</th>
-            <th style={{ ...th, textAlign: "right" }}>Post-test correct</th>
-            <th style={{ ...th, textAlign: "right" }}>Paired change</th>
+            <th className={th}>Days from first graded answer</th>
+            <th className={thNum}>Post-tests</th>
+            <th className={thNum}>Pairs</th>
+            <th className={thNum}>Post-test correct</th>
+            <th className={thNum}>Paired change</th>
           </tr>
         </thead>
-        <tbody>
+        <StaggerBody>
           {gain.delay_bins.map(b => (
-            <tr key={b.lo_days} data-testid={`admin-loop-delay-${b.lo_days}`}>
-              <td style={td}>{b.hi_days == null ? `${b.lo_days}+` : `${b.lo_days}–${b.hi_days - 1}`}</td>
-              <td style={tdNum}>{b.posttests}</td>
-              <td style={tdNum}>{b.n}</td>
-              <td style={tdNum}>{fmtRate(b.post_correct_rate)}</td>
-              <td style={tdNum}>{fmtPp(b.paired_difference)}</td>
-            </tr>
+            <StaggerRow key={b.lo_days} data-testid={`admin-loop-delay-${b.lo_days}`}>
+              <td className={td}>{b.hi_days == null ? `${b.lo_days}+` : `${b.lo_days}–${b.hi_days - 1}`}</td>
+              <td className={tdNum}>{b.posttests}</td>
+              <td className={tdNum}>{b.n}</td>
+              <td className={tdNum}>{fmtRate(b.post_correct_rate)}</td>
+              <td className={tdNum}>{fmtPp(b.paired_difference)}</td>
+            </StaggerRow>
           ))}
-        </tbody>
+        </StaggerBody>
       </table>
       {(gain.delay_unknown > 0 || gain.delay_out_of_range > 0) && (
-        <div style={{ color: "var(--text-muted)", fontSize: 12, marginTop: 4 }}>
+        <div className={s.below}>
           {`Not binned: ${gain.delay_unknown} with no recorded anchor, ${gain.delay_out_of_range} answered before day ${gain.delay_bins[0]?.lo_days ?? 0}.`}
         </div>
       )}
@@ -469,8 +479,8 @@ function LearningGainTable({ gain }: { gain: LearningLoopKpisData["learning_gain
   // an outcome excluded for a retired item still shows the table: the drop stays visible
   if (!gain.windows.some(w => w.posttests > 0 || w.excluded_retired > 0)) {
     return (
-      <div style={{ display: "grid", gap: 12 }}>
-        <div data-testid="admin-loop-gain" style={{ color: "var(--text-muted)", fontSize: 13 }}>
+      <div className={t.stack}>
+        <div data-testid="admin-loop-gain" className={t.muted}>
           No unaided post-test outcomes in this range.
         </div>
         {/* A126: windows came due with no outcome — the missing data is the finding */}
@@ -479,22 +489,22 @@ function LearningGainTable({ gain }: { gain: LearningLoopKpisData["learning_gain
     );
   }
   return (
-    <div style={{ display: "grid", gap: 12 }}>
-      <div data-testid="admin-loop-gain" style={scrollX}>
-        <table style={{ borderCollapse: "collapse", minWidth: 560 }}>
+    <div className={t.stack}>
+      <div data-testid="admin-loop-gain" className={t.scrollX}>
+        <table className={`${t.table} ${t.minGain}`}>
           <thead>
             <tr>
-              <th style={th}>Window</th>
-              <th style={{ ...th, textAlign: "right" }}>Post-tests</th>
-              <th style={{ ...th, textAlign: "right" }}>Excluded: item retired</th>
-              <th style={{ ...th, textAlign: "right" }}>Pairs</th>
-              <th style={{ ...th, textAlign: "right" }}>Pre-test correct</th>
-              <th style={{ ...th, textAlign: "right" }}>Post-test correct</th>
-              <th style={{ ...th, textAlign: "right" }}>Paired change</th>
-              <th style={{ ...th, textAlign: "right" }}>Improved / same / worse</th>
+              <th className={th}>Window</th>
+              <th className={thNum}>Post-tests</th>
+              <th className={thNum}>Excluded: item retired</th>
+              <th className={thNum}>Pairs</th>
+              <th className={thNum}>Pre-test correct</th>
+              <th className={thNum}>Post-test correct</th>
+              <th className={thNum}>Paired change</th>
+              <th className={thNum}>Improved / same / worse</th>
             </tr>
           </thead>
-          <tbody>
+          <StaggerBody>
             {gain.windows.map(w => (
               <React.Fragment key={w.window_days}>
                 <GainRow
@@ -518,10 +528,10 @@ function LearningGainTable({ gain }: { gain: LearningLoopKpisData["learning_gain
                 />
               </React.Fragment>
             ))}
-          </tbody>
+          </StaggerBody>
         </table>
       </div>
-      <p style={{ color: "var(--text-muted)", fontSize: 12, margin: 0 }} data-testid="admin-loop-gain-ci-note">
+      <p className={t.small} data-testid="admin-loop-gain-ci-note">
         {`Under each rate: a ${Math.round(gain.ci.level * 100)}% interval from a ${gain.ci.resamples.toLocaleString()}-resample bootstrap over students (each student's answers resampled together; fixed seed). No interval below two students.`}
         {gain.windows.some(w => w.visibility_unreported > 0) &&
           ` ${gain.windows.reduce((n, w) => n + w.visibility_unreported, 0)} outcomes have no page-visibility record.`}
@@ -543,13 +553,9 @@ const SLOT_WARNING_REASON: Record<string, string> = {
 function SlotWarnings({ warnings }: { warnings: NonNullable<LearningLoopKpisData["slot_warnings"]> }) {
   if (!warnings.length) return null;
   return (
-    <div
-      data-testid="admin-loop-slot-warnings"
-      role="status"
-      style={{ marginBottom: 16, padding: "10px 14px", borderRadius: "var(--r-md)", background: "var(--warn-soft)", fontSize: 13 }}
-    >
+    <FadeIn data-testid="admin-loop-slot-warnings" role="status" className={s.slotWarnings}>
       <strong>Model slot warnings</strong>
-      <ul style={{ margin: "6px 0 0", paddingLeft: 18 }}>
+      <ul className={s.slotList}>
         {warnings.map(w => (
           <li key={`${w.kind}-${w.slot}`} data-testid={`admin-loop-slot-warning-${w.slot}`}>
             <code>{w.slot}</code> runs <code>{w.model}</code>
@@ -559,7 +565,7 @@ function SlotWarnings({ warnings }: { warnings: NonNullable<LearningLoopKpisData
           </li>
         ))}
       </ul>
-    </div>
+    </FadeIn>
   );
 }
 
@@ -567,41 +573,41 @@ export function LearningLoopPanelBody({ d }: { d: LearningLoopKpisData }) {
   return (
     <>
       <SlotWarnings warnings={d.slot_warnings ?? []} />
-      {d.truncated && <div style={{ marginBottom: 8 }}><TruncatedBadge /></div>}
+      {d.truncated && <div className={s.badgeRow}><TruncatedBadge /></div>}
       <LoopGates d={d} />
-      <div style={{ display: "flex", gap: 24, flexWrap: "wrap", marginBottom: 16 }}>
-        <Stat label="Graded steps" value={d.steps_total} />
-        <Stat label="In-band share" value={fmtRate(d.in_band_share)} />
-        <Stat label="Unassisted next session" value={fmtRate(d.unassisted_next_session.rate)} />
-        <Stat label="Ceiling compliance" value={fmtRate(d.ceiling_compliance.rate)} />
-        <Stat label="Served reveals" value={d.served_reveals} />
+      <div className={`${t.stats} ${t.statsLoose}`}>
+        <Stat label="Graded steps" value={<Num value={d.steps_total} />} />
+        <Stat label="In-band share" value={<Num value={d.in_band_share} format={fmtRate} />} />
+        <Stat label="Unassisted next session" value={<Num value={d.unassisted_next_session.rate} format={fmtRate} />} />
+        <Stat label="Ceiling compliance" value={<Num value={d.ceiling_compliance.rate} format={fmtRate} />} />
+        <Stat label="Served reveals" value={<Num value={d.served_reveals} />} />
       </div>
       <HintTrendPanel trend={d.htc_k_trend} />
-      <h3 className="h-serif" style={{ fontSize: 15, margin: "8px 0" }}>Are the mastery estimates right?</h3>
-      <p style={{ color: "var(--text-muted)", fontSize: 13, margin: "0 0 12px" }}>
+      <h3 className={`h-serif ${t.headingTight}`}>Are the mastery estimates right?</h3>
+      <p className={t.lede}>
         BKT&apos;s predicted chance of a correct unaided answer, against what students actually did.
         The delayed post-test (fresh item, no tutor, at fixed follow-up windows) is the cleanest check.
       </p>
-      <div style={{ display: "grid", gap: 16 }}>
+      <div className={t.stackLoose}>
         <CalibrationTable title="Delayed post-test" report={d.calibration.posttest} testid="admin-loop-calibration-posttest" />
         <CalibrationTable title="All independent evidence" report={d.calibration.all} testid="admin-loop-calibration-all" />
       </div>
       {/* spec §13 A123: answers to a question staff retired are void evidence */}
       {d.calibration.excluded_void > 0 && (
-        <p data-testid="admin-loop-calibration-void" style={{ color: "var(--text-muted)", fontSize: 13, margin: "8px 0 0" }}>
+        <p data-testid="admin-loop-calibration-void" className={t.tail}>
           {d.calibration.excluded_void} answer{d.calibration.excluded_void === 1 ? "" : "s"} to retired
           questions left out (their results were voided).
         </p>
       )}
-      <h3 className="h-serif" style={{ fontSize: 15, margin: "16px 0 8px" }}>Do students know what they know?</h3>
-      <p style={{ color: "var(--text-muted)", fontSize: 13, margin: "0 0 12px" }}>
+      <h3 className={`h-serif ${t.heading}`}>Do students know what they know?</h3>
+      <p className={t.lede}>
         How sure students said they were (Guessing / Fairly sure / Sure — optional, so only the answers that stated one)
         against how often those answers were right, per kind of question. A well-calibrated &ldquo;Sure&rdquo; is right
         most of the time; overconfidence is the stated confidence minus the share correct.
       </p>
       <ConfidenceCalibrationTable data={d.confidence_calibration} />
-      <h3 className="h-serif" style={{ fontSize: 15, margin: "16px 0 8px" }}>Did students learn?</h3>
-      <p style={{ color: "var(--text-muted)", fontSize: 13, margin: "0 0 12px" }}>
+      <h3 className={`h-serif ${t.heading}`}>Did students learn?</h3>
+      <p className={t.lede}>
         Each concept&apos;s first unaided probe answer (the pretest) against its unaided delayed post-test,
         at fixed windows after the concept was first graded (the last one closes too). Answers only, never
         the mastery estimate. An answer to a question later retired as broken is left out and counted under
@@ -611,7 +617,7 @@ export function LearningLoopPanelBody({ d }: { d: LearningLoopKpisData }) {
       {/* spec §13 A137: the loop's spend against that gain (absent from a pre-A137 backend) */}
       {d.cost_per_gain !== undefined && (
         <>
-          <h3 className="h-serif" style={{ fontSize: 15, margin: "16px 0 8px" }}>What did it cost?</h3>
+          <h3 className={`h-serif ${t.heading}`}>What did it cost?</h3>
           <LoopCostPanel cost={d.cost_per_gain} />
         </>
       )}
@@ -622,9 +628,9 @@ export function LearningLoopPanelBody({ d }: { d: LearningLoopKpisData }) {
       {/* spec §13 A141: questions that combine concepts — served and outcomes */}
       <MultiConceptPanel data={d.multi_concept} />
       {/* spec §13 A113: the items themselves — flagged by the linter or reported by students */}
-      <p style={{ color: "var(--text-muted)", fontSize: 13, margin: "16px 0 0" }}>
+      <p className={s.itemsLink}>
         Are the questions valid?{" "}
-        <Link data-testid="admin-loop-items-link" href="/admin/check-items" style={{ color: "var(--accent)" }}>
+        <Link data-testid="admin-loop-items-link" href="/admin/check-items" className={s.link}>
           Review flagged and reported check items
         </Link>
       </p>
@@ -641,7 +647,7 @@ export function AdminAnalytics() {
     return (
       <div>
         <TopBar breadcrumb="Admin" title="Analytics" subtitle="Staff only" />
-        <div style={{ padding: 60, textAlign: "center", color: "var(--text-muted)" }}>
+        <div className={s.denied}>
           You don&apos;t have admin access.
         </div>
       </div>
@@ -653,6 +659,8 @@ export function AdminAnalytics() {
 function AnalyticsBody() {
   const [range, setRange] = React.useState<AnalyticsRangeValue>(() => presetRange(30));
   const [groupBy, setGroupBy] = React.useState<LlmCostGroupBy>("feature");
+  // A re-sort slides the users' rows to their new places, unless motion is reduced.
+  const reduceMotion = Boolean(useReducedMotion());
   const toast = useToast();
   // Failed BACKGROUND reloads keep the loaded view and toast (#463 convention).
   const onBackgroundError = React.useCallback(
@@ -692,7 +700,7 @@ function AnalyticsBody() {
   };
 
   return (
-    <div>
+    <div className={s.page}>
       <TopBar
         breadcrumb="Admin"
         title="Analytics"
@@ -700,10 +708,7 @@ function AnalyticsBody() {
         actions={<span className="chip chip--err">Staff only</span>}
       />
       <AdminReauthBanner />
-      <div style={{
-        padding: "12px 32px", borderBottom: "1px solid var(--border)",
-        display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap",
-      }}>
+      <div className={s.rangeBar}>
         <span className="label-micro">Range</span>
         {PRESETS.map((p) => (
           <button
@@ -722,9 +727,9 @@ function AnalyticsBody() {
           value={range.from.slice(0, 10)}
           max={range.to.slice(0, 10)}
           onChange={(e) => setCustom("from", e.target.value)}
-          style={{ fontSize: 13 }}
+          className={s.dateInput}
         />
-        <span style={{ color: "var(--text-muted)", fontSize: 13 }}>→</span>
+        <span className={t.muted}>→</span>
         <input
           data-testid="admin-analytics-range-to"
           type="date"
@@ -732,17 +737,17 @@ function AnalyticsBody() {
           value={range.to.slice(0, 10)}
           min={range.from.slice(0, 10)}
           onChange={(e) => setCustom("to", e.target.value)}
-          style={{ fontSize: 13 }}
+          className={s.dateInput}
         />
       </div>
 
-      <div style={{ padding: "24px 32px", display: "grid", gap: 16 }}>
+      <div className={s.body}>
         {/* Headline stats — type carries the hierarchy, no card chrome. */}
-        <div style={{ display: "flex", gap: 40, flexWrap: "wrap", padding: "4px 2px" }}>
-          <Stat label="Total events" value={summary.data ? summary.data.total_events : "—"} />
-          <Stat label="Active users" value={summary.data ? summary.data.distinct_active_users : "—"} />
-          <Stat label="LLM cost" value={cost.data ? `$${cost.data.totals.cost_usd.toFixed(2)}` : "—"} />
-          <Stat label="LLM calls" value={cost.data ? cost.data.totals.calls : "—"} />
+        <div className={s.headline}>
+          <Stat label="Total events" value={<Num value={summary.data?.total_events} />} />
+          <Stat label="Active users" value={<Num value={summary.data?.distinct_active_users} />} />
+          <Stat label="LLM cost" value={<Num value={cost.data?.totals.cost_usd} format={fmtDollars} />} />
+          <Stat label="LLM calls" value={<Num value={cost.data?.totals.calls} />} />
         </div>
 
         <Panel title="Usage" query={summary} testid="admin-analytics-usage">
@@ -755,31 +760,31 @@ function AnalyticsBody() {
                 {d.truncated && <TruncatedBadge />}
                 <DayLineChart
                   points={eventPoints}
-                  color="var(--brand-forest, #445D22)"
-                  fillColor="var(--sap-100, #e1ecd7)"
+                  color={SERIES.line}
+                  fillColor={SERIES.fill}
                   ariaLabel="Events per day"
                 />
                 <DaySeriesTable label="events per day" columns={[{ label: "Events", points: eventPoints }]} />
-                <h3 className="label-micro" style={{ margin: "16px 0 8px" }}>Top event types</h3>
+                <h3 className={`label-micro ${s.chartTitle}`}>Top event types</h3>
                 <CategoryBars
                   rows={d.by_event_type.slice(0, 8).map((r) => ({ label: r.event_type, value: r.count }))}
                   ariaLabel="Top event types"
                 />
-                <details style={{ marginTop: 12 }}>
-                  <summary style={{ fontSize: 12, color: "var(--text-muted)", cursor: "pointer" }}>View data: event types</summary>
-                  <div style={scrollX}>
-                    <table style={{ borderCollapse: "collapse", minWidth: 360, marginTop: 8 }}>
+                <details className={s.details}>
+                  <summary className={s.summary}>View data: event types</summary>
+                  <div className={t.scrollX}>
+                    <table className={`${t.table} ${t.minEventTypes} ${s.detailsTable}`}>
                       <thead>
-                        <tr><th style={th}>Event type</th><th style={{ ...th, textAlign: "right" }}>Count</th></tr>
+                        <tr><th className={th}>Event type</th><th className={thNum}>Count</th></tr>
                       </thead>
-                      <tbody>
+                      <StaggerBody>
                         {d.by_event_type.map((row) => (
-                          <tr key={row.event_type}>
-                            <td style={td}>{row.event_type}</td>
-                            <td style={tdNum}>{row.count}</td>
-                          </tr>
+                          <StaggerRow key={row.event_type}>
+                            <td className={td}>{row.event_type}</td>
+                            <td className={tdNum}>{row.count}</td>
+                          </StaggerRow>
                         ))}
-                      </tbody>
+                      </StaggerBody>
                     </table>
                   </div>
                 </details>
@@ -805,10 +810,7 @@ function AnalyticsBody() {
               <button
                 data-testid={`admin-analytics-users-sort-${key}`}
                 onClick={() => toggleUserSort(key)}
-                style={{
-                  font: "inherit", color: "inherit", textTransform: "inherit", letterSpacing: "inherit",
-                  fontWeight: userSort.key === key ? 700 : "inherit",
-                }}
+                className={userSort.key === key ? `${s.sort} ${s.sortActive}` : s.sort}
               >
                 {label}{userSort.key === key ? (userSort.desc ? " ↓" : " ↑") : ""}
               </button>
@@ -817,28 +819,28 @@ function AnalyticsBody() {
               <>
                 {d.truncated && <TruncatedBadge />}
                 {d.users.length === 0 ? (
-                  <div style={{ color: "var(--text-muted)", fontSize: 13 }}>No user activity in this range.</div>
+                  <div className={t.muted}>No user activity in this range.</div>
                 ) : (
-                  <div style={scrollX}>
-                    <table style={{ borderCollapse: "collapse", minWidth: 520 }}>
+                  <div className={t.scrollX}>
+                    <table className={`${t.table} ${t.minUsers}`}>
                       <thead>
                         <tr>
-                          <th style={th}>User</th>
-                          <th style={{ ...th, textAlign: "right" }}>{sortBtn("events", "Events")}</th>
-                          <th style={{ ...th, textAlign: "right" }}>{sortBtn("cost", "LLM cost")}</th>
-                          <th style={{ ...th, textAlign: "right" }}>{sortBtn("tokens", "Tokens")}</th>
+                          <th className={th}>User</th>
+                          <th className={thNum}>{sortBtn("events", "Events")}</th>
+                          <th className={thNum}>{sortBtn("cost", "LLM cost")}</th>
+                          <th className={thNum}>{sortBtn("tokens", "Tokens")}</th>
                         </tr>
                       </thead>
-                      <tbody>
+                      <StaggerBody>
                         {users.map((u) => (
-                          <tr key={u.user_id}>
-                            <td style={{ ...td, fontFamily: "var(--font-mono, monospace)", fontSize: 12 }}>{u.user_id}</td>
-                            <td style={tdNum}>{u.event_count}</td>
-                            <td style={tdNum}>${u.llm_cost_usd.toFixed(4)}</td>
-                            <td style={tdNum}>{u.total_tokens}</td>
-                          </tr>
+                          <StaggerRow key={u.user_id} layout={reduceMotion ? false : "position"}>
+                            <td className={tdMono}>{u.user_id}</td>
+                            <td className={tdNum}>{u.event_count}</td>
+                            <td className={tdNum}>${u.llm_cost_usd.toFixed(4)}</td>
+                            <td className={tdNum}>{u.total_tokens}</td>
+                          </StaggerRow>
                         ))}
-                      </tbody>
+                      </StaggerBody>
                     </table>
                   </div>
                 )}
@@ -861,14 +863,14 @@ function AnalyticsBody() {
             const callPoints = dayMetric((p) => p.calls);
             return (
             <>
-              <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 12 }}>
+              <div className={s.groupBar}>
                 <span className="label-micro">Group by</span>
                 {GROUPS.map((g) => (
                   <button
                     key={g}
                     data-testid={`admin-analytics-cost-group-${g}`}
-                    className="btn btn--sm"
-                    style={g === groupBy ? { fontWeight: 600, borderColor: "var(--accent)" } : undefined}
+                    className={g === groupBy ? `btn btn--sm ${s.group} ${s.groupActive}` : `btn btn--sm ${s.group}`}
+                    aria-pressed={g === groupBy}
                     onClick={() => setGroupBy(g)}
                   >
                     {g}
@@ -878,16 +880,16 @@ function AnalyticsBody() {
               </div>
               <DayLineChart
                 points={costPoints}
-                color="var(--brand-forest, #445D22)"
-                fillColor="var(--sap-100, #e1ecd7)"
+                color={SERIES.line}
+                fillColor={SERIES.fill}
                 ariaLabel="Cost per day"
                 format={(v) => `$${v.toFixed(2)}`}
               />
-              <h3 className="label-micro" style={{ margin: "16px 0 8px" }}>Tokens per day</h3>
+              <h3 className={`label-micro ${s.chartTitle}`}>Tokens per day</h3>
               <DayLineChart
                 points={tokenPoints}
-                color="var(--brand-forest, #445D22)"
-                fillColor="var(--sap-100, #e1ecd7)"
+                color={SERIES.line}
+                fillColor={SERIES.fill}
                 ariaLabel="Tokens per day"
                 format={formatCompactCount}
               />
@@ -899,46 +901,46 @@ function AnalyticsBody() {
                   { label: "Cost", points: costPoints, format: (v) => `$${v.toFixed(2)}` },
                 ]}
               />
-              <h3 className="label-micro" style={{ margin: "16px 0 8px" }}>Cost by {d.group_by}</h3>
+              <h3 className={`label-micro ${s.chartTitle}`}>Cost by {d.group_by}</h3>
               <CategoryBars
                 rows={d.rows.slice(0, 8).map((r) => ({ label: r.key || "(none)", value: r.cost_usd }))}
                 ariaLabel={`Cost by ${d.group_by}`}
                 format={(v) => `$${v.toFixed(4)}`}
               />
-              <details style={{ marginTop: 12 }}>
-                <summary style={{ fontSize: 12, color: "var(--text-muted)", cursor: "pointer" }}>View data: cost breakdown</summary>
-                <div style={scrollX}>
-                  <table style={{ borderCollapse: "collapse", minWidth: 560, marginTop: 8 }}>
+              <details className={s.details}>
+                <summary className={s.summary}>View data: cost breakdown</summary>
+                <div className={t.scrollX}>
+                  <table className={`${t.table} ${t.minCostRows} ${s.detailsTable}`}>
                     <thead>
                       <tr>
-                        <th style={th}>{d.group_by}</th>
-                        <th style={{ ...th, textAlign: "right" }}>Calls</th>
-                        <th style={{ ...th, textAlign: "right" }}>Prompt</th>
-                        <th style={{ ...th, textAlign: "right" }}>Completion</th>
-                        <th style={{ ...th, textAlign: "right" }}>Tokens</th>
-                        <th style={{ ...th, textAlign: "right" }}>Cost</th>
+                        <th className={th}>{d.group_by}</th>
+                        <th className={thNum}>Calls</th>
+                        <th className={thNum}>Prompt</th>
+                        <th className={thNum}>Completion</th>
+                        <th className={thNum}>Tokens</th>
+                        <th className={thNum}>Cost</th>
                       </tr>
                     </thead>
-                    <tbody>
+                    <StaggerBody>
                       {d.rows.map((row) => (
-                        <tr key={row.key}>
-                          <td style={td}>{row.key || "(none)"}</td>
-                          <td style={tdNum}>{row.calls}</td>
-                          <td style={tdNum}>{row.prompt_tokens}</td>
-                          <td style={tdNum}>{row.completion_tokens}</td>
-                          <td style={tdNum}>{row.total_tokens}</td>
-                          <td style={tdNum}>${row.cost_usd.toFixed(4)}</td>
-                        </tr>
+                        <StaggerRow key={row.key}>
+                          <td className={td}>{row.key || "(none)"}</td>
+                          <td className={tdNum}>{row.calls}</td>
+                          <td className={tdNum}>{row.prompt_tokens}</td>
+                          <td className={tdNum}>{row.completion_tokens}</td>
+                          <td className={tdNum}>{row.total_tokens}</td>
+                          <td className={tdNum}>${row.cost_usd.toFixed(4)}</td>
+                        </StaggerRow>
                       ))}
-                      <tr>
-                        <td style={{ ...td, fontWeight: 600 }}>Total</td>
-                        <td style={{ ...tdNum, fontWeight: 600 }}>{d.totals.calls}</td>
-                        <td style={{ ...tdNum, fontWeight: 600 }}>{d.totals.prompt_tokens}</td>
-                        <td style={{ ...tdNum, fontWeight: 600 }}>{d.totals.completion_tokens}</td>
-                        <td style={{ ...tdNum, fontWeight: 600 }}>{d.totals.total_tokens}</td>
-                        <td style={{ ...tdNum, fontWeight: 600 }}>${d.totals.cost_usd.toFixed(4)}</td>
-                      </tr>
-                    </tbody>
+                      <StaggerRow>
+                        <td className={tdStrong}>Total</td>
+                        <td className={tdNumStrong}>{d.totals.calls}</td>
+                        <td className={tdNumStrong}>{d.totals.prompt_tokens}</td>
+                        <td className={tdNumStrong}>{d.totals.completion_tokens}</td>
+                        <td className={tdNumStrong}>{d.totals.total_tokens}</td>
+                        <td className={tdNumStrong}>${d.totals.cost_usd.toFixed(4)}</td>
+                      </StaggerRow>
+                    </StaggerBody>
                   </table>
                 </div>
               </details>
@@ -982,10 +984,10 @@ function AnalyticsBody() {
               {d.truncated && <TruncatedBadge />}
               <DayLineChart
                 points={errorPoints}
-                color="var(--err, #a83a3a)"
+                color={SERIES.error}
                 ariaLabel="Errors per day"
               />
-              <h3 className="label-micro" style={{ margin: "16px 0 8px" }}>Error rate</h3>
+              <h3 className={`label-micro ${s.chartTitle}`}>Error rate</h3>
               {ratePoints.length ? (
                 <>
                   {/* A truncated summary scan undercounts the denominator, so
@@ -993,13 +995,13 @@ function AnalyticsBody() {
                   {summary.data?.truncated && <TruncatedBadge />}
                   <DayLineChart
                     points={ratePoints}
-                    color="var(--err, #a83a3a)"
+                    color={SERIES.error}
                     ariaLabel="Error rate per day"
                     format={formatPct}
                   />
                 </>
               ) : (
-                <div style={{ color: "var(--text-muted)", fontSize: 13 }}>
+                <div className={t.muted}>
                   {summary.error
                     ? "Couldn't load the events-per-day series, so the error rate can't be computed."
                     : summary.data && rangesAgree
@@ -1014,34 +1016,34 @@ function AnalyticsBody() {
                   { label: "Error rate", points: ratePoints, format: formatPct },
                 ]}
               />
-              <div style={{ height: 12 }} />
+              <div className={s.spacer} />
               {d.errors.length === 0 ? (
-                <div style={{ color: "var(--text-muted)", fontSize: 13 }}>No errors in this range. 🎉</div>
+                <div className={t.muted}>No errors in this range. 🎉</div>
               ) : (
-                <div style={scrollX}>
-                  <table style={{ borderCollapse: "collapse", minWidth: 640 }}>
+                <div className={t.scrollX}>
+                  <table className={`${t.table} ${t.minErrors}`}>
                     <thead>
                       <tr>
-                        <th style={th}>Time</th>
-                        <th style={th}>Type</th>
-                        <th style={th}>Method</th>
-                        <th style={th}>Path</th>
-                        <th style={{ ...th, textAlign: "right" }}>Status</th>
-                        <th style={{ ...th, textAlign: "right" }}>Duration</th>
+                        <th className={th}>Time</th>
+                        <th className={th}>Type</th>
+                        <th className={th}>Method</th>
+                        <th className={th}>Path</th>
+                        <th className={thNum}>Status</th>
+                        <th className={thNum}>Duration</th>
                       </tr>
                     </thead>
-                    <tbody>
+                    <StaggerBody>
                       {d.errors.map((e, i) => (
-                        <tr key={e.request_id ?? `${e.created_at}-${i}`}>
-                          <td style={{ ...td, whiteSpace: "nowrap" }}>{e.created_at ?? "—"}</td>
-                          <td style={td}>{e.event_type}</td>
-                          <td style={td}>{e.method ?? "—"}</td>
-                          <td style={{ ...td, fontFamily: "var(--font-mono, monospace)", fontSize: 12 }}>{e.path ?? "—"}</td>
-                          <td style={tdNum}>{e.status_code ?? "—"}</td>
-                          <td style={tdNum}>{e.duration_ms != null ? `${e.duration_ms.toFixed(1)}ms` : "—"}</td>
-                        </tr>
+                        <StaggerRow key={e.request_id ?? `${e.created_at}-${i}`}>
+                          <td className={`${td} ${t.nowrap}`}>{e.created_at ?? "—"}</td>
+                          <td className={td}>{e.event_type}</td>
+                          <td className={td}>{e.method ?? "—"}</td>
+                          <td className={tdMono}>{e.path ?? "—"}</td>
+                          <td className={tdNum}>{e.status_code ?? "—"}</td>
+                          <td className={tdNum}>{e.duration_ms != null ? `${e.duration_ms.toFixed(1)}ms` : "—"}</td>
+                        </StaggerRow>
                       ))}
-                    </tbody>
+                    </StaggerBody>
                   </table>
                 </div>
               )}
