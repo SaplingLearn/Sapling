@@ -6,8 +6,11 @@
  * Every value is the design handoff's literal — see `Sapling Library v2.dc.html`.
  */
 import React from "react";
+import Link from "next/link";
 
 import type { Document as Doc } from "@/lib/types";
+import { Glyph as ToolGlyph, TOOL } from "../study/hubUi";
+import { studyGuideHref } from "@/lib/toolHrefs";
 import {
   FONT_MONO, FONT_SERIF, Glyph, FolderIcon, MENU_IN, MENU_ITEM, MENU_OUT,
   MENU_SURFACE, MenuDivider, MenuScrim,
@@ -37,6 +40,42 @@ export interface LibraryHeaderProps {
   menuClosing: boolean;
   /** Disabled until the student is enrolled in something to upload into. */
   canUpload: boolean;
+}
+
+/**
+ * The way out to the Study Guides hub.
+ *
+ * The guides used to be listed inline above the documents; the hub owns that
+ * list, and the design handoff has no guides section at all (it knows "Study
+ * Guide" only as a document category).
+ *
+ * Sized to match Upload beside it — same 48px height, 12px radius and 15/700
+ * type — so the two read as one pair of page actions rather than a primary
+ * button with a chip stuck to it. It keeps the Study hub's `TOOL.guide` tint
+ * on the glyph, and the secondary surface, so Upload is still clearly the
+ * primary of the two.
+ */
+function GuidesButton() {
+  return (
+    <Link
+      href={studyGuideHref()}
+      data-testid="library-guides"
+      className="sapHoverWarm"
+      style={{
+        display: "inline-flex", alignItems: "center", gap: 9,
+        height: 48, padding: "0 18px", boxSizing: "border-box",
+        border: "1px solid rgba(42,39,31,0.16)", borderRadius: 12,
+        background: "#FDFCF9", color: "#1A1814",
+        font: "inherit", fontSize: 15, fontWeight: 700,
+        whiteSpace: "nowrap", flexShrink: 0, textDecoration: "none",
+      }}
+    >
+      <span aria-hidden="true" style={{ display: "grid", color: TOOL.guide.fg }}>
+        <ToolGlyph name={TOOL.guide.icon} size={17} />
+      </span>
+      {TOOL.guide.title}
+    </Link>
+  );
 }
 
 export function LibraryHeader(props: LibraryHeaderProps) {
@@ -247,6 +286,7 @@ export function LibraryHeader(props: LibraryHeaderProps) {
           display: "flex", alignItems: "center", gap: 10,
           flexShrink: 0, marginLeft: "auto",
         }}>
+          <GuidesButton />
           <div style={{ position: "relative", flexShrink: 0, display: "flex" }}>
             <button
               data-testid="library-upload"
