@@ -45,6 +45,12 @@ graph container) carry `data-testid` attributes. Naming rules, the current
 inventory, and the ESLint rule that keeps new controls from drifting are in
 `docs/frontend-testids.md`.
 
+Design tokens: colours, spacing, type, radii, shadows, layers and motion come
+from tokens in `src/app/globals.css` (numbers for code in
+`src/lib/designTokens.ts`, framer-motion presets in `src/lib/motion.ts`).
+`npm run hardcode` is the ratchet that stops new hand-written values; see
+`docs/frontend-design-tokens.md`.
+
 Deployed to Cloudflare Workers via OpenNext:
 
 ```bash
