@@ -2580,79 +2580,107 @@ REF_BIG_O = (
 FA_BIG_O = "Linear (O(n)) is much better than exponential (O(2^n))."
 
 
+def _gap(why, *cases):
+    """Each case as a strict xfail: the leak is real and the rule misses it today."""
+    mark = pytest.mark.xfail(
+        strict=True, raises=AssertionError, reason=f"known gap of the final-answer rule: {why}"
+    )
+    return [pytest.param(*case, marks=mark) for case in cases]
+
+
 @pytest.mark.parametrize(
     "reference,final,canonical,hint",
     [
-        # (a) an mc_reason item's correct option LETTER when the caller passes
-        # no correct_option: the final answer is the option's text (A34), and
-        # the n-gram rule never matches one letter (with correct_option the
-        # "option" detector flags these — owner decision A38, 06 gap)
-        (MC_REF, MC_FINAL, None, "The answer is C."),
-        (MC_REF, MC_FINAL, None, "Is it option C?"),
-        (MC_REF, MC_FINAL, None, "Look again at (C) - it is right."),
-        # (b) LaTeX macros (the loop tutor may write math in LaTeX): \cdot,
-        # \times, \text{}, \mathrm{}, \frac{}{}, \pi, \sqrt{}, \left/\right
-        # each read as word tokens that split the run
-        (DIFF_REF, "6x^2", None, "So you get $6 \\cdot x^{2}$."),
-        (DIFF_REF, "6x^2", None, "So you get $6 \\times x^2$."),
-        (G_REF, "9.8 m/s^2", None, "$g = 9.8\\,\\mathrm{m/s^2}$"),
-        ("It factors as (x-3)^2.", "(x-3)^2", None, "So it is $\\left(x-3\\right)^2$."),
-        (G_REF, "9.8 m/s^2", None, "$g = 9.8\\,\\text{m/s}^2$"),
-        ("x = 1/2", "1/2", None, "x = $\\frac{1}{2}$"),
-        ("The circumference is 2πr.", "2πr", None, "So it is $2\\pi r$."),
-        ("The side is √2.", "√2", None, "So the side is $\\sqrt{2}$."),
-        # ... and the other direction: a final answer the generator copied in
-        # LaTeX against a plain hint
-        ("x = $\\frac{1}{2}x^2$", "$\\frac{1}{2}x^2$", None, "So it is 1/2 x^2"),
-        ("The area is $6 \\cdot x^{2}$.", "$6 \\cdot x^{2}$", None, "So it is 6x^2."),
-        ("The circumference is 2\\pi r.", "2\\pi r", None, "So it is 2πr."),
-        ("The side is $\\sqrt{2}$.", "$\\sqrt{2}$", None, "So the side is √2."),
-        # U+2044 FRACTION SLASH (what NFKC makes of U+00BD) and U+2215 DIVISION
-        # SLASH are not "/", so a vulgar fraction misses "1/2" (and 0.5)
-        ("x = 1/2", "1/2", None, "It is \u00bd"),
-        ("x = 1/2", "1/2", "0.5", "It is \u00bd"),
-        ("x = 1/2", "1/2", None, "It is 1\u20442"),
-        ("x = 1/2", "1/2", None, "It is 1\u22152"),
-        # (c) a hyphenated answer in its spaced spelling ('-' is a token)
-        (
-            "It is a first-order reaction.",
-            "first-order reaction",
-            None,
-            "So is it a first order reaction?",
+        *_gap(
+            "(a) with no correct_option the final answer is the option's text (A34) and the "
+            "n-gram rule never matches one letter (with correct_option the option detector "
+            "flags these, owner decision A38 06)",
+            (MC_REF, MC_FINAL, None, "The answer is C."),
+            (MC_REF, MC_FINAL, None, "Is it option C?"),
+            (MC_REF, MC_FINAL, None, "Look again at (C) - it is right."),
         ),
-        ("The eigenvalues are non-negative.", "non-negative", None, "Are they non negative?"),
-        # (d) a bare power of ten has no mantissa to scale
-        ("It is 1000 m.", "1000 m", "1e3", "Is it 10^3?"),
-        # (e) the decisive part of a long final answer (most free and
-        # teachback final answers are 6+ tokens; the rule matches the whole run)
-        (REF_BIG_O, FA_BIG_O, None, "Compare O(n) with O(2^n): which grows slower?"),
-        # (f) a paraphrase of a teachback claim
-        (TB_REF, TB_FINAL, None, "So it calls itself on a smaller problem?"),
-        # (g) an answer spelled in words, another unit spelling, or (on a free
-        # item, with no canonical value) scientific notation written otherwise
-        (DIFF_REF, "6x^2", None, "So it is six x squared."),
-        (G_REF, "9.8 m/s^2", None, "So g is 9.8 m s^-2."),
-        (G_REF, "9.8 m/s^2", None, "So g is 9.8 metres per second squared."),
-        ("Avogadro: 6.022e23 per mole.", "6.022e23", None, "About 6.022 x 10^23 of them."),
-        # (h) unicode: a superscript letter outside the exponent set folds
-        # without its "^"; a decomposed accent (letter + combining mark) splits
-        # the word
-        ("It is x^a.", "x^a", None, "So it is x\u1d43."),
-        ("Send your r\u00e9sum\u00e9.", "r\u00e9sum\u00e9", None, "Send the re\u0301sume\u0301."),
+        *_gap(
+            "(b) LaTeX macros (\\cdot, \\times, \\text{}, \\mathrm{}, \\frac{}{}, \\pi, "
+            "\\sqrt{}, \\left/\\right) read as word tokens that split the run",
+            (DIFF_REF, "6x^2", None, "So you get $6 \\cdot x^{2}$."),
+            (DIFF_REF, "6x^2", None, "So you get $6 \\times x^2$."),
+            (G_REF, "9.8 m/s^2", None, "$g = 9.8\\,\\mathrm{m/s^2}$"),
+            ("It factors as (x-3)^2.", "(x-3)^2", None, "So it is $\\left(x-3\\right)^2$."),
+            (G_REF, "9.8 m/s^2", None, "$g = 9.8\\,\\text{m/s}^2$"),
+            ("x = 1/2", "1/2", None, "x = $\\frac{1}{2}$"),
+            ("The circumference is 2πr.", "2πr", None, "So it is $2\\pi r$."),
+            ("The side is √2.", "√2", None, "So the side is $\\sqrt{2}$."),
+        ),
+        *_gap(
+            "(b) a final answer the generator copied in LaTeX, against a plain hint",
+            ("x = $\\frac{1}{2}x^2$", "$\\frac{1}{2}x^2$", None, "So it is 1/2 x^2"),
+            ("The area is $6 \\cdot x^{2}$.", "$6 \\cdot x^{2}$", None, "So it is 6x^2."),
+            ("The circumference is 2\\pi r.", "2\\pi r", None, "So it is 2πr."),
+            ("The side is $\\sqrt{2}$.", "$\\sqrt{2}$", None, "So the side is √2."),
+        ),
+        *_gap(
+            "(b) U+2044 FRACTION SLASH (what NFKC makes of U+00BD) and U+2215 DIVISION SLASH "
+            "are not '/', so a vulgar fraction misses 1/2 (and 0.5)",
+            ("x = 1/2", "1/2", None, "It is \u00bd"),
+            ("x = 1/2", "1/2", "0.5", "It is \u00bd"),
+            ("x = 1/2", "1/2", None, "It is 1\u20442"),
+            ("x = 1/2", "1/2", None, "It is 1\u22152"),
+        ),
+        *_gap(
+            "(c) a hyphenated answer in its spaced spelling ('-' is a token)",
+            (
+                "It is a first-order reaction.",
+                "first-order reaction",
+                None,
+                "So is it a first order reaction?",
+            ),
+            ("The eigenvalues are non-negative.", "non-negative", None, "Are they non negative?"),
+        ),
+        *_gap(
+            "(d) a bare power of ten has no mantissa to scale",
+            ("It is 1000 m.", "1000 m", "1e3", "Is it 10^3?"),
+        ),
+        *_gap(
+            "(e) the decisive part of a long final answer (the rule matches the whole run)",
+            (REF_BIG_O, FA_BIG_O, None, "Compare O(n) with O(2^n): which grows slower?"),
+        ),
+        *_gap(
+            "(f) a paraphrase of a teachback claim",
+            (TB_REF, TB_FINAL, None, "So it calls itself on a smaller problem?"),
+        ),
+        *_gap(
+            "(g) an answer spelled in words, another unit spelling, or (on a free item with "
+            "no canonical value) scientific notation written otherwise",
+            (DIFF_REF, "6x^2", None, "So it is six x squared."),
+            (G_REF, "9.8 m/s^2", None, "So g is 9.8 m s^-2."),
+            (G_REF, "9.8 m/s^2", None, "So g is 9.8 metres per second squared."),
+            ("Avogadro: 6.022e23 per mole.", "6.022e23", None, "About 6.022 x 10^23 of them."),
+        ),
+        *_gap(
+            "(h) a superscript letter outside the exponent set folds without its '^'; a "
+            "decomposed accent (letter + combining mark) splits the word",
+            ("It is x^a.", "x^a", None, "So it is x\u1d43."),
+            (
+                "Send your r\u00e9sum\u00e9.",
+                "r\u00e9sum\u00e9",
+                None,
+                "Send the re\u0301sume\u0301.",
+            ),
+        ),
     ],
 )
 def test_known_gaps_of_the_final_answer_rule_are_pinned(reference, final, canonical, hint):
-    """Residuals the owner accepted as documented known gaps (review round 7:
-    "accept the remaining leak-detector edge cases as documented known gaps"):
-    HANDOFF-06 Known gaps and spec §13 A34's known limits list each. A change
-    that closes one updates both and moves its case to LEAKS."""
+    """These hints are REAL answer-key leaks that detect_leak misses today: the
+    residuals the owner accepted in review round 7 (HANDOFF-06 Known gaps,
+    spec §13 A34's known limits), tracked in an issue. The test asserts the
+    leak IS detected, so each case is a strict xfail: closing a gap makes its
+    case XPASS, which fails the suite until the mark is removed."""
     from learning.ladder import Rung
     from learning.leak import detect_leak
 
     kw = {"final_answer": final, "canonical_answer": canonical}
-    assert detect_leak(reference=reference, emitted=hint, rung=Rung.H3, **kw) == (False, "none"), (
-        hint
-    )
+    leaked, _detector = detect_leak(reference=reference, emitted=hint, rung=Rung.H3, **kw)
+    assert leaked is True, hint
 
 
 @pytest.mark.parametrize(
