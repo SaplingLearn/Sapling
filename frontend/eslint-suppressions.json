@@ -106,7 +106,7 @@
       "count": 1
     },
     "no-restricted-syntax": {
-      "count": 7
+      "count": 5
     }
   },
   "src/lib/api.test.ts": {
