@@ -17,7 +17,7 @@ from services.quiz.grading import WRITTEN_TYPES, numeric_value
 from services.quiz.algebra import equivalent_algebra
 from services.fingerprint import fingerprint
 from services.quiz.identity import question_hash
-from services.quiz.interaction import sanitize_interaction, scramble_pool
+from services.quiz.interaction import keyless_interaction
 from learning import quiz_gates
 
 # Log records keep the name they had in routes/quiz.py before the #118 split:
@@ -101,12 +101,13 @@ def _strip_answer_key(wire_questions: list[dict]) -> list[dict]:
         # buckets and items…), so it must reach them. Re-sanitized here, not
         # copied: the sanitizers emit layout only (ids, labels, prompts),
         # never the key, and a stored row of any other shape drops it. The
-        # pool is scrambled: written order IS a sequence's/rank's answer.
+        # pool is scrambled (written order IS a sequence's/rank's/match's
+        # answer) and post-answer fields (an explain rubric) are dropped.
         if q.get("type") == "short_answer":
-            interaction = sanitize_interaction(q.get("interaction"))
+            seed = str(q.get("question") or q.get("id") or "")
+            interaction = keyless_interaction(q.get("interaction"), seed)
             if interaction is not None:
-                seed = str(q.get("question") or q.get("id") or "")
-                q2["interaction"] = scramble_pool(interaction, seed)
+                q2["interaction"] = interaction
         stripped.append(q2)
     return stripped
 

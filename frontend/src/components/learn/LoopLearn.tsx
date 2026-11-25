@@ -76,7 +76,7 @@ import {
 import { useFlag } from "@/context/FlagsContext";
 import { useStudyNavShown } from "../useRetentionNav";
 import { forgetEndedSession, noteLearningSession, useFeedbackHold } from "@/lib/feedbackPacing";
-import { useHypercorrectionDwell } from "@/lib/hypercorrectionDwell";
+import { type DwellArm, dwellArm, useHypercorrectionDwell } from "@/lib/hypercorrectionDwell";
 import { checkIsOpen, hintTurnEvents, initialLoopState, reduceLoopEvent } from "./loopState";
 import { hasDeepLink, readDeepLink } from "./deepLink";
 import styles from "./LoopLearn.module.css";
@@ -344,7 +344,7 @@ export function LoopLearn() {
   // Wireframe T9: the last graded check's verdict, shown over the feedback turn
   const [verdict, setVerdict] = useState<{ verdict: string; nodeId: string | null; credit?: LoopTurnResult["credit"]; reasons?: LoopTurnResult["credit_reasons"] } | null>(null);
   // W2.5: ms Continue / probe Next holds after high-confidence wrong (server-scaled)
-  const [feedbackDwellMs, setFeedbackDwellMs] = useState<number | null>(null);
+  const [feedbackDwellMs, setFeedbackDwellMs] = useState<DwellArm>(null);
   const hypercorrectionHold = useHypercorrectionDwell(feedbackDwellMs);
   // Spec §13 A138: the open segment-opening guess; A139: the open "why" prompt.
   // Both are server-driven: a served turn closes them and may open new ones.
@@ -1098,7 +1098,7 @@ export function LoopLearn() {
       if (r.probe_done) setProbeFinished(true);
       if (r.reference_answer) {
         setProbeReference(r.reference_answer);
-        setFeedbackDwellMs(r.feedback_dwell_ms && r.feedback_dwell_ms > 0 ? r.feedback_dwell_ms : null);
+        setFeedbackDwellMs(dwellArm(r.feedback_dwell_ms));
         return;
       }
       await advanceProbe(r.probe_done, g);
@@ -1269,7 +1269,7 @@ export function LoopLearn() {
     if (res.approved_plan) setApprovedPlan(res.approved_plan); // K08: the server moved the plan's cursor
     if (submission && res.graded) {
       setVerdict(res.verdict ? { verdict: res.verdict, nodeId: res.learner_state?.[0]?.node_id ?? state.focusNodeId, credit: res.credit, reasons: res.credit_reasons } : null);
-      setFeedbackDwellMs(res.feedback_dwell_ms && res.feedback_dwell_ms > 0 ? res.feedback_dwell_ms : null);
+      setFeedbackDwellMs(dwellArm(res.feedback_dwell_ms));
       setPendingGrade(null);
       // graded — correct, not yet, idk, or a refusal the server graded as idk:
       // the item takes no more answers

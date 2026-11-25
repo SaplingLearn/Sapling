@@ -6081,13 +6081,22 @@ class TestMcReasonEval:
 
         from agents.check_items import CheckItemsOutput, _validate_options_present
 
+        from types import SimpleNamespace
+
+        first = SimpleNamespace(retry=0, max_retries=2)
+        last = SimpleNamespace(retry=2, max_retries=2)
         ok = CheckItemsOutput(items=[_draft(), _mc_draft()])
-        assert _validate_options_present(ok) is ok
+        assert _validate_options_present(first, ok) is ok
         three = CheckItemsOutput(items=[_mc_draft(options=_opts(_CORRECT, _ITER, _LOSS))])
-        assert _validate_options_present(three) is three
+        assert _validate_options_present(first, three) is three
         bare = CheckItemsOutput(items=[_draft(), _mc_draft(options=[], difficulty=2)])
         with pytest.raises(ModelRetry, match="Learning Rate difficulty 2"):
-            _validate_options_present(bare)
+            _validate_options_present(first, bare)
+        # The last attempt keeps the call's good drafts and drops only the
+        # option-less ones, never raising (that would lose every draft).
+        kept = _validate_options_present(last, bare)
+        assert [d.format for d in kept.items] == [bare.items[0].format]
+        assert all(d.options or d.format != "mc_reason" for d in kept.items)
 
     def test_options_valid_reads_only_the_a37_option_rules(self):
         from learning.checks import MC_OPTION_RULES

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, act } from "@testing-library/react";
-import { feedbackDwellLocked, useHypercorrectionDwell } from "./hypercorrectionDwell";
+import { type DwellArm, dwellArm, feedbackDwellLocked, useHypercorrectionDwell } from "./hypercorrectionDwell";
 
 describe("feedbackDwellLocked", () => {
   it("locks only while a positive dwell window is open", () => {
@@ -69,5 +69,23 @@ describe("useHypercorrectionDwell", () => {
     expect(result.current).toBe(false);
     rerender({ ms: undefined });
     expect(result.current).toBe(false);
+  });
+
+  it("re-arms on a second grade with the same duration (a fresh arm)", () => {
+    vi.useFakeTimers();
+    const { result, rerender } = renderHook(
+      ({ arm }: { arm: DwellArm }) => useHypercorrectionDwell(arm),
+      { initialProps: { arm: dwellArm(8000) } },
+    );
+    expect(result.current).toBe(true);
+    act(() => { vi.advanceTimersByTime(8000); });
+    expect(result.current).toBe(false);
+    rerender({ arm: dwellArm(8000) });
+    expect(result.current).toBe(true);
+    act(() => { vi.advanceTimersByTime(7999); });
+    expect(result.current).toBe(true);
+    act(() => { vi.advanceTimersByTime(1); });
+    expect(result.current).toBe(false);
+    vi.useRealTimers();
   });
 });

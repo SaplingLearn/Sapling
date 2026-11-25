@@ -276,15 +276,22 @@ def attach_interaction(wire: dict[str, Any], raw: Any) -> dict[str, Any]:
 
 
 # The pool a student drags FROM. The model writes it in key order (a
-# sequence's steps ARE the answer `id1;id2;…`), so the student view must
-# never show it as written. Kits assign by id, never by index.
+# sequence's steps ARE the answer `id1;id2;…`, a match's `right[i]` pairs
+# with `left[i]`), so the student view must never show it as written. Kits
+# assign by id, never by index. A connect MAP's nodes are not a pool.
 _POOL_KEYS: dict[str, str] = {
     "sequence": "steps",
     "rank": "items",
     "sort": "items",
     "label": "labels",
     "build": "parts",
+    "position": "markers",
+    "connect": "right",
 }
+
+# Fields a kit shows only WITH the verdict (ExplainAnswer renders the rubric
+# once marked): the pre-answer view never carries them.
+_POST_ANSWER_KEYS: dict[str, tuple[str, ...]] = {"explain": ("rubric",)}
 
 
 def scramble_pool(interaction: dict[str, Any], seed: str) -> dict[str, Any]:
@@ -307,3 +314,14 @@ def scramble_pool(interaction: dict[str, Any], seed: str) -> dict[str, Any]:
     if [n.get("id") for n in ranked] == [n.get("id") for n in pool]:
         ranked = ranked[1:] + ranked[:1]
     return {**interaction, key: ranked}
+
+
+def keyless_interaction(raw: Any, seed: str) -> dict[str, Any] | None:
+    """The pre-answer view of a kit: sanitized, post-answer fields dropped,
+    the pool scrambled. None when the payload is unusable."""
+    interaction = sanitize_interaction(raw)
+    if interaction is None:
+        return None
+    for field in _POST_ANSWER_KEYS.get(interaction["kind"], ()):
+        interaction.pop(field, None)
+    return scramble_pool(interaction, seed)

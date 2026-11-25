@@ -26,7 +26,7 @@ import logging
 import re
 
 from pydantic import BaseModel, Field
-from pydantic_ai import Agent, ModelRetry
+from pydantic_ai import Agent, ModelRetry, RunContext
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RunUsage
@@ -265,23 +265,41 @@ def optionless_mc(output: CheckItemsOutput) -> list[str]:
 
 
 @check_items_agent.output_validator
-def _validate_options_present(output: CheckItemsOutput) -> CheckItemsOutput:
+def _validate_options_present(
+    ctx: RunContext[SaplingDeps], output: CheckItemsOutput
+) -> CheckItemsOutput:
     """Retry (within `retries=` CHECK_ITEM_OUTPUT_RETRIES, as an empty items
     list is) an output with an option-less mc_reason draft: the Claude
     recording of 2026-11-24 drew one call (Big-O Notation) whose three
     mc_reason drafts all came back `options: []`, in 2 of 3 runs, which the
     A37 McOptionsValid contract (required 1.0) does not allow. The same
-    prompt, never a second one (ADR 0024)."""
+    prompt, never a second one (ADR 0024).
+
+    On the LAST attempt the option-less drafts are dropped instead, as they
+    were before the retry existed: raising there would end the run and lose
+    every valid free and teachback draft in the call."""
     missing = optionless_mc(output)
-    if missing:
-        raise ModelRetry(
-            "These mc_reason items have no options: "
-            + "; ".join(missing)
-            + f". Every mc_reason item carries exactly {_MC_OPTIONS} options (the correct "
-            "one first, then the distractors, each with its own misconception). Return "
-            "every item again, with those options filled in."
+    if not missing:
+        return output
+    if ctx.retry >= ctx.max_retries:
+        logger.warning(
+            "check_items: dropped %d option-less mc_reason draft(s) after the retries",
+            len(missing),
         )
-    return output
+        return output.model_copy(
+            update={
+                "items": [
+                    d for d in output.items if not (d.format == "mc_reason" and not d.options)
+                ]
+            }
+        )
+    raise ModelRetry(
+        "These mc_reason items have no options: "
+        + "; ".join(missing)
+        + f". Every mc_reason item carries exactly {_MC_OPTIONS} options (the correct "
+        "one first, then the distractors, each with its own misconception). Return "
+        "every item again, with those options filled in."
+    )
 
 
 def _flex_settings(task: AgentTask = "check_items") -> ModelSettings | None:

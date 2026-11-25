@@ -122,14 +122,6 @@ class PlannedQuiz(BaseModel):
             return None
         return parsed if isinstance(parsed, dict) else None
 
-
-def planned_kit(quiz: object, question: object) -> dict[str, Any] | None:
-    """`PlannedQuiz.kit_for` for one of a run's questions, whichever schema
-    the run had: the plain quiz (flag off) has no kit."""
-    if not isinstance(quiz, PlannedQuiz) or not isinstance(question, PlannedQuestion):
-        return None
-    return quiz.kit_for(question.slot)
-
     @field_validator("questions", mode="before")
     @classmethod
     def _clip_questions(cls, questions):
@@ -145,6 +137,14 @@ def planned_kit(quiz: object, question: object) -> dict[str, Any] | None:
                 {"field_type": "List", "min_length": 1, "actual_length": 0},
             )
         return questions
+
+
+def planned_kit(quiz: object, question: object) -> dict[str, Any] | None:
+    """`PlannedQuiz.kit_for` for one of a run's questions, whichever schema
+    the run had: the plain quiz (flag off) has no kit."""
+    if not isinstance(quiz, PlannedQuiz) or not isinstance(question, PlannedQuestion):
+        return None
+    return quiz.kit_for(question.slot)
 
 
 INTRO = (

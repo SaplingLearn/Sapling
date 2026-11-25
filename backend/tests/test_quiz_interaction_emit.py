@@ -250,3 +250,40 @@ def test_keyless_projection_never_serves_the_pool_in_key_order():
             assert [p["id"] for p in first] != [p["id"] for p in pool]
             assert first == again
             assert sorted(p["id"] for p in first) == [p["id"] for p in pool]
+
+
+def test_keyless_projection_drops_the_explain_rubric_and_scrambles_a_match():
+    """The rubric is shown WITH the verdict (ExplainAnswer), never before the
+    answer; a match's right column is written paired with the left."""
+    from services.quiz.wire import _strip_answer_key
+
+    left = [{"id": f"l{i}", "label": f"L{i}"} for i in range(4)]
+    right = [{"id": f"r{i}", "label": f"R{i}"} for i in range(4)]
+    stored = [
+        {"id": 1, "question": "Explain it.", "type": "short_answer", "options": [],
+         "correct_answer": "x",
+         "interaction": {"kind": "explain", "placeholder": "Why?", "rubric": ["Names X"]}},
+        {"id": 2, "question": "Match them.", "type": "short_answer", "options": [],
+         "correct_answer": "l0=r0;l1=r1;l2=r2;l3=r3",
+         "interaction": {"kind": "connect", "left": left, "right": right}},
+    ]
+    explain, match = _strip_answer_key(stored)
+    assert explain["interaction"] == {"kind": "explain", "placeholder": "Why?"}
+    assert match["interaction"]["left"] == left
+    assert [n["id"] for n in match["interaction"]["right"]] != [n["id"] for n in right]
+    assert sorted(n["id"] for n in match["interaction"]["right"]) == [n["id"] for n in right]
+
+
+def test_planned_quiz_keeps_its_question_validators():
+    """`planned_kit` once sat between `kit_for` and the class's validators,
+    which turned them into dead nested functions: an empty list validated and
+    no cap applied. Both stay ON the model."""
+    import pytest
+    from pydantic import ValidationError
+
+    from agents.quiz_planned import PlannedQuiz
+
+    assert set(PlannedQuiz.__pydantic_decorators__.field_validators) >= {
+        "_clip_questions", "_require_questions"}
+    with pytest.raises(ValidationError):
+        PlannedQuiz(questions=[])

@@ -25,7 +25,8 @@ export const HANDOFF_COPY = {
   /** W3.3b: Quiz cue stream on due (not Teach / LoopLearn). */
   practiceWhatsDue: "Practice what's due",
   seeOnMap: "See on your map",
-  /** Budget pause only — flashcards while the tutor is capped. */
+  /** The budget pause (flashcards while the tutor is capped) AND the Study
+   *  hub's due-reviews button: one label for one action, edit with both in view. */
   reviewFlashcards: "Review flashcards",
 } as const;
 
