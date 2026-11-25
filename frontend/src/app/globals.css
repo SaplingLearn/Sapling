@@ -178,11 +178,71 @@
   --shadow-lg: 0 20px 48px rgba(25, 37, 11, 0.10), 0 4px 8px rgba(25, 37, 11, 0.04);
   --shadow-inset: inset 0 1px 0 rgba(255,255,255,0.6), inset 0 -1px 0 rgba(42,39,31,0.04);
 
-  --pad-sm: 10px;
-  --pad-md: 16px;
-  --pad-lg: 22px;
-  --pad-xl: 32px;
+  /* Spacing scale (#866). For margin, padding and gap. DERIVED like the type
+     scale: the steps are the px values the app's margins, paddings and gaps
+     already use, counted across src/ (8, 10, 12, 6, 16 and 4 lead; 22 is
+     --pad-lg). `--sp-N` is N × 2px, so the name says the size: --sp-4 = 8px,
+     --sp-8 = 16px. Contiguous to 32px, then the four large steps in use.
+     Odd values (3, 5, 7, 9px) have no step: round to a neighbour.
+     Not density-aware; --pad-* below is, and stays the token for a panel's
+     inset. docs/frontend-design-tokens.md. */
+  --sp-1:  2px;
+  --sp-2:  4px;
+  --sp-3:  6px;
+  --sp-4:  8px;
+  --sp-5:  10px;
+  --sp-6:  12px;
+  --sp-7:  14px;
+  --sp-8:  16px;
+  --sp-9:  18px;
+  --sp-10: 20px;
+  --sp-11: 22px;
+  --sp-12: 24px;
+  --sp-13: 26px;
+  --sp-14: 28px;
+  --sp-15: 30px;
+  --sp-16: 32px;
+  --sp-20: 40px;
+  --sp-24: 48px;
+  --sp-28: 56px;
+  --sp-32: 64px;
+
+  /* Density-aware insets: html[data-density] below redefines these with its
+     own px values. The defaults are steps of the scale above. */
+  --pad-sm: var(--sp-5);
+  --pad-md: var(--sp-8);
+  --pad-lg: var(--sp-11);
+  --pad-xl: var(--sp-16);
   --row-h: 40px;
+
+  /* Layering (#866). Every z-index the app uses, by role, measured: a raised
+     sibling (1), sticky chrome (TopNav, sticky bars: 20), menus and selects
+     (100), full-screen takeovers (Tree / Dashboard fullscreen: 150), modals
+     and their backdrops (200), toasts (1000). Stay inside a role's band:
+     a value between two roles is a new role, so name it here. */
+  --z-base:    0;
+  --z-raised:  1;
+  --z-sticky:  20;
+  --z-popover: 100;
+  --z-overlay: 150;
+  --z-modal:   200;
+  --z-toast:   1000;
+
+  /* Role colours (#866) the app writes out by hand in several places.
+     --text-on-fill: text and marks on a saturated fill (a verdict badge, a
+     step dot, a dark hero). --scrim: the dimmed page behind a modal.
+     --focus-ring / --focus-halo: the keyboard-focus outline and the soft ring
+     an input wears while focused. --tool-quiz(-soft): the Quiz tool's hue
+     wherever the study hub, flashcards and the daily goal name it.
+     --series-compare: the second series when two people's mastery is drawn
+     together (Social's comparison, the graph's comparison overlay). */
+  --text-on-fill:   #ffffff;
+  --scrim:          rgba(25, 37, 11, 0.45);
+  --focus-ring:     var(--accent);
+  --focus-halo:     var(--accent-soft);
+  --tool-quiz:      #7a4a78;
+  --tool-quiz-soft: #ebddee;
+  --series-compare: #8a7bc4;
 
   /* Type scale (#289).
      DERIVED, not invented: every step is a size the app already uses, counted
@@ -215,6 +275,23 @@
   --dur-fast: 140ms;
   --dur: 220ms;
   --dur-slow: 420ms;
+
+  /* Motion (#866), beside the four above. Mirrored in seconds and as
+     cubic-bezier arrays by lib/designTokens.ts (MOTION) for framer-motion;
+     designTokens.test.ts fails if the two drift. lib/motion.ts holds the
+     presets built from them.
+     --ease-out: entrances and anything settling into place (the app's most
+       used curve: modals, tool switches). --ease-in: exits (modal-out).
+     --ease-in-out: a thing moving between two resting places.
+     --ease-emphasized: an entrance meant to be noticed (study-mode-enter).
+     --dur-instant: press feedback. --dur-slower: a large surface arriving
+       (onboarding's moments, a full-screen takeover). */
+  --ease-out:        cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in:         cubic-bezier(0.4, 0, 1, 1);
+  --ease-in-out:     cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-emphasized: cubic-bezier(0.2, 0.85, 0.35, 1);
+  --dur-instant: 60ms;
+  --dur-slower: 600ms;
 }
 
 /* Light-mode only per .impeccable.md. Dark-mode rules removed to
