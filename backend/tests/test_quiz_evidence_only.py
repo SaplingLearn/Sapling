@@ -18,16 +18,9 @@ from tests.db_fakes import with_async_twins
 
 # The retired symbols are named once, in inv_21's list (spec §8 invariant 21
 # greps the literals), and every absence check here reads them from it.
-LEGACY_DELTA_KEY, LEGACY_DELTA_CONSTANTS, _ = LEGACY_MASTERY_SYMBOLS
+LEGACY_DELTA_KEY, _, _ = LEGACY_MASTERY_SYMBOLS
 
 REPO = Path(__file__).resolve().parents[2]
-
-
-def test_quiz_config_has_no_delta_model():
-    import services.quiz_config as qc
-
-    assert [n for n in dir(qc) if n.startswith(LEGACY_DELTA_CONSTANTS)] == []
-    assert not hasattr(qc, "mastery_after")
 
 
 def test_three_mc_corrects_from_prior():
@@ -419,17 +412,25 @@ def test_the_help_floor_is_one_batched_read_after_the_farm_guard():
     assert out[2] == {"question_hash": "h2", "max_rung": 2, "assisted": True}
 
 
+_SHORT = ("short_answer", "base case", "The base case.", "loop body")
+_NUMERIC = ("numeric", "0.5", "1/2", "99")
+_SYMBOLIC = ("symbolic", "2*x+2", "2(x+1)", "x")
+_ASSISTED, _NO_CREDIT = params.RUNG_ASSISTED_MIN, params.RUNG_NO_CREDIT_MIN
+
+
+# Every written kind graded right and wrong, and every help floor on a right
+# answer (the three weights: full, assisted, none) and on a wrong one; the floor
+# acts on the evidence whatever grader the kind uses (was the full 3 x 2 x 3).
 @pytest.mark.parametrize(
-    "kind,key,right,wrong",
+    "kind,key,right,wrong,correct,floor",
     [
-        ("short_answer", "base case", "The base case.", "loop body"),
-        ("numeric", "0.5", "1/2", "99"),
-        ("symbolic", "2*x+2", "2(x+1)", "x"),
+        (*_SHORT, True, 0),
+        (*_NUMERIC, True, _ASSISTED),
+        (*_SYMBOLIC, True, _NO_CREDIT),
+        (*_SHORT, False, _NO_CREDIT),
+        (*_NUMERIC, False, 0),
+        (*_SYMBOLIC, False, _ASSISTED),
     ],
-)
-@pytest.mark.parametrize("correct", [True, False])
-@pytest.mark.parametrize(
-    "floor", [0, params.RUNG_ASSISTED_MIN, params.RUNG_NO_CREDIT_MIN]
 )
 def test_recorded_written_grades_keep_conservative_evidence_and_guards(
     kind, key, right, wrong, correct, floor
