@@ -62,6 +62,14 @@ from services.loop.guard import option_text
 #: mirror and the tests key on this logger name).
 logger = logging.getLogger("routes.learn_loop")
 
+#: The loop phase a stored close moves the session to.
+CLOSE_PHASE = "close"
+#: `close_session`'s rate_limit mode that answers a rate-limited close with the 429.
+RATE_LIMIT_RAISE = "raise"
+#: ... and the mode that answers it with the deterministic close.
+RATE_LIMIT_FALLBACK = "fallback"
+_SESSION_NOT_FOUND = "Session not found"
+
 
 # ── The served session close (PKG-09; spec §13 A25, A51) ─────────────────
 
@@ -154,7 +162,7 @@ def _claim_close(session_id: str, claim: str, now: float) -> dict:
     out: dict = {}
 
     def take(doc: dict) -> None:
-        if _loop_phase(doc) == "close":
+        if _loop_phase(doc) == CLOSE_PHASE:
             raise _AlreadyClosed()
         if doc.get("close_claim") != claim and _live(doc, "close_claim", now):
             raise HTTPException(status_code=409, detail=_CLOSE_IN_PROGRESS)
@@ -178,7 +186,7 @@ def _finish_close(session_id: str, claim: str, *, closed: bool) -> None:
             doc.pop("close_claim", None)
             doc.pop("close_claim_at", None)
         if closed:
-            doc["phase"] = "close"
+            doc["phase"] = CLOSE_PHASE
 
     try:
         _update_loop_state(session_id, finish)
@@ -364,7 +372,7 @@ async def close_session(
         seen["pending"] = pending is not None
     claim = ""
     if pending is not None:
-        phase = "close"
+        phase = CLOSE_PHASE
         record = fallback_close(build_close([], [], [], measured_before=()))
         row_defaults = {
             "mode": pending.get("mode"),
@@ -372,80 +380,25 @@ async def close_session(
             "offering_id": pending.get("offering_id"),
         }
     else:
-        rows = await asyncio.to_thread(  # #117: off the event loop
-            table("sessions").select,
-            "id,user_id,offering_id,loop_state,close_json,close_phase",
-            # PKG-12: a review session is not a tutor session — never closed (404)
-            filters={"id": f"eq.{session_id}", **NOT_REVIEW},
-            limit=1,
-        )
-        if not rows:
-            raise HTTPException(status_code=404, detail="Session not found")
-        if rows[0].get("user_id") != user_id:
-            raise HTTPException(status_code=404, detail="Session not found")
-        if rows[0].get("close_json") is not None:
-            return _stored_close(rows[0])
-        had_state = bool(rows[0].get("loop_state"))
+        row = await _owned_session_row(session_id, user_id)
+        if row.get("close_json") is not None:
+            return _stored_close(row)
+        had_state = bool(row.get("loop_state"))
         claim = uuid.uuid4().hex
         try:
             doc = await asyncio.to_thread(_claim_close, session_id, claim, _now_s())  # #117
         except _AlreadyClosed:
             return await asyncio.to_thread(_reread_close, session_id)
-        phase = _close_phase(doc) if had_state else "close"
+        phase = _close_phase(doc) if had_state else CLOSE_PHASE
         row_defaults = None
         try:
-            transcript, evidence = await asyncio.to_thread(_session_record, session_id)  # #117
-            keys = await asyncio.to_thread(_close_misconception_keys, user_id, evidence)
-            # A117: honest baselines, and check-in answers counted apart
-            # (the probe history is the claimed document's)
-            measured = await asyncio.to_thread(_measured_before, user_id, session_id, evidence)
-            names = await asyncio.to_thread(
-                _concept_names, user_id, [e.get("node_id") for e in evidence]
-            )
-            draft = build_close(
-                transcript,
-                evidence,
-                keys,
-                measured_before=measured,
-                probe_hashes=session_probe_hashes(doc),
-                concept_names=names,
-            )
-            items = await asyncio.to_thread(_unreleased_items, doc)
-            out = None
-            if evidence:  # A25: no model without graded evidence
-                limited = False
-                if rate_limit:
-                    try:
-                        # A20 inline: a model may run (#117: the read, off the event loop)
-                        await asyncio.to_thread(ai_budget.enforce_rate_limit_for, user_id)
-                    except AIBudgetExceeded:
-                        if rate_limit == "raise":
-                            raise
-                        limited = True
-                if not limited:
-                    # #866 K60: the close's usage row names the session's course
-                    course = await _session_course(session_id, rows[0].get("offering_id"))
-                    out = await _model_close(
-                        draft, user_id=user_id, request_id=request_id, session_id=session_id,
-                        course_id=course,
-                    )
-            record = (
-                served_close(out, draft, items)
-                if out is not None
-                else _served_fallback(draft, items)
+            record = await _materialised_close(
+                session_id, user_id, row, doc, request_id=request_id, rate_limit=rate_limit
             )
         except BaseException:
             await asyncio.to_thread(_finish_close, session_id, claim, closed=False)
             raise
-    try:
-        stored = await asyncio.to_thread(  # #117: off the event loop
-            store_close, session_id, user_id, record, phase, row_defaults=row_defaults
-        )
-    except Exception as exc:
-        if claim:
-            await asyncio.to_thread(_finish_close, session_id, claim, closed=False)
-        logger.warning("session close not stored (%s)", type(exc).__name__)
-        raise HTTPException(status_code=502, detail=_CLOSE_STORE_FAILED) from None
+    stored = await _store_claimed_close(session_id, user_id, record, phase, row_defaults, claim)
     await asyncio.to_thread(_finish_close, session_id, claim, closed=True)  # a pending session's phase too
     if pending is not None:
         # The row now carries the close: it, not the claim's tombstone, refuses
@@ -453,6 +406,102 @@ async def close_session(
         await asyncio.to_thread(release_claim_tombstone, session_id, user_id)
     if not stored:  # another close's write landed first: serve it, emit nothing
         return await asyncio.to_thread(_reread_close, session_id)
+    _log_session_closed(session_id, user_id, request_id, record)
+    return {"close": record.model_dump(), "model_written": record.model_written, "close_phase": phase}
+
+
+async def _owned_session_row(session_id: str, user_id: str) -> dict:
+    """The session's row as the close reads it; 404 when it is missing, a
+    review session (PKG-12: never closed) or another student's."""
+    rows = await asyncio.to_thread(  # #117: off the event loop
+        table("sessions").select,
+        "id,user_id,offering_id,loop_state,close_json,close_phase",
+        # PKG-12: a review session is not a tutor session — never closed (404)
+        filters={"id": f"eq.{session_id}", **NOT_REVIEW},
+        limit=1,
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail=_SESSION_NOT_FOUND)
+    if rows[0].get("user_id") != user_id:
+        raise HTTPException(status_code=404, detail=_SESSION_NOT_FOUND)
+    return rows[0]
+
+
+async def _materialised_close(
+    session_id: str, user_id: str, row: dict, doc: dict, *, request_id: str, rate_limit: str | None
+) -> CloseRecord:
+    """A claimed, materialised session's close record: the draft from its
+    transcript and evidence, written by the model only when it has evidence
+    (A25), and as served (leak-checked against its unreleased items)."""
+    transcript, evidence = await asyncio.to_thread(_session_record, session_id)  # #117
+    keys = await asyncio.to_thread(_close_misconception_keys, user_id, evidence)
+    # A117: honest baselines, and check-in answers counted apart
+    # (the probe history is the claimed document's)
+    measured = await asyncio.to_thread(_measured_before, user_id, session_id, evidence)
+    names = await asyncio.to_thread(
+        _concept_names, user_id, [e.get("node_id") for e in evidence]
+    )
+    draft = build_close(
+        transcript,
+        evidence,
+        keys,
+        measured_before=measured,
+        probe_hashes=session_probe_hashes(doc),
+        concept_names=names,
+    )
+    items = await asyncio.to_thread(_unreleased_items, doc)
+    out = None
+    if evidence:  # A25: no model without graded evidence
+        out = await _rate_limited_model_close(
+            draft, session_id, user_id, row, request_id=request_id, rate_limit=rate_limit
+        )
+    return (
+        served_close(out, draft, items)
+        if out is not None
+        else _served_fallback(draft, items)
+    )
+
+
+async def _rate_limited_model_close(
+    draft, session_id: str, user_id: str, row: dict, *, request_id: str, rate_limit: str | None
+) -> object | None:
+    """The model's close past the inline A20 check: rate-limited, the 429
+    (`rate_limit="raise"`) or no model output (`"fallback"`: the deterministic
+    close)."""
+    if rate_limit:
+        try:
+            # A20 inline: a model may run (#117: the read, off the event loop)
+            await asyncio.to_thread(ai_budget.enforce_rate_limit_for, user_id)
+        except AIBudgetExceeded:
+            if rate_limit == RATE_LIMIT_RAISE:
+                raise
+            return None
+    # #866 K60: the close's usage row names the session's course
+    course = await _session_course(session_id, row.get("offering_id"))
+    return await _model_close(
+        draft, user_id=user_id, request_id=request_id, session_id=session_id,
+        course_id=course,
+    )
+
+
+async def _store_claimed_close(
+    session_id: str, user_id: str, record: CloseRecord, phase: str, row_defaults, claim: str
+) -> bool:
+    """Store the close ONCE (conditional on `close_json IS NULL`); a failed
+    store releases the claim and is a 502."""
+    try:
+        return await asyncio.to_thread(  # #117: off the event loop
+            store_close, session_id, user_id, record, phase, row_defaults=row_defaults
+        )
+    except Exception as exc:
+        if claim:
+            await asyncio.to_thread(_finish_close, session_id, claim, closed=False)
+        logger.warning("session close not stored (%s)", type(exc).__name__)
+        raise HTTPException(status_code=502, detail=_CLOSE_STORE_FAILED) from None
+
+
+def _log_session_closed(session_id: str, user_id: str, request_id: str, record: CloseRecord) -> None:
+    """`learn.session_closed`, once per stored close."""
     events_service.log_event(
         "learn.session_closed",
         category="usage",
@@ -466,7 +515,6 @@ async def close_session(
             "model_written": record.model_written,
         },
     )
-    return {"close": record.model_dump(), "model_written": record.model_written, "close_phase": phase}
 
 
 async def close(body: CloseBody, request: Request) -> dict:
@@ -483,7 +531,7 @@ async def close(body: CloseBody, request: Request) -> dict:
         body.session_id,
         body.user_id,
         request_id=_request_id(request),
-        rate_limit="raise",
+        rate_limit=RATE_LIMIT_RAISE,
         seen=seen,
     )
     # #117: the legacy end body is sync (DB reads and writes): off the event loop
@@ -548,7 +596,7 @@ def end_session(body: EndSessionBody, request: Request) -> None:
                     body.session_id,
                     body.user_id,
                     request_id=_request_id(request),
-                    rate_limit="fallback",  # A20 inline: rate-limited → the deterministic close
+                    rate_limit=RATE_LIMIT_FALLBACK,  # A20 inline: rate-limited → the deterministic close
                 )
             )
     except HTTPException:
