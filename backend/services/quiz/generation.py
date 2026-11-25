@@ -1136,7 +1136,7 @@ async def _owned_node(body: GenerateQuizBody) -> dict:
     return node_rows[0]
 
 
-async def _claim_generate_slot(body: GenerateQuizBody) -> float | None:
+async def _claim_generate_slot(body: GenerateQuizBody):
     """#544 F1: claim this request's rate-limit slot, or the 429."""
     retry_after, slot = await aclaim_rate_limit(
         f"quiz_generate:{body.user_id}",
@@ -1156,7 +1156,7 @@ async def _claim_generate_slot(body: GenerateQuizBody) -> float | None:
     return slot
 
 
-async def _reserved_or_refund(body: GenerateQuizBody, slot: float | None):
+async def _reserved_or_refund(body: GenerateQuizBody, slot):
     """G5 (#537): the re-served misses; a refusal refunds the slot first."""
     try:
         return await _reserved_misses(body)
@@ -1170,7 +1170,7 @@ async def _reserved_or_refund(body: GenerateQuizBody, slot: float | None):
 
 
 async def _check_daily_spend(
-    body: GenerateQuizBody, slot: float | None, request_id: str, missing: int
+    body: GenerateQuizBody, slot, request_id: str, missing: int
 ) -> None:
     """The daily spend cap, only when something is left to generate."""
     if missing > 0 and await run_in_threadpool(_daily_spend_exceeded, body.user_id):
@@ -1232,7 +1232,7 @@ async def _generate_remainder(
     course_id,
     concept_name: str,
     request_id: str,
-    slot: float | None,
+    slot,
     planned_on: bool,
     gates_on: bool,
 ) -> tuple[list[dict], int | None]:
@@ -1330,7 +1330,7 @@ def _attempt_row(
     exam_days_away: int | None,
 ) -> dict:
     """The quiz_attempts row for this generation."""
-    attempt_row = {
+    attempt_row: dict = {
         "id": quiz_id,
         "user_id": body.user_id,
         "concept_node_id": concept_node_id,
@@ -1354,7 +1354,7 @@ def _attempt_row(
 
 
 async def _store_attempt_or_502(
-    attempt_row: dict, body: GenerateQuizBody, slot: float | None, request_id: str
+    attempt_row: dict, body: GenerateQuizBody, slot, request_id: str
 ) -> None:
     """Insert the attempt row, or refund, count and answer the 502."""
     try:
