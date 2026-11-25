@@ -12,6 +12,7 @@ from agents.deps import SaplingDeps
 from agents.tools.check import CheckAnswer, GradeOutcome
 from learning import policy, zpd_events
 from learning import grade_checkpoint
+from learning.claim_deadline import GradeDeadlineExceeded
 from learning.evidence import (
     Evidence,
     PlanningObservation,
@@ -66,6 +67,66 @@ from services.loop.claims import (
 #: mirror and the tests key on this logger name).
 logger = logging.getLogger("routes.learn_loop")
 
+#: A saved grade's checkpoint kinds: a /check/answer grade and a probe grade.
+CHECK_KIND = "check"
+PROBE_KIND = "probe"
+
+#: The loop phase a probe grade is flushed in.
+_PROBE_PHASE = "probe"
+
+#: The usage feature a recovered grade's deps bill under, by checkpoint kind.
+_FEATURE_FOR_KIND = {CHECK_KIND: "loop_check", PROBE_KIND: "loop_probe"}
+
+#: The 503 details of a grade that can be retried with the same answer.
+EVIDENCE_UNAVAILABLE = "Learning evidence unavailable; retry the same answer"
+RECOVERY_UNAVAILABLE = "Saved grade recovery unavailable; retry the same answer"
+_RECOVERY_RETRY_LATER = "Saved grade recovery unavailable; retry later"
+
+#: The 503 detail when grading outlived its claim deadline (#866 A1): nothing saved.
+GRADE_TIMED_OUT = "Checking your answer took too long, so nothing was recorded. Please submit it again."
+
+#: The 409 for a check grade a newer observation superseded before it was written.
+_SUPERSEDED_DETAIL = "Newer learning activity was recorded. Select another check to continue."
+
+
+def grading_failure_http(exc: BaseException) -> HTTPException | None:
+    """The 503 a grading failure maps to before any checkpoint was saved (its
+    claim already released), or None for one that propagates unchanged."""
+    if isinstance(exc, GradeDeadlineExceeded):  # #866 A1: nothing saved, claim released
+        return HTTPException(status_code=503, detail=GRADE_TIMED_OUT)
+    if isinstance(exc, PlanningPersistenceUnavailable):
+        return HTTPException(status_code=503, detail=EVIDENCE_UNAVAILABLE)
+    return None
+
+
+def grading_deps(body, course_id, request, *, kind: str, loop_on: bool, state: dict) -> SaplingDeps:
+    """The deps one graded answer runs grade_answer under: billed to its kind's
+    feature, with a copy of the loop state for the grade hook's attempt log
+    (its change rides the checkpoint into the claimed save)."""
+    return SaplingDeps(
+        user_id=body.user_id,
+        course_id=course_id or None,
+        supabase=None,
+        request_id=_request_id(request),
+        session_id=body.session_id,
+        feature=_FEATURE_FOR_KIND[kind],
+        learning_loop=loop_on,
+        loop_state=copy.deepcopy(state),
+    )
+
+
+def submitted_answer(body, *, idk: bool) -> CheckAnswer:
+    """The student's explicit answer as the grader takes it."""
+    return CheckAnswer(
+        question_hash=body.question_hash,
+        answer_text=body.answer,
+        selected_option=body.option,
+        reason=body.reason,
+        idk=idk,
+        # spec §13 A127: the stated confidence; an idk (a box or a phrase) states none
+        confidence=None if idk else body.confidence,
+    )
+
 
 def _open_grade_checkpoint(entry, body, course_id, *, kind):
     try:
@@ -75,7 +136,7 @@ def _open_grade_checkpoint(entry, body, course_id, *, kind):
             question_hash=body.question_hash,
         )
     except PlanningPersistenceUnavailable:
-        raise HTTPException(status_code=503, detail="Saved grade recovery unavailable; retry later") from None
+        raise HTTPException(status_code=503, detail=_RECOVERY_RETRY_LATER) from None
 
 
 #: The 409 for an answer whose check was closed while it was graded: a later
@@ -103,16 +164,16 @@ def _save_grade_checkpoint(checkpoint):
         moved.clear()
         _refuse_while_closing(doc, _now_s())
         _check_goal_version(doc, checkpoint.goal_version)
-        entry = (_steps(doc).get(checkpoint.question_hash) if checkpoint.kind == "check"
+        entry = (_steps(doc).get(checkpoint.question_hash) if checkpoint.kind == CHECK_KIND
                  else _probe_doc(doc).get("current"))
-        if (isinstance(entry, dict) and checkpoint.kind == "check"
+        if (isinstance(entry, dict) and checkpoint.kind == CHECK_KIND
                 and entry.get("grading_abandoned") == ABANDON_MOVED_PAST
                 and entry.get("discarded_grade_operation_id") == checkpoint.operation_id):
             raise HTTPException(status_code=409, detail=_MOVED_ON)  # /check/next closed it meanwhile
         if (not isinstance(entry, dict) or entry.get("grading_claim") != checkpoint.operation_id
-                or (checkpoint.kind == "probe" and entry.get("question_hash") != checkpoint.question_hash)):
+                or (checkpoint.kind == PROBE_KIND and entry.get("question_hash") != checkpoint.question_hash)):
             raise HTTPException(status_code=409, detail=_ALREADY_GRADED)
-        if checkpoint.kind == "check" and doc.get("current") != checkpoint.question_hash:
+        if checkpoint.kind == CHECK_KIND and doc.get("current") != checkpoint.question_hash:
             _abandon_claimed(entry, ABANDON_MOVED_PAST)
             moved["past"] = True
             return
@@ -139,7 +200,7 @@ def _abandon_grade_checkpoint(checkpoint, reason: str) -> None:
     qh, claim = checkpoint.question_hash, checkpoint.operation_id
 
     def abandon(doc: dict) -> None:
-        if checkpoint.kind == "check":
+        if checkpoint.kind == CHECK_KIND:
             entry = _steps(doc).get(qh)
             if isinstance(entry, dict) and entry.get("grading_claim") == claim:
                 _abandon_claimed(entry, reason)
@@ -173,15 +234,17 @@ _GRADE_ABANDONED = object()
 _RETIRED_DETAIL = "This question was withdrawn. Select another check to continue."
 
 
-def _flush_grade_checkpoint(checkpoint, request, *, loop_on, deps=None):
+def _flush_guard(checkpoint):
+    """The compare-and-set check before a flush: the grade's claim and its
+    checkpoint are still on the entry, and a check step is still current."""
     orphan: dict = {}
 
     def guard(doc):
         orphan.clear()
         _refuse_while_closing(doc, _now_s())
         _check_goal_version(doc, checkpoint.goal_version)
-        if checkpoint.kind == "probe":
-            _require_phase(doc, "probe")
+        if checkpoint.kind == PROBE_KIND:
+            _require_phase(doc, _PROBE_PHASE)
             entry = _probe_doc(doc).get("current")
         else:
             _require_teaching(doc)
@@ -189,7 +252,7 @@ def _flush_grade_checkpoint(checkpoint, request, *, loop_on, deps=None):
         if (not isinstance(entry, dict) or entry.get("grading_claim") != checkpoint.operation_id
                 or grade_checkpoint.KEY not in entry):
             raise HTTPException(status_code=409, detail=_ALREADY_GRADED)
-        if checkpoint.kind == "check" and doc.get("current") != checkpoint.question_hash:
+        if checkpoint.kind == CHECK_KIND and doc.get("current") != checkpoint.question_hash:
             # A grade saved on a step that is no longer current (left by a
             # build before _save_grade_checkpoint refused that) can never be
             # flushed: closed here for good, in this write, so it stops
@@ -197,6 +260,79 @@ def _flush_grade_checkpoint(checkpoint, request, *, loop_on, deps=None):
             _abandon_claimed(entry, ABANDON_MOVED_PAST)
             orphan["moved"] = True
 
+    return guard, orphan
+
+
+def _supersede(checkpoint):
+    """The write that retires a grade a newer observation (or a retirement)
+    superseded: its pose is closed and fresh evidence is asked for."""
+
+    def supersede(doc):
+        if checkpoint.kind == CHECK_KIND:
+            def retire(entry):
+                entry["grading_superseded"] = True
+                entry["discarded_grade_operation_id"] = checkpoint.operation_id
+            _under_claim(checkpoint.question_hash, checkpoint.operation_id, retire, release=True)(doc)
+            if doc.get("current") == checkpoint.question_hash:
+                doc["current"] = None
+        else:
+            _under_probe_claim(checkpoint.question_hash, checkpoint.operation_id, _not_asked)(doc)
+
+    return supersede
+
+
+def _abandoned(checkpoint, reason: str):
+    """Abandon the saved grade for good; a check's answer is _GRADE_ABANDONED,
+    a probe's False (its caller's "not asked")."""
+    _abandon_grade_checkpoint(checkpoint, reason)
+    return _GRADE_ABANDONED if checkpoint.kind == CHECK_KIND else False
+
+
+def _refused_flush(checkpoint, exc: Exception):
+    """`_flush_grade_checkpoint`'s answer when its flush_pending refused the
+    grade (`exc`, one of the three it catches, in its except order)."""
+    if isinstance(exc, EvidenceObservationSuperseded):
+        # The original answer has no committed receipt, and a newer observation
+        # is already authoritative — or (A123, EvidenceItemRetired) staff retired
+        # the item while it was graded, so the grade is void by definition and
+        # nothing was written. Never apply the old answer out of order or
+        # invent a diagnosis; retire its pose and ask for fresh evidence.
+        _update_loop_state(checkpoint.session_id, _supersede(checkpoint), require_open=True, require_existing=True)
+        return _ITEM_RETIRED if isinstance(exc, EvidenceItemRetired) else False
+    if isinstance(exc, EvidenceTransactionConflict):
+        # #866 review A2: a permanent refusal (the node is gone or outside the course, the
+        # operation's input or owner changed): the same answer can never be
+        # written, so it is abandoned instead of a 503 "retry" forever
+        return _abandoned(checkpoint, ABANDON_EVIDENCE_REFUSED)
+    raise HTTPException(status_code=503, detail=EVIDENCE_UNAVAILABLE) from None
+
+
+def _committed_receipt(checkpoint):
+    """The flushed grade's committed receipt, checked to attest it; a receipt
+    that never will is abandoned (`_abandoned`'s answer)."""
+    try:
+        receipt = read_evidence_receipt(checkpoint.user_id, checkpoint.operation_id)
+    except EvidenceTransactionConflict:  # the operation is another owner's: never ours to finish
+        return _abandoned(checkpoint, ABANDON_RECEIPT_MISMATCH)
+    except PlanningPersistenceUnavailable:
+        raise HTTPException(status_code=503, detail=RECOVERY_UNAVAILABLE) from None
+    if receipt is None:  # just flushed, so missing is a read that has not caught up: retry
+        raise HTTPException(status_code=503, detail=RECOVERY_UNAVAILABLE)
+    if receipt.get("course_id") != checkpoint.course_id:
+        return _abandoned(checkpoint, ABANDON_RECEIPT_MISMATCH)
+    _ledger(mark_graded, checkpoint.user_id, checkpoint.question_hash)
+    try:
+        _attested_observation(checkpoint, receipt, _graded_node(checkpoint))
+    except _UNATTESTED:
+        # #866 review A2: the committed receipt does not attest this grade, and it reads
+        # the same on every retry: abandon the session record (the journal
+        # keeps what it committed) instead of a 503 "retry" forever
+        return _abandoned(checkpoint, ABANDON_RECEIPT_MISMATCH)
+    return receipt
+
+
+def _flush_grade_checkpoint(checkpoint, request, *, loop_on, deps=None):
+    guard, orphan = _flush_guard(checkpoint)
     # The durable claim excludes goal changes and close. A conditional write
     # also checks ended_at/close_json before any replay can write evidence.
     _update_loop_state(checkpoint.session_id, guard, require_open=True, require_existing=True)
@@ -205,66 +341,21 @@ def _flush_grade_checkpoint(checkpoint, request, *, loop_on, deps=None):
     deps = deps or SaplingDeps(
         user_id=checkpoint.user_id, course_id=checkpoint.course_id, supabase=None,
         request_id=_request_id(request), session_id=checkpoint.session_id,
-        feature="loop_check" if checkpoint.kind == "check" else "loop_probe", learning_loop=loop_on,
+        feature=_FEATURE_FOR_KIND[CHECK_KIND if checkpoint.kind == CHECK_KIND else PROBE_KIND],
+        learning_loop=loop_on,
     )
     deps.pending_evidence = copy.deepcopy(checkpoint.evidence)
     try:
         flush_pending(deps, checkpoint.course_id)
-    except EvidenceObservationSuperseded as exc:
-        # The original answer has no committed receipt, and a newer observation
-        # is already authoritative — or (A123, EvidenceItemRetired) staff retired
-        # the item while it was graded, so the grade is void by definition and
-        # nothing was written. Never apply the old answer out of order or
-        # invent a diagnosis; retire its pose and ask for fresh evidence.
-        def supersede(doc):
-            if checkpoint.kind == "check":
-                def retire(entry):
-                    entry["grading_superseded"] = True
-                    entry["discarded_grade_operation_id"] = checkpoint.operation_id
-                _under_claim(checkpoint.question_hash, checkpoint.operation_id, retire, release=True)(doc)
-                if doc.get("current") == checkpoint.question_hash:
-                    doc["current"] = None
-            else:
-                _under_probe_claim(checkpoint.question_hash, checkpoint.operation_id, _not_asked)(doc)
-
-        _update_loop_state(checkpoint.session_id, supersede, require_open=True, require_existing=True)
-        return _ITEM_RETIRED if isinstance(exc, EvidenceItemRetired) else False
-    except EvidenceTransactionConflict:
-        # #866 review A2: a permanent refusal (the node is gone or outside the course, the
-        # operation's input or owner changed): the same answer can never be
-        # written, so it is abandoned instead of a 503 "retry" forever
-        _abandon_grade_checkpoint(checkpoint, ABANDON_EVIDENCE_REFUSED)
-        return _GRADE_ABANDONED if checkpoint.kind == "check" else False
-    except PlanningPersistenceUnavailable:
-        raise HTTPException(status_code=503, detail="Learning evidence unavailable; retry the same answer") from None
-    try:
-        receipt = read_evidence_receipt(checkpoint.user_id, checkpoint.operation_id)
-    except EvidenceTransactionConflict:  # the operation is another owner's: never ours to finish
-        _abandon_grade_checkpoint(checkpoint, ABANDON_RECEIPT_MISMATCH)
-        return _GRADE_ABANDONED if checkpoint.kind == "check" else False
-    except PlanningPersistenceUnavailable:
-        raise HTTPException(status_code=503, detail="Saved grade recovery unavailable; retry the same answer") from None
-    if receipt is None:  # just flushed, so missing is a read that has not caught up: retry
-        raise HTTPException(status_code=503, detail="Saved grade recovery unavailable; retry the same answer")
-    if receipt.get("course_id") != checkpoint.course_id:
-        _abandon_grade_checkpoint(checkpoint, ABANDON_RECEIPT_MISMATCH)
-        return _GRADE_ABANDONED if checkpoint.kind == "check" else False
-    _ledger(mark_graded, checkpoint.user_id, checkpoint.question_hash)
-    try:
-        _attested_observation(checkpoint, receipt, _graded_node(checkpoint))
-    except _UNATTESTED:
-        # #866 review A2: the committed receipt does not attest this grade, and it reads
-        # the same on every retry: abandon the session record (the journal
-        # keeps what it committed) instead of a 503 "retry" forever
-        _abandon_grade_checkpoint(checkpoint, ABANDON_RECEIPT_MISMATCH)
-        return _GRADE_ABANDONED if checkpoint.kind == "check" else False
-    return receipt
+    except (EvidenceObservationSuperseded, EvidenceTransactionConflict, PlanningPersistenceUnavailable) as exc:
+        return _refused_flush(checkpoint, exc)
+    return _committed_receipt(checkpoint)
 
 
 def _graded_node(checkpoint) -> str:
     """The node the saved grade observes (its continuation's)."""
     c = checkpoint.continuation
-    return c["graded"]["node_id"] if checkpoint.kind == "check" else c["observation"]["node_id"]
+    return c["graded"]["node_id"] if checkpoint.kind == CHECK_KIND else c["observation"]["node_id"]
 
 
 def _committed_grade_observation(checkpoint, receipt, node_id):
@@ -470,28 +561,28 @@ def _emit_band_verdict(user_id: str, request_id: str, node_id: str, band: _BandO
         )
 
 
-def _finish_check_checkpoint(checkpoint, scope, request, *, loop_on, deps=None, difficulty=None):
-    receipt = _flush_grade_checkpoint(checkpoint, request, loop_on=loop_on, deps=deps)
+def _check_receipt(receipt):
+    """The 409 for a check grade the flush did not write (`_flush_grade_checkpoint`'s
+    sentinels); a receipt passes through."""
     if receipt is _ITEM_RETIRED:
         raise HTTPException(status_code=409, detail=_RETIRED_DETAIL)
     if receipt is _GRADE_ABANDONED:
         raise HTTPException(status_code=409, detail=_ABANDONED_DETAIL)
     if receipt is False:
-        raise HTTPException(status_code=409, detail="Newer learning activity was recorded. Select another check to continue.")
+        raise HTTPException(status_code=409, detail=_SUPERSEDED_DETAIL)
+    return receipt
+
+
+def _record_check_grade(checkpoint, graded: dict, band: _BandOutcome | None, held: dict):
+    """The compare-and-set write that records a flushed check grade under its
+    claim: the step's grade, the band verdict for its feedback turn, the
+    attempt log and the zpd.rating count. `held["last"]` says whether the
+    claim was still ours on the last run."""
     qh, claim = checkpoint.question_hash, checkpoint.operation_id
     c = checkpoint.continuation
-    graded, correct, genuine = copy.deepcopy(c["graded"]), c["correct"], c["genuine"]
-    committed = _committed_grade_observation(checkpoint, receipt, graded["node_id"])
-    graded.update(_credited(checkpoint, graded["node_id"], committed))
-    if graded.get("goal_observation") is not None:
-        graded["goal_observation"].update(committed)
+    correct, genuine, diagnosis = c["correct"], c["genuine"], c["diagnosis"]
     now = graded["graded_at"]
-    # spec §13 A122: the band controller's verdict on the concept, read now that
-    # the journal holds this grade; stored on the step under the claim below and
-    # applied when its feedback turn is served
-    band = _band_verdict(
-        checkpoint.user_id, graded["node_id"], _graded_difficulty(difficulty, checkpoint)
-    )
+
     def record_grade(e: dict) -> None:
         if genuine:
             _record_attempt(e, now, failed=not correct)
@@ -502,9 +593,6 @@ def _finish_check_checkpoint(checkpoint, scope, request, *, loop_on, deps=None, 
         e.update(graded)
 
     under = _under_claim(qh, claim, record_grade, release=True)
-    diagnosis = c["diagnosis"]
-
-    held = {"last": False}
 
     def record_grade_and_diagnosis(doc: dict) -> None:
         _refuse_while_closing(doc, _now_s())
@@ -523,34 +611,29 @@ def _finish_check_checkpoint(checkpoint, scope, request, *, loop_on, deps=None, 
             doc["checks_since_rating"] = int(doc.get("checks_since_rating") or 0) + 1
             held["checks"] = doc["checks_since_rating"]
 
-    # saved NOW: a failed feedback turn is recovered by _phase_for. An exhausted
-    # conflict retains the encrypted checkpoint; retry replays the same atomic
-    # operation and then materializes this session continuation exactly once.
-    state = _update_loop_state(checkpoint.session_id, record_grade_and_diagnosis, require_open=True, require_existing=True)
-    if not held["last"]:
-        raise HTTPException(status_code=409, detail=_ALREADY_GRADED)
-    if band is not None:  # after the save that recorded it under OUR claim: once per grade
-        _emit_band_verdict(checkpoint.user_id, _request_id(request), graded["node_id"], band)
-    if held["last"]:
-        # PKG-10 (spec §13 A75): the row grade_answer marked, written only now —
-        # after the ONE flush and the save that recorded the grade under OUR
-        # claim (a claim lost to another request writes nothing; never raises)
-        if (diagnosis or {}).get("record"):
-            try:
-                item = get_check_item((_steps(state).get(qh) or {}).get("check_item_id"))
-                if item is not None:
-                    _write_misconception(checkpoint.user_id, GradeOutcome(diagnosis=diagnosis),
-                                         _item_like(item), CheckAnswer.model_validate(c["answer"]))
-            except Exception:
-                logger.warning("optional misconception rollup unavailable after saved grade")
-        # spec §13 A127: a correct, unassisted answer on an isomorph closes the
-        # misconceptions its item tests — after the flush and the claimed save
-        _resolve_misconceptions(checkpoint, diagnosis, committed, surface="check", request=request)
-    ask = held.get("checks", 0) >= ZPD_RATING_EVERY_N_CHECKS
-    # W2.5: high stated confidence + wrong → Continue holds for corrective feedback
+    return record_grade_and_diagnosis
+
+
+def _write_check_misconception(checkpoint, state: dict, diagnosis) -> None:
+    """PKG-10 (spec §13 A75): the row grade_answer marked, written only now —
+    after the ONE flush and the save that recorded the grade under OUR claim
+    (a claim lost to another request writes nothing; never raises)."""
+    if not (diagnosis or {}).get("record"):
+        return
+    try:
+        item = get_check_item((_steps(state).get(checkpoint.question_hash) or {}).get("check_item_id"))
+        if item is not None:
+            _write_misconception(checkpoint.user_id, GradeOutcome(diagnosis=diagnosis),
+                                 _item_like(item), CheckAnswer.model_validate(checkpoint.continuation["answer"]))
+    except Exception:
+        logger.warning("optional misconception rollup unavailable after saved grade")
+
+
+def _check_dwell_ms(c) -> int:
+    """W2.5: high stated confidence + wrong → Continue holds for corrective feedback."""
     verdict = c["verdict"]
     answer = c.get("answer") if isinstance(c.get("answer"), dict) else {}
-    dwell = policy.hypercorrection_feedback_dwell_ms(
+    return policy.hypercorrection_feedback_dwell_ms(
         correct=verdict == "correct",
         student_confidence=stated_confidence(
             answer.get("confidence"), idk=verdict == "idk"
@@ -558,13 +641,46 @@ def _finish_check_checkpoint(checkpoint, scope, request, *, loop_on, deps=None, 
         idk=verdict == "idk",
         time_scale=config.LEARNING_GATE_TIME_SCALE,
     )
+
+
+def _finish_check_checkpoint(checkpoint, scope, request, *, loop_on, deps=None, difficulty=None):
+    receipt = _check_receipt(_flush_grade_checkpoint(checkpoint, request, loop_on=loop_on, deps=deps))
+    c = checkpoint.continuation
+    graded = copy.deepcopy(c["graded"])
+    committed = _committed_grade_observation(checkpoint, receipt, graded["node_id"])
+    graded.update(_credited(checkpoint, graded["node_id"], committed))
+    if graded.get("goal_observation") is not None:
+        graded["goal_observation"].update(committed)
+    # spec §13 A122: the band controller's verdict on the concept, read now that
+    # the journal holds this grade; stored on the step under the claim below and
+    # applied when its feedback turn is served
+    band = _band_verdict(
+        checkpoint.user_id, graded["node_id"], _graded_difficulty(difficulty, checkpoint)
+    )
+    held = {"last": False}
+    # saved NOW: a failed feedback turn is recovered by _phase_for. An exhausted
+    # conflict retains the encrypted checkpoint; retry replays the same atomic
+    # operation and then materializes this session continuation exactly once.
+    state = _update_loop_state(
+        checkpoint.session_id, _record_check_grade(checkpoint, graded, band, held),
+        require_open=True, require_existing=True,
+    )
+    if not held["last"]:
+        raise HTTPException(status_code=409, detail=_ALREADY_GRADED)
+    if band is not None:  # after the save that recorded it under OUR claim: once per grade
+        _emit_band_verdict(checkpoint.user_id, _request_id(request), graded["node_id"], band)
+    diagnosis = c["diagnosis"]
+    _write_check_misconception(checkpoint, state, diagnosis)
+    # spec §13 A127: a correct, unassisted answer on an isomorph closes the
+    # misconceptions its item tests — after the flush and the claimed save
+    _resolve_misconceptions(checkpoint, diagnosis, committed, surface="check", request=request)
     return _Submission(
         "feedback",
         state,
         c["rendered"],
         scope,
-        verdict,
+        c["verdict"],
         refused=c["refused"],
-        ask_rating=ask,
-        feedback_dwell_ms=dwell,
+        ask_rating=held.get("checks", 0) >= ZPD_RATING_EVERY_N_CHECKS,
+        feedback_dwell_ms=_check_dwell_ms(c),
     )

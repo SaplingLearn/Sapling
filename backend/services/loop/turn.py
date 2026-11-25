@@ -152,6 +152,21 @@ from services.loop.practice import (
 #: mirror and the tests key on this logger name).
 logger = logging.getLogger("routes.learn_loop")
 
+#: The loop phases a turn is served in.
+_TEACH, _HINT, _CHECK, _FEEDBACK = "teach", "hint", "check", "feedback"
+#: The phases whose turn is about a posed item (the hint ladder, the graded feedback).
+_ITEM_PHASES = (_HINT, _FEEDBACK)
+#: The phases in which a posed item waits for the student's answer.
+_ASKING_PHASES = (_CHECK, _HINT)
+#: The phases whose model turn may leave the tutor's own question open (A121).
+_OPEN_QUESTION_PHASES = (_TEACH, _FEEDBACK)
+#: The planned tier of a turn served without a model run, and the deep tier.
+_NO_MODEL_TIER, _DEEP_TIER = "none", "deep"
+#: A graded answer's correct verdict.
+_CORRECT = "correct"
+#: The 409 detail for a turn while a saved grade still waits to be flushed.
+_FINISH_SAVED_GRADE = "Finish checking the saved answer before continuing"
+
 
 def _turn_row_ids(kind, session_id: str, body) -> tuple[str | None, str | None]:
     """(user row id, reply row id) of a student chat turn the client sent with
@@ -264,10 +279,10 @@ class _LoopTurn:
         self.band, self.p_known = _band_of(learner)
         self.variant = arms.variant_for(self.user_id, self.concept_node or "", self.arm)
         self.verdict = verdict or (
-            self.entry.get("last_verdict") if self.phase == "feedback" else None
+            self.entry.get("last_verdict") if self.phase == _FEEDBACK else None
         )
-        self.answer_released = self.item is not None and self.phase == "feedback" and self.verdict != "correct"
-        self.rung = self.step.rung if self.phase == "hint" else Rung.H0
+        self.answer_released = self.item is not None and self.phase == _FEEDBACK and self.verdict != _CORRECT
+        self.rung = self.step.rung if self.phase == _HINT else Rung.H0
         prereq = _prereq_proficient(self.user_id, self.concept_node) if self.concept_node else True
         # spec §13 A122: the band format reads policy.attempt_first off this view
         self.learner_view = _learner_view(learner, band=self.band, prereq_proficient=prereq)
@@ -287,7 +302,7 @@ class _LoopTurn:
         self.given = ""
         self.confront_line, self.confront_used = None, None
         self.run_requests = 0
-        self.tier, self.text, self.paused = "none", None, False
+        self.tier, self.text, self.paused = _NO_MODEL_TIER, None, False
         self.revealed_hash, self.served_as_h6 = None, False
         self.reveal_hashes: list[str] = []  # A88: the open posed items this turn stated
         self.reveal_unscanned = False  # A88: its open items could not be read
@@ -328,7 +343,7 @@ class _LoopTurn:
         explanation is owed until a turn serves it, so a failed explaining turn
         is retried by the next one. A withdrawn item (A23) has nothing left to
         explain: (record, None), and the turn closes the record."""
-        if not getattr(self, "pq_on", False) or self.phase != "teach" or self.item is not None:
+        if not getattr(self, "pq_on", False) or self.phase != _TEACH or self.item is not None:
             return None, None
         if self.withdrawn_feedback or self.kind not in ("chat", "action", "prequestion"):
             return None, None
@@ -355,17 +370,17 @@ class _LoopTurn:
         prompt then waits for the concept's next juncture."""
         if not self.se_on or self.item is None or self.withdrawn_feedback or self.paused:
             return None
-        if self.phase not in ("hint", "feedback") or not _auto_poses_checks(self.state):
+        if self.phase not in _ITEM_PHASES or not _auto_poses_checks(self.state):
             return None
-        if self.tier != "none" and self.confront_line is not None:
+        if self.tier != _NO_MODEL_TIER and self.confront_line is not None:
             return None  # a template turn serves no confrontation line
         node = self.node_id or self.concept_node
         if not self_explain.may_prompt(self.state, node):
             return None
         rung = int(Rung.H6) if self.served_as_h6 else int(self.rung)
         first = (
-            self.phase == "feedback"
-            and self.verdict == "correct"
+            self.phase == _FEEDBACK
+            and self.verdict == _CORRECT
             and self_explain.first_unhelped_on_concept(self.state.get("steps") or {}, node, self.active)
         )
         found = self_explain.juncture(
@@ -380,7 +395,7 @@ class _LoopTurn:
             "juncture": juncture,
             "prompt_key": prompt_key,
             "question_hash": self.active,
-            "rung": rung if self.phase == "hint" else int(self.entry.get("max_rung") or 0),
+            "rung": rung if self.phase == _HINT else int(self.entry.get("max_rung") or 0),
             "prompted_at": _now_s(),
         }
 
@@ -394,7 +409,7 @@ class _LoopTurn:
         concept just finished and comes first; the next segment's prequestion is
         posed when the prompt closes. A failed read plans the turn with its
         question."""
-        if not self.pq_on or self.phase != "feedback" or self.withdrawn_feedback or self.se_prompt:
+        if not self.pq_on or self.phase != _FEEDBACK or self.withdrawn_feedback or self.se_prompt:
             return False
         entry = (self.state.get("steps") or {}).get(self.active)
         if not isinstance(entry, dict):
@@ -420,7 +435,7 @@ class _LoopTurn:
             self.v2
             and self.kind == "chat"
             and not self.trusted
-            and self.phase == "teach"
+            and self.phase == _TEACH
             and self.item is None
             and not self.withdrawn_feedback
             and self.state.get(OPEN_QUESTION_KEY) is True
@@ -437,7 +452,7 @@ class _LoopTurn:
         failed read plans the turn with its question."""
         if (
             self.kind not in ("chat", "action")
-            or self.phase != "teach"
+            or self.phase != _TEACH
             or self.withdrawn_feedback
             or not _auto_poses_checks(self.state)
         ):
@@ -491,7 +506,7 @@ class _LoopTurn:
         state (`plan_focus`), the name from the student's graph. None off the
         variant, outside the teach phase, with no plan concept, or when the
         name cannot be read (the turn is then served without it, never failed)."""
-        if not self.v2 or self.phase != "teach":
+        if not self.v2 or self.phase != _TEACH:
             return None
         focus = plan_focus(self.state)
         if focus is None:
@@ -510,7 +525,7 @@ class _LoopTurn:
         loop's previous served turn (`loop_state.served_at`). Only a student chat
         message on a teach turn with no active item; no anchor → no raise. It
         moves no evidence and no state (spec §1)."""
-        if self.phase != "teach" or self.item is not None or self.kind != "chat" or self.trusted:
+        if self.phase != _TEACH or self.item is not None or self.kind != "chat" or self.trusted:
             return False
         anchor = self.state.get("served_at")
         if isinstance(anchor, bool) or not isinstance(anchor, (int, float)):
@@ -545,7 +560,7 @@ class _LoopTurn:
             # existing units without mutating its counters: ordinary turns add
             # one, while confronting deep turns count every known model request.
             tutor += 1
-            if self.tier == "deep":
+            if self.tier == _DEEP_TIER:
                 deep += self.run_requests if self.confront_used is not None else 1
         return {
             "session_tutor_requests": tutor,
@@ -579,9 +594,9 @@ class _LoopTurn:
         """A93 (owner decision 1): a hint turn's rung on its item (H6 when a
         leaking deterministic payload is served as H6), and an H4 sibling payload
         on the SIBLING (its worked answer is shown: RUNG_NO_CREDIT_MIN)."""
-        if self.paused or self.phase != "hint" or self.item is None:
+        if self.paused or self.phase != _HINT or self.item is None:
             return
-        if self.text is None and self.tier == "none":
+        if self.text is None and self.tier == _NO_MODEL_TIER:
             return  # nothing is served
         rung = int(Rung.H6) if self.served_as_h6 else int(self.rung)
         _ledger(record_help, self.user_id, self.item.question_hash, rung, source="loop", session_id=self.session_id)
@@ -604,13 +619,13 @@ class _LoopTurn:
         if self.planned is decision:
             return
         self.planned = decision
-        self.tier, self.text, self.paused = "none", None, False
+        self.tier, self.text, self.paused = _NO_MODEL_TIER, None, False
         self.revealed_hash, self.served_as_h6 = None, False
         self.poses_check, self.answer_check, self.focus = False, False, None
         self.pq_follows, self.se_prompt = False, None
         self.retrieval_failed = False
         self.materials_grounded = False
-        if decision.pause_novice and self.band == "novice" and self.phase in ("check", "hint"):
+        if decision.pause_novice and self.band == "novice" and self.phase in _ASKING_PHASES:
             self.paused = True  # novice-band concepts pause at the hard level (§3.5)
             return
         self.text = self._deterministic_text(hard=decision.level == "hard")
@@ -622,7 +637,7 @@ class _LoopTurn:
             return  # tier "none": the template is served, nothing else is planned
         # PKG-10 (A15): a recorded misconception makes this a confronting turn
         self.confront_line = self._confront_line()
-        if self.phase != "check":  # the pose never reaches the model (A17)
+        if self.phase != _CHECK:  # the pose never reaches the model (A17)
             deep = self.budget_counters()["session_deep_requests"]
             self.tier = routable_tier(
                 policy.model_tier(
@@ -638,7 +653,7 @@ class _LoopTurn:
                     arm_session=bool(self.arm),
                 )
             )
-        if self.tier == "none":
+        if self.tier == _NO_MODEL_TIER:
             self.paused = self.text is None
             if not self.paused:
                 # spec §13 A139: a template hint or feedback turn at a juncture
@@ -656,11 +671,11 @@ class _LoopTurn:
         context = policy.context_policy(
             self.phase, opener=self.kind == "opener", budget_level=decision.level
         )
-        item_phase = self.phase in ("hint", "feedback")
+        item_phase = self.phase in _ITEM_PHASES
         # model text never writes H6 before the answer is released (clamp_model_ceiling)
         model_ceiling = Rung(
             clamp_model_ceiling(
-                self.rung if self.phase == "hint" else self.ceiling, self.answer_released
+                self.rung if self.phase == _HINT else self.ceiling, self.answer_released
             )
         )
         # C1(b): H0/H1 add no content — with an unreleased item in view the model
@@ -695,7 +710,7 @@ class _LoopTurn:
             item_prompt=self.item.prompt if (item_phase and self.item) else None,
             item_format=self.item.format if (item_phase and self.item) else None,
             answer_released=self.answer_released,
-            verdict=self.verdict if self.phase == "feedback" else None,
+            verdict=self.verdict if self.phase == _FEEDBACK else None,
             # §3.3 novice rows (spec §13 A122): worked example first when the
             # prerequisite is not known — policy.attempt_first decides
             attempt_first=policy.attempt_first(self.learner_view),
@@ -774,13 +789,13 @@ class _LoopTurn:
         the strict check drafting also refuses with (F3, spec §13 A77: number
         words anywhere, no provenance — fix round 5); a text that states it is
         withheld and its marker waits."""
-        if self.phase == "check" or (self.phase == "feedback" and self.verdict == "correct"):
+        if self.phase == _CHECK or (self.phase == _FEEDBACK and self.verdict == _CORRECT):
             return None
         marker = confront_of(self.state)
         if marker is None or marker["node_id"] != self.concept_node:
             return None
         ceiling = clamp_model_ceiling(
-            self.rung if self.phase == "hint" else self.ceiling, self.answer_released
+            self.rung if self.phase == _HINT else self.ceiling, self.answer_released
         )
         if not self.answer_released and ceiling < MISCONCEPTION_CONFRONT_MIN_RUNG:
             return None  # the ceiling wins: a contradiction names specifics (H3+)
@@ -800,8 +815,8 @@ class _LoopTurn:
         """PKG-06's TurnPhase: the feedback verdict rides the phase value."""
         if self.kind == "opener":
             return "opener"
-        if self.phase == "feedback":
-            return "feedback_correct" if self.verdict == "correct" else "feedback_wrong"
+        if self.phase == _FEEDBACK:
+            return "feedback_correct" if self.verdict == _CORRECT else "feedback_wrong"
         return self.phase  # "teach" | "hint"
 
     def _deterministic_text(self, *, hard: bool) -> str | None:
@@ -816,9 +831,9 @@ class _LoopTurn:
             return _GRADE_UNAVAILABLE_REPLY
         if self.kind == "refused":
             return _ANSWER_REFUSED_REPLY
-        if self.phase == "check" and self.item is not None:
+        if self.phase == _CHECK and self.item is not None:
             return ladder.check_pose(self.item.prompt)
-        if self.phase == "hint" and self.item is not None and self.rung in _DETERMINISTIC_RUNGS:
+        if self.phase == _HINT and self.item is not None and self.rung in _DETERMINISTIC_RUNGS:
             payload, leaked = _leak_checked_payload(
                 user_id=self.user_id,
                 item=self.item,
@@ -836,10 +851,10 @@ class _LoopTurn:
                 self.served_as_h6 = True
             self.revealed_hash = payload.revealed_hash
             return payload.text
-        if self.phase == "feedback" and hard and self.item is not None:
+        if self.phase == _FEEDBACK and hard and self.item is not None:
             reference = self.item.reference_answer if self.answer_released else None
             return _template_feedback(self.verdict, reference)
-        if self.phase == "teach" and hard and self.pq_item is not None:
+        if self.phase == _TEACH and hard and self.pq_item is not None:
             # spec §13 A138: the answer follows promptly whatever the budget —
             # at the hard level as a template (no model): the answer, one line
             return prequestion_rules.answer_lead(self.pq_item) + FIELD_JOIN + prequestion_rules.HARD_LEVEL_LINE
@@ -854,7 +869,7 @@ class _LoopTurn:
                 data={"phase": self.phase},
             )
         ]
-        if self.item is not None and self.active and self.phase in ("check", "hint"):
+        if self.item is not None and self.active and self.phase in _ASKING_PHASES:
             evs.append(
                 SaplingEvent(
                     type="check",
@@ -921,14 +936,14 @@ class _LoopTurn:
         explains an answered prequestion — the correct answer (A51 m1: the
         model never states it); "" on every other turn and on a template turn
         (whose text already carries it)."""
-        if self.tier == "none" or self.pq_item is None:
+        if self.tier == _NO_MODEL_TIER or self.pq_item is None:
             return ""
         return prequestion_rules.answer_lead(self.pq_item) + FIELD_JOIN
 
     def _lead_verdict(self) -> str | None:
         """The grader verdict whose plain line code serves first: a feedback
         turn's, with the v2 variant on (spec §13 A121)."""
-        return self.verdict if self.phase == "feedback" and self.v2 else None
+        return self.verdict if self.phase == _FEEDBACK and self.v2 else None
 
     def _leak_guard(self) -> _LeakGuard | None:
         """deps.loop_leak for an unreleased active item (fix round 2, N1)."""
@@ -951,7 +966,7 @@ class _LoopTurn:
         ladder line, replaces it). Code's lead goes in front (`served_lead`: a
         feedback turn's verdict line, A121, then the released answer, m1), so
         the verdict is the first thing the stream shows."""
-        if self.tier == "none" or self.item is None:
+        if self.tier == _NO_MODEL_TIER or self.item is None:
             return self._prequestion_lead() + text
         lead = served_lead(
             reference=self.item.reference_answer,
@@ -992,7 +1007,7 @@ class _LoopTurn:
     def serve(self, text: str) -> str:
         """stream_structured_turn's `transform_final`: the served text of the
         final render (`served_model_text`)."""
-        if self.tier == "none" or self.item is None:
+        if self.tier == _NO_MODEL_TIER or self.item is None:
             return self._prequestion_lead() + text
         served, _ = served_model_text(text, leak_rung=self._leak_rung(), **self._item_leak_kwargs())
         return served
@@ -1001,7 +1016,7 @@ class _LoopTurn:
         """Model-written text is leak-checked against the ACTIVE item at the rung
         it is served at (`_leak_rung`; A34: the item's structured final answer),
         through `served_model_text` (strict; the released lead in front)."""
-        if self.tier == "none" or self.item is None:
+        if self.tier == _NO_MODEL_TIER or self.item is None:
             return self._prequestion_lead() + reply, False
         served, verdict = served_model_text(
             reply, leak_rung=self._leak_rung(), **self._item_leak_kwargs()
@@ -1210,7 +1225,7 @@ class _LoopTurn:
             out["se_prompt"] = self.se_prompt
         if self_explain.ack_due(state):
             self_explain.set_ack(state, None)
-        if self.phase == "teach" and self.kind in ("chat", "action"):
+        if self.phase == _TEACH and self.kind in ("chat", "action"):
             rec = prequestion_rules.open_record(state, self.concept_node)
             # a guess being saved under its claim is no open card: it commits
             if rec is not None and not _live(rec, _ANSWER_CLAIM, self._now):
@@ -1226,7 +1241,7 @@ class _LoopTurn:
                 records[node] = {**rec, "status": prequestion_rules.RESOLVED, "resolved_at": self._now}
                 state[prequestion_rules.KEY] = records
                 out["pq_resolved"] = node
-        if self.phase == "feedback" and self.pq_on and self.se_prompt is None and not self.withdrawn_feedback:
+        if self.phase == _FEEDBACK and self.pq_on and self.se_prompt is None and not self.withdrawn_feedback:
             pose = _pose_prequestion(self.user_id, self.course_id, state, now=self._now)
             if pose.item is not None and not self.pq_follows:
                 _undo_pose(state, pose)
@@ -1315,7 +1330,7 @@ class _LoopTurn:
         A88/A93 — fail closed) and does NOT mark its text scanned, so the next
         scan reads that window again."""
         self.reveal_unscanned, self.reveal_overflow = False, None
-        if self.tier == "none" or not reply:
+        if self.tier == _NO_MODEL_TIER or not reply:
             return
         got = self._scan_set()
         if got is None:
@@ -1438,35 +1453,16 @@ class _LoopTurn:
         in `out`, and has no side effects."""
         out.clear()
         if _pending_grade(state):
-            raise HTTPException(status_code=409, detail="Finish checking the saved answer before continuing")
-        if getattr(self, "activity_id", None) is not None:
-            _refuse_while_closing(state, self._now)
-            try:
-                turn_activity.complete(state, self.activity_id, self._now)
-            except turn_activity.StaleTurnActivity as exc:
-                raise _StateConflict() from exc
+            raise HTTPException(status_code=409, detail=_FINISH_SAVED_GRADE)
+        _complete_activity(self, state)
         steps = _steps(state)
         if self.withdrawn_feedback and (
             state.get("current") != self.active
             or (steps.get(self.active) or {}).get("feedback_given") is True
         ):
             raise _StateConflict()
-        if self.phase == "feedback" and self.active in steps:
-            entry = steps[self.active]
-            if self.withdrawn_feedback:
-                entry["feedback_withdrawn"] = True
-            else:
-                out["step"] = dict(entry)  # item-dependent zpd.step, after the save
-            if not self.withdrawn_feedback and gates.offer_allowed(self.band, self.verdict != "correct"):
-                entry["offered"] = True
-                out["offer_rung"] = min(int(self.ceiling), int(entry.get("rung") or 0) + 1)
-            entry["feedback_given"] = True
-            if state.get("current") == self.active:
-                state["current"] = None
-            # A27: one more graded check on the concept; the cursor advances at the
-            # cap — unless the band controller's verdict on this grade (spec §13
-            # A122) already moved it: stop practice, wheel-spin, prerequisite repair
-            _count_feedback_and_move(state, entry)
+        if self.phase == _FEEDBACK and self.active in steps:
+            _apply_feedback(self, state, steps[self.active], out)
         if self.retrieval_failed and _note_retrieval_failure(state, self.concept_node):
             out["materials_notice"] = True  # A128: once per session (the stored key)
         state["phase_served"] = self.phase
@@ -1475,57 +1471,13 @@ class _LoopTurn:
         state["served_at"] = self._now  # A85: the next teach message's independent-time anchor
         if self.confront_used is not None and confront_of(state) == self.confront_used:
             set_confront(state, None)  # PKG-10: used once (a newer marker is kept)
-        if self.tier != "none":
-            state["tutor_requests"] = int(state.get("tutor_requests") or 0) + 1
-            if self.tier == "deep":
-                # A39: one per run; PKG-10 (F4): a confronting run counts every request
-                spent = max(1, self.run_requests) if self.confront_used is not None else 1
-                state["deep_requests"] = int(state.get("deep_requests") or 0) + spent
-        if self.revealed_hash:  # an H4 sibling shown: never a future check (A23)
-            revealed = list(state.get("revealed") or [])
-            if self.revealed_hash not in revealed:
-                state["revealed"] = [*revealed, self.revealed_hash]
-        if self.served_as_h6 and self.active in steps:
-            steps[self.active]["rung"] = int(Rung.H6)
-        if self.withdrawn and state.get("current") == self.withdrawn:
-            state["current"] = None
-        if self.phase == "teach" and not state.get("current"):
-            # A27 trigger 1: a served teach turn on the current concept; the
-            # LOOP_TEACH_TURNS_BEFORE_CHECK-th activates its next check item
-            state["teach_turns"] = int(state.get("teach_turns") or 0) + 1
-            if state["teach_turns"] >= LOOP_TEACH_TURNS_BEFORE_CHECK and _auto_poses_checks(state):
-                qh = _activate_next_item(
-                    self.user_id,
-                    self.course_id,
-                    state,
-                    now=self._now,
-                    session_id=self.session_id,
-                )
-                if qh is not None and not self.poses_check:
-                    # Spec §13 A121: this turn was planned and served WITH its own
-                    # question (its trial found nothing to pose), so it poses no
-                    # check — never two open prompts at once. The item stays
-                    # unposed for a later teach turn or "Check me"; a cursor move
-                    # the activation made on the way is kept.
-                    state["current"] = None
-                    _steps(state).pop(qh, None)
-                    qh = None
-                if qh is not None:
-                    out["activated"] = state["steps"][qh]["check_item_id"]
-                    out["activated_qh"] = qh
+        _count_requests(self, state)
+        _apply_served_item(self, state, steps)
+        if self.phase == _TEACH and not state.get("current"):
+            _count_teach_turn(self, state, out)
         # Spec §13 A138 / A139: the teach-phase prompts' part of this write
         self._apply_teach_prompts(state, out)
-        # Spec §13 A121: whether the next teach-phase chat message replies to the
-        # tutor's own open question (its turn then opens with the verdict). A139:
-        # a self-explanation prompt is answered on its own card, never in chat;
-        # A138: a turn that handed over to a prequestion card asked nothing
-        state[OPEN_QUESTION_KEY] = (
-            self.tier != "none"
-            and self.phase in ("teach", "feedback")
-            and not self.poses_check
-            and not self.pq_follows
-            and self.se_prompt is None
-        )
+        state[OPEN_QUESTION_KEY] = _asks_open_question(self)
 
     def _submission_extra(self) -> dict:
         """The check-answer response keys (A16) — only on a submission's turn."""
@@ -1543,6 +1495,104 @@ class _LoopTurn:
         dwell = int(getattr(self, "feedback_dwell_ms", 0) or 0)
         if dwell > 0:  # W2.5: present only when a high-confidence wrong needs the pause
             extra["feedback_dwell_ms"] = dwell
-        if self.kind == "feedback" and self.verdict == "correct":
+        if self.kind == "feedback" and self.verdict == _CORRECT:
             extra.update(_credit_for(self.entry))  # #866 K07
         return extra
+
+
+# ── _LoopTurn._apply_turn's steps (module functions: they take the turn) ──
+
+
+def _complete_activity(turn: _LoopTurn, state: dict) -> None:
+    """Close this turn's activity on the document (a stale one conflicts)."""
+    if getattr(turn, "activity_id", None) is None:
+        return
+    _refuse_while_closing(state, turn._now)
+    try:
+        turn_activity.complete(state, turn.activity_id, turn._now)
+    except turn_activity.StaleTurnActivity as exc:
+        raise _StateConflict() from exc
+
+
+def _apply_feedback(turn: _LoopTurn, state: dict, entry: dict, out: dict) -> None:
+    """A served feedback turn on its graded step: feedback given (or the
+    withdrawn feedback marked), the hint offer, and the cursor move."""
+    if turn.withdrawn_feedback:
+        entry["feedback_withdrawn"] = True
+    else:
+        out["step"] = dict(entry)  # item-dependent zpd.step, after the save
+    if not turn.withdrawn_feedback and gates.offer_allowed(turn.band, turn.verdict != _CORRECT):
+        entry["offered"] = True
+        out["offer_rung"] = min(int(turn.ceiling), int(entry.get("rung") or 0) + 1)
+    entry["feedback_given"] = True
+    if state.get("current") == turn.active:
+        state["current"] = None
+    # A27: one more graded check on the concept; the cursor advances at the
+    # cap — unless the band controller's verdict on this grade (spec §13
+    # A122) already moved it: stop practice, wheel-spin, prerequisite repair
+    _count_feedback_and_move(state, entry)
+
+
+def _count_requests(turn: _LoopTurn, state: dict) -> None:
+    """A39: the session's tutor (and deep) request counts for a model turn."""
+    if turn.tier == _NO_MODEL_TIER:
+        return
+    state["tutor_requests"] = int(state.get("tutor_requests") or 0) + 1
+    if turn.tier == _DEEP_TIER:
+        # A39: one per run; PKG-10 (F4): a confronting run counts every request
+        spent = max(1, turn.run_requests) if turn.confront_used is not None else 1
+        state["deep_requests"] = int(state.get("deep_requests") or 0) + spent
+
+
+def _apply_served_item(turn: _LoopTurn, state: dict, steps: dict) -> None:
+    """What this turn showed about items: an H4 sibling revealed, an H6
+    served, a withdrawn item no longer current."""
+    if turn.revealed_hash:  # an H4 sibling shown: never a future check (A23)
+        revealed = list(state.get("revealed") or [])
+        if turn.revealed_hash not in revealed:
+            state["revealed"] = [*revealed, turn.revealed_hash]
+    if turn.served_as_h6 and turn.active in steps:
+        steps[turn.active]["rung"] = int(Rung.H6)
+    if turn.withdrawn and state.get("current") == turn.withdrawn:
+        state["current"] = None
+
+
+def _count_teach_turn(turn: _LoopTurn, state: dict, out: dict) -> None:
+    """A27 trigger 1: a served teach turn on the current concept; the
+    LOOP_TEACH_TURNS_BEFORE_CHECK-th activates its next check item."""
+    state["teach_turns"] = int(state.get("teach_turns") or 0) + 1
+    if state["teach_turns"] < LOOP_TEACH_TURNS_BEFORE_CHECK or not _auto_poses_checks(state):
+        return
+    qh = _activate_next_item(
+        turn.user_id,
+        turn.course_id,
+        state,
+        now=turn._now,
+        session_id=turn.session_id,
+    )
+    if qh is not None and not turn.poses_check:
+        # Spec §13 A121: this turn was planned and served WITH its own
+        # question (its trial found nothing to pose), so it poses no
+        # check — never two open prompts at once. The item stays
+        # unposed for a later teach turn or "Check me"; a cursor move
+        # the activation made on the way is kept.
+        state["current"] = None
+        _steps(state).pop(qh, None)
+        qh = None
+    if qh is not None:
+        out["activated"] = state["steps"][qh]["check_item_id"]
+        out["activated_qh"] = qh
+
+
+def _asks_open_question(turn: _LoopTurn) -> bool:
+    """Spec §13 A121: whether the next teach-phase chat message replies to
+    the tutor's own open question (its turn then opens with the verdict).
+    A139: a self-explanation prompt is answered on its own card, never in
+    chat; A138: a turn that handed over to a prequestion card asked nothing."""
+    return (
+        turn.tier != _NO_MODEL_TIER
+        and turn.phase in _OPEN_QUESTION_PHASES
+        and not turn.poses_check
+        and not turn.pq_follows
+        and turn.se_prompt is None
+    )
