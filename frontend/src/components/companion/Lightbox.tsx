@@ -24,7 +24,7 @@ import { createPortal } from 'react-dom';
 
 import { useOverlayBehaviour } from '@/components/Dialog';
 
-import { MONO, SERIF } from '@/lib/landing/companionType';
+import { LABEL, SERIF } from '@/lib/landing/companionType';
 
 /** Exit animation duration. Keep in step with globals.css. */
 const EXIT_MS = 180;
@@ -143,7 +143,7 @@ export function Lightbox({ open, onClose, src, alt, title, caption, eyebrow }: L
 
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap' }}>
           {eyebrow && (
-            <span style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#cfc7b4' }}>
+            <span style={{ fontFamily: LABEL, fontSize: 12, color: '#cfc7b4' }}>
               {eyebrow}
             </span>
           )}

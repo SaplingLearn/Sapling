@@ -13,7 +13,7 @@ import type { ToolKey } from "./useToolNav";
 
 export const DISPLAY = "var(--font-display)";
 export const SANS = "var(--font-sans)";
-export const MONO = "var(--font-mono)";
+export const LABEL = "var(--font-sans)";
 
 /** The two parts of the page an exam tab re-scopes, by id: the readiness band
  *  with Up Next, and the roadmap (each tab's `aria-controls`). */

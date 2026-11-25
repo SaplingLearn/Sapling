@@ -44,6 +44,7 @@ import {
   noteDetailRailStyle,
   chatRailStyle,
 } from "@/lib/notes/notetakerLayout";
+import { sentenceCase } from "@/lib/sentenceCase";
 
 type Mastery = "mastered" | "learning" | "struggling" | "unexplored";
 
@@ -949,9 +950,7 @@ function NoteDetail({
                 <span className={styles.conceptName}>
                   {c.name}
                 </span>
-                <span className={`mono ${styles.tier}`}>
-                  {c.mastery}
-                </span>
+                <span className={`mono ${styles.tier}`}>{sentenceCase(c.mastery)}</span>
                 <button
                   type="button"
                   onClick={() => onUnlinkConcept(c.id)}
@@ -1290,7 +1289,7 @@ function ConceptPickerModal({
                     {n.concept_name}
                   </span>
                   <span className={`mono ${styles.tier}`}>
-                    {n.mastery_tier}
+                    {sentenceCase(n.mastery_tier)}
                   </span>
                 </button>
               ))}

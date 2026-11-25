@@ -12,15 +12,15 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
-import { LAB_TIER, MONO } from './LabShell';
+import { LAB_TIER, LABEL } from './LabShell';
 import { GUIDES } from './labData';
 
 type Phase = 'empty' | 'loading' | 'guide';
 type CourseKey = keyof typeof GUIDES;
 
 const RECENT = [
-  { i: 0, exam: 'MA 242 · Midterm 1', meta: 'GENERATED SEP 28', course: 'MA 242' as CourseKey, pick: 'Midterm 1 · Sep 30' },
-  { i: 1, exam: 'CS 201 · Quiz 2', meta: 'GENERATED OCT 03', course: 'CS 201' as CourseKey, pick: 'Quiz 2 · Oct 03' },
+  { i: 0, exam: 'MA 242 · Midterm 1', meta: 'Generated Sep 28', course: 'MA 242' as CourseKey, pick: 'Midterm 1 · Sep 30' },
+  { i: 1, exam: 'CS 201 · Quiz 2', meta: 'Generated Oct 03', course: 'CS 201' as CourseKey, pick: 'Quiz 2 · Oct 03' },
 ];
 
 const SELECT: React.CSSProperties = {
@@ -44,7 +44,7 @@ export function GuideDemo() {
     if (timer.current) clearTimeout(timer.current);
     timer.current = setTimeout(() => {
       setPhase('guide');
-      setStamp('GENERATED ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }).toUpperCase());
+      setStamp('Generated ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
     }, 900);
   };
 
@@ -53,7 +53,7 @@ export function GuideDemo() {
     setExam(r.pick);
     setPhase('loading');
     if (timer.current) clearTimeout(timer.current);
-    timer.current = setTimeout(() => { setPhase('guide'); setStamp('FROM CACHE'); }, 500);
+    timer.current = setTimeout(() => { setPhase('guide'); setStamp('From cache'); }, 500);
   };
 
   return (
@@ -100,7 +100,7 @@ export function GuideDemo() {
 
         {phase === 'guide' && (
           <div style={{ flex: 1, overflow: 'auto', borderRadius: 12, border: '1px solid #E8E5DA', background: '#FDFCF9', padding: '18px 20px', animation: 'labIn 320ms ease both' }}>
-            <span style={{ ...MONO, fontSize: 9, letterSpacing: '0.2em', color: '#91978B' }}>{course.toUpperCase()} · STUDY GUIDE</span>
+            <span style={{ ...LABEL, fontSize: 11, letterSpacing: '0.01em', color: '#91978B' }}>{course} · STUDY GUIDE</span>
             <h4 style={{ margin: '8px 0 0', fontFamily: "var(--font-gummi), Georgia, serif", fontSize: 20, fontWeight: 600 }}>{exam}</h4>
             <p style={{ margin: '8px 0 0', fontSize: 13, lineHeight: 1.7, color: '#697062' }}>{set.overview}</p>
             <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -109,7 +109,7 @@ export function GuideDemo() {
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <span style={{ width: 8, height: 8, borderRadius: 99, background: LAB_TIER[t.tier as keyof typeof LAB_TIER] }} />
                     <span style={{ fontSize: 14, fontWeight: 600, color: '#191F13' }}>{t.name}</span>
-                    <span style={{ marginLeft: 'auto', ...MONO, fontSize: 9.5, color: '#91978B' }}>{t.weight}</span>
+                    <span style={{ marginLeft: 'auto', ...LABEL, fontSize: 9.5, color: '#91978B' }}>{t.weight}</span>
                   </div>
                   <p style={{ margin: '4px 0 0 16px', fontSize: 12, fontStyle: 'italic', color: '#91978B' }}>{t.importance}</p>
                   <ul style={{ margin: '6px 0 0 16px', paddingLeft: 16, display: 'flex', flexDirection: 'column', gap: 3 }}>
@@ -120,7 +120,7 @@ export function GuideDemo() {
                 </div>
               ))}
             </div>
-            <span style={{ display: 'block', marginTop: 16, ...MONO, fontSize: 9, letterSpacing: '0.14em', color: '#9FA49A' }}>{stamp}</span>
+            <span style={{ display: 'block', marginTop: 16, ...LABEL, fontSize: 11, letterSpacing: '0.01em', color: '#9FA49A' }}>{stamp}</span>
           </div>
         )}
 
@@ -133,7 +133,7 @@ export function GuideDemo() {
       </div>
 
       <div style={{ padding: '20px 16px', background: '#F6F8F4', display: 'flex', flexDirection: 'column', gap: 9 }}>
-        <span style={{ ...MONO, fontSize: 9, letterSpacing: '0.18em', color: '#91978B' }}>RECENT GUIDES</span>
+        <span style={{ ...LABEL, fontSize: 11, letterSpacing: '0.01em', color: '#91978B' }}>Recent guides</span>
         {RECENT.map((r) => (
           <button
             key={r.i}
@@ -143,7 +143,7 @@ export function GuideDemo() {
             style={{ textAlign: 'left', padding: '10px 12px', borderRadius: 10, border: '1px solid #E0E6DA', background: '#FDFCF9', cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: 2, transition: 'all 180ms' }}
           >
             <span style={{ fontSize: 12.5, fontWeight: 600, color: '#191F13' }}>{r.exam}</span>
-            <span style={{ ...MONO, fontSize: 9, color: '#91978B' }}>{r.meta}</span>
+            <span style={{ ...LABEL, fontSize: 9, color: '#91978B' }}>{r.meta}</span>
           </button>
         ))}
       </div>

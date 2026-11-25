@@ -367,7 +367,7 @@ export function nodeUses(node: GraphNode, degree: number): NodeUse[] {
   const t = node.tier;
   return [
     {
-      tag: 'TUTOR RETRIEVAL',
+      tag: 'Tutor retrieval',
       text:
         'A /learn session on ' +
         node.label +
@@ -378,14 +378,14 @@ export function nodeUses(node: GraphNode, degree: number): NodeUse[] {
         ' uploads that mention them.',
     },
     {
-      tag: 'QUIZ TARGETING',
+      tag: 'Quiz targeting',
       text:
         t === 'mastered'
           ? 'Adaptive quizzes spend few questions here. It is already at or above the 0.95 mastery cut-off, so the generator spends them on weaker nodes.'
           : 'POST /api/quiz/generate takes this node id. Every answer writes a mastery delta back onto it, which moves the ring you are looking at.',
     },
     {
-      tag: t === 'unexplored' ? 'NOT SCHEDULED YET' : 'REVIEW SCHEDULING',
+      tag: t === 'unexplored' ? 'Not scheduled yet' : 'Review scheduling',
       text:
         t === 'unexplored'
           ? 'Nothing has touched this node yet. It appears the moment a note, upload, or quiz mentions the concept.'

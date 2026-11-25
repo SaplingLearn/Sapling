@@ -2,6 +2,7 @@
 import React from "react";
 import { BadgeArt } from "@/components/growth/BadgeArt";
 import type { Achievement, AchievementCategory, UserAchievement } from "@/lib/types";
+import { sentenceCase } from "@/lib/sentenceCase";
 
 export const CAT_ORDER: AchievementCategory[] = ["activity", "social", "milestone", "special"];
 
@@ -71,7 +72,7 @@ export function BadgeGrid({
                         <div style={{ fontWeight: 600, fontSize: 14.5 }}>
                           {secret ? "???" : a.name}
                         </div>
-                        <span className="chip">{a.rarity}</span>
+                        <span className="chip">{sentenceCase(a.rarity)}</span>
                       </div>
                       <div style={{ fontSize: 12, color: "var(--text-dim)", marginTop: 5, lineHeight: 1.45 }}>
                         {secret ? "A hidden achievement. Keep exploring to discover it." : a.description}
@@ -94,8 +95,7 @@ export function BadgeGrid({
                         </div>
                       )}
                       {!earned && pct === null && (
-                        <div style={{ marginTop: 10, fontSize: 10, color: "var(--text-muted)",
-                                      textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                        <div style={{ marginTop: 10, fontSize: 12, color: "var(--text-muted)" }}>
                           Locked · +{a.xp_reward} XP
                         </div>
                       )}

@@ -219,15 +219,13 @@
 }
 
 .sideWhen {
-  font: 400 var(--fs-2xs)/14px var(--font-mono);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font: 400 var(--fs-sm)/14px var(--font-sans);
   color: var(--text-muted);
   padding: var(--sp-4) var(--sp-4) var(--sp-2);
 }
 
 .code {
-  font: 500 var(--fs-xs) var(--font-mono);
+  font: 500 var(--fs-xs) var(--font-sans);
   color: var(--text-muted);
   flex-shrink: 0;
 }
@@ -725,7 +723,8 @@
   display: grid;
   place-items: center;
   flex-shrink: 0;
-  font: 600 var(--fs-2xs) var(--font-mono);
+  font: 600 var(--fs-2xs) var(--font-sans);
+  font-variant-numeric: tabular-nums;
   transition:
     background-color var(--dur) var(--ease-in-out),
     border-color var(--dur) var(--ease-in-out),
@@ -795,7 +794,7 @@
 }
 
 .pct {
-  font: 500 var(--fs-xs) var(--font-mono);
+  font: 500 var(--fs-xs) var(--font-sans);
   color: var(--text-dim);
   text-align: right;
   font-variant-numeric: tabular-nums;
@@ -842,7 +841,8 @@
 }
 
 .mono {
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
+  font-variant-numeric: tabular-nums;
 }
 
 .flush {
@@ -989,7 +989,8 @@
   place-items: center;
   flex-shrink: 0;
   box-sizing: border-box;
-  font: 600 var(--fs-xs)/1 var(--font-mono);
+  font: 600 var(--fs-xs)/1 var(--font-sans);
+  font-variant-numeric: tabular-nums;
   transition:
     background-color var(--dur) var(--ease-in-out),
     border-color var(--dur) var(--ease-in-out),

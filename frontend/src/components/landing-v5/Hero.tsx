@@ -322,10 +322,10 @@ export function Hero({
             product actually uses. Colours only; nothing else in the hero moves.
           */}
           <div className="flex flex-col gap-3">
-            <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-[var(--state-mastery)]" /><span className="text-xs text-[var(--text-dim)] uppercase tracking-wide">Mastered</span></div>
-            <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-[var(--state-progress)]" /><span className="text-xs text-[var(--text-dim)] uppercase tracking-wide">Learning</span></div>
-            <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-[var(--state-struggle)]" /><span className="text-xs text-[var(--text-dim)] uppercase tracking-wide">Struggling</span></div>
-            <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-[var(--state-neutral)]" /><span className="text-xs text-[var(--text-dim)] uppercase tracking-wide">Unexplored</span></div>
+            <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-[var(--state-mastery)]" /><span className="text-xs text-[var(--text-dim)]">Mastered</span></div>
+            <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-[var(--state-progress)]" /><span className="text-xs text-[var(--text-dim)]">Learning</span></div>
+            <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-[var(--state-struggle)]" /><span className="text-xs text-[var(--text-dim)]">Struggling</span></div>
+            <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-[var(--state-neutral)]" /><span className="text-xs text-[var(--text-dim)]">Unexplored</span></div>
           </div>
         </div>
 
@@ -426,7 +426,7 @@ export function Hero({
       {/* Scroll Indicator */}
       <div style={{ opacity: heroMounted ? 1 : 0, transition: 'opacity 1s ease 1.2s' }} className="relative z-20 flex shrink-0 flex-col items-center">
         <div className="w-px h-14 landing-divider-v" />
-        <span className="font-plex-mono text-xs tracking-[0.4em] whitespace-nowrap text-[var(--text-dim)] opacity-70 mt-3">SEE WHAT&apos;S INSIDE</span>
+        <span className="font-suse text-xs whitespace-nowrap text-[var(--text-dim)] opacity-70 mt-3">See what&apos;s inside</span>
       </div>
     </section>
   );

@@ -15,7 +15,7 @@ export const TIER = { mastered:'#5a7834', learning:'#c89b5e', struggling:'#b2585
 export const TYPE = { exam:'#b25855', project:'#c89b5e', homework:'#68951F', quiz:'#7B9E51', reading:'#A5BA8F' };
 
 export const QUESTIONS = [
-  { concept:'Eigenvalues', diff:'MEDIUM',
+  { concept:'Eigenvalues', diff:'Medium',
     text:'If A v = λ v for some non-zero v, what does λ tell you about what A does to v?',
     options:[
       { label:'A', text:'The angle that A rotates v through' },
@@ -23,7 +23,7 @@ export const QUESTIONS = [
       { label:'C', text:'The determinant of A' },
       { label:'D', text:'The rank of A' }],
     explain:'λ is a pure scale factor along v. An eigenvector\u2019s direction is unchanged by A — only its length is.' },
-  { concept:'Eigenvalues', diff:'HARD',
+  { concept:'Eigenvalues', diff:'Hard',
     text:'Which equation do you solve to find the eigenvalues of a square matrix A?',
     options:[
       { label:'A', text:'det(A \u2212 \u03bbI) = 0', correct:true },
@@ -31,7 +31,7 @@ export const QUESTIONS = [
       { label:'C', text:'det(A) = \u03bb' },
       { label:'D', text:'A v = 0' }],
     explain:'Non-zero solutions of (A \u2212 \u03bbI)v = 0 exist exactly when A \u2212 \u03bbI is singular — that is, when its determinant vanishes.' },
-  { concept:'Eigenvalues', diff:'HARD',
+  { concept:'Eigenvalues', diff:'Hard',
     text:'A 3\u00d73 matrix has eigenvalues 2, 2 and 5. What is det(A)?',
     options:[
       { label:'A', text:'9' },
@@ -91,14 +91,14 @@ export const GUIDES = {
 };
 
 export const GB_ROWS = [
-  { title:'Pset 1 — Row reduction', cat:'PSETS', earned:47, possible:50 },
-  { title:'Pset 2 — Determinants', cat:'PSETS', earned:44, possible:50 },
-  { title:'Pset 3 — Eigenvalues', cat:'PSETS', earned:41, possible:50 },
-  { title:'Midterm 1', cat:'MIDTERMS', earned:88, possible:100 },
-  { title:'Midterm 2', cat:'MIDTERMS', earned:91, possible:100 },
+  { title:'Pset 1 — Row reduction', cat:'Psets', earned:47, possible:50 },
+  { title:'Pset 2 — Determinants', cat:'Psets', earned:44, possible:50 },
+  { title:'Pset 3 — Eigenvalues', cat:'Psets', earned:41, possible:50 },
+  { title:'Midterm 1', cat:'Midterms', earned:88, possible:100 },
+  { title:'Midterm 2', cat:'Midterms', earned:91, possible:100 },
 ];
 
-export const GB_CATS = [ { name:'Psets', key:'PSETS', weight:0.40 }, { name:'Midterms', key:'MIDTERMS', weight:0.35 }, { name:'Final', key:'FINAL', weight:0.25 } ];
+export const GB_CATS = [ { name:'Psets', key:'Psets', weight:0.40 }, { name:'Midterms', key:'Midterms', weight:0.35 }, { name:'Final', key:'Final', weight:0.25 } ];
 
 /** Grade bands, ordered high to low — the first match wins. */
 export const LETTERS: [number, string][] = [[93,'A'],[90,'A\u2212'],[87,'B+'],[83,'B'],[80,'B\u2212'],[77,'C+'],[73,'C'],[70,'C\u2212'],[60,'D'],[0,'F']];
@@ -130,7 +130,7 @@ export const GRAPH_EDGES = [ ['vs','det'], ['det','eig'], ['vs','eig'], ['eig','
 
 export const TUTOR = {
   socratic: {
-    label:'SOCRATIC', topic:'AVL ROTATIONS', tone:'#68951F',
+    label:'Socratic', topic:'AVL rotations', tone:'#68951F',
     blurb:'It never hands over the answer. Pick a reply and watch where it takes you.',
     open:'Before we touch rotations: what does an AVL tree promise about the heights of a node\u2019s two subtrees?',
     steps:[
@@ -147,7 +147,7 @@ export const TUTOR = {
     ],
   },
   expository: {
-    label:'EXPOSITORY', topic:'AVL ROTATIONS', tone:'#7B9E51',
+    label:'Expository', topic:'AVL rotations', tone:'#7B9E51',
     blurb:'Straight explanation, assembled from your own uploads and shown with its sources.',
     open:'An AVL tree keeps every node\u2019s balance factor in {\u22121, 0, +1}. When an insert pushes a node to \u00b12, exactly one of four rotations restores it in O(1): LL, LR, RL, RR.',
     sources:['lecture-07.pdf p. 12', 'notes-wk4.md'],
@@ -162,7 +162,7 @@ export const TUTOR = {
     ],
   },
   teachback: {
-    label:'TEACHBACK', topic:'AVL ROTATIONS', tone:'#E27A63',
+    label:'Teachback', topic:'AVL rotations', tone:'#E27A63',
     blurb:'You do the explaining. It listens for the part you skipped.',
     open:'Explain a left rotation to me as if I have never seen one. I will tell you exactly where it breaks down.',
     steps:[

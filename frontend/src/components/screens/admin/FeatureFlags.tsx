@@ -15,6 +15,7 @@ import { FlagPanel } from "./FlagPanel";
 import {
   changeSummary, flagMeta, forcedNote, groupFlags, relativeTime, rolloutPhrase, switchFor, variantLabel,
 } from "./flagLabels";
+import { sentenceCase } from "@/lib/sentenceCase";
 
 /** The row's open chevron (Icon's `size`, px). */
 const CHEVRON_PX = 14;
@@ -76,7 +77,7 @@ export function FeatureFlagsTab() {
 
       {groupFlags(flags).map(({ group, flags: inGroup }) => (
         <section key={group} className="flags__group" aria-labelledby={`flags-group-${group}`}>
-          <h3 id={`flags-group-${group}`} className="label-micro flags__group-title">{group}</h3>
+          <h3 id={`flags-group-${group}`} className="label-micro flags__group-title">{sentenceCase(group)}</h3>
           {/* Rows arrive in a short stagger once the list has loaded. */}
           <motion.div className="card flags__list" variants={m.list.container} initial="hidden" animate="shown">
             {inGroup.map((f) => (

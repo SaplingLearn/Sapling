@@ -21,7 +21,7 @@
   --admin-field-pad-y: 7px;
   /* The "draft" tag on the preview badge: smaller than --fs-2xs on purpose,
      it sits on the badge's corner. */
-  --admin-draft-tag-fs: 8px;
+  --admin-draft-tag-fs: var(--fs-2xs);
 }
 
 /* ── Shell ─────────────────────────────────────────────────────────── */
@@ -128,9 +128,7 @@
   text-align: left;
   padding: var(--sp-5) var(--sp-8);
   font-weight: 500;
-  font-size: var(--fs-xs);
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
+  font-size: var(--fs-md);
   color: var(--text-muted);
 }
 .row {
@@ -141,10 +139,10 @@
 .td { padding: var(--sp-5) var(--sp-8); }
 .nowrap { white-space: nowrap; }
 .actionsCell { text-align: right; white-space: nowrap; }
-.mono { font-family: var(--font-mono); }
-.monoSm { font-family: var(--font-mono); font-size: var(--fs-sm); }
+.mono { font-family: var(--font-code); }
+.monoSm { font-family: var(--font-code); font-size: var(--fs-sm); }
 .payload {
-  font-family: var(--font-mono);
+  font-family: var(--font-code);
   font-size: var(--fs-xs);
   color: var(--text-muted);
   max-width: var(--admin-payload-w);
@@ -290,12 +288,10 @@ button.addRole { font-size: var(--fs-xs); }
   right: calc(-1 * var(--sp-3));
   font-size: var(--admin-draft-tag-fs);
   font-weight: 600;
-  letter-spacing: 0.05em;
   padding: var(--sp-1) var(--sp-2);
   border-radius: var(--r-xs);
   background: var(--accent);
   color: var(--text-on-fill);
-  text-transform: uppercase;
 }
 
 .labeled { margin-bottom: var(--sp-5); }
@@ -322,7 +318,8 @@ button.addRole { font-size: var(--fs-xs); }
   padding: var(--sp-5) var(--sp-8);
   border-bottom: 1px solid var(--border);
 }
-.uppercase { text-transform: uppercase; }
+/* Labels are sentence case now (#928): kept only until the TSX stops naming it. */
+.uppercase { }
 .count { font-size: var(--fs-xs); color: var(--text-muted); }
 .emptySmall {
   padding: var(--sp-8);
@@ -354,7 +351,7 @@ button.addRole { font-size: var(--fs-xs); }
   gap: var(--sp-4);
 }
 .bold { font-weight: 600; }
-.nameLine .rarity { font-size: var(--fs-2xs); text-transform: uppercase; }
+.nameLine .rarity { font-size: var(--fs-sm); }
 .linkLabel { margin-bottom: var(--sp-3); }
 .chipRow {
   display: flex;
@@ -441,7 +438,7 @@ button.addRole { font-size: var(--fs-xs); }
   border: 1px solid var(--border);
 }
 .roleCountName { flex: 1; font-weight: 500; }
-.roleCount { font-family: var(--font-mono); color: var(--text-dim); }
+.roleCount { font-family: var(--font-sans); font-variant-numeric: tabular-nums; color: var(--text-dim); }
 
 /* ── Feedback ──────────────────────────────────────────────────────── */
 

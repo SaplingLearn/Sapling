@@ -394,7 +394,8 @@
   background: var(--bg-inset);
   font-size: var(--fs-xs);
   color: var(--text-muted);
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
+  font-variant-numeric: tabular-nums;
   letter-spacing: 0.04em;
   transition: padding var(--dur-slow) var(--ease), background var(--dur-slow) var(--ease),
     border-color var(--dur-slow) var(--ease);
@@ -476,9 +477,8 @@
 }
 
 .tier {
-  font-size: var(--fs-2xs);
+  font-size: var(--fs-sm);
   color: var(--text-muted);
-  text-transform: uppercase;
 }
 
 .iconBtn {

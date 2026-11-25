@@ -175,7 +175,7 @@ describe("QuizQuestion — header and grounding", () => {
     expect(screen.getByTestId("quiz-question-meta").querySelector(".quiz-question__concept"))
       .toHaveTextContent("Recursion");
     expect(document.querySelector(".quiz-question__header .badge")).toBeNull();
-    expect(screen.queryByText("MEDIUM")).toBeNull();
+    expect(screen.queryByText("Medium")).toBeNull();
     // No course code → session top omits the muted course span.
     expect(screen.getByTestId("quiz-session-top").querySelector(".quiz-session-top__course")).toBeNull();
   });
@@ -213,7 +213,7 @@ describe("QuizQuestion — header and grounding", () => {
 
   it("shows the question's own difficulty over the quiz's", () => {
     renderScreen(makeSession({ items: [item(0, { question: question(1, { difficulty: "hard" }) })] }));
-    expect(screen.getByText("HARD")).toBeInTheDocument();
+    expect(screen.getByText("Hard")).toBeInTheDocument();
   });
 
   it("answers a type it doesn't know by choosing, tagged as multiple choice", () => {

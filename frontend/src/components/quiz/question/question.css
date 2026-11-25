@@ -490,8 +490,6 @@
 
 .quiz-question__hint-rung-title {
   color: var(--brand-forest, var(--accent));
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
 }
 
 .quiz-question__hint-rung-body {
@@ -648,8 +646,6 @@
   margin: 0;
   font-size: var(--fs-md);
   font-weight: 600;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
   color: var(--text-muted, var(--text));
 }
 
@@ -2054,7 +2050,8 @@
   padding: 0 var(--sp-4);
   border: 1.5px solid var(--border);
   border-radius: var(--r-full);
-  font-family: var(--font-mono, var(--font-sans));
+  font-family: var(--font-sans);
+  font-variant-numeric: tabular-nums;
   font-size: var(--fs-sm);
   font-weight: 600;
   color: var(--text);
@@ -2172,14 +2169,13 @@
 
 .quiz-sequence__tray-label,
 .quiz-sequence__slot-num {
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: var(--fs-xs);
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
   color: var(--text-muted);
 }
 
 .quiz-sequence__slot-num {
+  font-variant-numeric: tabular-nums;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -2319,7 +2315,8 @@
   padding: 0 var(--sp-4);
   border: 1.5px solid var(--border);
   border-radius: var(--r-full);
-  font-family: var(--font-mono, var(--font-sans));
+  font-family: var(--font-sans);
+  font-variant-numeric: tabular-nums;
   font-size: var(--fs-sm);
   font-weight: 600;
   color: var(--text);

@@ -6,6 +6,7 @@ import { useScrollLock } from "@/lib/useScrollLock";
 import { BadgeArt } from "@/components/growth/BadgeArt";
 import type { Achievement, UserAchievement } from "@/lib/types";
 import { CAT_META } from "./BadgeGrid";
+import { sentenceCase } from "@/lib/sentenceCase";
 
 // 14 leaf-burst spans fanned evenly around the badge — a small flourish that
 // only plays when the badge is earned. Each span keeps a fixed rotation as
@@ -146,7 +147,7 @@ export function BadgeModal({
 
         <div style={{ fontSize: 20, fontWeight: 600 }}>{secret ? "???" : achievement.name}</div>
         <div style={{ display: "flex", justifyContent: "center", marginTop: 8 }}>
-          <span className="chip">{achievement.rarity} · {CAT_META[achievement.category].label}</span>
+          <span className="chip">{sentenceCase(achievement.rarity)} · {CAT_META[achievement.category].label}</span>
         </div>
         <div style={{ fontSize: 13, color: "var(--text-dim)", marginTop: 14, lineHeight: 1.5 }}>
           {secret ? "A hidden achievement. Keep exploring to discover it." : achievement.description}
@@ -168,7 +169,7 @@ export function BadgeModal({
           </div>
         )}
         {!isEarned && pct === null && (
-          <div style={{ marginTop: 18, fontSize: 11, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+          <div style={{ marginTop: 18, fontSize: 13, color: "var(--text-muted)" }}>
             Not yet unlocked · +{achievement.xp_reward} XP
           </div>
         )}

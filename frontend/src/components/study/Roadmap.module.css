@@ -84,11 +84,11 @@
   --tag-h: 15px;
   /* Half over the edge (the tag is 15px tall). */
   --tag-rise: 7px;
-  /* Under --fs-2xs: the tag is a caption on a caption. */
-  --tag-size: 9px;
+  /* Sentence-case caption (#928): main's tile tag is 11px. */
+  --tag-size: var(--fs-xs);
   position: absolute; top: calc(-1 * var(--tag-rise)); right: var(--sp-4); height: var(--tag-h);
   padding: 0 var(--sp-3); border-radius: var(--r-full);
-  font-family: var(--font-mono); font-size: var(--tag-size); letter-spacing: 0.06em; text-transform: uppercase; font-weight: 600;
+  font-family: var(--font-sans); font-size: var(--tag-size); font-weight: 600;
   display: inline-flex; align-items: center; box-shadow: 0 0 0 var(--sp-1) var(--bg);
 }
 /* A tag lands with a small scale-in when it appears (a new "Next", or the

@@ -17,8 +17,7 @@ import {
   adminListRoles, adminCreateRole, adminDeleteRole, adminAssignRole, adminRevokeRole,
   adminListCosmetics, adminCreateCosmetic, adminDeleteCosmetic,
   adminListRoleCosmetics, adminLinkRoleCosmetic, adminUnlinkRoleCosmetic,
-  adminAuditLog, adminAnalyticsOverview,
-  adminListFeedback, adminListIssueReports,
+  adminAuditLog, adminAnalyticsOverview, adminListFeedback, adminListIssueReports,
   adminUploadCosmeticAsset, COSMETIC_ASSET_TYPES,
   type AdminFeedbackEntry, type AdminIssueReport,
 } from "@/lib/api";
@@ -29,6 +28,7 @@ import { AllowlistTab } from "./admin/AllowlistTab";
 import { EmailBroadcastsTab } from "./admin/EmailBroadcasts";
 import { AccountToolsDialog } from "./admin/AccountToolsDialog";
 import { AdminReauthBanner } from "./admin/AdminReauthBanner";
+import { sentenceCase } from "@/lib/sentenceCase";
 import { useMotionPresets } from "@/lib/motion";
 import { AnimatedNumber } from "./AnimatedNumber";
 import s from "./Admin.module.css";
@@ -767,7 +767,7 @@ function CosmeticsTab() {
         {COSMETIC_TYPES.map(t => (
           <div key={t} className={`card ${s.flush}`}>
             <div className={s.groupHead}>
-              <div className={`label-micro ${s.uppercase}`}>{t.replace("_", " ")}</div>
+              <div className="label-micro">{sentenceCase(t.replace("_", " "))}</div>
               <span className={s.count}>{grouped[t].length}</span>
             </div>
             {grouped[t].length === 0 && (
@@ -789,7 +789,7 @@ function CosmeticsTab() {
                 middle={
                   <span className={s.nameLine}>
                     <span className={s.bold}>{c.name}</span>
-                    <span className={`chip ${s.rarity}`}>{c.rarity}</span>
+                    <span className={`chip ${s.rarity}`}>{sentenceCase(c.rarity)}</span>
                   </span>
                 }
                 sub={c.slug}

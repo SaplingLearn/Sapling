@@ -81,7 +81,7 @@
 .swatch { display: flex; padding-top: 4px; }
 .sectionText { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .sectionTitle { font-weight: 600; line-height: 1.3; overflow-wrap: anywhere; }
-.share { flex-shrink: 0; font-family: var(--font-mono); font-size: var(--fs-sm); color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.share { flex-shrink: 0; font-family: var(--font-sans); font-size: var(--fs-sm); color: var(--text-dim); font-variant-numeric: tabular-nums; }
 .minutes { margin: 0; font-weight: 600; color: var(--text); }
 
 /* ── footer ──────────────────────────────────────────────────────────────── */

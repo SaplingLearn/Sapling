@@ -362,12 +362,11 @@ function CategoryGroup({
         <span
           className="mono"
           style={{
-            fontSize: 11,
-            letterSpacing: "0.16em",
-            textTransform: "uppercase",
+            fontSize: 13,
+            
+            
             color: "var(--text-dim)",
-            fontWeight: 600,
-          }}
+            fontWeight: 600 }}
         >
           {title}
         </span>
@@ -386,17 +385,16 @@ function CategoryGroup({
             className="mono"
             title={`Drops the ${dropLowest} lowest graded assignment${dropLowest === 1 ? "" : "s"}. ${droppedCount}/${dropLowest} dropped so far.`}
             style={{
-              fontSize: 10,
-              letterSpacing: "0.04em",
-              textTransform: "uppercase",
+              fontSize: 12,
+              
+              
               color: "var(--accent)",
               background: "var(--accent-soft)",
               border: "1px solid var(--accent-border)",
               borderRadius: "var(--r-full)",
               padding: "2px 8px",
               fontWeight: 600,
-              lineHeight: 1.4,
-            }}
+              lineHeight: 1.4 }}
           >
             {dropLowest} Drops
           </span>
@@ -488,16 +486,15 @@ function CategoryGroup({
                       title="Bell curve has been applied to this assignment's score."
                       style={{
                         flexShrink: 0,
-                        fontSize: 9,
-                        letterSpacing: "0.08em",
-                        textTransform: "uppercase",
+                        fontSize: 11,
+                        
+                        
                         color: "var(--c-sky)",
                         background: "color-mix(in oklch, var(--c-sky), transparent 88%)",
                         border: "1px solid color-mix(in oklch, var(--c-sky), transparent 70%)",
                         borderRadius: "var(--r-full)",
                         padding: "2px 8px",
-                        fontWeight: 600,
-                      }}
+                        fontWeight: 600 }}
                     >
                       Curved
                     </span>

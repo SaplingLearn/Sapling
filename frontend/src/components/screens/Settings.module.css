@@ -364,8 +364,7 @@
   position: absolute;
   top: var(--sp-4);
   right: var(--sp-4);
-  font-size: var(--fs-2xs);
-  text-transform: uppercase;
+  font-size: var(--fs-xs);
 }
 
 .cosmeticName {
@@ -374,10 +373,8 @@
   text-align: center;
 }
 .rarity {
-  font-size: var(--fs-2xs);
+  font-size: var(--fs-sm);
   color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
 }
 .unlock {
   font-size: var(--fs-2xs);
@@ -433,9 +430,7 @@
 }
 
 .titleChip {
-  font-size: var(--fs-xs);
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
+  font-size: var(--fs-sm);
 }
 
 /* ── Profile preview modal ────────────────────────────────────────────── */

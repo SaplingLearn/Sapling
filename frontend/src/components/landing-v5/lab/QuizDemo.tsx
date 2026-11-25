@@ -12,7 +12,7 @@
  */
 
 import { useState } from 'react';
-import { LAB_TIER, MONO, PRIMARY_BTN } from './LabShell';
+import { LAB_TIER, LABEL, PRIMARY_BTN } from './LabShell';
 import { QUESTIONS } from './labData';
 
 type Phase = 'active' | 'review' | 'results';
@@ -30,9 +30,9 @@ export function QuizDemo() {
   const correctCount = answers.filter(Boolean).length;
   const right = reviewing && q.options.some((o) => o.label === picked && 'correct' in o && o.correct);
 
-  const diff = qi === 0 ? 'MEDIUM' : streak > 0 ? 'HARD' : 'EASY';
+  const diff = qi === 0 ? 'Medium' : streak > 0 ? 'Hard' : 'Easy';
   const [diffBg, diffFg] =
-    diff === 'HARD' ? ['#b25855', '#9c4b48'] : diff === 'EASY' ? ['#5a7834', '#4a622b'] : ['#c89b5e', '#8a6636'];
+    diff === 'Hard' ? ['#b25855', '#9c4b48'] : diff === 'Easy' ? ['#5a7834', '#4a622b'] : ['#c89b5e', '#8a6636'];
   const tier = correctCount >= 2 ? 'learning' : 'struggling';
 
   const submit = () => {
@@ -57,12 +57,12 @@ export function QuizDemo() {
           <span style={{ fontFamily: "var(--font-aleo), 'Aleo', Georgia, serif", fontSize: 54, fontWeight: 600, lineHeight: 1 }}>
             {correctCount} / {QUESTIONS.length}
           </span>
-          <span style={{ ...MONO, fontSize: 11, letterSpacing: '0.2em', color: '#91978B' }}>
+          <span style={{ ...LABEL, fontSize: 13, letterSpacing: '0.01em', color: '#91978B' }}>
             {Math.round((correctCount / QUESTIONS.length) * 100)}% CORRECT
           </span>
           <div style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '9px 16px', borderRadius: 99, background: '#EAF1E4', border: '1px solid #E0E6DA' }}>
             <span style={{ fontSize: 13, color: '#3B4233' }}>Eigenvalues mastery</span>
-            <span style={{ ...MONO, fontSize: 13, fontWeight: 700, color: '#445D22' }}>
+            <span style={{ ...LABEL, fontSize: 13, fontWeight: 700, color: '#445D22' }}>
               41% → {41 + correctCount * 7}%  (+{correctCount * 7})
             </span>
           </div>
@@ -82,10 +82,10 @@ export function QuizDemo() {
   return (
     <div style={{ padding: '22px 26px', display: 'flex', flexDirection: 'column', gap: 14, minHeight: '100%', boxSizing: 'border-box' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <span style={{ ...MONO, fontSize: 10, letterSpacing: '0.18em', color: '#91978B' }}>
-          QUESTION {Math.min(qi + 1, QUESTIONS.length)} OF {QUESTIONS.length}
+        <span style={{ ...LABEL, fontSize: 12, letterSpacing: '0.01em', color: '#91978B' }}>
+          QUESTION {Math.min(qi + 1, QUESTIONS.length)} of {QUESTIONS.length}
         </span>
-        <span style={{ padding: '4px 11px', borderRadius: 99, ...MONO, fontSize: 9.5, letterSpacing: '0.12em', border: `1px solid ${diffBg}`, background: `${diffBg}1f`, color: diffFg, transition: 'all 300ms' }}>
+        <span style={{ padding: '4px 11px', borderRadius: 99, ...LABEL, fontSize: 11.5, letterSpacing: '0.01em', border: `1px solid ${diffBg}`, background: `${diffBg}1f`, color: diffFg, transition: 'all 300ms' }}>
           {diff}
         </span>
       </div>
@@ -93,8 +93,8 @@ export function QuizDemo() {
       <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
         <span style={{ width: 8, height: 8, borderRadius: 99, background: LAB_TIER[tier] }} />
         <span style={{ fontSize: 13, fontWeight: 600, color: '#3B4233' }}>Eigenvalues</span>
-        <span style={{ ...MONO, fontSize: 9.5, color: '#9FA49A' }}>MA 242</span>
-        <span style={{ marginLeft: 'auto', ...MONO, fontSize: 9.5, color: '#91978B' }}>
+        <span style={{ ...LABEL, fontSize: 9.5, color: '#9FA49A' }}>MA 242</span>
+        <span style={{ marginLeft: 'auto', ...LABEL, fontSize: 11.5, color: '#91978B' }}>
           MASTERY {41 + correctCount * 7}%
         </span>
       </div>
@@ -106,8 +106,8 @@ export function QuizDemo() {
             const isPicked = o.label === picked;
             const correct = 'correct' in o && o.correct;
             let bd = '#E3E0D5', bg = '#FDFCF9', fg = '#3B4233', mark = '', markCol = '';
-            if (reviewing && correct) { bd = '#68951F'; bg = '#EAF1E4'; fg = '#445D22'; mark = 'CORRECT'; markCol = '#445D22'; }
-            else if (reviewing && isPicked) { bd = '#b25855'; bg = 'rgba(178,88,85,0.09)'; fg = '#9c4b48'; mark = 'YOUR PICK'; markCol = '#9c4b48'; }
+            if (reviewing && correct) { bd = '#68951F'; bg = '#EAF1E4'; fg = '#445D22'; mark = 'Correct'; markCol = '#445D22'; }
+            else if (reviewing && isPicked) { bd = '#b25855'; bg = 'rgba(178,88,85,0.09)'; fg = '#9c4b48'; mark = 'Your pick'; markCol = '#9c4b48'; }
             else if (isPicked) { bd = '#68951F'; bg = '#EAF1E4'; fg = '#445D22'; }
             return (
               <button
@@ -116,9 +116,9 @@ export function QuizDemo() {
                 onClick={() => { if (!reviewing) setPicked(o.label); }}
                 style={{ textAlign: 'left', display: 'flex', gap: 10, alignItems: 'flex-start', padding: '12px 14px', borderRadius: 10, fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif", fontSize: 14, transition: 'all 180ms', border: `1px solid ${bd}`, background: bg, color: fg, cursor: reviewing ? 'default' : 'pointer' }}
               >
-                <span style={{ ...MONO, fontSize: 12, color: isPicked || (reviewing && correct) ? '#68951F' : '#9FA49A' }}>{o.label}.</span>
+                <span style={{ ...LABEL, fontSize: 12, color: isPicked || (reviewing && correct) ? '#68951F' : '#9FA49A' }}>{o.label}.</span>
                 <span>{o.text}</span>
-                <span style={{ marginLeft: 'auto', ...MONO, fontSize: 11, letterSpacing: '0.14em', color: markCol }}>{mark}</span>
+                <span style={{ marginLeft: 'auto', ...LABEL, fontSize: 13, letterSpacing: '0.01em', color: markCol }}>{mark}</span>
               </button>
             );
           })}
@@ -127,8 +127,8 @@ export function QuizDemo() {
 
       {reviewing && (
         <div style={{ borderRadius: 12, background: '#F6F8F4', border: '1px solid #E6EAE2', padding: '14px 16px', animation: 'labIn 300ms ease both' }}>
-          <span style={{ ...MONO, fontSize: 9.5, letterSpacing: '0.2em', color: right ? '#445D22' : '#9c4b48' }}>
-            {right ? 'CORRECT' : 'NOT QUITE'}
+          <span style={{ ...LABEL, fontSize: 11.5, letterSpacing: '0.01em', color: right ? '#445D22' : '#9c4b48' }}>
+            {right ? 'Correct' : 'Not quite'}
           </span>
           <p style={{ margin: '7px 0 0', fontSize: 13.5, lineHeight: 1.65, color: '#3B4233' }}>{q.explain}</p>
         </div>

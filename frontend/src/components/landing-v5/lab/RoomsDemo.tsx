@@ -13,7 +13,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
-import { LAB_TIER, MONO } from './LabShell';
+import { LAB_TIER, LABEL } from './LabShell';
 import { GRAPH_EDGES, GRAPH_NODES } from './labData';
 import { FONT_SANS } from '@/lib/landing/fonts';
 
@@ -59,7 +59,7 @@ export function RoomsDemo() {
       <div style={{ padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: 10, borderRight: '1px solid #ECE9DE' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <span style={{ fontSize: 14, fontWeight: 600 }}>MA 242 Study Room</span>
-          <span style={{ ...MONO, fontSize: 9, letterSpacing: '0.14em', color: '#91978B' }}>INVITE · 7QK2</span>
+          <span style={{ ...LABEL, fontSize: 11, letterSpacing: '0.01em', color: '#91978B' }}>Invite · 7QK2</span>
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -110,7 +110,7 @@ export function RoomsDemo() {
         <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '16px 14px', display: 'flex', flexDirection: 'column', gap: 9 }}>
           {msgs.map((m, i) => (
             <div key={i} style={{ display: 'flex', flexDirection: 'column', gap: 2, animation: 'labIn 260ms ease both', alignItems: m.mine ? 'flex-end' : 'flex-start' }}>
-              <span style={{ ...MONO, fontSize: 8.5, letterSpacing: '0.1em', color: '#9FA49A' }}>{m.mine ? 'you' : m.who}</span>
+              <span style={{ ...LABEL, fontSize: 10, letterSpacing: '0.01em', color: '#9FA49A' }}>{m.mine ? 'you' : m.who}</span>
               <span
                 style={{
                   padding: '9px 12px', borderRadius: 13, fontSize: 12.5, lineHeight: 1.5, maxWidth: 230,

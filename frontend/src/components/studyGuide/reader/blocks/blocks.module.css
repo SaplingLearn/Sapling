@@ -65,7 +65,7 @@
 .chartGrid { stroke: var(--border); }
 .chartAxis { stroke: var(--text-dim); stroke-width: 1.5; }
 .chartAxisLabel { font-size: var(--fs-md); fill: var(--text-dim); }
-.chartTick { font-family: var(--font-mono); font-size: var(--fs-xs); fill: var(--text-muted); }
+.chartTick { font-family: var(--font-sans); font-size: var(--fs-xs); fill: var(--text-muted); }
 .chartLine { fill: none; stroke-width: 3.5; stroke-linecap: round; stroke-linejoin: round; }
 .chartLineAfter { stroke-dasharray: 9 7; }
 .chartGuide { stroke: var(--text-muted); stroke-width: 1; stroke-dasharray: 3 4; }
@@ -102,7 +102,7 @@
 
 /* ── worked example ──────────────────────────────────────────────────────── */
 
-.counter { padding: 0 var(--sp-3); font-family: var(--font-mono); font-size: var(--fs-sm); color: var(--text-muted); }
+.counter { padding: 0 var(--sp-3); font-family: var(--font-sans); font-size: var(--fs-sm); color: var(--text-muted); }
 .problem { margin: 0; font-family: var(--font-serif); font-size: var(--block-fs-lead); line-height: 1.55; }
 .steps { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; }
 .step { display: flex; gap: var(--sp-7); padding: var(--sp-6) 0; border-top: 1px solid var(--border); }
@@ -111,7 +111,7 @@
   flex: none; width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center;
   background: var(--brand-forest); color: var(--text-on-fill); font-size: var(--fs-md); font-weight: 700;
 }
-.math { font-family: var(--font-mono); font-size: var(--fs-base); color: var(--sap-900); overflow-wrap: anywhere; }
+.math { font-family: var(--font-sans); font-size: var(--fs-base); color: var(--sap-900); overflow-wrap: anywhere; }
 .stepActions { display: flex; flex-wrap: wrap; gap: var(--sp-4); }
 
 /* ── comparison ──────────────────────────────────────────────────────────── */

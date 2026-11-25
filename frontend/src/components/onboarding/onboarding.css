@@ -202,7 +202,7 @@ button.ob-school:hover { transform: translateY(-2px); }
 .ob-school--soon .ob-school-logo img { opacity: .45; filter: grayscale(1); }
 .ob-school-logo { width: 100%; aspect-ratio: 16 / 10; border-radius: 12px; display: flex; align-items: center; justify-content: center; overflow: hidden; }
 .ob-school-logo img { max-width: 100%; max-height: 100%; object-fit: contain; display: block; }
-.ob-soon { font: 500 10px/1 'Momo Trust Sans', sans-serif; letter-spacing: .14em; text-transform: uppercase; color: var(--ob-mut); }
+.ob-soon { font: 500 12px/1 'Momo Trust Sans', sans-serif; letter-spacing: 0.01em; color: var(--ob-mut); }
 .ob-missing-slot { width: 100%; max-width: 560px; }
 .ob-missing { display: flex; flex-direction: column; gap: 10px; padding: 16px 20px; text-align: center; }
 .ob-missing-text { margin: 0; font: 400 15px/1.55 'Momo Trust Sans', sans-serif; color: var(--ob-fg2); }
@@ -211,8 +211,7 @@ button.ob-school:hover { transform: translateY(-2px); }
 /* Courses */
 .ob-courses { flex: 1 0 auto; display: flex; flex-direction: column; align-items: center; gap: 10px; width: 100%; max-width: 560px; padding-top: 4px; }
 .ob-label {
-  width: 100%; padding: 0 4px; font: 500 10.5px/1 'Momo Trust Sans', sans-serif; letter-spacing: .16em;
-  text-transform: uppercase; color: var(--ob-mut); text-shadow: var(--ob-tsh);
+  width: 100%; padding: 0 4px; font: 500 12.5px/1 'Momo Trust Sans', sans-serif; letter-spacing: 0.01em; color: var(--ob-mut); text-shadow: var(--ob-tsh);
 }
 .ob-label--gap { padding-top: 6px; }
 /* Each button sizes to its word plus the same padding, and the row's spare
@@ -288,7 +287,7 @@ button.ob-school:hover { transform: translateY(-2px); }
 .ob-doc-progress div { height: 3px; background: var(--ob-acc); transition: width 120ms linear; }
 .ob-doc-body { flex: 1 1 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 24px 32px 8px; }
 .ob-doc-meta {
-  font: 500 10.5px/1 'Momo Trust Sans', sans-serif; letter-spacing: .16em; text-transform: uppercase; color: var(--ob-mut);
+  font: 500 12.5px/1 'Momo Trust Sans', sans-serif; letter-spacing: 0.01em; color: var(--ob-mut);
 }
 .ob-doc-meta--top { margin-bottom: 12px; }
 .ob-doc-meta--end { padding: 18px 0 22px; border-top: 1px solid var(--ob-line); text-align: center; }
@@ -413,7 +412,7 @@ button.ob-school:hover { transform: translateY(-2px); }
 .ob-sheet-rows { margin: 0; display: flex; flex-direction: column; gap: 10px; font: 400 14.5px/1.5 'Momo Trust Sans', sans-serif; color: var(--ob-fg2); }
 .ob-sheet-row { display: flex; gap: 10px; }
 .ob-sheet-row dt {
-  font: 500 10.5px/1.9 'Momo Trust Sans', sans-serif; letter-spacing: .12em; text-transform: uppercase;
+  font: 500 12.5px/1.9 'Momo Trust Sans', sans-serif; letter-spacing: 0.01em;
   color: var(--ob-acc); min-width: 62px;
 }
 .ob-sheet-row dd { margin: 0; }

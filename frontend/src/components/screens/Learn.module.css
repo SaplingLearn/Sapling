@@ -414,7 +414,7 @@
 
 .railCourseCode {
   margin-top: var(--sp-4);
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: var(--fs-sm);
   font-weight: 500;
   color: var(--brand-forest);

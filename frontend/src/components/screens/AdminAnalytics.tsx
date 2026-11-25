@@ -56,13 +56,9 @@ import {
   type AnalyticsRangeValue,
 } from "@/lib/useAdminAnalytics";
 import type {
-  CostDayPoint,
-  LearningLoopKpisData,
-  LlmCostGroupBy,
-  LoopCalibrationReport,
-  LoopConfidenceReport,
-  LoopGainSummary,
+  CostDayPoint, LearningLoopKpisData, LlmCostGroupBy, LoopCalibrationReport, LoopConfidenceReport, LoopGainSummary,
 } from "@/lib/types";
+import { sentenceCase } from "@/lib/sentenceCase";
 
 const PRESETS = [
   { days: 7, label: "7d" },
@@ -901,10 +897,10 @@ function AnalyticsBody() {
                   { label: "Cost", points: costPoints, format: (v) => `$${v.toFixed(2)}` },
                 ]}
               />
-              <h3 className={`label-micro ${s.chartTitle}`}>Cost by {d.group_by}</h3>
+              <h3 className={`label-micro ${s.chartTitle}`}>Cost by {sentenceCase(d.group_by)}</h3>
               <CategoryBars
                 rows={d.rows.slice(0, 8).map((r) => ({ label: r.key || "(none)", value: r.cost_usd }))}
-                ariaLabel={`Cost by ${d.group_by}`}
+                ariaLabel={`Cost by ${sentenceCase(d.group_by)}`}
                 format={(v) => `$${v.toFixed(4)}`}
               />
               <details className={s.details}>
@@ -913,7 +909,7 @@ function AnalyticsBody() {
                   <table className={`${t.table} ${t.minCostRows} ${s.detailsTable}`}>
                     <thead>
                       <tr>
-                        <th className={th}>{d.group_by}</th>
+                        <th className={th}>{sentenceCase(d.group_by)}</th>
                         <th className={thNum}>Calls</th>
                         <th className={thNum}>Prompt</th>
                         <th className={thNum}>Completion</th>

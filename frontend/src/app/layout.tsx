@@ -22,16 +22,16 @@ import './globals.css';
  * for it sits in the dev log, which nobody reads while the page renders.
  *
  * The type is the approved Pen set from the redesign (#728) — Aleo for
- * long-form reading text, SUSE for UI, IBM Plex Mono for numerals and code —
- * with headings since moved to the licensed Gummi (below, loaded at runtime).
+ * long-form reading text, SUSE for UI, labels and numerals — with headings
+ * since moved to the licensed Gummi (below, loaded at runtime). There is no
+ * mono webfont: real code falls back to the system monospace (`--font-code`).
  * Each woff2 in ./fonts is a lossless conversion of the official
  * google/fonts binary (ttf SHA-256 62b6cb49… Aleo, 9b4c074d… Aleo Italic,
- * 16bda691… SUSE, 6a3412f0… / a9b4c49b… / d3c38e55… / ac27abd6… Plex Mono
- * 400/500/600/700), committed so the build never needs the network to be
+ * 16bda691… SUSE), committed so the build never needs the network to be
  * typeset correctly. Aleo and SUSE are variable, one file spanning their
- * whole range; Plex Mono is static per weight.
+ * whole range.
  *
- * All three are SIL Open Font License 1.1 (the text sits beside each family
+ * All of them are SIL Open Font License 1.1 (the text sits beside each family
  * in ./fonts), which permits redistribution.
  */
 const aleo = localFont({
@@ -59,18 +59,6 @@ const suse = localFont({
   variable: '--font-suse',
   display: 'swap',
   fallback: ['system-ui', 'sans-serif'],
-});
-
-const plexMono = localFont({
-  src: [
-    { path: './fonts/IBM_Plex_Mono-400.woff2', weight: '400', style: 'normal' },
-    { path: './fonts/IBM_Plex_Mono-500.woff2', weight: '500', style: 'normal' },
-    { path: './fonts/IBM_Plex_Mono-600.woff2', weight: '600', style: 'normal' },
-    { path: './fonts/IBM_Plex_Mono-700.woff2', weight: '700', style: 'normal' },
-  ],
-  variable: '--font-plex-mono',
-  display: 'swap',
-  fallback: ['ui-monospace', 'monospace'],
 });
 
 /*
@@ -133,7 +121,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       lang="en"
       data-accent="sage"
       data-density="compact"
-      className={`${aleo.variable} ${suse.variable} ${plexMono.variable} ${caveat.variable}`}
+      className={`${aleo.variable} ${suse.variable} ${caveat.variable}`}
     >
       <head>
         {/* Before first paint, so a licensed host never flashes Aleo for long. */}

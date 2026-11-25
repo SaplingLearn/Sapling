@@ -118,7 +118,7 @@
 }
 
 .weekLabel {
-  font-size: var(--fs-2xs);
+  font-size: var(--fs-xs);
   letter-spacing: 0.06em;
 }
 

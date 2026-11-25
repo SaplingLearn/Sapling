@@ -1,6 +1,6 @@
 /* The admin analytics tables and their prose (#866): AdminAnalytics, the
    learning-loop panels under admin/, AdminLoopCost. One look for every panel:
-   a muted uppercase header row, ruled body rows, numbers right-aligned in
+   a muted sentence-case header row, ruled body rows, numbers right-aligned in
    tabular figures. */
 
 /* ── a section: its heading, prose and stat row ─────────────────────────── */
@@ -105,9 +105,7 @@
 
 .th {
   text-align: left;
-  font-size: var(--fs-xs);
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
+  font-size: var(--fs-md);
   color: var(--text-muted);
   padding: var(--sp-2) var(--sp-4);
 }
@@ -134,7 +132,7 @@
 }
 
 .mono {
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-code);
   font-size: var(--fs-sm);
 }
 

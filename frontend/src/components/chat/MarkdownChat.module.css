@@ -160,9 +160,7 @@
 
 .calloutLabel {
   font-family: var(--font-sans);
-  font-size: var(--fs-xs);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font-size: var(--fs-md);
   color: var(--accent);
   font-weight: 700;
   margin-bottom: var(--sp-2);

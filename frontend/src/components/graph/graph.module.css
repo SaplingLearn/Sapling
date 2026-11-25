@@ -63,7 +63,7 @@
   box-shadow: var(--shadow-sm);
 }
 /* Two classes: these also carry the shared .btn .btn--sm, whose padding they replace. */
-.zoom .zoomBtn { padding: var(--sp-1) var(--sp-4); font-family: var(--font-mono); }
+.zoom .zoomBtn { padding: var(--sp-1) var(--sp-4); font-family: var(--font-sans); }
 .zoom .zoomReset { padding: var(--sp-1) var(--sp-4); font-size: var(--fs-2xs); }
 
 /* ── colour toggle and key ─────────────────────────────────────────────── */

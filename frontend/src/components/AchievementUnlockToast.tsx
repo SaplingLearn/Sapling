@@ -82,13 +82,12 @@ export function AchievementUnlockToast({ achievement }: Props) {
           display: "flex",
           alignItems: "center",
           gap: 5,
-          fontSize: 10,
+          fontSize: 12,
           fontWeight: 600,
-          textTransform: "uppercase",
-          letterSpacing: "0.04em",
+          
+          
           color: "var(--text)",
-          flexShrink: 0,
-        }}
+          flexShrink: 0 }}
       >
         <span aria-hidden="true" style={{ width: 6, height: 6, borderRadius: "50%", background: borderColor, flexShrink: 0 }} />
         {achievement.rarity}

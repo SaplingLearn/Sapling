@@ -105,8 +105,9 @@
 .cardBody { flex: 1; min-width: 0; }
 .cardTitleRow { display: flex; align-items: center; gap: var(--sp-4); flex-wrap: wrap; }
 .cardName { font-weight: 600; font-size: var(--fs-base); }
-.tag { font-size: var(--fs-2xs); }
-.tagUpper { text-transform: uppercase; }
+.tag { font-size: var(--fs-sm); }
+/* Labels are sentence case now (#928): kept only until the TSX stops naming it. */
+.tagUpper { }
 .cardDescription {
   font-size: var(--fs-sm);
   color: var(--text-dim);
@@ -191,7 +192,7 @@
 .thresholdField { width: var(--threshold-w); }
 .xpField { width: var(--xp-w); }
 .cosmeticName { display: flex; align-items: center; gap: var(--sp-4); }
-.cosmeticMeta { font-size: var(--fs-2xs); color: var(--text-muted); text-transform: uppercase; }
+.cosmeticMeta { font-size: var(--fs-sm); color: var(--text-muted); }
 
 .checkLabel {
   display: inline-flex;

@@ -10,6 +10,7 @@ import { ChevRight } from "./TutorIcons";
 import { courseColor, dotColor, sessionTitle, shortWhen, type TutorSessionRow } from "./sessions";
 import { ManagedSessionRow } from "./ManagedSessionRow";
 import styles from "./tutor.module.css";
+import { sentenceCase } from "@/lib/sentenceCase";
 
 /** The mastery tier a meter shows (#866 K21): the map's own tiers (`tierFor`, the
  *  backend's cuts), so a meter, the map and its key never disagree. No score
@@ -261,7 +262,7 @@ export function TutorCourse({
             <Icon name="doc" size={15} />
             <span className={styles.grow}>
               <div className={`${styles.lt} ${styles.medium}`}>{m.file_name}</div>
-              {m.category && <div className={styles.ls}>{m.category.replace(/_/g, " ")}</div>}
+              {m.category && <div className={styles.ls}>{sentenceCase(m.category.replace(/_/g, " "))}</div>}
             </span>
           </div>
         ))}

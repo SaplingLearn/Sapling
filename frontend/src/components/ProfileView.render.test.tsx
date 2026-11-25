@@ -236,7 +236,7 @@ describe("ProfileView rendering", () => {
     expect(screen.getByText("Featured achievements")).toBeTruthy();
     expect(screen.getByText("🔥")).toBeTruthy();
     expect(screen.getByText("★")).toBeTruthy();
-    expect(screen.getByText("epic")).toBeTruthy();
+    expect(screen.getByText("Epic")).toBeTruthy();
     const card = screen.getByText("First Steps").parentElement as HTMLElement;
     expect(card.getAttribute("style")).toContain("var(--rarity-epic, var(--text-muted))");
     expect(container.innerHTML).toContain("No Icon");

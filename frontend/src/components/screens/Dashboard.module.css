@@ -275,7 +275,7 @@
 .streakDays { color: var(--warn); font-weight: 600; }
 .weekGrid { display: grid; grid-template-columns: repeat(7, 1fr); gap: var(--sp-3); }
 .weekDay { text-align: center; }
-.weekDayLabel { font-size: var(--fs-2xs); }
+.weekDayLabel { font-size: var(--fs-xs); }
 .weekMark { margin-top: var(--sp-3); display: grid; place-items: center; }
 
 .statsCard { padding: 0; display: grid; grid-template-columns: 1fr 1fr; }

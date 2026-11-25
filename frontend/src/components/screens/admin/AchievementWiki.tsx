@@ -23,6 +23,7 @@ import type {
   Achievement, AchievementCategory, RarityTier, AchievementTrigger, Cosmetic,
   AdminUserListItem as AdminUser,
 } from "@/lib/types";
+import { sentenceCase } from "@/lib/sentenceCase";
 
 const RARITIES: RarityTier[] = ["common", "uncommon", "rare", "epic", "legendary"];
 
@@ -484,7 +485,7 @@ function AchievementCard({
         <div className={w.cardBody}>
           <div className={w.cardTitleRow}>
             <span className={w.cardName}>{achievement.name}</span>
-            <span className={`chip ${w.tag} ${w.tagUpper}`}>{achievement.rarity}</span>
+            <span className={`chip ${w.tag}`}>{sentenceCase(achievement.rarity)}</span>
             <span className={`chip ${w.tag}`}>{CAT_META[achievement.category].label}</span>
             {achievement.is_secret && <span className="chip chip--warn">secret</span>}
           </div>
@@ -648,7 +649,7 @@ function AchievementCard({
                     <span>{c ? c.name : cid}</span>
                     {c && (
                       <span className={w.cosmeticMeta}>
-                        {c.type} · {c.rarity}
+                        {sentenceCase(c.type)} · {sentenceCase(c.rarity)}
                       </span>
                     )}
                   </span>
@@ -671,7 +672,7 @@ function AchievementCard({
                 onChange={setPendingCosmeticId}
                 options={cosmetics
                   .filter(c => !linkedCosmeticIds.includes(c.id))
-                  .map(c => ({ value: c.id, label: c.name, description: `${c.type} · ${c.rarity}` }))}
+                  .map(c => ({ value: c.id, label: c.name, description: `${sentenceCase(c.type)} · ${sentenceCase(c.rarity)}` }))}
                 placeholder={cosmetics.length === 0 ? "No cosmetics defined yet" : "Pick a cosmetic to link…"}
                 disabled={cosmetics.filter(c => !linkedCosmeticIds.includes(c.id)).length === 0}
               />

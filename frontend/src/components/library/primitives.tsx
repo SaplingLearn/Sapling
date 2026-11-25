@@ -11,7 +11,12 @@ import { GLYPHS, type GlyphName } from "./glyphs";
 
 export const FONT_SERIF = "var(--font-serif)";
 export const FONT_SANS = "var(--font-sans)";
-export const FONT_MONO = "var(--font-mono)";
+/**
+ * The handoff's IBM Plex Mono slot. Plex Mono is gone from the app (#928), so
+ * this is SUSE, as `.mono` in globals.css now is. The name stays so every
+ * handoff "mono" spot stays findable against the design.
+ */
+export const FONT_MONO = "var(--font-sans)";
 
 /** One of the filled brand glyphs from `glyphs.ts`. */
 export function Glyph({
@@ -186,13 +191,11 @@ export function MenuDivider() {
   return <span style={{ height: 1, margin: "4px 6px", background: "rgba(42,39,31,0.10)" }} />;
 }
 
-/** The IBM Plex Mono caps a menu uses as a group heading. */
+/** A menu's group heading: sentence case, no tracking (#928 retired the mono caps). */
 export const MENU_HEADING: React.CSSProperties = {
   padding: "6px 10px 4px",
   fontFamily: FONT_MONO,
-  fontSize: 11,
-  letterSpacing: "0.12em",
-  textTransform: "uppercase",
+  fontSize: 13,
   color: "#6F6857",
 };
 

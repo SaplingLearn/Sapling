@@ -21,7 +21,7 @@ import Link from 'next/link';
 import { CompanionShell } from '@/components/companion/CompanionShell';
 import { ArticleArt } from '@/components/journal/ArticleArt';
 import { NEWS_FILTERS, NEWS_POSTS } from '@/lib/landing/companionContent';
-import { DISPLAY, MONO, SERIF } from '@/lib/landing/companionType';
+import { DISPLAY, LABEL, SERIF } from '@/lib/landing/companionType';
 
 export default function NewsPage() {
   const [query, setQuery] = useState('');
@@ -53,7 +53,7 @@ export default function NewsPage() {
       <div>
         <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 24, flexWrap: 'wrap' }}>
           <div>
-            <span style={{ display: 'block', fontFamily: MONO, fontSize: 10, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#6f6857', animation: 'fadeUp 600ms ease both' }}>
+            <span style={{ display: 'block', fontFamily: LABEL, fontSize: 12, color: '#6f6857', animation: 'fadeUp 600ms ease both' }}>
               Notes from the build
             </span>
             <h1 style={{ margin: '14px 0 0', fontFamily: DISPLAY, fontWeight: 500, fontSize: 48, lineHeight: 1.15, letterSpacing: '-0.015em', animation: 'fadeUp 700ms ease 60ms both' }}>
@@ -63,7 +63,7 @@ export default function NewsPage() {
           <Link
             href="/#newsletter"
             className="cp-navlink"
-            style={{ fontFamily: MONO, fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase', color: 'var(--brand-forest)', paddingBottom: 4, borderBottom: '1px solid rgba(68,93,34,0.35)' }}
+            style={{ fontFamily: LABEL, fontSize: 13, color: 'var(--brand-forest)', paddingBottom: 4, borderBottom: '1px solid rgba(68,93,34,0.35)' }}
           >
             Subscribe →
           </Link>
@@ -176,14 +176,14 @@ export default function NewsPage() {
               </div>
               <div style={{ padding: '20px 22px 24px', display: 'flex', flexDirection: 'column', gap: 11 }}>
                 <span style={{ display: 'flex', alignItems: 'center', gap: 12, lineHeight: 1 }}>
-                  <span style={{ fontFamily: MONO, fontSize: 10, lineHeight: 1, letterSpacing: '0.06em', color: '#6f6857' }}>{p.date}</span>
-                  <span style={{ fontFamily: MONO, fontSize: 10, lineHeight: 1, letterSpacing: '0.14em', textTransform: 'uppercase', color: 'var(--brand-forest-bright)' }}>{p.tag}</span>
+                  <span style={{ fontFamily: LABEL, fontSize: 12, lineHeight: 1, letterSpacing: '0.06em', color: '#6f6857' }}>{p.date}</span>
+                  <span style={{ fontFamily: LABEL, fontSize: 12, lineHeight: 1, color: 'var(--brand-forest-bright)' }}>{p.tag}</span>
                 </span>
                 <h2 style={{ margin: 0, fontFamily: DISPLAY, fontWeight: 500, fontSize: 21, lineHeight: 1.24, letterSpacing: '-0.015em', color: '#1a1814' }}>{p.title}</h2>
                 <p style={{ margin: 0, fontFamily: SERIF, fontSize: 14.5, lineHeight: 1.62, color: '#3f3b31' }}>{p.excerpt}</p>
                 <span style={{ marginTop: 5, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, lineHeight: 1 }}>
                   <span style={{ fontSize: 13, fontWeight: 600, lineHeight: 1, color: 'var(--brand-forest)' }}>Read article →</span>
-                  <span style={{ fontFamily: MONO, fontSize: 10, lineHeight: 1, letterSpacing: '0.14em', color: '#6f6857' }}>{p.time}</span>
+                  <span style={{ fontFamily: LABEL, fontSize: 12, lineHeight: 1, letterSpacing: '0.14em', color: '#6f6857' }}>{p.time}</span>
                 </span>
               </div>
             </Link>
@@ -192,7 +192,7 @@ export default function NewsPage() {
 
         <div style={{ marginTop: 52, borderRadius: 18, background: '#faf8f3', border: '1px solid rgba(42,39,31,0.10)', padding: 'clamp(26px,4vw,40px)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 24, flexWrap: 'wrap' }}>
           <div style={{ maxWidth: '46ch' }}>
-            <span style={{ display: 'block', fontFamily: MONO, fontSize: 10, letterSpacing: '0.14em', textTransform: 'uppercase', color: 'var(--brand-forest-bright)' }}>
+            <span style={{ display: 'block', fontFamily: LABEL, fontSize: 12, color: 'var(--brand-forest-bright)' }}>
               The Sapling Journal
             </span>
             <p style={{ margin: '10px 0 0', fontFamily: SERIF, fontSize: 15.5, lineHeight: 1.65, color: '#3f3b31' }}>

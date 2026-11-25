@@ -1,5 +1,5 @@
 import type { CSSProperties } from "react";
-import { ACCENT, BODY, DISPLAY, INK, MONO, MUTED, SERIF } from "@/lib/landing/companionType";
+import { ACCENT, BODY, DISPLAY, INK, LABEL, MUTED, SERIF } from "@/lib/landing/companionType";
 import { legalDateLabel, type LegalDocument, type LegalSection } from "@/lib/legal/documents";
 
 /**
@@ -76,7 +76,7 @@ const SUBLABEL: CSSProperties = {
   margin: 0, fontSize: 14, fontWeight: 600, letterSpacing: "-0.005em", color: INK,
 };
 const META: CSSProperties = {
-  display: "block", fontFamily: MONO, fontSize: 10.5, letterSpacing: "0.04em", color: MUTED,
+  display: "block", fontFamily: LABEL, fontSize: 10.5, letterSpacing: "0.04em", color: MUTED,
 };
 const LINK: CSSProperties = { color: ACCENT };
 
@@ -148,9 +148,8 @@ export function LegalDocumentPage({ doc }: { doc: LegalDocument }) {
       <header style={{ paddingBottom: 30 }}>
         <span
           style={{
-            display: "block", fontFamily: MONO, fontSize: 10, letterSpacing: "0.14em",
-            textTransform: "uppercase", color: MUTED, animation: "fadeUp 600ms ease both",
-          }}
+            display: "block", fontFamily: LABEL, fontSize: 12, 
+            color: MUTED, animation: "fadeUp 600ms ease both" }}
         >
           Legal
         </span>

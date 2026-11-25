@@ -269,7 +269,7 @@ describe("QuizQuestion — the question", () => {
     expect(screen.getByRole("progressbar", { name: "Question 2 of 3" })).toBeInTheDocument();
     expect(screen.getByTestId("quiz-hint-slot")).toBeInTheDocument();
     expect(screen.getByTestId("quiz-skip-slot")).toBeInTheDocument();
-    expect(screen.getByText("MEDIUM")).toBeInTheDocument();
+    expect(screen.getByText("Medium")).toBeInTheDocument();
   });
 
   it("shows Returning when the concept was studied before", () => {

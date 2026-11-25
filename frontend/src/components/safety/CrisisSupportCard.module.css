@@ -37,11 +37,9 @@
 
 .resourcesHeading {
   margin: var(--sp-6) 0 var(--sp-3);
-  font-size: var(--fs-sm);
+  font-size: var(--fs-base);
   font-weight: 600;
   color: var(--info);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
 }
 
 .resources {

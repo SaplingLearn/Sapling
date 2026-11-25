@@ -37,6 +37,7 @@ import {
   type UsernameState,
 } from "./settingsUsername";
 import { humanizeError } from "@/lib/errorMessage";
+import { sentenceCase } from "@/lib/sentenceCase";
 import { QuizPrefsSection } from "./QuizPrefsSection";
 import { Toggle } from "./SettingsToggle";
 import { AnalyticsPreference } from "./AnalyticsPreference";
@@ -879,9 +880,7 @@ function CosmeticCard({
       )}
       <CosmeticPreview cosmetic={cosmetic} userName={userName} avatarUrl={avatarUrl} />
       <div className={styles.cosmeticName}>{cosmetic.name}</div>
-      <div className={styles.rarity}>
-        {cosmetic.rarity}
-      </div>
+      <div className={styles.rarity}>{sentenceCase(cosmetic.rarity)}</div>
       {locked ? (
         <div className={styles.unlock}>
           {unlockSource ? `Unlock: ${unlockSource}` : "Locked"}

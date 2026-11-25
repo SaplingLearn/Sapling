@@ -22,19 +22,17 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { JOBS, DEPT_COLORS } from './jobs';
 import { CompanionShell } from '@/components/companion/CompanionShell';
-import { ACCENT, BODY, DISPLAY, INK, MONO, MUTED, SERIF } from '@/lib/landing/companionType';
+import { ACCENT, BODY, DISPLAY, INK, LABEL, MUTED, SERIF } from '@/lib/landing/companionType';
 
 const HAIRLINE = '1px solid rgba(42,39,31,0.10)';
 
 const EYEBROW: React.CSSProperties = {
-  display: 'block', fontFamily: MONO, fontSize: 10, letterSpacing: '0.14em',
-  textTransform: 'uppercase', color: ACCENT,
-};
+  display: 'block', fontFamily: LABEL, fontSize: 12, 
+  color: ACCENT };
 
 const META: React.CSSProperties = {
-  fontFamily: MONO, fontSize: 10.5, letterSpacing: '0.12em',
-  textTransform: 'uppercase', color: MUTED,
-};
+  fontFamily: LABEL, fontSize: 12.5, 
+  color: MUTED };
 
 /**
  * Chip colours for a department `jobs.ts` has no entry for. The old fallback
@@ -54,7 +52,7 @@ export default function CareersList() {
         {/* The dot is the live-role tell: forest green while something is
             open, neutral once nothing is. An accent dot over "not hiring"
             reads as a broken state rather than a deliberate one. */}
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontFamily: MONO, fontSize: 10, letterSpacing: '0.14em', textTransform: 'uppercase', color: MUTED, animation: 'fadeUp 600ms ease both' }}>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontFamily: LABEL, fontSize: 12, color: MUTED, animation: 'fadeUp 600ms ease both' }}>
           <span aria-hidden="true" style={{ width: 6, height: 6, borderRadius: 99, background: hiring ? ACCENT : 'rgba(42,39,31,0.28)' }} />
           {hiring ? "We're hiring" : 'Not hiring right now'}
         </span>

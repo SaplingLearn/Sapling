@@ -135,7 +135,7 @@ export function createPlantField(): PlantField {
         ctx.globalAlpha = 1;
       }
       if (n.label) {
-        ctx.font = '10px ' + canvasFont('mono');
+        ctx.font = '10px ' + canvasFont('sans');
         ctx.fillStyle = 'rgba(234,241,228,0.85)';
         ctx.fillText(n.label, n.x + 9, n.y + wob + 3);
       }

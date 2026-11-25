@@ -40,7 +40,7 @@ export const CARD_H = H + M * 2; // 692
 // resolved per call rather than once at module load, since the CSS variables
 // they read live on <html> and this module can be imported before paint.
 const SANS = () => canvasFont('sans');
-const MONO = () => canvasFont('mono');
+const LABEL = () => canvasFont('sans');
 const SERIF = () => canvasFont('display');
 const INK = '#191F13';
 const DIM = '#6B7265';
@@ -95,7 +95,7 @@ export function drawHeroCard(kind: CardKind): HTMLCanvasElement {
   x.stroke();
 
   const eyebrow = (t: string, y: number, col?: string) => {
-    x.font = '600 20px ' + MONO();
+    x.font = '600 20px ' + LABEL();
     x.fillStyle = col || FAINT;
     x.letterSpacing = '2.2px';
     x.fillText(t, P, y);
@@ -133,7 +133,7 @@ export function drawHeroCard(kind: CardKind): HTMLCanvasElement {
 
   if (kind === 0) {
     // ── course mastery ──
-    eyebrow('PY 205 · MECHANICS', 54);
+    eyebrow('PY 205 · Mechanics', 54);
     x.font = '700 46px ' + SERIF();
     x.fillStyle = '#445D22';
     x.fillText('61%', P, 116);
@@ -154,7 +154,7 @@ export function drawHeroCard(kind: CardKind): HTMLCanvasElement {
     x.fillText('Next review · 14 cards due', P, 502);
   } else if (kind === 1) {
     // ── flashcard ──
-    eyebrow('CARD 03 / 12', 54);
+    eyebrow('Card 03 / 12', 54);
     x.fillStyle = '#B25855';
     x.beginPath();
     x.arc(W - P - 7, 48, 7, 0, 6.3);
@@ -166,10 +166,10 @@ export function drawHeroCard(kind: CardKind): HTMLCanvasElement {
     x.lineWidth = 2;
     rr(P + 1, 91, W - P * 2 - 2, 228, 20);
     x.stroke();
-    x.font = '500 18px ' + MONO();
+    x.font = '500 18px ' + LABEL();
     x.fillStyle = FAINT;
     x.letterSpacing = '2.6px';
-    x.fillText('FRONT', P + 26, 126);
+    x.fillText('Front', P + 26, 126);
     x.letterSpacing = '0px';
     x.save();
     x.translate(-8, 0);
@@ -193,7 +193,7 @@ export function drawHeroCard(kind: CardKind): HTMLCanvasElement {
       x.fillText(ch[0], cx0 + cw / 2, 394);
       x.textAlign = 'left';
     });
-    x.font = '500 20px ' + MONO();
+    x.font = '500 20px ' + LABEL();
     x.fillStyle = FAINT;
     x.fillText('next in 4d · 12d · 31d', P, 468);
     x.strokeStyle = LINE;
@@ -207,7 +207,7 @@ export function drawHeroCard(kind: CardKind): HTMLCanvasElement {
     x.fillText('From: Lecture 9 notes.pdf', P, 530);
   } else if (kind === 2) {
     // ── adaptive quiz ──
-    eyebrow('ADAPTIVE QUIZ · CH 4', 54);
+    eyebrow('Adaptive quiz · Ch 4', 54);
     wrap(
       'A block slides down a frictionless incline. Which quantity is conserved?',
       106, W - P * 2, 38, '600 29px ' + SERIF(), INK,
@@ -240,12 +240,12 @@ export function drawHeroCard(kind: CardKind): HTMLCanvasElement {
         x.stroke();
       }
     });
-    x.font = '500 20px ' + MONO();
+    x.font = '500 20px ' + LABEL();
     x.fillStyle = FAINT;
-    x.fillText('DIFFICULTY ↑  ·  4 OF 8', P, 512);
+    x.fillText('Difficulty ↑  ·  4 of 8', P, 512);
   } else if (kind === 3) {
     // ── mini knowledge graph ──
-    eyebrow('KNOWLEDGE GRAPH', 54);
+    eyebrow('Knowledge graph', 54);
     const nodes: [number, number, number, string][] = [
       [230, 210, 26, '#5A7834'], [130, 140, 13, '#7B9E51'], [330, 145, 12, '#C89B5E'],
       [110, 300, 11, '#B25855'], [340, 300, 14, '#7B9E51'], [230, 360, 10, '#9A9A9A'],
@@ -292,11 +292,11 @@ export function drawHeroCard(kind: CardKind): HTMLCanvasElement {
     });
   } else {
     // ── week calendar ──
-    eyebrow('THIS WEEK', 54);
+    eyebrow('This week', 54);
     const days = ['M', 'T', 'W', 'T', 'F'];
     const cw = (W - P * 2) / 5;
     days.forEach((d, i) => {
-      x.font = '500 20px ' + MONO();
+      x.font = '500 20px ' + LABEL();
       x.fillStyle = FAINT;
       x.textAlign = 'center';
       x.fillText(d, P + cw * i + cw / 2, 106);
@@ -332,9 +332,9 @@ export function drawHeroCard(kind: CardKind): HTMLCanvasElement {
       rr(P + 22, y + 43, (W - P * 2 - 44) * e[2], 7, 4);
       x.fill();
     });
-    x.font = '500 20px ' + MONO();
+    x.font = '500 20px ' + LABEL();
     x.fillStyle = FAINT;
-    x.fillText('PULLED FROM SYLLABUS', P, 532);
+    x.fillText('Pulled from syllabus', P, 532);
   }
 
   return c;
