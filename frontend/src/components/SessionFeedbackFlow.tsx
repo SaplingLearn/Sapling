@@ -10,6 +10,10 @@ import { LONG_TEXT_MAX } from "@/lib/inputLimits";
 // with its two ends labelled under it (shared with the Tutor's wrap-up).
 import { SessionRatingScale } from "./learn/SessionRatingScale";
 import { ChipPicker, FRICTION, HELPFULNESS, toggled } from "./sessionFeedbackOptions";
+import styles from "./FeedbackFlow.module.css";
+
+/** The follow-up's steps: rating, what worked, friction, a note. */
+const STEPS = [0, 1, 2, 3];
 
 export interface SessionFeedbackContext {
   sessionId?: string;
@@ -75,103 +79,67 @@ export function SessionFeedbackFlow({ open, context, onClose }: SessionFeedbackF
   const canNext = step === 0 ? rating !== null : true;
 
   return (
-    <div
-      style={{
-        position: "fixed",
-        inset: 0,
-        background: "rgba(0,0,0,0.4)",
-        zIndex: 200,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-      }}
-      onClick={() => !submitting && close()}
-    >
-      <div
-        onClick={e => e.stopPropagation()}
-        style={{
-          width: 440,
-          maxWidth: "calc(100vw - 32px)",
-          background: "var(--bg-panel)",
-          borderRadius: "var(--r-lg)",
-          padding: 28,
-          boxShadow: "var(--shadow-lg)",
-        }}
-      >
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-          <div className="h-serif" style={{ fontSize: 22 }}>How was that session?</div>
+    <div className={styles.backdrop} onClick={() => !submitting && close()}>
+      <div onClick={e => e.stopPropagation()} className={styles.card}>
+        <div className={styles.header}>
+          <div className={`h-serif ${styles.sessionTitle}`}>How was that session?</div>
           <button className="btn btn--ghost btn--sm" onClick={() => close()} aria-label="Close">×</button>
         </div>
 
         {context?.topic && (
-          <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 16 }}>
-            on <span style={{ color: "var(--text-dim)" }}>{context.topic}</span>
+          <div className={styles.topic}>
+            on <span className={styles.topicName}>{context.topic}</span>
           </div>
         )}
 
-        <div style={{ display: "flex", gap: 6, marginBottom: 20 }}>
-          {[0, 1, 2, 3].map(i => (
-            <div
-              key={i}
-              style={{
-                flex: 1,
-                height: 4,
-                borderRadius: "var(--r-full)",
-                background: i <= step ? "var(--accent)" : "var(--bg-soft)",
-              }}
-            />
+        <div className={styles.steps}>
+          {STEPS.map(i => (
+            <div key={i} className={styles.stepSegment} data-done={i <= step} />
           ))}
         </div>
 
-        {step === 0 && (
-          <div>
-            <div className="label-micro" style={{ marginBottom: 8 }}>How did it feel?</div>
-            <SessionRatingScale value={rating} onSelect={setRating} />
-          </div>
-        )}
+        <div key={step} className={styles.stepBody}>
+          {step === 0 && (
+            <div>
+              <div className={`label-micro ${styles.stepLabel}`}>How did it feel?</div>
+              <SessionRatingScale value={rating} onSelect={setRating} />
+            </div>
+          )}
 
-        {step === 1 && (
-          <ChipPicker
-            label="What worked?"
-            options={HELPFULNESS}
-            selected={helpful}
-            onToggle={v => toggle(helpful, setHelpful, v)}
-          />
-        )}
-
-        {step === 2 && (
-          <ChipPicker
-            label="Any friction?"
-            options={FRICTION}
-            selected={friction}
-            onToggle={v => toggle(friction, setFriction, v)}
-          />
-        )}
-
-        {step === 3 && (
-          <div>
-            <div className="label-micro" style={{ marginBottom: 6 }}>Anything else to add?</div>
-            <textarea
-              value={comment}
-              maxLength={LONG_TEXT_MAX}
-              onChange={e => setComment(e.target.value)}
-              placeholder="Optional note…"
-              rows={4}
-              style={{
-                width: "100%",
-                padding: "10px 14px",
-                fontSize: 13,
-                border: "1px solid var(--border)",
-                borderRadius: "var(--r-sm)",
-                background: "var(--bg-input)",
-                fontFamily: "inherit",
-                resize: "vertical",
-              }}
+          {step === 1 && (
+            <ChipPicker
+              label="What worked?"
+              options={HELPFULNESS}
+              selected={helpful}
+              onToggle={v => toggle(helpful, setHelpful, v)}
             />
-          </div>
-        )}
+          )}
 
-        <div style={{ display: "flex", gap: 8, justifyContent: "space-between", marginTop: 18 }}>
+          {step === 2 && (
+            <ChipPicker
+              label="Any friction?"
+              options={FRICTION}
+              selected={friction}
+              onToggle={v => toggle(friction, setFriction, v)}
+            />
+          )}
+
+          {step === 3 && (
+            <div>
+              <div className={`label-micro ${styles.fieldLabel}`}>Anything else to add?</div>
+              <textarea
+                value={comment}
+                maxLength={LONG_TEXT_MAX}
+                onChange={e => setComment(e.target.value)}
+                placeholder="Optional note…"
+                rows={4}
+                className={styles.textarea}
+              />
+            </div>
+          )}
+        </div>
+
+        <div className={`${styles.footer} ${styles.footerSplit}`}>
           {step > 0 ? (
             <button className="btn" onClick={() => setStep(step - 1)} disabled={submitting}>Back</button>
           ) : (
