@@ -1628,6 +1628,8 @@ _MYTH_THAT = frozenset(
     for common in ("", "common ")
 )
 _SENTENCE_TAIL = " \t.!?\"'\u201d\u2019)"
+_PARAGRAPH_NEWLINES = 2  # line breaks (a blank line) that start a paragraph
+_BACK_HEAD_WORDS = 2  # a backward frame's subject and verb ("that is")
 _UNIT_WORD = re.compile(r"[a-z']+")
 _UNIT_BREAK = re.compile(r"[.!?]+|\n")
 
@@ -1641,7 +1643,7 @@ def _units(answer: str) -> list[tuple[int, int, bool]]:
         brk = m.group() == "\n"
         seg_end = m.start() if brk else m.end()
         if answer[pos:seg_end].strip():
-            units.append((pos, seg_end, newlines >= 2))
+            units.append((pos, seg_end, newlines >= _PARAGRAPH_NEWLINES))
             newlines = 1 if brk else 0
         elif brk:
             newlines += 1
@@ -1717,9 +1719,9 @@ def _backward_frame(words: list[str]) -> bool:
         w = ["that", *w[2:]]
     elif w[:3] == ["all", "of", "that"] or w[:3] == ["all", "of", "this"]:
         w = ["that", *w[3:]]
-    if len(w) < 3 or w[0] not in {"that", "this"} or w[1] not in _BACK_VERBS:
+    if len(w) <= _BACK_HEAD_WORDS or w[0] not in {"that", "this"} or w[1] not in _BACK_VERBS:
         return False
-    k = 2
+    k = _BACK_HEAD_WORDS
     while k < len(w) and w[k] in _BACK_FILLER:
         k += 1
     if k >= len(w):

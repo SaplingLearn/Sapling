@@ -24,6 +24,9 @@ BKT_S_MAX = 0.30
 BKT_PROFICIENT = 0.95
 BKT_MASTERED = 0.98
 BKT_MASTERED_MIN_STRONG = 3
+# A concept with an unresolved planning miss is capped this far below
+# BKT_PROFICIENT, so the planner keeps it on the fringe (learning/planner.py).
+PLANNING_MISS_BELOW_PROFICIENT = 0.01
 # † Ceiling on bkt.update's output (not a spec §3.1 name; spec §13 row
 # pending). Without it back-to-back corrects round p to exactly 1.0, where the
 # incorrect posterior is 1·S/(1·S + 0) = 1 and no wrong answer or idk moves it.
