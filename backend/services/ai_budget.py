@@ -501,20 +501,9 @@ def _spend_decision(
     tutor_calls: int = 0,
 ) -> BudgetDecision:
     cap = _daily_cap(band)
-    hard: dict[Scope, datetime | None] = {}
-    if usage is not None:
-        if usage.day_usd >= cap:
-            hard["daily_usd"] = _next_day(now)
-        if usage.month_usd >= _exact(config.STUDENT_MONTHLY_BUDGET_USD):
-            hard["monthly_usd"] = _next_month(now)
-        if usage.day_tokens >= config.STUDENT_DAILY_TOKENS:
-            hard["daily_tokens"] = _next_day(now)
-        if kind == "tutor" and usage.minute_rows >= config.LEARN_RATE_LIMIT_PER_MIN:
-            hard["rate_limit"] = _rate_reset(usage, now)
-    if kind == "tutor" and tutor_calls >= config.STUDENT_DAILY_TUTOR_CALLS:
-        hard["daily_tutor_calls"] = _next_day(now)  # read outside llm_usage: holds when it fails
-    if kind == "tutor" and tutor_requests >= params.LOOP_SESSION_MAX_TUTOR_REQUESTS:
-        hard["session_requests"] = None
+    hard = _hard_scopes(
+        kind, usage, cap, now, tutor_requests=tutor_requests, tutor_calls=tutor_calls
+    )
     if hard:
         scope = _binding(hard)
         _emit_each(user_id, [s for s in _HARD_ORDER if s in hard], "hard", band, usage, cap)
@@ -530,6 +519,46 @@ def _spend_decision(
         )
     if kind in ("close", "generation"):
         return _NORMAL  # non-tutor runs have no model-tier downgrade
+    soft = _soft_scopes(band, usage, cap, deep_requests=deep_requests)
+    if not soft:
+        return _NORMAL
+    _emit_each(user_id, soft, "soft", band, usage, cap)
+    if arm_session:
+        return _NORMAL  # arms are exempt from downgrades; they pause at hard (spec §3.5)
+    return _soft_decision(band, soft, now)
+
+
+def _hard_scopes(
+    kind: Kind,
+    usage: _Usage | None,
+    cap: Decimal,
+    now: datetime,
+    *,
+    tutor_requests: int,
+    tutor_calls: int,
+) -> dict[Scope, datetime | None]:
+    """Every hard cap reached, with when it resets (None: at session end)."""
+    hard: dict[Scope, datetime | None] = {}
+    if usage is not None:
+        if usage.day_usd >= cap:
+            hard["daily_usd"] = _next_day(now)
+        if usage.month_usd >= _exact(config.STUDENT_MONTHLY_BUDGET_USD):
+            hard["monthly_usd"] = _next_month(now)
+        if usage.day_tokens >= config.STUDENT_DAILY_TOKENS:
+            hard["daily_tokens"] = _next_day(now)
+        if kind == "tutor" and usage.minute_rows >= config.LEARN_RATE_LIMIT_PER_MIN:
+            hard["rate_limit"] = _rate_reset(usage, now)
+    if kind == "tutor" and tutor_calls >= config.STUDENT_DAILY_TUTOR_CALLS:
+        hard["daily_tutor_calls"] = _next_day(now)  # read outside llm_usage: holds when it fails
+    if kind == "tutor" and tutor_requests >= params.LOOP_SESSION_MAX_TUTOR_REQUESTS:
+        hard["session_requests"] = None
+    return hard
+
+
+def _soft_scopes(
+    band: Band | None, usage: _Usage | None, cap: Decimal, *, deep_requests: int
+) -> list[Scope]:
+    """Every soft threshold reached, in reporting order."""
     soft: list[Scope] = []
     fraction = _exact(config.STUDENT_SOFT_FRACTION)
     if usage is not None and usage.day_usd >= fraction * cap:
@@ -543,12 +572,12 @@ def _spend_decision(
     )
     if deep_requests >= deep_cap:
         soft.append("session_deep")
-    if not soft:
-        return _NORMAL
+    return soft
+
+
+def _soft_decision(band: Band | None, soft: list[Scope], now: datetime) -> BudgetDecision:
+    """The soft level's tier downgrade for the scopes reached."""
     scope = soft[0]
-    _emit_each(user_id, soft, "soft", band, usage, cap)
-    if arm_session:
-        return _NORMAL  # arms are exempt from downgrades; they pause at hard (spec §3.5)
     # The $- and token-based soft level never downgrades novice deep turns; only the novice
     # deep-request cap does (spec §3.5 soft row, LOOP_MODEL_TIER).
     novice_keeps_deep = band == "novice" and "session_deep" not in soft
