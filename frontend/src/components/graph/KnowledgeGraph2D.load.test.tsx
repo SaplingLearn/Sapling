@@ -1,13 +1,20 @@
 // @vitest-environment jsdom
 /**
- * Opening the graph: it is drawn already at rest.
+ * Opening the graph: it is drawn with its layout already settled.
  *
  * With motion allowed, the simulation used to start on screen at full heat
  * (alpha 0.9) from the planned places, so on every load links pulled,
  * concepts pushed apart and whole courses swung out and back for about a
  * third of a second. A planned graph now settles before it is drawn
- * (`settleQuietly`): nothing moves once it is on screen, whether it has just
- * opened, the window was re-measured or a concept was added.
+ * (`settleQuietly`): the layout is done once it is on screen, whether it has
+ * just opened, the window was re-measured or a concept was added.
+ *
+ * What is left is the idle drift (`driftForce`): the graph is handed back
+ * running at its idle heat, and every node goes on wandering a few units
+ * about where it settled. So these tests pin a bound on the wander, not
+ * stillness — a graph that has not settled travels much further than
+ * `DRIFT_BOUND` in the frames played here (it was tens of units before
+ * `settleQuietly`, and the drift alone stays inside this bound for minutes).
  *
  * Motion is allowed here (the shared setup's reduced-motion stub is
  * replaced), the path a real browser takes. d3-timer is loaded under fake
@@ -22,7 +29,7 @@ import { forceLink, forceManyBody, forceSimulation, forceX, forceY, type Simulat
 import type { GraphEdge, GraphNode } from "@/lib/data";
 
 let KnowledgeGraph2D: (typeof import("./KnowledgeGraph2D"))["KnowledgeGraph2D"];
-let settleQuietly: (typeof import("./KnowledgeGraph2D"))["settleQuietly"];
+let settleQuietly: (typeof import("@/lib/graph/motion"))["settleQuietly"];
 const sharedMatchMedia = window.matchMedia;
 
 beforeAll(async () => {
@@ -40,7 +47,8 @@ beforeAll(async () => {
   const raf = window.requestAnimationFrame;
   (window as { requestAnimationFrame?: unknown }).requestAnimationFrame = undefined;
   try {
-    ({ KnowledgeGraph2D, settleQuietly } = await import("./KnowledgeGraph2D"));
+    ({ KnowledgeGraph2D } = await import("./KnowledgeGraph2D"));
+    ({ settleQuietly } = await import("@/lib/graph/motion"));
   } finally {
     window.requestAnimationFrame = raf;
   }
@@ -58,6 +66,9 @@ afterAll(() => {
 
 /** Play `n` simulation frames. */
 const frames = (n: number) => vi.advanceTimersByTime(17 * n);
+
+/** The furthest the idle drift ever takes a node from where it was drawn. */
+const DRIFT_BOUND = 14;
 
 const COLOURS: Record<string, string> = { c1: "#3e6f8a", c2: "#7a874f" };
 const root = (course: string): GraphNode => ({
@@ -120,14 +131,14 @@ describe("KnowledgeGraph2D — opening at rest", () => {
   it.each([
     ["plain", false],
     ["legible", true],
-  ])("draws the graph already settled: nothing moves once it is on screen (%s)", (_name, legible) => {
+  ])("draws the graph already settled: only the idle drift moves it (%s)", (_name, legible) => {
     const { container } = render(
       <KnowledgeGraph2D nodes={NODES} edges={EDGES} width={1240} height={900} legible={legible} />,
     );
     const drawn = positions(container);
     expect(drawn.size).toBe(NODES.length);
     frames(120);
-    expect(furthest(drawn, positions(container))).toBeLessThan(0.5);
+    expect(furthest(drawn, positions(container))).toBeLessThan(DRIFT_BOUND);
   });
 
   it("re-plans at rest when the window is re-measured", () => {
@@ -136,7 +147,7 @@ describe("KnowledgeGraph2D — opening at rest", () => {
     shown.rerender(<KnowledgeGraph2D nodes={NODES} edges={EDGES} width={700} height={900} legible />);
     const drawn = positions(shown.container);
     frames(120);
-    expect(furthest(drawn, positions(shown.container))).toBeLessThan(0.5);
+    expect(furthest(drawn, positions(shown.container))).toBeLessThan(DRIFT_BOUND);
   });
 
   it("takes in a new concept at rest", () => {
@@ -147,7 +158,23 @@ describe("KnowledgeGraph2D — opening at rest", () => {
     const drawn = positions(shown.container);
     expect(drawn.size).toBe(more.length);
     frames(120);
-    expect(furthest(drawn, positions(shown.container))).toBeLessThan(0.5);
+    expect(furthest(drawn, positions(shown.container))).toBeLessThan(DRIFT_BOUND);
+  });
+
+  it("stays dead still for a viewer who asked for reduced motion", () => {
+    const allowed = window.matchMedia;
+    window.matchMedia = ((query: string) => ({
+      ...(allowed(query) as unknown as object),
+      matches: query.includes("prefers-reduced-motion"),
+    })) as unknown as typeof window.matchMedia;
+    try {
+      const { container } = render(<KnowledgeGraph2D nodes={NODES} edges={EDGES} width={1240} height={900} legible />);
+      const drawn = positions(container);
+      frames(240);
+      expect(furthest(drawn, positions(container))).toBe(0);
+    } finally {
+      window.matchMedia = allowed;
+    }
   });
 
   it("frames a graph with its own opening zoom at once, rather than zooming there", () => {
