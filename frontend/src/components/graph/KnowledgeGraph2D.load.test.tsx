@@ -67,8 +67,18 @@ afterAll(() => {
 /** Play `n` simulation frames. */
 const frames = (n: number) => vi.advanceTimersByTime(17 * n);
 
-/** The furthest the idle drift ever takes a node from where it was drawn. */
-const DRIFT_BOUND = 14;
+/**
+ * The furthest the idle drift ever takes a node from where it was drawn.
+ *
+ * This is the drift's amplitude AND the guard that the graph opened settled:
+ * a layout that re-ran would move nodes by hundreds of units across a graph
+ * this wide, so anything in this range is wander rather than a re-plan.
+ * Raised with `DRIFT_ACCEL` (2026-11-25) — at 0.03 the motion measured ~10
+ * units over five seconds, which on screen was indistinguishable from a dead
+ * stop; it is now legible, and 44 units was the worst seen over 20s in the
+ * real app.
+ */
+const DRIFT_BOUND = 50;
 
 const COLOURS: Record<string, string> = { c1: "#3e6f8a", c2: "#7a874f" };
 const root = (course: string): GraphNode => ({
