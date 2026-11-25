@@ -45,10 +45,13 @@ going up.
 
 ## Why it is built this way
 
-The design follows a literature review and two audits, all in
-[`docs/research/learning-loop/`](../research/learning-loop/):
+The design follows a literature review and two audits. They moved to Trov with
+the rest of the build history: see the
+[learning-loop build history index](https://trov.dev/saplinglearn/#artifacts/learning-loop-build-history-index)
+(the files keep their `docs/research/learning-loop/` paths inside the
+[archive](https://trov.dev/saplinglearn/#artifacts/learning-loop-build-history-archive)):
 
-- [AI tutor learning loop research](../research/learning-loop/AI%20tutor%20learning%20loop%20research.md)
+- **AI tutor learning loop research**
   — the loop itself: graded, weighted evidence; per-channel BKT with decay;
   the probe → plan → step → check → feedback → close session; FSRS-6 review at
   90% retention; answer-withholding guardrails; and measuring learning with
@@ -56,22 +59,22 @@ The design follows a literature review and two audits, all in
   (Bastani et al.), unrestricted GPT-4 access raised practice scores and
   *lowered* the later unassisted exam by 17%, while a tutor that gave hints
   instead of answers removed the harm.
-- [ZPD lever tradeoffs and upgrades](../research/learning-loop/ZPD%20lever%20tradeoffs%20and%20upgrades.md)
+- **ZPD lever tradeoffs and upgrades**
   — the zone of proximal development (what a student can do with help but
   not yet alone) made operational: the H0–H6 ladder, the ceiling, the attempt
   gates and the difficulty bands (its section "Sapling ZPD policy spec").
-- [The 2026-10-18 foundation audit](../research/learning-loop/2026-10-18-foundation-audit.md)
+- **The 2026-10-18 foundation audit**
   — the mechanisms can support learning; passing tests and rising mastery
   estimates do not show that students learned.
-- [The 2026-11-07 direction audit](../research/learning-loop/2026-11-07-direction-audit.md)
+- **The 2026-11-07 direction audit**
   — "keep the guardrails, rebuild the measuring stick": answer withholding,
   graded-only evidence and BKT plus FSRS are the evidence-aligned choices; the
   weak point is measurement (model-drafted items, peer-sourced keys, a model
   grader, a short-delay post-test). §13 rows A110, A112–A114, A124 and A126
   implement its recommendations.
-- [The cost projection](../research/learning-loop/2026-11-08-loop-cost-projection.md),
-  [the trial preregistration draft](../research/learning-loop/2026-11-08-within-student-trial-preregistration.md)
-  and [its power simulation](../research/learning-loop/2026-11-08-trial-power-simulation.md).
+- **The cost projection**,
+  **the trial preregistration draft**
+  and **its power simulation**.
 
 What the code does **not** establish: that students learn more with the loop.
 No controlled learner-outcome result exists yet; the post-test, the

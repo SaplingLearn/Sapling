@@ -66,7 +66,7 @@ The three Eero Alvar videos shaped the loop's session machine and practice
 dials. Sapling keeps graded-only belief and Bastani-style withholding, so
 some harness claims were taken whole, some narrowed to an evidence-aligned
 substitute, and some refused. The research binding is
-[`docs/research/learning-loop/notes/direction/design_choices.md`](../research/learning-loop/notes/direction/design_choices.md)
+`docs/research/learning-loop/notes/direction/design_choices.md` (in the [learning-loop build history archive](https://trov.dev/saplinglearn/#artifacts/learning-loop-build-history-archive))
 (Q1–Q6); the build scoreboard is
 [`docs/learning-loop/alvar-trilogy-implementation-plan.md`](alvar-trilogy-implementation-plan.md)
 (workstream W6).

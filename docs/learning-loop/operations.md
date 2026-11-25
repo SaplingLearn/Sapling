@@ -178,7 +178,7 @@ Operationally:
 The owner's target is **$0.36 per student-month**
 (`backend/learning/params.py::LOOP_COST_TARGET_USD_PER_STUDENT_MONTH`; spec
 §1 and §3.5), which prices the routed tutor plan without caching.
-[The cost projection](../research/learning-loop/2026-11-08-loop-cost-projection.md)
+The cost projection (in the [learning-loop build history archive](https://trov.dev/saplinglearn/#artifacts/learning-loop-build-history-archive))
 (2026-11-08) estimates, per configuration:
 
 | Configuration | Per session | Per student-month | Against target |
