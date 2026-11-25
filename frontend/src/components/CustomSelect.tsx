@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useCallback, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import styles from "./CustomSelect.module.css";
 
 export interface CustomSelectOption<T extends string = string> {
   value: T;
@@ -32,9 +33,12 @@ interface CustomSelectProps<T extends string = string> {
   testId?: string;
 }
 
+/** The open list's height bounds (px), and its gap from the trigger: --sp-2 in CustomSelect.module.css. */
 const LIST_MAX = 280;
 const LIST_MIN = 120;
 const LIST_GAP = 4;
+/** Below this much room under the trigger, a list with more room above opens upward. */
+const LIST_FLIP_BELOW = 200;
 
 /** The box the open list must fit inside: the viewport, narrowed by every
  *  ancestor that clips or scrolls vertically (a list that runs past a
@@ -58,7 +62,7 @@ function placeList(el: HTMLElement): { up: boolean; max: number } {
   const box = clipBox(el);
   const below = box.bottom - r.bottom - LIST_GAP * 2;
   const above = r.top - box.top - LIST_GAP * 2;
-  const up = below < Math.min(LIST_MAX, 200) && above > below;
+  const up = below < Math.min(LIST_MAX, LIST_FLIP_BELOW) && above > below;
   return { up, max: Math.max(LIST_MIN, Math.min(LIST_MAX, up ? above : below)) };
 }
 
@@ -210,14 +214,13 @@ export function CustomSelect<T extends string = string>({
     }
   };
 
-  const padding = size === "sm" ? "5px 10px" : "8px 12px";
-  const fontSize = size === "sm" ? 12 : 13;
+  const cx = (...names: (string | false | undefined)[]) => names.filter(Boolean).join(" ");
 
   return (
     <div
       ref={wrapperRef}
-      className={className}
-      style={{ position: "relative", display: "inline-block", ...style }}
+      className={cx(styles.root, size === "sm" && styles.sm, className)}
+      style={style}
     >
       <span id={labelId} hidden>{ariaLabel}</span>
       <button
@@ -235,29 +238,13 @@ export function CustomSelect<T extends string = string>({
           else openList();
         }}
         onKeyDown={onButtonKey}
-        style={{
-          display: "inline-flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: 8,
-          width: "100%",
-          padding,
-          fontSize,
-          borderRadius: "var(--r-sm)",
-          border: "1px solid var(--border)",
-          background: "var(--bg-input)",
-          color: selected ? "var(--text)" : "var(--text-muted)",
-          cursor: disabled ? "not-allowed" : "pointer",
-          opacity: disabled ? 0.6 : 1,
-          textAlign: "left",
-          transition: "border-color var(--dur-fast) var(--ease)",
-          ...triggerStyle,
-        }}
+        className={cx(styles.trigger, !selected && styles.placeholder)}
+        style={triggerStyle}
       >
-        <span id={valueId} style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+        <span id={valueId} className={styles.value}>
           {selected ? selected.label : placeholder}
         </span>
-        <span aria-hidden style={{ fontSize: 10, color: "var(--text-muted)", transform: open ? "rotate(180deg)" : "none", transition: "transform var(--dur-fast) var(--ease)" }}>▾</span>
+        <span aria-hidden className={cx(styles.chevron, open && styles.chevronOpen)}>▾</span>
       </button>
       {open && (
         <ul
@@ -268,25 +255,8 @@ export function CustomSelect<T extends string = string>({
           aria-labelledby={labelId}
           aria-activedescendant={highlighted >= 0 ? optionId(highlighted) : undefined}
           onKeyDown={onListKey}
-          className="fade-in"
-          style={{
-            position: "absolute",
-            zIndex: 100,
-            top: place.up ? "auto" : `calc(100% + ${LIST_GAP}px)`,
-            bottom: place.up ? `calc(100% + ${LIST_GAP}px)` : "auto",
-            left: align === "left" ? 0 : "auto",
-            right: align === "right" ? 0 : "auto",
-            minWidth: "100%",
-            margin: 0,
-            padding: 4,
-            listStyle: "none",
-            background: "var(--bg-panel)",
-            border: "1px solid var(--border-strong)",
-            borderRadius: "var(--r-md)",
-            boxShadow: "var(--shadow-lg)",
-            maxHeight: place.max,
-            overflowY: "auto",
-          }}
+          className={cx("fade-in", styles.list, place.up && styles.listUp, align === "right" && styles.listRight)}
+          style={{ "--select-list-max": `${place.max}px` } as React.CSSProperties}
         >
           {options.map((opt, idx) => {
             const active = idx === highlighted;
@@ -302,25 +272,15 @@ export function CustomSelect<T extends string = string>({
                 aria-disabled={opt.disabled}
                 onMouseEnter={() => setHighlighted(idx)}
                 onClick={() => commit(idx, true)}
-                style={{
-                  padding: "7px 10px",
-                  fontSize,
-                  borderRadius: "var(--r-sm)",
-                  cursor: opt.disabled ? "not-allowed" : "pointer",
-                  color: opt.disabled ? "var(--text-muted)" : "var(--text)",
-                  background: active && !opt.disabled ? "var(--bg-subtle)" : "transparent",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 6,
-                }}
+                className={cx(styles.option, active && !opt.disabled && styles.optionActive, opt.disabled && styles.optionDisabled)}
               >
-                <span style={{ flex: 1, minWidth: 0 }}>
+                <span className={styles.optionBody}>
                   <span>{opt.label}</span>
                   {opt.description && (
-                    <span style={{ display: "block", fontSize: 11, color: "var(--text-muted)" }}>{opt.description}</span>
+                    <span className={styles.description}>{opt.description}</span>
                   )}
                 </span>
-                {isSelected && <span aria-hidden style={{ color: "var(--accent)", fontSize: 12 }}>✓</span>}
+                {isSelected && <span aria-hidden className={styles.check}>✓</span>}
               </li>
             );
           })}
