@@ -11,7 +11,9 @@ promotes anything: DECISION_BACKEND_<NAME> stays the owner's switch.
 Gold is synthetic or consented_deidentified ONLY (A24): `load_gold` refuses any
 other provenance, and any gold file over DECISION_EVAL_MAX_CASES cases (a per-file
 cap; PKG-05b recorded 8 cases in all under its session budget, HANDOFF-05b). Measures
-the Gemini baseline through the production prompts — the grading decisions
+the production-model baseline (the `grader` / `learning_decision` slots, Claude since
+ADR 0030; the identifiers below still say "gemini" from before the swap) through the
+production prompts — the grading decisions
 through agents/grader.py's message builder on the State-rebuilt item, the rest
 through services/learning_decisions.py's `decision_request` — and `promotion_checks()`
 computes every §3.6 gate for a candidate backend.
