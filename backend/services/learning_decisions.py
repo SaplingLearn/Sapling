@@ -85,6 +85,7 @@ from learning.checks import RubricItem, WrongReason
 from learning.evidence import GraderBackend
 from services import ai_budget, events_service
 from services.log_privacy import safe_exception_text
+from services.typesafe_client import DEFAULT_MODEL as _JEV_PINNED_MODEL
 
 logger = logging.getLogger("sapling.decisions")
 
@@ -97,7 +98,7 @@ def parse_jev_enabled(raw: str | None) -> bool:
 # ── §3.6 settings (read here or by tests/evals/decisions.py; Jev's by PKG-15) ──
 # † = no validated cut-point (HANDOFF-05b "Constants chosen").
 JEV_ENABLED = parse_jev_enabled(os.getenv("JEV_ENABLED"))
-JEV_MODEL = "jev-1.13.0"  # pinned; never an alias
+JEV_MODEL = _JEV_PINNED_MODEL  # pinned; never an alias (one pin: services/typesafe_client.py)
 JEV_SDK_VERSION = "typesafe-sdk==0.7.2"  # the exact pin in requirements.txt (invariant 24)
 JEV_TIMEOUT_MS = 800  # †
 JEV_MAX_RETRIES = 1
