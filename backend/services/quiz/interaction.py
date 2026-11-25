@@ -10,6 +10,21 @@ from __future__ import annotations
 import hashlib
 from typing import Any
 
+#: A dialogue's reply bounds: each of minReplies/maxReplies is clamped into
+#: [DIALOGUE_REPLIES_FLOOR, DIALOGUE_REPLIES_CEILING]; a missing value takes its
+#: default, and an inverted pair falls back to both defaults.
+DIALOGUE_REPLIES_FLOOR = 1
+DIALOGUE_REPLIES_CEILING = 8
+DIALOGUE_MIN_REPLIES_DEFAULT = 2
+DIALOGUE_MAX_REPLIES_DEFAULT = 4
+#: A connect-map needs at least this many nodes to draw a map.
+CONNECT_MAP_MIN_NODES = 3
+#: The fewest entries any other kit list (buckets, steps, options, passages,
+#: markers, stops, items, each side of a pairing) or a scrambled pool takes.
+MIN_KIT_ENTRIES = 2
+#: A highlight's minSelected when the payload gives none (and its floor).
+HIGHLIGHT_MIN_SELECTED_DEFAULT = 1
+
 
 def _clean_id(raw: Any) -> str:
     if not isinstance(raw, str):
@@ -69,7 +84,7 @@ def _sanitize_sort(raw: dict[str, Any]) -> dict[str, Any] | None:
     if not isinstance(buckets_raw, list):
         return None
     buckets = [b.strip() for b in buckets_raw if isinstance(b, str) and b.strip()]
-    if len(buckets) < 2:
+    if len(buckets) < MIN_KIT_ENTRIES:
         return None
     items = _clean_nodes(raw.get("items"))
     if not items:
@@ -90,7 +105,7 @@ def _sanitize_label(raw: dict[str, Any]) -> dict[str, Any] | None:
 
 def _sanitize_sequence(raw: dict[str, Any]) -> dict[str, Any] | None:
     steps = _clean_nodes(raw.get("steps"))
-    if len(steps) < 2:
+    if len(steps) < MIN_KIT_ENTRIES:
         return None
     return {"kind": "sequence", "steps": steps}
 
@@ -110,7 +125,7 @@ def _sanitize_compare(raw: dict[str, Any]) -> dict[str, Any] | None:
     left = _clean_side(raw.get("left"))
     right = _clean_side(raw.get("right"))
     options = _clean_nodes(raw.get("options"))
-    if not left or not right or left["id"] == right["id"] or len(options) < 2:
+    if not left or not right or left["id"] == right["id"] or len(options) < MIN_KIT_ENTRIES:
         return None
     side_ids = {left["id"], right["id"]}
     if any(o["id"] in side_ids for o in options):
@@ -124,10 +139,14 @@ def _sanitize_dialogue(raw: dict[str, Any]) -> dict[str, Any] | None:
     follow = _clean_text(raw.get("follow"))
     if not role or not open_ or not follow:
         return None
-    min_replies = _clamp_int(raw.get("minReplies"), 2, 1, 8)
-    max_replies = _clamp_int(raw.get("maxReplies"), 4, 1, 8)
+    min_replies = _clamp_int(
+        raw.get("minReplies"), DIALOGUE_MIN_REPLIES_DEFAULT, DIALOGUE_REPLIES_FLOOR, DIALOGUE_REPLIES_CEILING
+    )
+    max_replies = _clamp_int(
+        raw.get("maxReplies"), DIALOGUE_MAX_REPLIES_DEFAULT, DIALOGUE_REPLIES_FLOOR, DIALOGUE_REPLIES_CEILING
+    )
     if max_replies < min_replies:
-        min_replies, max_replies = 2, 4
+        min_replies, max_replies = DIALOGUE_MIN_REPLIES_DEFAULT, DIALOGUE_MAX_REPLIES_DEFAULT
     out: dict[str, Any] = {
         "kind": "dialogue",
         "role": role,
@@ -157,9 +176,11 @@ def _sanitize_explain(raw: dict[str, Any]) -> dict[str, Any] | None:
 
 def _sanitize_highlight(raw: dict[str, Any]) -> dict[str, Any] | None:
     passages = _clean_nodes(raw.get("passages"))
-    if len(passages) < 2:
+    if len(passages) < MIN_KIT_ENTRIES:
         return None
-    min_selected = _clamp_int(raw.get("minSelected"), 1, 1, len(passages))
+    min_selected = _clamp_int(
+        raw.get("minSelected"), HIGHLIGHT_MIN_SELECTED_DEFAULT, HIGHLIGHT_MIN_SELECTED_DEFAULT, len(passages)
+    )
     out: dict[str, Any] = {
         "kind": "highlight",
         "passages": passages,
@@ -183,7 +204,7 @@ def _sanitize_calculate(raw: dict[str, Any]) -> dict[str, Any] | None:
 def _sanitize_position(raw: dict[str, Any]) -> dict[str, Any] | None:
     markers = _clean_nodes(raw.get("markers"))
     stops = _clean_nodes(raw.get("stops"))
-    if len(markers) < 2 or len(stops) < 2:
+    if len(markers) < MIN_KIT_ENTRIES or len(stops) < MIN_KIT_ENTRIES:
         return None
     stop_ids = {s["id"] for s in stops}
     if any(m["id"] in stop_ids for m in markers):
@@ -197,7 +218,7 @@ def _sanitize_position(raw: dict[str, Any]) -> dict[str, Any] | None:
 
 def _sanitize_rank(raw: dict[str, Any]) -> dict[str, Any] | None:
     items = _clean_nodes(raw.get("items"))
-    if len(items) < 2:
+    if len(items) < MIN_KIT_ENTRIES:
         return None
     out: dict[str, Any] = {"kind": "rank", "items": items}
     for key in ("hint", "whyPlaceholder"):
@@ -213,7 +234,7 @@ def _sanitize_connect(raw: dict[str, Any]) -> dict[str, Any] | None:
 
     if mode == "map":
         nodes = _clean_nodes(raw.get("nodes"))
-        if len(nodes) < 3:
+        if len(nodes) < CONNECT_MAP_MIN_NODES:
             return None
         out: dict[str, Any] = {"kind": "connect", "mode": "map", "nodes": nodes}
         if note:
@@ -222,7 +243,7 @@ def _sanitize_connect(raw: dict[str, Any]) -> dict[str, Any] | None:
 
     left = _clean_nodes(raw.get("left"))
     right = _clean_nodes(raw.get("right"))
-    if len(left) < 2 or len(right) < 2 or len(left) != len(right):
+    if len(left) < MIN_KIT_ENTRIES or len(right) < MIN_KIT_ENTRIES or len(left) != len(right):
         return None
     right_ids = {n["id"] for n in right}
     if any(n["id"] in right_ids for n in left):
@@ -305,7 +326,7 @@ def scramble_pool(interaction: dict[str, Any], seed: str) -> dict[str, Any]:
     if key is None:
         return interaction
     pool = interaction.get(key)
-    if not isinstance(pool, list) or len(pool) < 2:
+    if not isinstance(pool, list) or len(pool) < MIN_KIT_ENTRIES:
         return interaction
     ranked = sorted(
         pool,
