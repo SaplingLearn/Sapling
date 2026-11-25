@@ -51,6 +51,8 @@ import { BACKEND_URL, USER_ACTIVE } from "./support/stack";
 
 const FIXTURE_PDF = path.join(__dirname, "fixtures", "upload-journey.pdf");
 const FIXTURE_NAME = "upload-journey.pdf";
+// The Library shows a file by its name without the extension (libraryModel.ts::titleOf).
+const FIXTURE_TITLE = "upload-journey";
 
 // Mirrors backend/agents/function_handlers_e2e.py — the scripted pipeline
 // output this journey asserts on. Keep in sync with that module.
@@ -145,7 +147,7 @@ test("upload → SSE → document appears in library and Postgres", async ({
 
   const dialog = page.getByTestId("library-upload-where");
   await expect(dialog).toBeVisible();
-  await expect(dialog).toContainText(FIXTURE_NAME);
+  await expect(dialog).toContainText(FIXTURE_TITLE);
 
   // Pick a course (nothing in the filename suggests one), then add it.
   const confirm = page.getByTestId("library-upload-confirm");
@@ -211,7 +213,7 @@ test("upload → SSE → document appears in library and Postgres", async ({
 
   const card = page.getByTestId(`library-doc-${doc.id}`);
   await expect(card).toBeVisible();
-  await expect(card).toContainText(FIXTURE_NAME);
+  await expect(card).toContainText(FIXTURE_TITLE);
   // The row's subtitle is the decrypted summary — the encryption round-trip
   // (encrypt at persist, decrypt at read) closed correctly.
   await expect(card).toContainText(SCRIPTED_ABSTRACT_SNIPPET);
