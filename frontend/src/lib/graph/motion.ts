@@ -43,10 +43,12 @@ import { IS_TEST_MODE } from "@/lib/testMode";
  * hurrying it.
  */
 const DRIFT_ACCEL = 0.03;
-/** How long one node's push takes to turn right round (ms). At 40s a concept
- *  reaches ~34 units from where it settled — three times the original 13s
- *  reach, at the original's speed (see `DRIFT_ACCEL`). */
-const DRIFT_TURN_MS = 40_000;
+/** How long one node's push takes to turn right round (ms). The longer the
+ *  turn, the further a concept travels before the push reverses — so this is
+ *  the REACH dial, and it moves without touching the pace `DRIFT_ACCEL` sets.
+ *  56s measures ~30 units from where a node settled in the live graph, against
+ *  the original 13s turn's ~11. */
+const DRIFT_TURN_MS = 56_000;
 /** Course roots are anchors: they wander at half a concept's amplitude. */
 const DRIFT_ROOT_SCALE = 0.5;
 /** Below this heat a released concept adopts where it came to rest (the
