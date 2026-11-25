@@ -73,10 +73,11 @@ const frames = (n: number) => vi.advanceTimersByTime(17 * n);
  * This is the drift's amplitude AND the guard that the graph opened settled:
  * a layout that re-ran would move nodes by hundreds of units across a graph
  * this wide, so anything in this range is wander rather than a re-plan.
- * Widened with `DRIFT_TURN_MS` (2026-11-25): the 13s turn only reached ~11
- * units, which on screen was indistinguishable from a dead stop. The 40s turn
- * reaches ~34 at the same SPEED — `DRIFT_ACCEL` is unchanged, since that is
- * what sets the pace.
+ * Retuned with the drift constants (2026-11-25). This bound is the drift as
+ * jsdom frames see it; the live graph measures differently because the orbit
+ * and home springs pull back, so do not read one as the other. What it is
+ * here for is unchanged: a layout that re-ran would move nodes by hundreds of
+ * units across a graph this wide, so anything in this range is wander.
  */
 const DRIFT_BOUND = 40;
 

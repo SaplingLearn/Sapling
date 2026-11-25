@@ -71,8 +71,10 @@ describe("driftForce", () => {
 
   // What these assert is the SHAPE of the motion, not the numbers: that the
   // push cancels itself over a full turn, and that a second of it is neither
-  // nothing nor a leap. The per-second bound is DRIFT_ACCEL's (unchanged); the
-  // full-turn bound is reach, which DRIFT_TURN_MS widened on 2026-11-25.
+  // nothing nor a leap. The per-second bound belongs to DRIFT_ACCEL and the
+  // full-turn bound to the reach, so each moves when its own constant does.
+  // Both are the drift IN ISOLATION and read higher than the live graph, where
+  // the orbit and home springs pull back — measure in the app, not here.
 
   it("turns right round, so a node wanders rather than flying off", () => {
     // Over a full turn the push cancels itself: the node comes back.
@@ -84,8 +86,8 @@ describe("driftForce", () => {
   it("wanders a few units, not pixels at a time", () => {
     const n = node("concept-1");
     const moved = wander(n, 1000);
-    expect(Math.hypot(moved.x, moved.y)).toBeGreaterThan(0.2);
-    expect(Math.hypot(moved.x, moved.y)).toBeLessThan(6);
+    expect(Math.hypot(moved.x, moved.y)).toBeGreaterThan(0.5);
+    expect(Math.hypot(moved.x, moved.y)).toBeLessThan(15);
   });
 });
 

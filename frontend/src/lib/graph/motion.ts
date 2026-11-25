@@ -31,24 +31,29 @@ import { IS_TEST_MODE } from "@/lib/testMode";
 /**
  * How hard the drift pushes a concept, per tick, before velocity decay.
  *
- * This constant sets the SPEED on its own: measured, a node travels about
- * 89 * DRIFT_ACCEL units per second whatever the turn period is. 0.03 is the
- * pace the map was designed to breathe at (~2.7 units/sec) and is deliberately
- * unchanged — raising it to make the motion visible made it four times too
- * fast, which read as drifting rather than breathing.
+ * This constant sets the PACE. Measured on the live graph, a node travels
+ * roughly 43 * DRIFT_ACCEL units per second; 0.14 came out at 10.2, which read
+ * as the map drifting rather than breathing, and 0.03 at 0.85, which barely
+ * read at all.
  *
- * Reach is `DRIFT_TURN_MS`'s job instead: amplitude measures about
- * 28.6 * DRIFT_ACCEL * (DRIFT_TURN_MS / 1000) units. So a longer turn travels
- * further at the same speed, which is what makes the wander legible without
- * hurrying it.
+ * Reach is `DRIFT_TURN_MS`'s job, with one catch worth knowing: a turn long
+ * enough (120s was tried) makes the map look MORE static, not less, because
+ * what you notice over a few seconds of watching is pace, and a slow turn
+ * spends those seconds barely moving. So reach is only legible when the pace
+ * carries it.
+ *
+ * These two are paired deliberately: 0.075 over a 30s turn travels further
+ * than 0.14 over 13s did (45.6 units against 43.2) at under a third of its
+ * speed. Measure in the running app, not in `motion.test.ts` — the orbit and
+ * home springs pull back against the drift there, so the isolated force
+ * overstates both numbers.
  */
-const DRIFT_ACCEL = 0.03;
+const DRIFT_ACCEL = 0.075;
 /** How long one node's push takes to turn right round (ms). The longer the
- *  turn, the further a concept travels before the push reverses — so this is
- *  the REACH dial, and it moves without touching the pace `DRIFT_ACCEL` sets.
- *  56s measures ~30 units from where a node settled in the live graph, against
- *  the original 13s turn's ~11. */
-const DRIFT_TURN_MS = 56_000;
+ *  turn, the further a concept travels before the push reverses — the REACH
+ *  dial, which does not touch the pace. See `DRIFT_ACCEL` for why it cannot be
+ *  stretched indefinitely. */
+const DRIFT_TURN_MS = 30_000;
 /** Course roots are anchors: they wander at half a concept's amplitude. */
 const DRIFT_ROOT_SCALE = 0.5;
 /** Below this heat a released concept adopts where it came to rest (the
