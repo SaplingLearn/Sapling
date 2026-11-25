@@ -7,8 +7,7 @@ import type { LoopPlanConcept } from "@/lib/api";
 import { HYPERCORRECTION_DWELL_COPY } from "@/lib/hypercorrectionDwell";
 import tutorStyles from "./tutor/tutor.module.css";
 import { FEEDBACK_PENDING_COPY } from "./checkNote";
-
-const NOTE_STYLE: React.CSSProperties = { fontSize: 13, color: "var(--text-muted)" };
+import styles from "./TeachActions.module.css";
 
 export function TeachActions({
   feedback, feedbackPending, hold, continueDisabled, checkMeDisabled, pendingNote, teachStart, streaming,
@@ -43,7 +42,7 @@ export function TeachActions({
         <button
           ref={continueRef}
           data-testid="loop-continue"
-          className="btn btn--primary"
+          className={`btn btn--primary ${styles.press}`}
           onClick={onContinue}
           disabled={continueDisabled}
         >
@@ -51,26 +50,26 @@ export function TeachActions({
         </button>
       )}
       {feedback && hold && (
-        <span role="status" data-testid="loop-feedback-dwell" style={NOTE_STYLE}>
+        <span role="status" data-testid="loop-feedback-dwell" className={styles.note}>
           {HYPERCORRECTION_DWELL_COPY}
         </span>
       )}
       <button
         ref={checkMeRef}
         data-testid="loop-check-me"
-        className={feedback ? "btn" : "btn btn--primary"}
+        className={`${feedback ? "btn" : "btn btn--primary"} ${styles.press}`}
         onClick={onCheckMe}
         disabled={checkMeDisabled}
         title={feedbackPending ? FEEDBACK_PENDING_COPY : "Get a question on this concept"}
       >
         Check me
       </button>
-      {pendingNote && <span role="status" style={NOTE_STYLE}>{FEEDBACK_PENDING_COPY}</span>}
+      {pendingNote && <span role="status" className={styles.note}>{FEEDBACK_PENDING_COPY}</span>}
       {teachStart && (
         <button
           ref={teachStartRef}
           data-testid="loop-teach-start"
-          className="btn"
+          className={`btn ${styles.press}`}
           onClick={() => onTeachStart(teachStart)}
           disabled={streaming}
         >
@@ -84,7 +83,7 @@ export function TeachActions({
           <span
             role="status"
             data-testid={checkNoteReported ? "loop-check-reported" : undefined}
-            style={NOTE_STYLE}
+            className={styles.note}
           >
             {checkNote}
           </span>

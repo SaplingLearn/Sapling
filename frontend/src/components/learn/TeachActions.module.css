@@ -1,0 +1,22 @@
+/* The actions between checks (TeachActions). */
+
+/* The status lines beside the buttons: the dwell, why Check me waits, the
+   check's note. */
+.note {
+  font-size: var(--fs-md);
+  color: var(--text-muted);
+}
+
+/* A press answers at once: the button gives a little under the pointer and
+   springs back (the global `.btn` transition carries it back). */
+.press {
+  /* No scale token exists for a press. */
+  --teach-press-scale: 0.97;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .press:active:not(:disabled) {
+    transform: scale(var(--teach-press-scale));
+    transition-duration: var(--dur-instant);
+  }
+}
