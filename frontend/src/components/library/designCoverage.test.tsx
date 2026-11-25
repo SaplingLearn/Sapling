@@ -3,7 +3,7 @@
  * Total coverage of the design handoff's style declarations.
  *
  * `designParity.test.tsx` checks specific values the rebuild must carry. This
- * file checks the complement: that NO declaration in the prototype was left
+ * file checks the complement: that NO declaration in either prototype was left
  * behind. Every `style="…"` declaration in the handoff must appear either in
  * the rendered DOM or somewhere in the rebuild's source — the latter because a
  * menu, modal, trash view or skeleton is not mounted in a single render.
@@ -16,7 +16,7 @@ import fs from "node:fs";
 import path from "node:path";
 import React from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 
 import { declarations, normalizeColor, renderedDeclarations } from "./designParity";
 
@@ -27,6 +27,13 @@ vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
 vi.mock("@/context/FlagsContext", () => ({
   useFlagMap: () => ({ flags: {}, ready: true }),
 }));
+vi.mock("@/lib/notes/useNoteMath", () => ({
+  useNoteMath: () => ({
+    open: vi.fn(), close: vi.fn(), active: null, paletteOpen: false,
+    insert: vi.fn(), preview: () => "", refresh: vi.fn(),
+    palettePos: { left: 0, top: 0 },
+  }),
+}));
 vi.mock("@/lib/api", () => ({
   getDocuments: vi.fn(),
   getCourses: vi.fn(),
@@ -34,6 +41,10 @@ vi.mock("@/lib/api", () => ({
   scanDocumentConcepts: vi.fn(),
   scanCourseConcepts: vi.fn(),
   uploadDocumentStream: vi.fn(),
+  getDocumentNotes: vi.fn(),
+  saveDocumentNotes: vi.fn(),
+  regenerateDocumentNotes: vi.fn(),
+  askDocumentNotes: vi.fn(),
 }));
 vi.mock("@/lib/libraryApi", () => ({
   getFolders: vi.fn(async () => ({ folders: [] })),
@@ -41,18 +52,21 @@ vi.mock("@/lib/libraryApi", () => ({
   restoreDocument: vi.fn(),
   purgeDocument: vi.fn(),
   updateDocument: vi.fn(),
+  createBlankDocument: vi.fn(),
   createFolder: vi.fn(),
   renameFolder: vi.fn(),
   deleteFolder: vi.fn(),
 }));
 vi.mock("@/lib/studyGuide/api", () => ({ listGuides: vi.fn(async () => ({ guides: [] })) }));
 
-import { getCourses, getDocuments, type EnrolledCourse } from "@/lib/api";
+import { getCourses, getDocumentNotes, getDocuments, type EnrolledCourse } from "@/lib/api";
 import { Library } from "./Library";
+import { Notes } from "../notes/Notes";
 import { ToastProvider } from "../ToastProvider";
 
 const read = (p: string) => fs.readFileSync(path.join(__dirname, p), "utf8");
 const LIBRARY_DESIGN = read("__fixtures__/library-v2.design.html");
+const NOTES_DESIGN = read("../notes/__fixtures__/notes.design.html");
 
 /**
  * Declarations the rebuild deliberately does not carry.
@@ -121,7 +135,10 @@ function sourceText(): string {
     }
   };
   walk(path.join(__dirname, "..", "library"));
+  walk(path.join(__dirname, "..", "notes"));
+  walk(path.join(__dirname, "../../lib/notes"));
   files.push(path.join(__dirname, "../../app/library-notes.css"));
+  files.push(path.join(__dirname, "../../app/notes-editor.css"));
   return files.map(f => fs.readFileSync(f, "utf8")).join("\n");
 }
 
@@ -194,11 +211,17 @@ const DOC = {
   concept_notes: [{ name: "Determinants", description: "" }], page_count: 18,
   created_at: "2026-11-05T00:00:00Z", processed_at: "2026-11-05T00:00:00Z",
 };
+const NOTES_ROW = {
+  document_id: "d1", user_id: "u1", title: "Determinants",
+  content: "<h2>Overview</h2><p>What a determinant measures.</p>", final: false,
+  created_at: "2026-11-01T00:00:00Z", updated_at: "2026-11-01T00:00:00Z",
+};
 
 beforeEach(() => {
   vi.spyOn(console, "error").mockImplementation(() => {});
   vi.mocked(getDocuments).mockResolvedValue({ documents: [DOC] } as never);
   vi.mocked(getCourses).mockResolvedValue({ courses: [COURSE] });
+  vi.mocked(getDocumentNotes).mockResolvedValue(NOTES_ROW);
 });
 
 describe("every design declaration was ported", () => {
@@ -206,5 +229,13 @@ describe("every design declaration was ported", () => {
     const view = render(<ToastProvider><Library /></ToastProvider>);
     await screen.findByTestId("library-doc-d1");
     expect(dropped(LIBRARY_DESIGN, view.container as HTMLElement)).toEqual([]);
+  });
+
+  it("the Notes page drops nothing", async () => {
+    const view = render(<ToastProvider><Notes documentId="d1" /></ToastProvider>);
+    await screen.findByTestId("notes-editor");
+    await waitFor(() =>
+      expect(screen.getByTestId("notes-title").textContent).toBe("Determinants"));
+    expect(dropped(NOTES_DESIGN, view.container as HTMLElement)).toEqual([]);
   });
 });

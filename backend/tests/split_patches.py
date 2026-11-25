@@ -194,7 +194,10 @@ DOCUMENTS_MODULES = (
     "services.documents.library_api",
     "services.documents.scan",
     "services.documents.stream",
+    "services.documents.blank",
     "services.documents.folders",
+    "services.documents.doc_notes",
+    "services.documents.notes_api",
 )
 
 

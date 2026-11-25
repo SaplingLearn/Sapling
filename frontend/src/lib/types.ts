@@ -186,6 +186,25 @@ export interface DocFolder {
   updated_at: string;
 }
 
+/** The editable notes document for one library document. */
+export interface DocumentNotes {
+  document_id: string;
+  user_id: string;
+  title: string;
+  /** The editor's HTML body. */
+  content: string;
+  /** Finalized notes are read-only until the student presses Edit. */
+  final: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+/** One turn of the Ask Clov conversation, as the ask endpoint wants it. */
+export interface NotesChatTurn {
+  role: 'user' | 'ai';
+  text: string;
+}
+
 export type RarityTier = 'common' | 'uncommon' | 'rare' | 'epic' | 'legendary';
 export type CosmeticType = 'avatar_frame' | 'banner' | 'name_color' | 'title';
 export type AchievementCategory = 'activity' | 'social' | 'milestone' | 'special';

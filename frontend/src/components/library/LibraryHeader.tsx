@@ -26,6 +26,7 @@ export interface LibraryHeaderProps {
   searchRef: React.RefObject<HTMLInputElement | null>;
   fileRef: React.RefObject<HTMLInputElement | null>;
   onFiles: (files: File[]) => void;
+  onNewDocument: () => void;
   onNewFolder: () => void;
   sort: SortKey;
   onSort: (s: SortKey) => void;
@@ -79,7 +80,7 @@ function GuidesButton() {
 
 export function LibraryHeader(props: LibraryHeaderProps) {
   const {
-    query, onQuery, searchRef, fileRef, onFiles, onNewFolder,
+    query, onQuery, searchRef, fileRef, onFiles, onNewDocument, onNewFolder,
     sort, onSort, type, onType, typeCounts, scopedCount, menu, onMenu, menuClosing, canUpload,
   } = props;
   const [focused, setFocused] = React.useState(false);
@@ -369,6 +370,16 @@ export function LibraryHeader(props: LibraryHeaderProps) {
                     Upload Documents
                   </button>
                   <MenuDivider />
+                  <button role="menuitem" className="sapHoverMenu" onClick={onNewDocument} style={MENU_ITEM}>
+                    <svg
+                      width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#445D22"
+                      strokeWidth="1.8" strokeLinejoin="round" aria-hidden="true"
+                    >
+                      <path d="M6 3h8l4 4v14H6z" />
+                      <path d="M14 3v4h4" />
+                    </svg>
+                    New Document
+                  </button>
                   <button role="menuitem" className="sapHoverMenu" onClick={onNewFolder} style={MENU_ITEM}>
                     <FolderIcon size={16} />
                     New Folder

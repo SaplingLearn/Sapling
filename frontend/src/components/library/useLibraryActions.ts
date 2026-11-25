@@ -1,7 +1,7 @@
 "use client";
 /**
  * The Library's verbs: move, trash, restore, purge, rename, re-type, scan, and
- * "New Folder".
+ * the two "New …" creators.
  *
  * Each one is the small amount of glue between a control and `useLibraryData`:
  * it plays the row's exit animation where the design has one, clears the
@@ -45,6 +45,7 @@ export interface LibraryActions {
   restoreDocs: (ids: string[]) => void;
   purgeDocs: (ids: string[]) => void;
   commitEdit: () => void;
+  newDocument: () => void;
   newFolder: () => void;
   deleteOpenFolder: () => void;
 
@@ -122,6 +123,17 @@ export function useLibraryActions(input: LibraryActionsInput): LibraryActions {
     void data.renameDocument(edit.id, base.endsWith(ext) ? base : base + ext);
   }, [data, ui]);
 
+  const newDocument = React.useCallback(() => {
+    ui.closeAllMenus();
+    void (async () => {
+      const name = uniqueName("New Document", data.documents.map(titleOf));
+      const doc = await data.createDocument(name, scopeCourseId, openFolder?.id ?? null);
+      if (!doc) return;
+      ui.setSelected(doc.id);
+      ui.startEdit(doc.id, "doc", name);
+    })();
+  }, [data, ui, scopeCourseId, openFolder]);
+
   const newFolder = React.useCallback(() => {
     ui.closeAllMenus();
     void (async () => {
@@ -179,7 +191,7 @@ export function useLibraryActions(input: LibraryActionsInput): LibraryActions {
 
   return {
     moveToFolder, moveToCourse, trashDocs, restoreDocs, purgeDocs,
-    commitEdit, newFolder, deleteOpenFolder,
+    commitEdit, newDocument, newFolder, deleteOpenFolder,
     scans, runScan, courseScanning, runCourseScan,
   };
 }

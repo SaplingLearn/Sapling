@@ -109,6 +109,7 @@ WIPED_BY_CASCADE: dict[str, str] = {
     "graph_edges": "graph_nodes",
     "node_mastery_events": "graph_nodes",
     "note_concepts": "notes",
+    "document_notes": "documents",
     "messages": "sessions",
     "quiz_responses": "quiz_attempts",
 }

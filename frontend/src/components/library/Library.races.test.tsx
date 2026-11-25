@@ -35,6 +35,7 @@ vi.mock("@/lib/libraryApi", () => ({
   restoreDocument: vi.fn(),
   purgeDocument: vi.fn(),
   updateDocument: vi.fn(),
+  createBlankDocument: vi.fn(),
   createFolder: vi.fn(),
   renameFolder: vi.fn(),
   deleteFolder: vi.fn(),

@@ -16,12 +16,13 @@
  * `useLibraryUpload`.
  */
 import React from "react";
+import { useRouter } from "next/navigation";
 
 import { FullHeightScreen } from "../FullHeightScreen";
 import { useToast } from "../ToastProvider";
 import { useUser } from "@/context/UserContext";
 
-import { DocMenu, menuPositionFor } from "./DocMenu";
+import { DocMenu } from "./DocMenu";
 import { BulkBar, BulkBarReveal, UndoToast } from "./LibraryBits";
 import { LibraryBody } from "./LibraryBody";
 import { LibraryHeader } from "./LibraryHeader";
@@ -46,6 +47,7 @@ import { useRowProps } from "./useRowProps";
 const BOOT_MS = 980;
 
 export function Library() {
+  const router = useRouter();
   const toast = useToast();
   const { userId, userReady } = useUser();
   const data = useLibraryData(userId, userReady);
@@ -70,24 +72,14 @@ export function Library() {
     ui, data.documents, data.trash, data.folders, courses, courseById,
   );
 
-  // Opening a document (double-click, or Enter on a focused row) shows its
-  // details: the row's "⋯" dialog, anchored to that row's own button. A row in
-  // the Trash has no dialog — Restore is its only action — so it opens nothing.
-  const { setSelected, openDocMenu } = ui;
-  const openDoc = React.useCallback((docId: string) => {
-    const section = sectionRef.current;
-    const button = section
-      ?.querySelector(`[data-testid="library-doc-${docId}"]`)
-      ?.querySelector<HTMLElement>('[aria-haspopup="dialog"]');
-    if (!section || !button) return;
-    setSelected(docId);
-    openDocMenu({ docId, position: menuPositionFor(button, section), sub: null });
-  }, [setSelected, openDocMenu]);
+  const openDoc = React.useCallback(
+    (docId: string) => router.push(`/library/${docId}/notes`), [router],
+  );
 
   // Checking rows takes over from the single current row: it clears, so it
   // does not come back when the checks are cleared.
   const anyChecked = scope.checkedIds.length > 0;
-  const { setSelectedFolder } = ui;
+  const { setSelected, setSelectedFolder } = ui;
   React.useEffect(() => {
     if (!anyChecked) return;
     setSelected(null);
@@ -198,6 +190,7 @@ export function Library() {
             searchRef={searchRef}
             fileRef={fileRef}
             onFiles={upload.pickFiles}
+            onNewDocument={act.newDocument}
             onNewFolder={act.newFolder}
             sort={ui.sortKey}
             onSort={ui.setSortKey}
@@ -331,10 +324,14 @@ export function Library() {
               sub={ui.docMenu.sub}
               onSub={ui.setDocMenuSub}
               onClose={ui.closeAllMenus}
+              onOpen={() => { ui.closeAllMenus(); openDoc(menuDoc.id); }}
               onRename={() => {
                 ui.closeAllMenus();
                 ui.startEdit(menuDoc.id, "doc", titleOf(menuDoc));
               }}
+              // The uploaded file is not kept after processing, so there is no
+              // original to hand back — the notes page is what can be exported.
+              onDownload={() => { ui.closeAllMenus(); openDoc(menuDoc.id); }}
               onMoveCourse={id => { ui.closeAllMenus(); act.moveToCourse([menuDoc.id], id); }}
               onMoveFolder={id => { ui.closeAllMenus(); act.moveToFolder([menuDoc.id], id); }}
               onType={c => { ui.closeAllMenus(); void data.setCategory(menuDoc.id, c); }}

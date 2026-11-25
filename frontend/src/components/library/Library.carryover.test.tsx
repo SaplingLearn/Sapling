@@ -33,6 +33,7 @@ vi.mock("@/lib/libraryApi", () => ({
   restoreDocument: vi.fn(async () => ({ restored: true })),
   purgeDocument: vi.fn(async () => ({ deleted: true, purged: true })),
   updateDocument: vi.fn(async () => ({ id: "d1" })),
+  createBlankDocument: vi.fn(),
   createFolder: vi.fn(),
   renameFolder: vi.fn(),
   deleteFolder: vi.fn(),
@@ -165,18 +166,10 @@ describe("the old page's actions all still work", () => {
     expect(within(toast).getByTestId("library-toast-undo")).toBeTruthy();
   });
 
-  it("double-clicking a row opens its details, the old panel's content", async () => {
+  it("double-clicking a row opens its notes, as the design specifies", async () => {
     await renderLibrary();
     fireEvent.doubleClick(screen.getByTestId("library-doc-d1"));
-    const dialog = await screen.findByTestId("library-doc-menu");
-    expect(dialog.textContent).toContain("Cofactor expansion");
-    expect(push).not.toHaveBeenCalled();
-  });
-
-  it("Enter on a focused row opens the same details", async () => {
-    await renderLibrary();
-    fireEvent.keyDown(screen.getByTestId("library-doc-d1"), { key: "Enter" });
-    expect(await screen.findByTestId("library-doc-menu")).toBeTruthy();
+    expect(push).toHaveBeenCalledWith("/library/d1/notes");
   });
 
   it("the search still reaches the summary and the concepts", async () => {
