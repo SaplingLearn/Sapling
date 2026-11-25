@@ -135,7 +135,10 @@ def _call(name: str, params: dict) -> dict:
         if not isinstance(result, dict) or not isinstance(result.get("status"), str):
             raise ValueError("Invalid budget acknowledgment")
         return result
-    except Exception:
+    except Exception as error:
+        # #866 debug: the 503 below names no cause, so say which RPC failed
+        # (the class only: a PostgREST error body can echo parameters).
+        _logger.warning("checklist_budget_%s failed: %s", name, type(error).__name__)
         raise _unavailable() from None
 
 
@@ -230,6 +233,16 @@ def admit(user_id: str, enrollment_id: str, input_hash: str, model_names: tuple[
         if status == "blocked":
             detail = "Checklist usage needs reconciliation before another paid refresh. Your saved checklist is still available."
         raise HTTPException(429, detail)
+    if status == "usage_unavailable":
+        # The SQL refuses to read headroom past a usage row this UTC month whose
+        # price is unknown (cost NULL, negative or non-finite; token count
+        # missing). Retrying cannot clear it, so say so instead of "retry".
+        _logger.warning(
+            "checklist admission refused for %s: an llm_usage row this month has "
+            "no usable price (unpriced model?); no paid refresh until it is priced",
+            user_id,
+        )
+        raise HTTPException(503, "Checklist usage cannot be priced right now, so the checklist cannot be regenerated. Your saved checklist is still available.")
     if status == "busy":
         raise HTTPException(409, "A checklist request is still in progress. Retry in two minutes; an uncertain earlier bill will remain reserved.", headers={"Retry-After": "120"})
     raise _unavailable()
