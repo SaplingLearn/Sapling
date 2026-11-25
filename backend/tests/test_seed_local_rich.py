@@ -46,10 +46,7 @@ def _seeded_graph_nodes(monkeypatch) -> list[dict]:
     monkeypatch.setattr(rich.h, "insert_if_absent", lambda *a, **k: None)
     monkeypatch.setattr(rich, "table", lambda name: MagicMock(select=MagicMock(return_value=[])))
     rich.seed_graph()
-    try:
-        rich.seed_learning_loop()
-    except Exception:  # noqa: BLE001 — only its graph_nodes upserts matter here
-        pass
+    rich.seed_learning_loop()
     return rows
 
 
