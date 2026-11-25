@@ -118,9 +118,12 @@ REDUNDANT = "redundant"
 OVER_CAP = "cap"
 
 _LOG_SAMPLE = 8  # dropped relations named per log line
-_LOG_NAME_MAX = 60
+_LOG_NAME_MAX = 60  # chars of each sampled name a log line carries
+_NODES_TABLE = "graph_nodes"
+_NOT_SUBJECT_ROOT = "neq.subject_root"  # a subject-root node is never an endpoint (rule 1)
 
-_LOCK_STRIPES = tuple(threading.Lock() for _ in range(64))
+_LOCK_STRIPE_COUNT = 64  # lock stripes the (student, course) edge writes hash onto
+_LOCK_STRIPES = tuple(threading.Lock() for _ in range(_LOCK_STRIPE_COUNT))
 
 
 def _lock_for(user_id: str, course_id: str) -> threading.Lock:
@@ -153,6 +156,113 @@ def _reaches(successors: dict[str, set[str]], start: str, goal: str) -> bool:
     return False
 
 
+def _scope_names(course_concepts: Iterable[str]) -> dict[str, str]:
+    """Rule 1's scope: normalized key -> the course graph's stored name (first wins)."""
+    scope: dict[str, str] = {}
+    for name in course_concepts:
+        key = _normalize_concept(name)
+        if key:
+            scope.setdefault(key, " ".join(name.split()))
+    return scope
+
+
+def _importance_by_key(document_concepts: Iterable[tuple[str, float]]) -> dict[str, float]:
+    """This document's concepts: normalized key -> its highest importance."""
+    importance: dict[str, float] = {}
+    for name, value in document_concepts:
+        key = _normalize_concept(name)
+        if key:
+            importance[key] = max(importance.get(key, value), value)
+    return importance
+
+
+def _rank(key: str, importance: dict[str, float]) -> tuple[int, float, str]:
+    """Rule 6's canonical rank: a concept the course already had first, then
+    this document's by importance descending, ties by normalized name."""
+    if key in importance:
+        return (1, -importance[key], key)
+    return (0, 0.0, key)
+
+
+def _drop_reason(
+    pre: str, dep: str, scope: dict[str, str], importance: dict[str, float], seen: set
+) -> str | None:
+    """Rules 1–4 for one normalized relation, or None when it is a candidate."""
+    if pre not in scope or dep not in scope:
+        return UNKNOWN
+    if pre == dep:
+        return SELF_LOOP
+    if pre not in importance and dep not in importance:
+        return OFF_DOCUMENT
+    if (pre, dep) in seen:
+        return DUPLICATE
+    return None
+
+
+def _screen_relations(
+    relations: Iterable[tuple[str, str]], scope: dict[str, str], importance: dict[str, float]
+) -> tuple[list[tuple[str, str]], list[tuple[str, str, str]]]:
+    """Rules 1–4: (the candidates as normalized pairs, in model order; the
+    drops by the model's names)."""
+    dropped: list[tuple[str, str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    candidates: list[tuple[str, str]] = []
+    for raw_pre, raw_dep in relations:
+        pre, dep = _normalize_concept(raw_pre), _normalize_concept(raw_dep)
+        reason = _drop_reason(pre, dep, scope, importance, seen)
+        if reason is None:
+            seen.add((pre, dep))
+            candidates.append((pre, dep))
+        else:
+            dropped.append((reason, raw_pre, raw_dep))
+    return candidates, dropped
+
+
+def _existing_graph(
+    existing_edges: Iterable[tuple[str, str]],
+) -> tuple[dict[str, set[str]], set[tuple[str, str]]]:
+    """The course's existing prerequisite edges as (successors, present pairs)."""
+    successors: dict[str, set[str]] = defaultdict(set)
+    present: set[tuple[str, str]] = set()
+    for raw_pre, raw_dep in existing_edges:
+        pre, dep = _normalize_concept(raw_pre), _normalize_concept(raw_dep)
+        if pre and dep and pre != dep:
+            successors[pre].add(dep)
+            present.add((pre, dep))
+    return successors, present
+
+
+def _admit(candidates, successors, present, scope, dropped):
+    """Rules 5 and 6: the ranked candidates admitted greedily (adding each to
+    `successors`); a present one is already there, one that would close a
+    cycle is dropped. Returns (already present, admitted)."""
+    already: list[tuple[str, str]] = []
+    admitted: list[tuple[str, str]] = []
+    for pre, dep in candidates:
+        if (pre, dep) in present:
+            already.append((pre, dep))
+        elif _reaches(successors, dep, pre):
+            dropped.append((CYCLE, scope[pre], scope[dep]))
+        else:
+            successors[pre].add(dep)
+            admitted.append((pre, dep))
+    return already, admitted
+
+
+def _reduced(admitted, successors, scope, dropped) -> list[tuple[str, str]]:
+    """Rule 7: the admitted edges without those still reachable another way,
+    checked lowest rank first."""
+    redundant: set[tuple[str, str]] = set()
+    for pre, dep in reversed(admitted):
+        successors[pre].discard(dep)
+        if _reaches(successors, pre, dep):
+            redundant.add((pre, dep))
+            dropped.append((REDUNDANT, scope[pre], scope[dep]))
+        else:
+            successors[pre].add(dep)
+    return [edge for edge in admitted if edge not in redundant]
+
+
 def resolve_prerequisites(
     relations: Iterable[tuple[str, str]],
     *,
@@ -167,70 +277,13 @@ def resolve_prerequisites(
     `document_concepts` are this document's (name, importance); and
     `course_concepts` is the scope — every concept name in the student's course
     graph at write time."""
-    scope: dict[str, str] = {}
-    for name in course_concepts:
-        key = _normalize_concept(name)
-        if key:
-            scope.setdefault(key, " ".join(name.split()))
-    importance: dict[str, float] = {}
-    for name, value in document_concepts:
-        key = _normalize_concept(name)
-        if key:
-            importance[key] = max(importance.get(key, value), value)
-
-    def rank(key: str) -> tuple[int, float, str]:
-        if key in importance:
-            return (1, -importance[key], key)
-        return (0, 0.0, key)
-
-    dropped: list[tuple[str, str, str]] = []
-    seen: set[tuple[str, str]] = set()
-    candidates: list[tuple[str, str]] = []
-    for raw_pre, raw_dep in relations:
-        pre, dep = _normalize_concept(raw_pre), _normalize_concept(raw_dep)
-        if pre not in scope or dep not in scope:
-            reason = UNKNOWN
-        elif pre == dep:
-            reason = SELF_LOOP
-        elif pre not in importance and dep not in importance:
-            reason = OFF_DOCUMENT
-        elif (pre, dep) in seen:
-            reason = DUPLICATE
-        else:
-            seen.add((pre, dep))
-            candidates.append((pre, dep))
-            continue
-        dropped.append((reason, raw_pre, raw_dep))
-    candidates.sort(key=lambda edge: (rank(edge[0]), rank(edge[1])))
-
-    successors: dict[str, set[str]] = defaultdict(set)
-    present: set[tuple[str, str]] = set()
-    for raw_pre, raw_dep in existing_edges:
-        pre, dep = _normalize_concept(raw_pre), _normalize_concept(raw_dep)
-        if pre and dep and pre != dep:
-            successors[pre].add(dep)
-            present.add((pre, dep))
-
-    already: list[tuple[str, str]] = []
-    admitted: list[tuple[str, str]] = []
-    for pre, dep in candidates:
-        if (pre, dep) in present:
-            already.append((pre, dep))
-        elif _reaches(successors, dep, pre):
-            dropped.append((CYCLE, scope[pre], scope[dep]))
-        else:
-            successors[pre].add(dep)
-            admitted.append((pre, dep))
-
-    redundant: set[tuple[str, str]] = set()
-    for pre, dep in reversed(admitted):
-        successors[pre].discard(dep)
-        if _reaches(successors, pre, dep):
-            redundant.add((pre, dep))
-            dropped.append((REDUNDANT, scope[pre], scope[dep]))
-        else:
-            successors[pre].add(dep)
-    kept = [edge for edge in admitted if edge not in redundant]
+    scope = _scope_names(course_concepts)
+    importance = _importance_by_key(document_concepts)
+    candidates, dropped = _screen_relations(relations, scope, importance)
+    candidates.sort(key=lambda edge: (_rank(edge[0], importance), _rank(edge[1], importance)))
+    successors, present = _existing_graph(existing_edges)
+    already, admitted = _admit(candidates, successors, present, scope, dropped)
+    kept = _reduced(admitted, successors, scope, dropped)
     for pre, dep in kept[max_edges:]:
         dropped.append((OVER_CAP, scope[pre], scope[dep]))
 
@@ -281,12 +334,12 @@ def course_concept_names(user_id: str, course_id: str | None) -> list[str]:
     if not user_id or not course_id:
         return []
     try:
-        rows = table("graph_nodes").select(
+        rows = table(_NODES_TABLE).select(
             "concept_name",
             filters={
                 "user_id": f"eq.{user_id}",
                 "course_id": f"eq.{course_id}",
-                "mastery_tier": "neq.subject_root",
+                "mastery_tier": _NOT_SUBJECT_ROOT,
             },
             order="created_at.desc,id.desc",
             limit=EXISTING_CONCEPTS_PROMPT_MAX,
@@ -308,11 +361,11 @@ def course_concept_names(user_id: str, course_id: str | None) -> list[str]:
 def _course_nodes(user_id: str, course_id: str) -> dict[str, str]:
     """node id -> concept name, for every concept of the course graph."""
     rows = page_all(
-        table("graph_nodes"), "id,concept_name",
+        table(_NODES_TABLE), "id,concept_name",
         filters={
             "user_id": f"eq.{user_id}",
             "course_id": f"eq.{course_id}",
-            "mastery_tier": "neq.subject_root",
+            "mastery_tier": _NOT_SUBJECT_ROOT,
         },
         order="id",
     )
