@@ -25,6 +25,7 @@ import {
 import { nodeBlobPath, wobbleFor } from "@/lib/graph/blobShape";
 import { IS_TEST_MODE } from "@/lib/testMode";
 import { GraphZoomControls } from "./GraphZoomControls";
+import styles from "./graph.module.css";
 import { FOLLOW_GAP, followForce, followersOf, restFloor, type FreeNodes, type Tether } from "./graphFollow";
 // The follow physics' pure parts are tested where they always were imported from.
 export { followForce, followersOf } from "./graphFollow";
@@ -337,19 +338,8 @@ const THIN_ARROW = { markerWidth: 5, markerHeight: 5, refX: 9 } as const;
 const ARROW_GAP = 2;
 const MAX_ZOOM = 3;
 
-// Visually-hidden but screen-reader-available, so the pointer-only SVG graph
-// still exposes its nodes as a navigable text list.
-const SR_ONLY: React.CSSProperties = {
-  position: "absolute",
-  width: 1,
-  height: 1,
-  padding: 0,
-  margin: -1,
-  overflow: "hidden",
-  clip: "rect(0,0,0,0)",
-  whiteSpace: "nowrap",
-  border: 0,
-};
+/** How far the hover card sits below and right of the pointer, in px. */
+const TOOLTIP_OFFSET = 14;
 
 /**
  * The hover tooltip: name, course, mastery bar, tier and last studied. Its
@@ -366,63 +356,36 @@ function renderTooltip(
   return (
     <div
       ref={ref}
-      style={{
-        position: "fixed",
-        left: pos.x + 14,
-        top: pos.y + 14,
-        background: "var(--bg-panel)",
-        border: "1px solid var(--border-strong)",
-        borderRadius: "var(--r-md)",
-        padding: "10px 12px",
-        boxShadow: "var(--shadow-md)",
-        pointerEvents: "none",
-        zIndex: 50,
-        fontSize: 12,
-        minWidth: 200,
-      }}
+      className={styles.tooltip}
+      // Seeded here, then moved by direct writes on pointer-move; the mark
+      // colour and mastery feed the module's dot and bar.
+      style={
+        {
+          left: pos.x + TOOLTIP_OFFSET,
+          top: pos.y + TOOLTIP_OFFSET,
+          "--tip-color": color,
+          "--tip-mastery": mastery,
+        } as React.CSSProperties
+      }
     >
-      <div style={{ fontFamily: "var(--font-display)", fontSize: 14, marginBottom: 4 }}>{hovered.name}</div>
-      <div style={{ display: "flex", alignItems: "center", gap: 6, color: "var(--text-dim)" }}>
-        <span style={{ width: 8, height: 8, borderRadius: "50%", background: color }} />
+      <div className={styles.tipName}>{hovered.name}</div>
+      <div className={styles.tipCourse}>
+        <span className={styles.tipDot} />
         {hovered.is_subject_root ? "Course" : hovered.subject}
       </div>
-      <div style={{ marginTop: 8 }}>
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            fontSize: 11,
-            color: "var(--text-muted)",
-            marginBottom: 4,
-          }}
-        >
+      <div className={styles.tipMastery}>
+        <div className={styles.tipMasteryHead}>
           <span>{hovered.is_subject_root ? "Avg. mastery" : "Mastery"}</span>
-          <span className="mono" style={{ color: "var(--text)" }}>
+          <span className={`mono ${styles.tipValue}`}>
             {Math.round(mastery * 100)}%
           </span>
         </div>
-        <div
-          style={{
-            height: 4,
-            background: "var(--bg-soft)",
-            borderRadius: "var(--r-full)",
-            overflow: "hidden",
-          }}
-        >
-          <div
-            style={{
-              width: "100%",
-              height: "100%",
-              background: color,
-              transformOrigin: "left",
-              transform: `scaleX(${mastery})`,
-              transition: "transform var(--dur) var(--ease)",
-            }}
-          />
+        <div className={styles.tipTrack}>
+          <div className={styles.tipFill} />
         </div>
       </div>
       {!hovered.is_subject_root && (
-        <div style={{ marginTop: 6, color: "var(--text-dim)", fontSize: 11, textTransform: "capitalize" }}>
+        <div className={styles.tipTier}>
           {hovered.mastery_tier}
           {hovered.last_studied_at && <> · {hovered.last_studied_at}</>}
         </div>
@@ -442,7 +405,7 @@ function KnowledgeGraph2DImpl({
   onNodeClick,
   pauseWhenOffscreen = true,
   comparison = null,
-  comparisonColor = "#8a7bc4",
+  comparisonColor = "var(--series-compare)",
   comparisonLabel,
   initialZoom = 1,
   fit,
@@ -1266,8 +1229,8 @@ function KnowledgeGraph2DImpl({
     // direct style write — no setState on a bare pointer-move.
     const tip = tooltipRef.current;
     if (tip) {
-      tip.style.left = `${e.clientX + 14}px`;
-      tip.style.top = `${e.clientY + 14}px`;
+      tip.style.left = `${e.clientX + TOOLTIP_OFFSET}px`;
+      tip.style.top = `${e.clientY + TOOLTIP_OFFSET}px`;
     }
     const drag = dragRef.current;
     if (!drag || e.pointerId !== drag.pointerId) return;
@@ -1479,7 +1442,7 @@ function KnowledgeGraph2DImpl({
           stroke={linkStroke(mastery, gradId, incident, organic ? linkCourseColor(s) : undefined)}
           strokeOpacity={op}
           markerEnd={linkMarker(arrow, gradPrefix, incident)}
-          style={legible ? { transition: "stroke-opacity 150ms ease" } : undefined}
+          className={legible ? styles.legibleEdge : undefined}
           strokeWidth={width}
           // A hand-drawn bar meets each node's rim square-on; its dotted
           // "related" form needs round caps to make the dots.
@@ -1515,15 +1478,8 @@ function KnowledgeGraph2DImpl({
         data-testid="graph-node"
         data-node-id={n.id}
         transform={`translate(${n.x}, ${n.y})`}
-        style={
-          legible
-            ? {
-                cursor: "grab",
-                opacity: legibleNodeOpacity(n, focusId, focusSet, focusCourseId),
-                transition: "opacity 150ms ease",
-              }
-            : { cursor: "grab" }
-        }
+        className={legible ? `${styles.node} ${styles.legibleNode}` : styles.node}
+        style={legible ? { opacity: legibleNodeOpacity(n, focusId, focusSet, focusCourseId) } : undefined}
         onPointerDown={(ev) => onNodePointerDown(ev, n)}
         onPointerEnter={(ev) => {
           // Seed the tooltip position as it mounts so it opens
@@ -1710,7 +1666,7 @@ function KnowledgeGraph2DImpl({
   const arrowBox = organic ? ORGANIC_ARROW : THIN_ARROW;
 
   return (
-    <div style={{ position: "relative", width, height, overflow: "hidden", background: "transparent" }}>
+    <div className={styles.frame} style={{ width, height }}>
       <svg
         ref={svgRef}
         width={width}
@@ -1718,11 +1674,7 @@ function KnowledgeGraph2DImpl({
         role="img"
         aria-label="Knowledge map"
         data-color-mode={colorMode}
-        style={{
-          display: "block",
-          cursor: "grab",
-          touchAction: "none",
-        }}
+        className={styles.svg}
         onPointerDown={onSvgPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
@@ -1777,7 +1729,7 @@ function KnowledgeGraph2DImpl({
           id as `data-node-id` so tests assert by identity, never by label
           (concept names are only unique per course). Registered in
           docs/frontend-testids.md. */}
-      <ul style={SR_ONLY} aria-label="Knowledge map nodes" data-testid="graph-node-items">
+      <ul className={styles.srOnly} aria-label="Knowledge map nodes" data-testid="graph-node-items">
         {nodes.map((n) =>
           onNodeClick ? (
             <li key={n.id} data-testid="graph-node-item" data-node-id={n.id}>
