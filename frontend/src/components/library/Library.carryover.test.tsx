@@ -162,6 +162,20 @@ describe("the old page's actions all still work", () => {
     expect(within(toast).getByTestId("library-toast-undo")).toBeTruthy();
   });
 
+  it("double-clicking a row opens its details, the old panel's content", async () => {
+    await renderLibrary();
+    fireEvent.doubleClick(screen.getByTestId("library-doc-d1"));
+    const dialog = await screen.findByTestId("library-doc-menu");
+    expect(dialog.textContent).toContain("Cofactor expansion");
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it("Enter on a focused row opens the same details", async () => {
+    await renderLibrary();
+    fireEvent.keyDown(screen.getByTestId("library-doc-d1"), { key: "Enter" });
+    expect(await screen.findByTestId("library-doc-menu")).toBeTruthy();
+  });
+
   it("the search still reaches the summary and the concepts", async () => {
     await renderLibrary();
     const search = screen.getByTestId("library-search");
