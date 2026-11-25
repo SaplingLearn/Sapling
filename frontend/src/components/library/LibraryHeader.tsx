@@ -6,8 +6,11 @@
  * Every value is the design handoff's literal — see `Sapling Library v2.dc.html`.
  */
 import React from "react";
+import Link from "next/link";
 
 import type { Document as Doc } from "@/lib/types";
+import { Glyph as ToolGlyph, TOOL } from "../study/hubUi";
+import { studyGuideHref } from "@/lib/toolHrefs";
 import {
   FONT_MONO, FONT_SERIF, Glyph, FolderIcon, MENU_IN, MENU_ITEM, MENU_OUT,
   MENU_SURFACE, MenuDivider, MenuScrim,
@@ -37,6 +40,39 @@ export interface LibraryHeaderProps {
   menuClosing: boolean;
   /** Disabled until the student is enrolled in something to upload into. */
   canUpload: boolean;
+}
+
+/**
+ * The way out to the Study Guides hub.
+ *
+ * The guides used to be listed inline above the documents; the hub owns that
+ * list, and the design handoff has no guides section at all (it knows "Study
+ * Guide" only as a document category). This is the Study hub's own tool
+ * button — same `TOOL.guide` tint, same `Glyph`, same `btn btn--sm` with
+ * `.tool`'s three overrides — so the two cannot drift apart.
+ *
+ * It sits in the header beside Upload, with the other page-level actions. The
+ * scope bar it used to share with Trash is about which documents the list
+ * shows; a link that leaves the Library entirely never belonged there.
+ */
+function GuidesButton() {
+  const tool = TOOL.guide;
+  return (
+    <Link
+      href={studyGuideHref()}
+      data-testid="library-guides"
+      className="btn btn--sm"
+      style={{
+        height: 40, padding: "0 16px", fontSize: "var(--fs-md)",
+        whiteSpace: "nowrap", flexShrink: 0, textDecoration: "none",
+      }}
+    >
+      <span aria-hidden="true" style={{ display: "grid", color: tool.fg }}>
+        <ToolGlyph name={tool.icon} size={14} />
+      </span>
+      {tool.title}
+    </Link>
+  );
 }
 
 export function LibraryHeader(props: LibraryHeaderProps) {
@@ -247,6 +283,7 @@ export function LibraryHeader(props: LibraryHeaderProps) {
           display: "flex", alignItems: "center", gap: 10,
           flexShrink: 0, marginLeft: "auto",
         }}>
+          <GuidesButton />
           <div style={{ position: "relative", flexShrink: 0, display: "flex" }}>
             <button
               data-testid="library-upload"

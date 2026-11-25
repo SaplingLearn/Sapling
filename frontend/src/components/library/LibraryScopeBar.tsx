@@ -9,11 +9,8 @@
  * single course is open, which is exactly this row's subject.
  */
 import React from "react";
-import Link from "next/link";
 
 import { Icon } from "../Icon";
-import { Glyph as ToolGlyph, TOOL } from "../study/hubUi";
-import { studyGuideHref } from "@/lib/toolHrefs";
 import {
   FONT_MONO, FONT_SERIF, Glyph, MENU_IN, MENU_OUT, MENU_SURFACE, MenuScrim, TrashIcon,
 } from "./primitives";
@@ -219,35 +216,6 @@ function ScopeSwitcher({
   );
 }
 
-/**
- * The way out to the Study Guides hub.
- *
- * The guides used to be listed inline above the documents; the hub owns that
- * list, and the design handoff has no guides section at all (it knows "Study
- * Guide" only as a document category). This is the Study hub's own tool
- * button — same `TOOL.guide` tint, same `Glyph`, same `btn btn--sm` with
- * `.tool`'s three overrides — so the two cannot drift apart.
- */
-function GuidesButton() {
-  const tool = TOOL.guide;
-  return (
-    <Link
-      href={studyGuideHref()}
-      data-testid="library-guides"
-      className="btn btn--sm"
-      style={{
-        height: 40, padding: "0 16px", fontSize: "var(--fs-md)",
-        whiteSpace: "nowrap", flexShrink: 0, textDecoration: "none",
-      }}
-    >
-      <span aria-hidden="true" style={{ display: "grid", color: tool.fg }}>
-        <ToolGlyph name={tool.icon} size={14} />
-      </span>
-      {tool.title}
-    </Link>
-  );
-}
-
 /** List ⇄ Panel. */
 function ViewToggle({
   view, onView,
@@ -402,7 +370,6 @@ export function LibraryScopeBar(props: LibraryScopeBarProps) {
             onDragLeave={onTrashDragLeave}
             onDrop={onTrashDrop}
           />
-          <GuidesButton />
         </>
       )}
 
