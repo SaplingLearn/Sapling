@@ -21,7 +21,6 @@ from this prompt's rule fragments, and never a retry of a failed run.
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import logging
 import re
 
@@ -31,6 +30,7 @@ from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RunUsage
 
+from agents._prompt_hash import prompt_version
 from agents._providers import AgentTask, model_for, settings_for_slot, slot_provider
 from agents.deps import SaplingDeps
 from agents.usage import UnfinishedRun, record_agent_usage
@@ -237,7 +237,7 @@ _PROMPT = (
     f"{_ANSWER_KIND}{_STEPWISE}{_NO_REFERENCE_IN_PROMPT}{_SHAPES}"
     f"{_CHUNK_IDS}{_UNTRUSTED}"
 )
-_PROMPT_HASH = hashlib.sha256(_PROMPT.encode("utf-8")).hexdigest()[:12]
+_PROMPT_HASH = prompt_version(_PROMPT)
 
 check_items_agent = Agent[SaplingDeps, CheckItemsOutput](
     model=model_for("check_items"),

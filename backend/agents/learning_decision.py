@@ -4,7 +4,6 @@ task="learning_decision")."""
 
 from __future__ import annotations
 
-import hashlib
 import re
 from typing import Annotated, Literal
 
@@ -13,6 +12,7 @@ from pydantic import BaseModel, Field
 from pydantic_ai import Agent
 from pydantic_ai.models.google import GoogleModelSettings
 
+from agents._prompt_hash import prompt_version
 from agents._bounded import clamp_unit
 from agents._providers import model_for, settings_for_slot
 from agents.deps import SaplingDeps
@@ -57,7 +57,9 @@ _SYSTEM_PROMPT = (
     "Never invent a key.\n"
     "- Report your confidence from 0 to 1; when unsure, lower it."
 )
-_PROMPT_HASH = hashlib.sha256(_SYSTEM_PROMPT.encode("utf-8")).hexdigest()[:12]
+_PROMPT_HASH = prompt_version(_SYSTEM_PROMPT)
+#: The #153 output-validation budget (tool-less, so `retries=` is that budget).
+DECISION_OUTPUT_RETRIES = 2
 # Spec §3.5 slot table: flash-lite, thinking off (Flash-Lite accepts budget 0; cf. agents/flashcard.py).
 _DECISION_SETTINGS = GoogleModelSettings(google_thinking_config=ThinkingConfig(thinking_budget=0))
 
@@ -65,7 +67,7 @@ learning_decision_agent = Agent[SaplingDeps, DecisionYesNoOutput](
     model=model_for("learning_decision"),
     deps_type=SaplingDeps,
     output_type=DecisionYesNoOutput,  # default; services/learning_decisions.py passes output_type= per run
-    retries=2,  # #153 output-validation budget; tool-less, so retries= is that budget
+    retries=DECISION_OUTPUT_RETRIES,
     system_prompt=_SYSTEM_PROMPT,
     # A claude-* slot sends nothing extra: no thinking budget on Claude 5.x;
     # the slot's `effort` (agents/_providers.py) is its thinking dial.

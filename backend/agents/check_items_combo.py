@@ -21,10 +21,10 @@ the flag stays off until one has (spec §13 A141).
 
 from __future__ import annotations
 
-import hashlib
 
 from pydantic_ai import Agent
 
+from agents._prompt_hash import prompt_version
 from agents._providers import model_for
 from agents.check_items import (
     _ANSWER_KIND,
@@ -85,7 +85,7 @@ _PROMPT = (
     f"{_COMBINE_RULES}{_FORMATS}{_DIFFICULTY}{_CARRIES}{_ITEM_FIELDS}{_WRONG_REASONS}"
     f"{_ANSWER_KIND}{_STEPWISE}{_NO_REFERENCE_IN_PROMPT}{_SHAPES}{_CHUNK_IDS}{_UNTRUSTED}"
 )
-_PROMPT_HASH = hashlib.sha256(_PROMPT.encode("utf-8")).hexdigest()[:12]
+_PROMPT_HASH = prompt_version(_PROMPT)
 
 check_items_combo_agent = Agent[SaplingDeps, CheckItemsOutput](
     model=model_for("check_items"),

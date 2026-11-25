@@ -28,7 +28,6 @@ from the loop route).
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import logging
 import re
 
@@ -36,6 +35,7 @@ from pydantic import BaseModel, Field
 from pydantic_ai import Agent, ModelRetry
 from pydantic_ai.usage import RunUsage
 
+from agents._prompt_hash import prompt_version
 from agents import CLOSE_LIMITS
 from agents._providers import model_for
 from agents.deps import SaplingDeps
@@ -114,14 +114,17 @@ _PROMPT = (
     "listed. Never state, solve or hint at the answer of a check item the "
     "transcript poses without its answer: the student may still be asked it."
 )
-_PROMPT_HASH = hashlib.sha256(_PROMPT.encode("utf-8")).hexdigest()[:12]
+_PROMPT_HASH = prompt_version(_PROMPT)
+#: The output-validation budget; CLOSE_LIMITS' request_limit 2 trips first on
+#: a second retry (agents/__init__.py).
+CLOSE_OUTPUT_RETRIES = 2
 
 session_close_agent = Agent[SaplingDeps, SessionClose](
     model=model_for("session_close"),
     deps_type=SaplingDeps,
     output_type=SessionClose,
     # Tool-less: retries= IS the output-validation budget (agents/__init__.py).
-    retries=2,
+    retries=CLOSE_OUTPUT_RETRIES,
     system_prompt=_PROMPT,
     metadata={"prompt_version": _PROMPT_HASH, "agent": "session_close"},
 )
@@ -129,7 +132,7 @@ session_close_agent = Agent[SaplingDeps, SessionClose](
 
 @session_close_agent.output_validator
 def _validate_close(output: SessionClose) -> SessionClose:
-    """Retry (within `retries=2` / CLOSE_LIMITS) a close whose shape the served
+    """Retry (within CLOSE_OUTPUT_RETRIES / CLOSE_LIMITS) a close whose shape the served
     path would otherwise have to cut: an incomplete summary, a plan that is not
     "If …, then …", or a self-evaluation that is not one question (structure
     only — no word lists). `served_close` still
