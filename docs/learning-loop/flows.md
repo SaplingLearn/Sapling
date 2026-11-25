@@ -968,7 +968,8 @@ flowchart LR
   through the gated loop router and a few sanctioned single imports (the
   inertness scan in `backend/tests/test_learning_zpd_policy.py`).
   `backend/tests/test_learning_loop_flag.py` compares every loop route's
-  answer under the two, and every `kill_switch` test runs both ways.
+  answer under the two; a `kill_switch` test that takes `loop_off_via` runs
+  both ways, the rest run once under the kill switch.
 - The frontend reads the flag first (`useLoopStatus`): an "off" read this
   visit renders the legacy screen with no probe. Otherwise the probe decides,
   and the legacy screen renders only on a definite "inactive" answer; an

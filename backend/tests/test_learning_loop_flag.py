@@ -12,8 +12,10 @@ pre-loop app — exactly the kill switch's. Pinned here:
   kill switch does, and the legacy tutor does not hand off to the loop;
 - only the named sites resolve the uploader's gate.
 
-The kill_switch-marked tests elsewhere run twice (tests/conftest.py
-LOOP_OFF_VIA), so every legacy-path pin holds for flag-off too.
+The kill_switch-marked tests elsewhere run once, under the kill switch; a
+test that names `loop_off_via` as its own argument runs both ways
+(tests/conftest.py LOOP_OFF_VIA). This module is what proves flag-off answers
+as the kill switch does.
 """
 
 from __future__ import annotations

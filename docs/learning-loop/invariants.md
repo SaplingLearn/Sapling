@@ -300,7 +300,8 @@ table read), `inv_15_gate_never_inside_chat_stream`,
 `backend/tests/test_kill_switch_gate_first.py`,
 `backend/tests/test_kill_switch_spelling_warning.py`,
 `backend/tests/test_learning_loop_flag.py` (flag off answers every loop route
-as the kill switch does; every `kill_switch` test runs both ways), the
+as the kill switch does; a `kill_switch` test taking `loop_off_via` runs
+both ways), the
 inertness scan in `backend/tests/test_learning_zpd_policy.py`, and the E2E
 kill-switch lane.
 
