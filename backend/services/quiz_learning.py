@@ -55,6 +55,8 @@ PLANNED_QUESTIONS_FLAG = "quiz_planned_questions"
 ITEM_GATES_FLAG = "quiz_item_gates"
 MISCONCEPTIONS_FLAG = "quiz_misconceptions"
 RESULTS_ROUTING_FLAG = "quiz_results_routing"
+#: Decimal places of p_known on the wire (the concept plan and learner-next).
+P_KNOWN_WIRE_DIGITS = 4
 
 
 
@@ -227,7 +229,7 @@ def concept_plan(user_id: str, course_id: str | None = None, now: datetime | Non
             "concept_name": by_id[c.node_id].name,
             "course_id": by_id[c.node_id].course_id,
             "reason": c.reason,
-            "p_known": round(c.p_known, 4),
+            "p_known": round(c.p_known, P_KNOWN_WIRE_DIGITS),
             "band": c.band,
             "due_at": _iso(c.due_at),
             "open_misconceptions": c.open_misconceptions,
