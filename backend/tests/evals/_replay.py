@@ -53,9 +53,8 @@ MODE = os.getenv("SAPLING_EVAL_MODE", "replay").lower()
 # returns that count. Any other table or function raises LookupError, so a new
 # budget read is a deliberate decision here, never a silent network call. The
 # production warning in services/ai_budget.py is unchanged. `evaluate_dataset`
-# (every dataset, from run_all.py and each module's cli_main) and
-# `grader_agreement.main` run inside it; tests/test_eval_budget_hermetic.py
-# pins both.
+# (every dataset, from run_all.py and each module's cli_main) runs inside it;
+# tests/test_eval_budget_hermetic.py pins it.
 
 
 class _EmptyLedger:

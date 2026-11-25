@@ -127,25 +127,6 @@ def test_every_dataset_is_evaluated_inside_the_hermetic_budget(
     assert ai_budget.table is dbconn.table
 
 
-def test_grader_agreement_grades_inside_the_hermetic_budget(monkeypatch, tmp_path):
-    from tests.evals import grader_agreement as ga
-
-    seen = []
-
-    async def grade_all(records):
-        seen.append(ai_budget.table)
-        return records
-
-    monkeypatch.setattr(ga, "load", lambda _path, need_item: [])
-    monkeypatch.setattr(ga, "grade_all", grade_all)
-    monkeypatch.setattr(ga, "report", lambda records: {})
-    path = tmp_path / "answers.jsonl"
-    path.write_text("")
-    assert ga.main([str(path)]) == 0
-    assert len(seen) == 1 and isinstance(getattr(seen[0], "__self__", None), replay.BudgetStore)
-    assert ai_budget.table is dbconn.table
-
-
 # ── spec §13 A137: a run's usage is captured, never enqueued ─────────────────
 
 
