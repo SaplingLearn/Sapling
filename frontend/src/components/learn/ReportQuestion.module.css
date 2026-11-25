@@ -1,0 +1,21 @@
+/* "Report this question" (ReportQuestion): a quiet link-weight button, then
+   one row of reasons. */
+
+/* `button.` outranks the global `.btn--sm` font size whatever the load order. */
+button.open {
+  align-self: flex-start;
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+
+.reasons {
+  display: flex;
+  gap: var(--sp-3);
+  align-items: center;
+  flex-wrap: wrap;
+  font-size: var(--fs-md);
+}
+
+.question {
+  color: var(--text-muted);
+}

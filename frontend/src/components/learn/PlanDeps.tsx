@@ -1,6 +1,7 @@
 "use client";
 import type { LoopPlanPrereqEdge } from "@/lib/api";
 import tutorStyles from "./tutor/tutor.module.css";
+import styles from "./PlanDeps.module.css";
 
 type PlanRow = { node_id: string; concept_name: string };
 
@@ -66,12 +67,12 @@ export function PlanDeps({
       className={tutorStyles.panelSec}
       aria-labelledby={headingId}
     >
-      <h3 id={headingId} className={tutorStyles.ps} style={{ margin: 0, fontWeight: 600 }}>
+      <h3 id={headingId} className={`${tutorStyles.ps} ${styles.heading}`}>
         How these connect
       </h3>
       <ul
         aria-label="Prerequisite dependencies"
-        style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 4 }}
+        className={styles.list}
       >
         {shown.map((edge) => {
           const from = conceptLabel(edge.prerequisite, plan, names);
@@ -80,8 +81,7 @@ export function PlanDeps({
             <li
               key={`${edge.prerequisite}-${edge.dependent}`}
               data-testid={`${testIdPrefix}-dep-${edge.prerequisite}-${edge.dependent}`}
-              className={tutorStyles.ps}
-              style={{ overflowWrap: "anywhere" }}
+              className={`${tutorStyles.ps} ${styles.edge}`}
               aria-label={`${from} is a prerequisite for ${to}`}
             >
               {from} → {to}

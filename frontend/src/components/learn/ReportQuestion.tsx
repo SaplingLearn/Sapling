@@ -8,6 +8,7 @@
 // why. Every testid is `${testIdPrefix}…`, written at the call site.
 import React from "react";
 import type { LoopReportReason } from "@/lib/api";
+import styles from "./ReportQuestion.module.css";
 
 export const REPORT_REASONS: readonly { reason: LoopReportReason; label: string }[] = [
   { reason: "wrong_answer", label: "The answer is wrong" },
@@ -50,8 +51,7 @@ export function ReportQuestion({
       <button
         type="button"
         data-testid={testIdPrefix}
-        className="btn btn--sm btn--ghost"
-        style={{ alignSelf: "flex-start", fontSize: 12, color: "var(--text-muted)" }}
+        className={`btn btn--sm btn--ghost ${styles.open}`}
         disabled={disabled}
         onClick={() => setOpen(true)}
       >
@@ -64,9 +64,9 @@ export function ReportQuestion({
       role="group"
       aria-label="What's wrong with this question?"
       data-testid={`${testIdPrefix}-reasons`}
-      style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", fontSize: 13 }}
+      className={styles.reasons}
     >
-      <span style={{ color: "var(--text-muted)" }}>What&apos;s wrong with it?</span>
+      <span className={styles.question}>What&apos;s wrong with it?</span>
       {REPORT_REASONS.map((r) => (
         <button
           key={r.reason}

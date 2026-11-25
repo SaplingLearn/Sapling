@@ -1,6 +1,7 @@
 "use client";
 import React, { useLayoutEffect, useRef } from "react";
 import { modalOpen } from "./modalOpen";
+import styles from "./CenteredCard.module.css";
 
 /** A card that stands in for the screen: an error, the saved-grade recovery,
  *  no course, the start's crisis-support card, a session closed elsewhere.
@@ -21,8 +22,8 @@ export function CenteredCard({ testId, children }: { testId: string; children: R
     heading.focus();
   }, []);
   return (
-    <div style={{ flex: 1, overflowY: "auto", padding: 32 }}>
-      <div ref={ref} tabIndex={-1} data-testid={testId} className="card fade-in" style={{ maxWidth: 520, margin: "24px auto", padding: "var(--pad-xl)" }}>
+    <div className={styles.scroll}>
+      <div ref={ref} tabIndex={-1} data-testid={testId} className={`card fade-in ${styles.card}`}>
         {children}
       </div>
     </div>
