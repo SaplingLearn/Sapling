@@ -15,10 +15,12 @@
  * them is graded as assisted.
  */
 
-import React from "react";
+import { AnimatePresence, motion } from "framer-motion";
 import type { LearningLoopKpisData } from "@/lib/types";
-
-const muted: React.CSSProperties = { color: "var(--text-muted)", fontSize: 13, margin: 0 };
+import { useMotionPresets } from "@/lib/motion";
+import { presetProps } from "./adminMotion";
+import t from "./adminTable.module.css";
+import s from "./LoopGates.module.css";
 
 function plural(n: number, one: string, many = `${one}s`): string {
   return `${n.toLocaleString()} ${n === 1 ? one : many}`;
@@ -28,7 +30,7 @@ function plural(n: number, one: string, many = `${one}s`): string {
 function GateChip({ label, ok, testid }: { label: string; ok: boolean | null; testid: string }) {
   const state = ok == null ? "inconclusive" : ok ? "pass" : "fail";
   return (
-    <span data-testid={testid} data-state={state} className={`chip ${ok === false ? "chip--err" : ""}`}
+    <span data-testid={testid} data-state={state} className={`chip ${s.chip} ${ok === false ? "chip--err" : ""}`}
       title={ok == null ? "No step carries the signal yet in this range." : undefined}>
       {label}: {state}
     </span>
@@ -36,22 +38,25 @@ function GateChip({ label, ok, testid }: { label: string; ok: boolean | null; te
 }
 
 export function LoopGates({ d }: { d: LearningLoopKpisData }) {
+  const m = useMotionPresets();
   const unscanned = d.unscanned_turns;
   return (
-    <div style={{ display: "grid", gap: 8, marginBottom: 16 }}>
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+    <div className={s.gates}>
+      <div className={s.chips}>
         <GateChip label="Zero served reveals" ok={d.gates.zero_leaks} testid="admin-loop-gate-leaks" />
         <GateChip label="Ceiling compliance ≥ 95%" ok={d.gates.ceiling_compliance_ok} testid="admin-loop-gate-ceiling" />
         <GateChip label="Earnest-revise ≤ 5%" ok={d.gates.earnest_revise_ok} testid="admin-loop-gate-earnest" />
       </div>
-      <p data-testid="admin-loop-gate-counts" style={muted}>
+      <p data-testid="admin-loop-gate-counts" className={t.muted}>
         {`${plural(d.served_reveals, "served reveal")} · ${plural(d.caught_leaks, "leak")} caught and cut before serving · ${plural(unscanned, "turn")} served unscanned · ceiling compliance over ${plural(d.ceiling_compliance.steps, "step")}`}
       </p>
-      {unscanned > 0 && (
-        <p data-testid="admin-loop-gate-unscanned" role="note" style={{ ...muted, color: "var(--text)" }}>
-          {`${plural(unscanned, "tutor turn")} ${unscanned === 1 ? "was" : "were"} served without the answer scan: the open questions could not be read, so "Zero served reveals" cannot vouch for what ${unscanned === 1 ? "it" : "they"} said. Every question posed before ${unscanned === 1 ? "it" : "them"} is graded as assisted.`}
-        </p>
-      )}
+      <AnimatePresence initial={false}>
+        {unscanned > 0 && (
+          <motion.p key="unscanned" {...presetProps(m.collapse)} data-testid="admin-loop-gate-unscanned" role="note" className={`${t.muted} ${s.unscanned}`}>
+            {`${plural(unscanned, "tutor turn")} ${unscanned === 1 ? "was" : "were"} served without the answer scan: the open questions could not be read, so "Zero served reveals" cannot vouch for what ${unscanned === 1 ? "it" : "they"} said. Every question posed before ${unscanned === 1 ? "it" : "them"} is graded as assisted.`}
+          </motion.p>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

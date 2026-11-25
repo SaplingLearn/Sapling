@@ -1,0 +1,20 @@
+/* What the learning loop cost (AdminLoopCost.tsx); its tables use
+   admin/adminTable.module.css. */
+
+.figures {
+  display: flex;
+  gap: var(--sp-12);
+  flex-wrap: wrap;
+}
+
+/* A dollar figure, a step under the panels' 24px counts. */
+.figure {
+  font-size: var(--fs-2xl);
+  font-weight: 600;
+}
+
+/* An interval under a cost. */
+.ci {
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+}

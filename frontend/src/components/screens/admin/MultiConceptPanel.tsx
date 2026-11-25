@@ -12,17 +12,14 @@
  * reads "—", never a zero.
  */
 
-import React from "react";
 import type { LoopMultiConcept, LoopMultiConceptBlock } from "@/lib/types";
+import { StaggerBody, StaggerRow } from "./adminMotion";
+import t from "./adminTable.module.css";
 
-const th: React.CSSProperties = {
-  textAlign: "left", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em",
-  color: "var(--text-muted)", padding: "4px 8px",
-};
-const thNum: React.CSSProperties = { ...th, textAlign: "right" };
-const td: React.CSSProperties = { fontSize: 13, padding: "6px 8px", borderTop: "1px solid var(--border)" };
-const tdNum: React.CSSProperties = { ...td, textAlign: "right", fontVariantNumeric: "tabular-nums" };
-const muted: React.CSSProperties = { color: "var(--text-muted)", fontSize: 13, margin: "0 0 12px" };
+const th = t.th;
+const thNum = `${t.th} ${t.num}`;
+const td = t.td;
+const tdNum = `${t.td} ${t.num}`;
 
 const pct = (v: number | null) => (v == null ? "—" : `${Number((v * 100).toFixed(1))}%`);
 
@@ -37,15 +34,15 @@ export function rateWithCi(b: LoopMultiConceptBlock): string {
 
 function Row({ block, label, testid }: { block: LoopMultiConceptBlock; label: string; testid: string }) {
   return (
-    <tr data-testid={testid}>
-      <td style={td}>{label}</td>
-      <td style={tdNum}>{block.items}{block.held ? ` (${block.held} held)` : ""}</td>
-      <td style={tdNum}>{block.served}</td>
-      <td style={tdNum}>{block.answered}</td>
-      <td style={tdNum}>{block.answered ? `${block.unassisted_correct} of ${block.unassisted}` : "—"}</td>
-      <td style={tdNum}>{block.students}</td>
-      <td style={tdNum}>{rateWithCi(block)}</td>
-    </tr>
+    <StaggerRow data-testid={testid}>
+      <td className={td}>{label}</td>
+      <td className={tdNum}>{block.items}{block.held ? ` (${block.held} held)` : ""}</td>
+      <td className={tdNum}>{block.served}</td>
+      <td className={tdNum}>{block.answered}</td>
+      <td className={tdNum}>{block.answered ? `${block.unassisted_correct} of ${block.unassisted}` : "—"}</td>
+      <td className={tdNum}>{block.students}</td>
+      <td className={tdNum}>{rateWithCi(block)}</td>
+    </StaggerRow>
   );
 }
 
@@ -54,7 +51,7 @@ function Row({ block, label, testid }: { block: LoopMultiConceptBlock; label: st
 export function MultiConceptPanel({ data }: { data: LoopMultiConcept | null | undefined }) {
   if (data === undefined) return null;
   const heading = (
-    <h3 className="h-serif" style={{ fontSize: 15, margin: "16px 0 8px" }}>
+    <h3 className={`h-serif ${t.heading}`}>
       Questions that combine concepts
     </h3>
   );
@@ -62,7 +59,7 @@ export function MultiConceptPanel({ data }: { data: LoopMultiConcept | null | un
     return (
       <section data-testid="admin-loop-multi-concept">
         {heading}
-        <p data-testid="admin-loop-multi-concept-unavailable" style={muted}>
+        <p data-testid="admin-loop-multi-concept-unavailable" className={t.lede}>
           Multi-concept question data could not be read for this range.
         </p>
       </section>
@@ -71,31 +68,31 @@ export function MultiConceptPanel({ data }: { data: LoopMultiConcept | null | un
   return (
     <section data-testid="admin-loop-multi-concept">
       {heading}
-      <p style={muted}>
+      <p className={t.lede}>
         Each of these questions combines a concept with one or two of its prerequisites. A student is
         asked one only once they are proficient in every concept it combines, at most once a concept a
         session; the answer counts as half an observation on the concept it builds up to. Served counts the
         questions posed in the range; the outcomes are the graded answers in it.
       </p>
       {data.overall.items === 0 && data.courses.length === 0 ? (
-        <p data-testid="admin-loop-multi-concept-empty" style={muted}>
+        <p data-testid="admin-loop-multi-concept-empty" className={t.lede}>
           No questions that combine concepts are stored yet.
         </p>
       ) : (
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ borderCollapse: "collapse", minWidth: 680 }}>
+        <div className={t.scrollX}>
+          <table className={`${t.table} ${t.minMultiConcept}`}>
             <thead>
               <tr>
-                <th style={th}>Course</th>
-                <th style={thNum}>Questions</th>
-                <th style={thNum}>Served</th>
-                <th style={thNum}>Answered</th>
-                <th style={thNum}>Right unaided</th>
-                <th style={thNum}>Students</th>
-                <th style={thNum}>Right</th>
+                <th className={th}>Course</th>
+                <th className={thNum}>Questions</th>
+                <th className={thNum}>Served</th>
+                <th className={thNum}>Answered</th>
+                <th className={thNum}>Right unaided</th>
+                <th className={thNum}>Students</th>
+                <th className={thNum}>Right</th>
               </tr>
             </thead>
-            <tbody>
+            <StaggerBody>
               {data.courses.map((c) => (
                 <Row
                   key={c.course_id ?? "none"}
@@ -105,7 +102,7 @@ export function MultiConceptPanel({ data }: { data: LoopMultiConcept | null | un
                 />
               ))}
               <Row block={data.overall} label="All courses" testid="admin-loop-multi-concept-overall" />
-            </tbody>
+            </StaggerBody>
           </table>
         </div>
       )}

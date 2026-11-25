@@ -1,0 +1,11 @@
+/* Hints to criterion (HintTrendPanel.tsx): a concept needing MORE help to get
+   it right is the one to look at, so rising reads as an error. */
+
+.rising { color: var(--err); }
+.flat { color: var(--text-muted); }
+.falling { color: var(--accent); }
+
+.summary {
+  font-size: var(--fs-md);
+  margin: 0 0 var(--sp-4);
+}

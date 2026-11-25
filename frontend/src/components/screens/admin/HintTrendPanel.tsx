@@ -17,17 +17,16 @@
 
 import React from "react";
 import type { LoopConceptTrend } from "@/lib/types";
+import { StaggerBody, StaggerRow } from "./adminMotion";
+import t from "./adminTable.module.css";
+import s from "./HintTrendPanel.module.css";
 
 type Direction = LoopConceptTrend["direction"];
 
-const th: React.CSSProperties = {
-  textAlign: "left", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em",
-  color: "var(--text-muted)", padding: "4px 8px",
-};
-const thNum: React.CSSProperties = { ...th, textAlign: "right" };
-const td: React.CSSProperties = { fontSize: 13, padding: "6px 8px", borderTop: "1px solid var(--border)" };
-const tdNum: React.CSSProperties = { ...td, textAlign: "right", fontVariantNumeric: "tabular-nums" };
-const muted: React.CSSProperties = { color: "var(--text-muted)", fontSize: 13, margin: "0 0 12px" };
+const th = t.th;
+const thNum = `${t.th} ${t.num}`;
+const td = t.td;
+const tdNum = `${t.td} ${t.num}`;
 
 /** Worst first: the concepts needing more help to get it right lead. */
 const ORDER: Direction[] = ["rising", "flat", "falling", "insufficient"];
@@ -39,11 +38,12 @@ const LABEL: Record<Direction, string> = {
   insufficient: "One week only",
 };
 
-const COLOR: Record<Direction, string> = {
-  rising: "var(--err)",
-  flat: "var(--text-muted)",
-  falling: "var(--accent)",
-  insufficient: "var(--text-muted)",
+/** The colour of each direction: worse is the error hue, better the accent. */
+const TONE: Record<Direction, string> = {
+  rising: s.rising,
+  flat: s.flat,
+  falling: s.falling,
+  insufficient: s.flat,
 };
 
 /** "H1.5": a mean rung, to one decimal. */
@@ -68,14 +68,14 @@ function Row({ concept }: { concept: LoopConceptTrend }) {
   const last = concept.weeks[concept.weeks.length - 1];
   const steps = concept.weeks.reduce((sum, week) => sum + week.steps, 0);
   return (
-    <tr data-testid={`admin-loop-htc-row-${concept.concept_id}`}>
-      <td style={td}><code>{concept.concept_id}</code></td>
-      <td style={tdNum}>{concept.weeks.length}</td>
-      <td style={tdNum}>{rung(first.mean_rung)} ({first.steps})</td>
-      <td style={tdNum}>{rung(last.mean_rung)} ({last.steps})</td>
-      <td style={tdNum}>{steps}</td>
-      <td style={{ ...td, color: COLOR[concept.direction], fontWeight: 600 }}>{LABEL[concept.direction]}</td>
-    </tr>
+    <StaggerRow data-testid={`admin-loop-htc-row-${concept.concept_id}`}>
+      <td className={td}><code>{concept.concept_id}</code></td>
+      <td className={tdNum}>{concept.weeks.length}</td>
+      <td className={tdNum}>{rung(first.mean_rung)} ({first.steps})</td>
+      <td className={tdNum}>{rung(last.mean_rung)} ({last.steps})</td>
+      <td className={tdNum}>{steps}</td>
+      <td className={`${td} ${t.strong} ${TONE[concept.direction]}`}>{LABEL[concept.direction]}</td>
+    </StaggerRow>
   );
 }
 
@@ -85,40 +85,40 @@ export function HintTrendPanel({ trend }: { trend: LoopConceptTrend[] }) {
   const rows = trendRows(trend);
   return (
     <section data-testid="admin-loop-htc-trend">
-      <h3 className="h-serif" style={{ fontSize: 15, margin: "16px 0 8px" }}>Do students need fewer hints?</h3>
-      <p style={muted}>
+      <h3 className={`h-serif ${t.heading}`}>Do students need fewer hints?</h3>
+      <p className={t.lede}>
         Per concept and week, the mean hint level (H0 = no hint) students had reached on the steps they got
         right, over the last weeks of the range. It should fall as students learn the concept. First and last
         are the window&apos;s first and last weeks with such steps, each with its count of steps.
       </p>
       {trend.length === 0 ? (
-        <p data-testid="admin-loop-htc-empty" style={muted}>No correct steps with a hint level in this range.</p>
+        <p data-testid="admin-loop-htc-empty" className={t.lede}>No correct steps with a hint level in this range.</p>
       ) : (
         <>
-          <p data-testid="admin-loop-htc-summary" style={{ fontSize: 13, margin: "0 0 8px" }}>
+          <p data-testid="admin-loop-htc-summary" className={s.summary}>
             {ORDER.map((direction, i) => (
               <React.Fragment key={direction}>
                 {i > 0 && " · "}
-                <span style={{ color: COLOR[direction] }}>{LABEL[direction]}</span> {counts[direction]}
+                <span className={TONE[direction]}>{LABEL[direction]}</span> {counts[direction]}
               </React.Fragment>
             ))}
           </p>
           {rows.length > 0 && (
-            <div style={{ overflowX: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <div className={t.scrollX}>
+              <table className={t.tableFull}>
                 <thead>
                   <tr>
-                    <th style={th}>Concept</th>
-                    <th style={thNum}>Weeks</th>
-                    <th style={thNum}>First week</th>
-                    <th style={thNum}>Last week</th>
-                    <th style={thNum}>Steps</th>
-                    <th style={th}>Trend</th>
+                    <th className={th}>Concept</th>
+                    <th className={thNum}>Weeks</th>
+                    <th className={thNum}>First week</th>
+                    <th className={thNum}>Last week</th>
+                    <th className={thNum}>Steps</th>
+                    <th className={th}>Trend</th>
                   </tr>
                 </thead>
-                <tbody>
+                <StaggerBody>
                   {rows.map((concept) => <Row key={concept.concept_id} concept={concept} />)}
-                </tbody>
+                </StaggerBody>
               </table>
             </div>
           )}
