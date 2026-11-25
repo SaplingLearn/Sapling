@@ -633,7 +633,7 @@ Five concurrent tracks kicked off from this plan. **No flag enables** until W0 e
 |---|---|---|
 | W3.1 UI | PlanPanel dependency block on `prereq_edges` | **done** |
 | W7.1 | Quiz focus-mode session chrome (first slice) | **done** (Hint/Skip/wager still deferred; forest retarget in W7.1b) |
-| W1.3 | Generative-core / compression check beat | **done** (E2E: `learn-loop.spec.ts` "W1.3 close beat" on `scripts/seed_learning_check_beats.py close`; Claude eval cases still open) |
+| W1.3 | Generative-core / compression check beat | **done** (E2E: `learn-loop.spec.ts` "W1.3 close beat" on `backend/scripts/seed_learning_check_beats.py` (stage `close`); Claude eval cases still open) |
 | W8.3 | Study Hub Focus ← `services.learner_next` | **done** (+ W8.3b Due→Quiz CTA) |
 | W2.3 | Reason-before-submit (encrypted, not evidence) | **done** (E2E: `learn-loop.spec.ts` "W2.3 reason-before-submit" on `seed_learning_check_beats.py reason`) → [`w2-reason-before-submit.md`](w2-reason-before-submit.md) |
 

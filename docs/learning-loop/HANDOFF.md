@@ -17,7 +17,7 @@
 4. **Plain quiz schema must stay flag-off byte-identical.** No `interaction` on `agents/quiz.QuizQuestion`. Kits live on `PlannedQuestion` + `attach_interaction` ([`w7-generation-emit.md`](./w7-generation-emit.md)).
 5. **Graded-only belief.** Kit UI / hints / working-steps never invent mastery channels. Submit stays written/MC evidence through `apply_graph_update`.
 6. **E2E ports:** human stack `:3000`/`:5000`; E2E slots `:310N`/`:510N`. Never boot E2E on the human ports. Prefer `127.0.0.1` for slot browsing (cookies ignore ports).
-7. **Do not commit** `backend/tests/evals/runs/*.jsonl`, `frontend/AGENTS.md`, `frontend/CLAUDE.md` unless asked.
+7. **Do not commit** `backend/tests/evals/runs/*.jsonl`, the local, untracked frontend AGENTS.md / CLAUDE.md unless asked.
 
 ---
 

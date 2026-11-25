@@ -614,11 +614,12 @@ class TestQueueAndRelint:
             assert f'"{flag}"' in overlap
 
     def test_the_frontend_types_every_queue_flag(self):
-        """The admin page labels each code (AdminCheckItems.tsx LINT_FLAG_LABELS
+        """The admin page labels each code (AdminCheckItems.tsx LINT_FLAG_LABELS; the
+        union moved to lib/adminCheckItemTypes.ts, re-exported by api.ts;
         is a Record over this union, so tsc fails on a missing label)."""
         from services.check_item_service import QUEUE_FLAGS
 
-        text = (BACKEND.parent / "frontend" / "src" / "lib" / "api.ts").read_text()
+        text = (BACKEND.parent / "frontend" / "src" / "lib" / "adminCheckItemTypes.ts").read_text()
         union = text.split("export type CheckItemLintFlag =", 1)[1].split(";", 1)[0]
         assert re.findall(r"'([a-z_]+)'", union) == list(QUEUE_FLAGS)
 
