@@ -7,7 +7,7 @@ import { OptionList } from "./OptionList";
 import { Icon } from "../Icon";
 import tutorStyles from "./tutor/tutor.module.css";
 import { modalOpen } from "./modalOpen";
-import { type Draft, FIELD_STYLE, type HintView, focusAnswerStart } from "./loopShared";
+import { type Draft, FIELD_CLASS, type HintView, focusAnswerStart } from "./loopShared";
 import { LOOP_ANSWER_MAX } from "@/lib/inputLimits";
 import {
   KEY_VERIFIED_HINT,
@@ -131,7 +131,7 @@ export function CheckCard({
             id={`${ids}-reason`}
             data-testid="loop-attempt-reason"
             maxLength={LOOP_ANSWER_MAX}
-            style={FIELD_STYLE}
+            className={FIELD_CLASS}
             placeholder="In one sentence: why?"
             value={draft.reason}
             disabled={busy}
@@ -150,7 +150,7 @@ export function CheckCard({
           maxLength={LOOP_ANSWER_MAX}
           data-answer-start=""
           aria-describedby={promptId}
-          style={FIELD_STYLE}
+          className={FIELD_CLASS}
           rows={2}
           placeholder={item.format === "teachback" ? "Explain it in your own words" : ""}
           value={draft.answer}
@@ -169,7 +169,7 @@ export function CheckCard({
           id={`${ids}-reasoning`}
           data-testid="loop-attempt-reasoning"
           maxLength={LOOP_ANSWER_MAX}
-          style={FIELD_STYLE}
+          className={FIELD_CLASS}
           rows={2}
           placeholder="Show your thinking — not graded"
           value={draft.reasoning}

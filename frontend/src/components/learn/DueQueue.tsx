@@ -54,7 +54,7 @@ import { useFeedbackHold } from "@/lib/feedbackPacing";
 import { HYPERCORRECTION_DWELL_COPY, useHypercorrectionDwell } from "@/lib/hypercorrectionDwell";
 import { BudgetPausedBanner, formatResetAt } from "./BudgetPausedBanner";
 import { ConfidenceControl } from "./ConfidenceControl";
-import { FIELD_STYLE } from "./loopShared";
+import { FIELD_CLASS } from "./loopShared";
 import { ReportQuestion } from "./ReportQuestion";
 import { answerPauseMessage, gradingPausedMessage, pausedConceptsMessage } from "./reviewPauseCopy";
 import tutorStyles from "./tutor/tutor.module.css";
@@ -625,7 +625,7 @@ function renderCheckAnswer({ item, promptId, choice, setChoice, reason, setReaso
         <textarea
           id={`${promptId}-reason`}
           data-testid="review-reason-input"
-          style={FIELD_STYLE}
+          className={FIELD_CLASS}
           maxLength={LOOP_ANSWER_MAX}
           placeholder="In one sentence: why?"
           value={reason}
@@ -644,7 +644,7 @@ function renderCheckAnswer({ item, promptId, choice, setChoice, reason, setReaso
         data-testid="review-answer-input"
         data-answer-start=""
         aria-describedby={promptId}
-        style={FIELD_STYLE}
+        className={FIELD_CLASS}
         maxLength={LOOP_ANSWER_MAX}
         value={answer}
         disabled={answered}

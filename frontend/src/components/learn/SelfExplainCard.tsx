@@ -15,18 +15,7 @@ import React, { useEffect, useId, useState } from "react";
 
 import type { LoopSelfExplain } from "@/lib/api";
 import { LOOP_ANSWER_MAX } from "@/lib/inputLimits";
-
-const FIELD_STYLE: React.CSSProperties = {
-  width: "100%",
-  padding: "10px 12px",
-  fontSize: 14,
-  lineHeight: 1.45,
-  border: "1px solid var(--border)",
-  borderRadius: "var(--r-md)",
-  background: "var(--bg-input)",
-  resize: "vertical",
-  boxSizing: "border-box",
-};
+import { FIELD_CLASS } from "./loopShared";
 
 export const SELF_EXPLAIN_HEADING = "Explain it in your own words";
 export const SELF_EXPLAIN_SUBLINE = "Not scored — a sentence or two is plenty.";
@@ -102,7 +91,7 @@ export function SelfExplainCard({
         maxLength={LOOP_ANSWER_MAX}
         aria-label="Your explanation"
         aria-describedby={promptId}
-        style={FIELD_STYLE}
+        className={FIELD_CLASS}
         rows={2}
         placeholder="Because…"
         value={reply}

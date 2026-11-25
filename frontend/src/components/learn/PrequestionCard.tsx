@@ -17,18 +17,7 @@ import React, { useId, useLayoutEffect, useRef, useState } from "react";
 import type { LoopPrequestion, LoopPrequestionGuess } from "@/lib/api";
 import { OptionList } from "./OptionList";
 import { LOOP_ANSWER_MAX } from "@/lib/inputLimits";
-
-const FIELD_STYLE: React.CSSProperties = {
-  width: "100%",
-  padding: "10px 12px",
-  fontSize: 14,
-  lineHeight: 1.45,
-  border: "1px solid var(--border)",
-  borderRadius: "var(--r-md)",
-  background: "var(--bg-input)",
-  resize: "vertical",
-  boxSizing: "border-box",
-};
+import { FIELD_CLASS } from "./loopShared";
 
 export const PREQUESTION_HEADING = "Take a guess first — this one isn't scored";
 export const PREQUESTION_SUBLINE = "Guess before we start: the explanation comes right after.";
@@ -139,7 +128,7 @@ export function PrequestionCard({
                 data-testid="loop-prequestion-reason"
                 maxLength={LOOP_ANSWER_MAX}
                 aria-label="Why you think so (optional)"
-                style={FIELD_STYLE}
+                className={FIELD_CLASS}
                 placeholder="Why? (optional)"
                 value={reason}
                 disabled={busy}
@@ -156,7 +145,7 @@ export function PrequestionCard({
               data-answer-start=""
               aria-label="Your guess"
               aria-describedby={promptId}
-              style={FIELD_STYLE}
+              className={FIELD_CLASS}
               rows={2}
               placeholder="Your guess"
               value={answer}

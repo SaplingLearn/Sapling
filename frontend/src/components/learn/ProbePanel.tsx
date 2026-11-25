@@ -5,7 +5,7 @@ import { ConfidenceControl } from "./ConfidenceControl";
 import { OptionList } from "./OptionList";
 import tutorStyles from "./tutor/tutor.module.css";
 import { modalOpen } from "./modalOpen";
-import { type Draft, FIELD_STYLE, focusAnswerStart } from "./loopShared";
+import { type Draft, FIELD_CLASS, focusAnswerStart } from "./loopShared";
 import { TutorTurn } from "./TutorTurn";
 import { LOOP_ANSWER_MAX } from "@/lib/inputLimits";
 import { HYPERCORRECTION_DWELL_COPY } from "@/lib/hypercorrectionDwell";
@@ -147,7 +147,7 @@ export function ProbePanel({
                       id={`${ids}-reason`}
                       data-testid="loop-probe-reason"
                       maxLength={LOOP_ANSWER_MAX}
-                      style={FIELD_STYLE}
+                      className={FIELD_CLASS}
                       placeholder="Because…"
                       value={draft.reason}
                       disabled={busy}
@@ -164,7 +164,7 @@ export function ProbePanel({
                     data-answer-start=""
                     aria-label="Check-in answer"
                     aria-describedby={promptId}
-                    style={FIELD_STYLE}
+                    className={FIELD_CLASS}
                     rows={3}
                     placeholder={item.format === "teachback" ? "Explain it in your own words" : "Your answer"}
                     value={draft.answer}
