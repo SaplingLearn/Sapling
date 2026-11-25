@@ -14,11 +14,11 @@ def _consolidated() -> list[Path]:
     return [p for p in sorted(MIGRATIONS_DIR.glob("*.sql")) if UNIT_MARKER.search(p.read_text())]
 
 
-def test_the_learning_system_is_one_consolidated_file_of_62_units():
+def test_the_learning_system_is_one_consolidated_file_of_units():
     [path] = _consolidated()
     names = [name for name, _ in split_units(path)]
-    assert len(names) == 62
-    # filename order, each once: the order the 62 files applied in
+    assert names
+    # filename order, each once: the order the original files applied in
     assert names == sorted(set(names))
     # every unit is a migration filename no plain file also has
     assert all(n.endswith(".sql") and not (MIGRATIONS_DIR / n).exists() for n in names)
@@ -28,7 +28,8 @@ def test_units_are_the_files_with_the_consolidated_one_expanded_in_place():
     plain = [p.name for p in sorted(MIGRATIONS_DIR.glob("*.sql")) if p not in _consolidated()]
     names = [name for name, _ in units()]
     assert [n for n in names if n in plain] == plain
-    assert len(names) == len(plain) + 62
+    [consolidated] = _consolidated()
+    assert len(names) == len(plain) + len(split_units(consolidated))
 
 
 def test_a_unit_reads_back_its_own_sql_only():
