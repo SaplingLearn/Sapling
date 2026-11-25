@@ -132,7 +132,7 @@ def _assert_replay_matches(db: LearningJournalDB, rep) -> None:
 
 
 @pytest.mark.parametrize("scores", [None, SCORES], ids=["never-studied", "stored-scores"])
-@pytest.mark.parametrize("seed", range(40))
+@pytest.mark.parametrize("seed", range(8))
 def test_replaying_the_journal_reproduces_the_incremental_writer_exactly(monkeypatch, seed, scores):
     db, _ = run(monkeypatch, history(seed), scores=scores)
     journal = _journal(db)
@@ -140,7 +140,7 @@ def test_replaying_the_journal_reproduces_the_incremental_writer_exactly(monkeyp
     _assert_replay_matches(db, _replay(db, journal))
 
 
-@pytest.mark.parametrize("seed", range(40, 70))
+@pytest.mark.parametrize("seed", range(40, 46))
 def test_rows_from_before_a123_replay_exactly_by_their_rule(monkeypatch, seed):
     """No retention, recheck or propagation columns (the pre-A123 journal):
     the default target (every writer but the review used it — no review

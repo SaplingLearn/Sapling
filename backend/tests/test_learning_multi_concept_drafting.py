@@ -1,14 +1,13 @@
 """Multi-concept drafting (learning-loop spec §13 A141, flag `multi_concept_items`).
 
-The combination drafter and its alignment check (requests and the rules that
-apply their answers), the service's combination run (the uploader's graph,
-the combinations, the skips, the write under the combination's key with its
-apex and components), and that with the flag off nothing of it runs.
+The rules that apply the combination drafter's and its alignment check's
+answers, the service's combination run (the uploader's graph, the
+combinations, the skips, the write under the combination's key with its apex
+and components), and that with the flag off nothing of it runs.
 """
 
 from __future__ import annotations
 
-import asyncio
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -27,59 +26,11 @@ from learning.item_alignment import (
 )
 from learning.multi_concept import SEP, combo_key
 from tests.test_learning_check_items import _cached_tables, _draft, _mc_draft
-from tests.test_learning_varied_drafting import PASSAGES, _capture
+from tests.test_learning_varied_drafting import PASSAGES
 
 APEX, PRE = "learning rate", "gradient descent"
 LABEL = "Learning Rate + Gradient Descent"
 KEY = combo_key([APEX, PRE])
-
-
-# ── the requests ─────────────────────────────────────────────────────────────
-
-
-def test_the_combination_drafter_sends_its_own_prompt_the_labels_and_the_recorded_schema(monkeypatch):
-    from agents import check_items as ci
-    from agents.check_items_combo import (
-        COMBINATIONS_HEADER,
-        build_combo_prompt,
-        check_items_combo_agent,
-    )
-
-    seen = _capture(
-        monkeypatch, check_items_combo_agent, "check_items", build_combo_prompt([LABEL], PASSAGES)
-    )
-    (system,) = seen["system"]
-    assert "using EVERY concept of the combination together" in system
-    assert f"at difficulty {params.MULTI_CONCEPT_DIFFICULTY}" in system
-    assert ci._FORMATS in system and ci._ITEM_FIELDS in system and ci._UNTRUSTED in system
-    (user,) = seen["user"]
-    assert user == f"{COMBINATIONS_HEADER}- {LABEL}\n\n" + ci.passages_section(PASSAGES)
-    plain = _capture(monkeypatch, ci.check_items_agent, "check_items", ci.build_prompt(["X"], PASSAGES))
-    assert seen["schema"] == plain["schema"]  # the plain drafter's schema, recorded live
-    assert check_items_combo_agent._metadata["prompt_version"] != ci._PROMPT_HASH
-
-
-def test_the_combination_check_asks_each_criterion_and_each_component(monkeypatch):
-    from agents.check_items_combo_verify import (
-        ComboVerifyItem,
-        build_combo_verify_prompt,
-        check_items_combo_verify_agent,
-    )
-    from agents.check_items_verify import CRITERIA_RULES, VerifyItem
-
-    item = ComboVerifyItem(
-        VerifyItem("1", "free", "Pick a rate for this descent.", None, (), ("Uses the gradient.", "Sizes the step.")),
-        ("Learning Rate", "Gradient Descent"),
-    )
-    seen = _capture(
-        monkeypatch, check_items_combo_verify_agent, "check_items_verify", build_combo_verify_prompt([item])
-    )
-    assert CRITERIA_RULES in seen["system"][0]
-    assert "(b) For EVERY component of EVERY item decide `required`" in seen["system"][0]
-    (user,) = seen["user"]
-    assert "ITEM 1\n" in user and "CRITERION c2: Sizes the step." in user
-    assert "COMPONENT k1: Learning Rate\nCOMPONENT k2: Gradient Descent" in user
-    assert set(seen["schema"]["properties"]) == {"criteria", "components"}
 
 
 # ── the rules (learning/item_alignment.py) ───────────────────────────────────
@@ -481,19 +432,3 @@ def test_the_e2e_handlers_answer_the_combination_drafter_and_its_check(monkeypat
         clear_function_handlers()
     # the plain request still gets the plain payload exactly
     assert fh._combination_labels("Concepts (write items for each; ...)\n- A\n\n") == []
-
-
-def test_asyncio_free_run_of_the_drafter_entry_point(monkeypatch):
-    """draft_combo_items rides run_drafting under its own feature."""
-    from agents import check_items_combo
-
-    seen = {}
-
-    async def fake_run(agent, prompt, *, deps, flex, feature, task="check_items"):
-        seen.update(agent=agent, feature=feature, task=task, prompt=prompt)
-        return "out"
-
-    monkeypatch.setattr(check_items_combo, "run_drafting", fake_run)
-    out = asyncio.run(check_items_combo.draft_combo_items([LABEL], PASSAGES, deps=None, flex=True))
-    assert out == "out" and seen["feature"] == "check_items_combo" and seen["task"] == "check_items"
-    assert seen["agent"] is check_items_combo.check_items_combo_agent

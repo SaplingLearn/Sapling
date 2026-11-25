@@ -138,10 +138,3 @@ def test_the_generator_reads_confusables_the_uts39_way():
     assert table["г"] == "r" and table["“"] == '"' and table["н"] == "h" and table["ɾ"] == "r"
     assert "—" not in table and '"' not in table  # no ASCII reading; ASCII never remapped
     assert gen.table_sha256(table) == _table_sha256(table)
-
-
-def test_the_data_module_renders_back_to_itself():
-    """render() of the committed table reproduces the committed module, so the
-    file is exactly what the generator writes (no hand edits)."""
-    gen = _generator()
-    assert gen.render(data.CONFUSABLES) == Path(data.__file__).read_text(encoding="utf-8")

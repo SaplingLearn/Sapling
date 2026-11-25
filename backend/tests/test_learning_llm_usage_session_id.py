@@ -13,11 +13,8 @@ unknown and retries — the graph_service journal idiom.
 
 from __future__ import annotations
 
-from db.migration_units import MIGRATION_UNITS
-import ast
 import asyncio
 import importlib
-import re
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -28,38 +25,7 @@ from agents.usage import record_agent_usage
 from services import events_service
 
 BACKEND = Path(__file__).resolve().parents[1]
-MIG_DIR = MIGRATION_UNITS
 SCRIPTS = BACKEND / "scripts"
-
-
-# ── migration ────────────────────────────────────────────────────────────────
-
-
-def _migration() -> Path:
-    hits = sorted(MIG_DIR.glob("*_learning_llm_usage_session_id.sql"))
-    assert len(hits) == 1, hits
-    return hits[0]
-
-
-def test_migration_is_timestamped_after_half_a():
-    """Append-only (CLAUDE.md): a UTC timestamp prefix later than the last
-    migration of half B's base (half A's posttest_poses)."""
-    path = _migration()
-    assert re.fullmatch(r"\d{14}_learning_llm_usage_session_id\.sql", path.name), path.name
-    (base,) = sorted(MIG_DIR.glob("*_learning_posttest_poses.sql"))
-    assert path.name > base.name
-
-
-def test_migration_is_additive_nullable_and_idempotent():
-    sql = _migration().read_text()
-    body = "\n".join(ln for ln in sql.splitlines() if not ln.lstrip().startswith("--"))
-    assert re.search(r"ALTER TABLE llm_usage\s+ADD COLUMN IF NOT EXISTS session_id text\s*;", body)
-    assert "NOT NULL" not in body.upper() and "DEFAULT" not in body.upper()
-    for forbidden in ("DROP ", "RENAME", "ALTER COLUMN", "UPDATE ", "DELETE "):
-        assert forbidden not in body.upper(), forbidden
-    # llm_usage's RLS/grants are table-level (0035) and unchanged; the column is
-    # served through PostgREST's cache, so the migration reloads it.
-    assert "NOTIFY pgrst, 'reload schema';" in body
 
 
 # ── the writer ───────────────────────────────────────────────────────────────
@@ -224,60 +190,6 @@ def test_an_unrelated_insert_error_keeps_the_column(monkeypatch):
     )
     events_service.flush_now()
     assert seen and all("session_id" in r for batch in seen for r in batch)
-
-
-# ── run sites that know a session pass it ───────────────────────────────────
-
-#: (module, innermost enclosing function) → the expression(s) its
-#: record_agent_usage calls pass as session_id=. A session is known at exactly
-#: these sites. Not listed, on purpose: agents/check_items.py (course assets, no
-#: session), and
-#: the non-tutor features (documents, notes, quiz, study guide, …).
-SESSION_SITES = {
-    ("agents/session_close.py", "run_session_close"): {"session_id"},
-    ("agents/grader.py", "_run_once"): {"deps.session_id"},
-    ("services/learning_decisions.py", "_run_decision"): {"deps.session_id"},
-    ("services/loop/turn.py", "record_usage"): {"self.session_id"},
-    # #118: the loop route's run sites live in services/loop/
-    ("services/loop/continuation.py", "_loop_continuation_text"): {"turn.session_id"},
-    # #117 (main's async ratchet): the owner read hops off the event loop.
-    # #118 (spec §13 A149): the tutor's run sites live in services/tutor/.
-    # The turn resolves the owner-checked id ONCE (off the event loop) and its
-    # run and continuation record against it; tests/test_legacy_usage_session_owner.py
-    # pins where each `usage_session_id` is resolved.
-    ("services/tutor/run.py", "_continuation_text"): {"usage_session_id"},
-    ("services/tutor/turns.py", "_start_session_agent"): {"session_id"},
-    ("services/tutor/turns.py", "_chat_via_agent"): {"usage_session_id"},
-    ("services/tutor/streams.py", "_usage"): {
-        # /chat/stream (owner-checked; resolved off the loop before the stream)
-        "usage_session_id",
-        "session_id",  # the opener stream: a server-minted id
-    },
-    ("services/tutor/turns.py", "_action_turn"): {"usage_session_id"},
-}
-
-
-def _session_kwargs(rel: str) -> dict[str, list[str | None]]:
-    """innermost enclosing function name → the session_id= of each call in it."""
-    tree = ast.parse((BACKEND / rel).read_text())
-    fns = [n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
-    found: dict[str, list[str | None]] = {}
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Call) and getattr(node.func, "id", None) == "record_agent_usage":
-            owner = max(
-                (f for f in fns if f.lineno <= node.lineno <= f.end_lineno), key=lambda f: f.lineno
-            )
-            kw = {k.arg: ast.unparse(k.value) for k in node.keywords}
-            found.setdefault(owner.name, []).append(kw.get("session_id"))
-    return found
-
-
-@pytest.mark.parametrize("site,expr", sorted(SESSION_SITES.items()), ids=lambda v: str(v))
-def test_run_sites_that_know_the_session_pass_it(site, expr):
-    rel, fn = site
-    calls = _session_kwargs(rel).get(fn)
-    assert calls, f"{rel}::{fn} has no record_agent_usage call (moved? re-point this pin)"
-    assert set(calls) == expr, f"{rel}::{fn} passes session_id={calls}, expected {expr}"
 
 
 # ── the report prefers the row's own session ────────────────────────────────

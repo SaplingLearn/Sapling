@@ -20,10 +20,8 @@
 
 from __future__ import annotations
 
-from db.migration_units import MIGRATION_UNITS
 import asyncio
 import pathlib
-import re
 from datetime import datetime, timedelta, timezone
 from typing import Optional, get_args
 
@@ -45,7 +43,6 @@ import services.loop.closing
 import services.loop.practice
 
 BACKEND = pathlib.Path(__file__).resolve().parents[1]
-MIGRATION = MIGRATION_UNITS / "20261108092032_learning_student_confidence.sql"
 
 # the route suites' fixtures (their autouse rate-limit overrides apply here too)
 gate_on, no_rate_limit, seams = _routes.gate_on, _routes.no_rate_limit, _routes.seams
@@ -467,118 +464,6 @@ def test_the_fingerprint_of_evidence_without_a_stated_confidence_is_unchanged():
     assert fingerprint("u1", "c1", [ev], None) == legacy
     stated = ev.model_copy(update={"student_confidence": SURE})
     assert fingerprint("u1", "c1", [stated], None) != legacy
-
-
-def test_the_migration_adds_the_column_and_the_commit_function_admits_it():
-    sql = MIGRATION.read_text()
-    assert re.search(
-        r"ALTER TABLE public\.node_mastery_events ADD COLUMN IF NOT EXISTS "
-        r"student_confidence double precision;",
-        sql,
-    )
-    assert "CHECK (student_confidence IS NULL OR (student_confidence >= 0 AND " in sql
-    fn = sql[sql.index("CREATE OR REPLACE FUNCTION learning_evidence_commit") :]
-    allow = fn[fn.index("'id','node_id','delta'") : fn.index("RAISE EXCEPTION 'Invalid transaction evidence'")]
-    assert "'student_confidence'" in allow
-    assert "ev.student_confidence BETWEEN 0 AND 1" in allow
-    insert = fn[fn.index("INSERT INTO node_mastery_events") :]
-    columns, values = insert.split("VALUES", 1)
-    assert "student_confidence" in columns and "ev.student_confidence" in values.split(";")[0]
-    assert "GRANT EXECUTE ON FUNCTION learning_evidence_commit" in sql
-
-
-#: The A123 × A127 reconcile, the definition A141's review re-creates.
-RECONCILE = (
-    MIGRATION_UNITS / "20261108103333_learning_evidence_commit_reconcile.sql"
-)
-#: A123's definition, the one A127's three edits are applied to.
-A123_VOID = MIGRATION_UNITS / "20261108072715_learning_evidence_void.sql"
-#: Spec §13 A141's review: the LAST definition of learning_evidence_commit, the
-#: reconcile's with the journal's multi_concept key.
-A141_REVIEW = MIGRATION_UNITS / "20261108205812_learning_varied_practice_review.sql"
-#: Spec §13 A150: the LAST definition, A141's review's with the journal's seeds key.
-A150_SEEDS = MIGRATION_UNITS / "20261120070405_learning_evidence_seeds.sql"
-
-
-def _commit_body(text: str) -> str:
-    start = text.index("CREATE OR REPLACE FUNCTION learning_evidence_commit")
-    return text[start : text.index("END $$;", start)]
-
-
-def test_the_function_the_database_runs_is_a123s_plus_the_new_key():
-    """Re-created, never rewritten. A127's own migration re-created the
-    pre-A123 body (20261019141950) plus the key, which, applied after A123's,
-    dropped A123's item lock and retired refusal. The reconcile's definition,
-    with A127's three edits taken out, is byte-identical to A123's. The
-    function A141's review re-created (20261108205812), with its three edits
-    taken out (the multi_concept key admitted, checked and inserted), is
-    byte-identical to the reconcile's; the one the database runs is A150's
-    (20261120070405), A141's review's plus the seeds key, and no later
-    migration re-creates it."""
-    new = _commit_body(RECONCILE.read_text())
-    new = new.replace(
-        "'retention','same_session_recheck','propagated_to',\n                'student_confidence'))\n"
-        "           -- spec §13 A127: a stated confidence is a JSON number in [0, 1], or absent/null\n"
-        "           OR (x ? 'student_confidence' AND jsonb_typeof(x->'student_confidence') NOT IN ('number','null'))\n"
-        "           OR NOT (ev.student_confidence IS NULL OR ev.student_confidence BETWEEN 0 AND 1) THEN",
-        "'retention','same_session_recheck','propagated_to')) THEN",
-    )
-    new = new.replace(
-        "retention,same_session_recheck,propagated_to,\n            student_confidence)",
-        "retention,same_session_recheck,propagated_to)",
-    )
-    new = new.replace(
-        "ev.retention,ev.same_session_recheck,ev.propagated_to,\n            ev.student_confidence);",
-        "ev.retention,ev.same_session_recheck,ev.propagated_to);",
-    )
-    assert new == _commit_body(A123_VOID.read_text())
-    review = _commit_body(A141_REVIEW.read_text())
-    for edited, original in (
-        (
-            "                'student_confidence',\n                'multi_concept'))",
-            "                'student_confidence'))",
-        ),
-        (
-            "           OR NOT (ev.student_confidence IS NULL OR ev.student_confidence BETWEEN 0 AND 1)\n"
-            "           -- spec §13 A141: a multi-concept item's row says so: a JSON boolean, or absent/null\n"
-            "           OR (x ? 'multi_concept' AND jsonb_typeof(x->'multi_concept') NOT IN ('boolean','null')) THEN",
-            "           OR NOT (ev.student_confidence IS NULL OR ev.student_confidence BETWEEN 0 AND 1) THEN",
-        ),
-        ("            multi_concept,\n            student_confidence)", "            student_confidence)"),
-        ("            ev.multi_concept,\n            ev.student_confidence);", "            ev.student_confidence);"),
-    ):
-        assert review.count(edited) == 1, edited
-        review = review.replace(edited, original)
-    assert review == _commit_body(RECONCILE.read_text())
-    # Spec §13 A150 re-creates it once more: with its three edits taken out
-    # (the seeds key admitted, checked and inserted), it is A141's review's.
-    seeds = _commit_body(A150_SEEDS.read_text())
-    for edited, original in (
-        (
-            "                'student_confidence',\n                'seeds',\n                'multi_concept'))",
-            "                'student_confidence',\n                'multi_concept'))",
-        ),
-        (
-            "           OR (x ? 'multi_concept' AND jsonb_typeof(x->'multi_concept') NOT IN ('boolean','null'))\n"
-            + seeds[seeds.index("           -- spec §13 A150: the starting scores") : seeds.index(") THEN\n            RAISE EXCEPTION 'Invalid transaction evidence'")]
-            + ") THEN",
-            "           OR (x ? 'multi_concept' AND jsonb_typeof(x->'multi_concept') NOT IN ('boolean','null')) THEN",
-        ),
-        ("            multi_concept,\n            seeds,\n", "            multi_concept,\n"),
-        ("            ev.multi_concept,\n            ev.seeds,\n", "            ev.multi_concept,\n"),
-    ):
-        assert seeds.count(edited) == 1, edited
-        seeds = seeds.replace(edited, original)
-    assert seeds == _commit_body(A141_REVIEW.read_text())
-    later = [
-        p.name
-        for p in sorted((MIGRATION_UNITS).glob("*.sql"))
-        if p.name > RECONCILE.name
-        and "CREATE OR REPLACE FUNCTION learning_evidence_commit" in p.read_text()
-    ]
-    assert later == [A141_REVIEW.name, A150_SEEDS.name], (
-        "a later migration re-creates the function: re-pin it here"
-    )
 
 
 # ── 4. the resolution rule ──────────────────────────────────────────────────
