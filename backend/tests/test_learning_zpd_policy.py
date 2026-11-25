@@ -2470,7 +2470,7 @@ FA_BIG_O = "Linear (O(n)) is much better than exponential (O(2^n))."
 def _gap(why, *cases):
     """Each case as a strict xfail: the leak is real and the rule misses it today."""
     mark = pytest.mark.xfail(
-        strict=True, raises=AssertionError, reason=f"known gap of the final-answer rule: {why}"
+        strict=True, raises=AssertionError, reason=f"known gap of the final-answer rule (#920): {why}"
     )
     return [pytest.param(*case, marks=mark) for case in cases]
 
@@ -2559,7 +2559,7 @@ def _gap(why, *cases):
 def test_known_gaps_of_the_final_answer_rule_are_pinned(reference, final, canonical, hint):
     """These hints are REAL answer-key leaks that detect_leak misses today: the
     residuals the owner accepted in review round 7 (HANDOFF-06 Known gaps,
-    spec §13 A34's known limits), tracked in an issue. The test asserts the
+    spec §13 A34's known limits), tracked in #920. The test asserts the
     leak IS detected, so each case is a strict xfail: closing a gap makes its
     case XPASS, which fails the suite until the mark is removed."""
     from learning.ladder import Rung
