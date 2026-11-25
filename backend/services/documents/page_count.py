@@ -37,9 +37,13 @@ def page_count_of(file_bytes: bytes, filename: str, content_type: str = "") -> i
             return _bounded(_pdf_pages(file_bytes))
         if lower.endswith(".pptx") or "presentationml" in content_type:
             return _bounded(_pptx_slides(file_bytes))
-    except Exception:
-        # A document that will not parse is still a perfectly good document;
-        # only its page count is unknown.
+    except Exception:  # noqa: BLE001 — third-party parsers on untrusted bytes
+        # pypdf and zipfile raise far more than their own error types on a
+        # malformed file (ValueError, KeyError, struct.error, RecursionError,
+        # ...), and this runs inside the upload's persist call, where an escape
+        # would fail the whole upload over a display-only column. A document
+        # that will not parse is still a perfectly good document; only its page
+        # count is unknown.
         logger.debug("page count unavailable for %s", filename, exc_info=True)
     return None
 
@@ -52,6 +56,7 @@ def _bounded(n: int | None) -> int | None:
 
 def _pdf_pages(file_bytes: bytes) -> int | None:
     from pypdf import PdfReader
+    from pypdf.errors import PyPdfError
 
     reader = PdfReader(io.BytesIO(file_bytes), strict=False)
     # An encrypted PDF still reports its page count once the empty-password
@@ -59,7 +64,9 @@ def _pdf_pages(file_bytes: bytes) -> int | None:
     if getattr(reader, "is_encrypted", False):
         try:
             reader.decrypt("")
-        except Exception:
+        except (PyPdfError, ValueError, NotImplementedError):
+            # A malformed encryption dictionary, an algorithm pypdf does not
+            # implement, or a missing crypto backend (DependencyError).
             return None
     return len(reader.pages)
 

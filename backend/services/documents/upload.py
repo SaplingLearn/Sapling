@@ -78,12 +78,12 @@ def _extract_text_or_422(file_bytes: bytes, filename: str, content_type: str) ->
         text = extract_text_from_file(file_bytes, filename, content_type)
     except LLMBudgetExceeded:
         raise  # #119: vision OCR refused by the per-user LLM budget -> the 429
-    except Exception:
+    except Exception as e:
         logger.exception("Text extraction failed for '%s'", filename)
         raise HTTPException(
             status_code=422,
             detail="Could not read this document. Please try a different file.",
-        )
+        ) from e
     # Extraction can "succeed" and return nothing -- a rasterized PDF has no
     # text layer, so there is no exception to catch. Reject here rather than
     # letting an empty document reach the model (see MIN_EXTRACTED_CHARS).

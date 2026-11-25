@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import uuid
 
+from cryptography.exceptions import InvalidTag
 from fastapi import HTTPException
 from pydantic_ai.exceptions import UsageLimitExceeded, UnexpectedModelBehavior
 
@@ -250,18 +251,26 @@ def scan_for_document(user_id: str, document_id: str) -> dict:
     notes_raw = doc.get("concept_notes")
     if isinstance(notes_raw, str):
         try:
-            concept_notes = decrypt_json(
+            decoded = decrypt_json(
                 notes_raw, bind=bind("documents", "concept_notes", document_id))
-        except Exception:
-            # A corrupted row degrades to "no takeaways" rather than failing
-            # the scan: the summary alone is still a usable seed.
+        except (InvalidTag, ValueError):
+            # What `decrypt_json` raises: an EncryptionError (a ValueError) for
+            # a refused value, or, when neither the ciphertext nor a legacy
+            # plaintext parse works, the original InvalidTag / base64 / JSON
+            # error. A corrupted row degrades to "no takeaways" rather than
+            # failing the scan: the summary alone is still a usable seed.
             logger.warning(
                 "concept_notes decrypt failed for document %s; scanning without them",
                 document_id,
             )
-            concept_notes = []
+            decoded = []
     else:
-        concept_notes = notes_raw or []
+        decoded = notes_raw or []
+    # The column holds a list of {name, description}. Any other shape is "no
+    # takeaways": the prompt builder iterates it and reads `.get` off each one.
+    concept_notes: list[dict] = (
+        [n for n in decoded if isinstance(n, dict)] if isinstance(decoded, list) else []
+    )
 
     return _scan_concepts_for_course(
         user_id,

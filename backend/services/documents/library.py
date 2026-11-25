@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
+from typing import Any
 
+import httpx
 from starlette.concurrency import run_in_threadpool
 
 from db.connection import table
@@ -55,12 +57,16 @@ def _is_missing_column(exc: Exception) -> bool:
     if response is not None:
         try:
             body = response.text or ""
-        except Exception:
+        except httpx.StreamError:
+            # A streamed body that was never read (or was closed unread) has
+            # no text to give; the exception string is still checked below.
             body = ""
     return any(m in body or m in str(exc) for m in _MISSING_COLUMN_MARKERS)
 
 
-async def _read_documents(filters: dict, order: str, extra: str = "") -> list[dict]:
+async def _read_documents(
+    filters: dict, order: str, extra: str = "",
+) -> list[dict[str, Any]]:
     """Read the Library's columns, falling back to the pre-migration set.
 
     Only a missing column is caught; any other failure is the caller's to
@@ -80,14 +86,16 @@ async def _read_documents(filters: dict, order: str, extra: str = "") -> list[di
             _LIBRARY_COLS_LEGACY + extra, filters=filters, order=order) or []
 
 
-async def _hydrate(docs: list[dict]) -> list[dict]:
+async def _hydrate(docs: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Decrypt the encrypted columns and resolve each row's abstract course.
 
     The row keys on the OFFERING (0025); the HTTP boundary keeps the abstract
     course_id (#435). Each unique offering_id resolves once, in one threadpool
     hop (offering_course_id is a cached sync read, #117).
     """
-    offering_ids = list(dict.fromkeys(d.get("offering_id") for d in docs if d.get("offering_id")))
+    offering_ids: list[str] = list(dict.fromkeys(
+        oid for d in docs if isinstance(oid := d.get("offering_id"), str) and oid
+    ))
     offering_to_course = (
         await run_in_threadpool(_courses_for_offerings, offering_ids) if offering_ids else {}
     )
@@ -108,7 +116,10 @@ async def _hydrate(docs: list[dict]) -> list[dict]:
                     d.get("id"),
                 )
                 d["concept_notes"] = []
-        d["course_id"] = offering_to_course.get(d.get("offering_id"))
+        offering_id = d.get("offering_id")
+        d["course_id"] = (
+            offering_to_course.get(offering_id) if isinstance(offering_id, str) else None
+        )
     return docs
 
 
