@@ -1,11 +1,15 @@
 "use client";
 import React from "react";
+import { AnimatePresence, motion } from "framer-motion";
 import { BadgeArt } from "@/components/growth/BadgeArt";
 import { Icon } from "@/components/Icon";
 import { CustomSelect } from "@/components/CustomSelect";
 import { AdminTableSkeleton } from "@/components/Skeleton";
 import { useToast } from "@/components/ToastProvider";
 import { useConfirm } from "@/lib/useConfirm";
+import { useMotionPresets } from "@/lib/motion";
+import { AnimatedNumber } from "../AnimatedNumber";
+import w from "./AchievementWiki.module.css";
 import { CAT_META, CAT_ORDER } from "../achievements/BadgeGrid";
 import {
   adminListAchievements, adminUpdateAchievement, adminUploadAchievementIcon,
@@ -21,6 +25,11 @@ import type {
 } from "@/lib/types";
 
 const RARITIES: RarityTier[] = ["common", "uncommon", "rare", "epic", "legendary"];
+
+/** The badge preview's size on a catalog card (BadgeArt's `size`, px). */
+const CARD_BADGE_PX = 64;
+/** The search field's icon (Icon's `size`, px). */
+const SEARCH_ICON_PX = 14;
 
 // ── Icon validation (client-side convenience only — the server enforces the
 // same rules and is the real gate). Specific messages beat "invalid image". ─
@@ -110,26 +119,22 @@ export function AchievementWiki() {
   }
 
   return (
-    <div>
-      <div className="body-serif" style={{ fontSize: 15, marginBottom: 18, color: "var(--text-dim)", maxWidth: 780 }}>
-        <span style={{ color: "var(--text)" }}>{live.length}</span> live · {" "}
-        <span style={{ color: "var(--text-muted)" }}>{drafts.length} work in progress</span>
+    <div className={w.root}>
+      <div className={`body-serif ${w.summary}`}>
+        <AnimatedNumber value={live.length} className={w.summaryLive} /> live · {" "}
+        <span className={w.summaryDrafts}><AnimatedNumber value={drafts.length} /> work in progress</span>
       </div>
 
-      <div className="card" style={{ padding: "12px 16px", marginBottom: 24, display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
-        <div style={{ position: "relative", flex: 1, minWidth: 200, maxWidth: 320 }}>
-          <div style={{ position: "absolute", left: 10, top: 8, color: "var(--text-muted)" }}>
-            <Icon name="search" size={14} />
+      <div className={`card ${w.filters}`}>
+        <div className={w.search}>
+          <div className={w.searchIcon}>
+            <Icon name="search" size={SEARCH_ICON_PX} />
           </div>
           <input
             placeholder="Search name, slug, description…"
             value={search}
             onChange={e => setSearch(e.target.value)}
-            style={{
-              width: "100%", padding: "7px 12px 7px 32px",
-              border: "1px solid var(--border)", borderRadius: "var(--r-sm)",
-              fontSize: 13, background: "var(--bg-input)",
-            }}
+            className={`${w.field} ${w.searchField}`}
           />
         </div>
         <CustomSelect
@@ -157,49 +162,59 @@ export function AchievementWiki() {
       </div>
 
       {drafts.length > 0 && (
-        <section style={{ marginBottom: 36 }}>
-          <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 6 }}>
-            <h2 style={{ margin: 0, fontSize: 20, fontWeight: 600 }}>Work in progress</h2>
-            <span className="chip chip--warn">{drafts.length}</span>
+        <section className={w.section}>
+          <div className={w.sectionHead}>
+            <h2 className={w.sectionTitle}>Work in progress</h2>
+            <span className="chip chip--warn"><AnimatedNumber value={drafts.length} /></span>
           </div>
-          <div style={{ fontSize: 12.5, color: "var(--text-muted)", marginBottom: 16, maxWidth: 640 }}>
+          <div className={w.sectionNote}>
             Drafts are visible only here — users never see them and their triggers never fire.
           </div>
           {filteredDrafts.length === 0 ? (
-            <div className="label-micro" style={{ padding: "8px 0" }}>No drafts match these filters.</div>
+            <div className={`label-micro ${w.empty}`}>No drafts match these filters.</div>
           ) : (
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(340px, 1fr))", gap: 14 }}>
-              {filteredDrafts.map(a => (
-                <AchievementCard key={a.id} achievement={a} onChange={patch => patchLocal(a.id, patch)} />
-              ))}
-            </div>
+            <CardGrid items={filteredDrafts} onChange={patchLocal} />
           )}
         </section>
       )}
 
-      <section style={{ marginBottom: 36 }}>
-        <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 6 }}>
-          <h2 style={{ margin: 0, fontSize: 20, fontWeight: 600 }}>Live catalog</h2>
-          <span className="chip chip--accent">{live.length}</span>
+      <section className={w.section}>
+        <div className={w.sectionHead}>
+          <h2 className={w.sectionTitle}>Live catalog</h2>
+          <span className="chip chip--accent"><AnimatedNumber value={live.length} /></span>
         </div>
         {filteredLive.length === 0 ? (
-          <div className="label-micro" style={{ padding: "8px 0" }}>
+          <div className={`label-micro ${w.empty}`}>
             {live.length === 0 ? "No live achievements yet." : "No live achievements match these filters."}
           </div>
         ) : (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(340px, 1fr))", gap: 14 }}>
-            {filteredLive.map(a => (
-              <AchievementCard key={a.id} achievement={a} onChange={patch => patchLocal(a.id, patch)} />
-            ))}
-          </div>
+          <CardGrid items={filteredLive} onChange={patchLocal} />
         )}
       </section>
 
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(260px, 340px) 1fr", gap: 20, alignItems: "start" }}>
+      <div className={w.panels}>
         <GrantPanel achievements={items} users={users} />
         <XpRulesPanel />
       </div>
     </div>
+  );
+}
+
+/** A catalog section's cards. They arrive in a short stagger, and a card a
+ *  filter brings back rises into its slot; one a filter drops simply leaves. */
+function CardGrid({ items, onChange }: {
+  items: Achievement[];
+  onChange: (id: string, patch: Partial<Achievement>) => void;
+}) {
+  const m = useMotionPresets();
+  return (
+    <motion.div className={w.grid} variants={m.list.container} initial="hidden" animate="shown">
+      {items.map(a => (
+        <motion.div key={a.id} className={w.gridItem} variants={m.list.item}>
+          <AchievementCard achievement={a} onChange={patch => onChange(a.id, patch)} />
+        </motion.div>
+      ))}
+    </motion.div>
   );
 }
 
@@ -214,6 +229,7 @@ function AchievementCard({
   onChange: (patch: Partial<Achievement>) => void;
 }) {
   const toast = useToast();
+  const m = useMotionPresets();
   const isDraft = achievement.status === "draft";
   const [expanded, setExpanded] = React.useState(false);
 
@@ -459,29 +475,29 @@ function AchievementCard({
   };
 
   return (
-    <div className="card" style={{ padding: 16 }}>
-      <div style={{ display: "flex", gap: 14, alignItems: "flex-start" }}>
-        <div style={{ flexShrink: 0 }}>
+    <div className={`card ${w.card}`}>
+      <div className={w.cardTop}>
+        <div className={w.cardArt}>
           <BadgeArt slug={achievement.slug} rarity={achievement.rarity} locked={false}
-                    iconUrl={achievement.icon_url} emoji={achievement.icon} size={64} />
+                    iconUrl={achievement.icon_url} emoji={achievement.icon} size={CARD_BADGE_PX} />
         </div>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-            <span style={{ fontWeight: 600, fontSize: 14.5 }}>{achievement.name}</span>
-            <span className="chip" style={{ textTransform: "uppercase", fontSize: 10 }}>{achievement.rarity}</span>
-            <span className="chip" style={{ fontSize: 10 }}>{CAT_META[achievement.category].label}</span>
+        <div className={w.cardBody}>
+          <div className={w.cardTitleRow}>
+            <span className={w.cardName}>{achievement.name}</span>
+            <span className={`chip ${w.tag} ${w.tagUpper}`}>{achievement.rarity}</span>
+            <span className={`chip ${w.tag}`}>{CAT_META[achievement.category].label}</span>
             {achievement.is_secret && <span className="chip chip--warn">secret</span>}
           </div>
-          <div style={{ fontSize: 12, color: "var(--text-dim)", marginTop: 5, lineHeight: 1.45 }}>
-            {achievement.description || <span style={{ color: "var(--text-muted)" }}>No description yet.</span>}
+          <div className={w.cardDescription}>
+            {achievement.description || <span className={w.dim}>No description yet.</span>}
           </div>
-          <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 6 }}>
+          <div className={w.cardMeta}>
             +{achievement.xp_reward} XP · sort {achievement.sort_order} · {achievement.slug}
           </div>
         </div>
       </div>
 
-      <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap", alignItems: "center" }}>
+      <div className={w.cardActions}>
         <button className="btn btn--sm btn--ghost" onClick={toggleExpanded}>
           {expanded ? "Close" : "Edit"}
         </button>
@@ -491,29 +507,30 @@ function AchievementCard({
           </button>
         ) : (
           <button
-            className={`btn btn--sm ${unpublishConfirm.armed ? "btn--danger" : "btn--ghost"}`}
+            className={`btn btn--sm ${w.unpublish} ${unpublishConfirm.armed ? `btn--danger ${w.armed}` : "btn--ghost"}`}
             onClick={unpublishConfirm.trigger}
             disabled={publishing}
-            style={unpublishConfirm.armed ? { background: "var(--err-soft)", color: "var(--err)" } : undefined}
           >
             {publishing ? "…" : unpublishConfirm.armed ? "Click again to unpublish" : "Unpublish"}
           </button>
         )}
         {isDraft && (
-          <span style={{ fontSize: 11, color: "var(--text-muted)" }}>
+          <span className={w.hint}>
             Grant is disabled until this is published.
           </span>
         )}
       </div>
 
+      <AnimatePresence initial={false}>
       {expanded && (
-        <div style={{ marginTop: 16, paddingTop: 16, borderTop: "1px dashed var(--border)", display: "grid", gap: 16 }}>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <motion.div key="editor" {...m.collapse}>
+        <div className={w.editor}>
+          <div className={w.editorFields}>
             <LabeledField label="Name">
-              <input value={name} onChange={e => setName(e.target.value)} style={fieldStyle} />
+              <input value={name} onChange={e => setName(e.target.value)} className={w.field} />
             </LabeledField>
             <LabeledField label="XP reward">
-              <input type="number" value={xpReward} onChange={e => setXpReward(Number(e.target.value) || 0)} style={fieldStyle} />
+              <input type="number" value={xpReward} onChange={e => setXpReward(Number(e.target.value) || 0)} className={w.field} />
             </LabeledField>
             <LabeledField label="Category">
               <CustomSelect<AchievementCategory>
@@ -532,49 +549,46 @@ function AchievementCard({
               />
             </LabeledField>
             <LabeledField label="Sort order">
-              <input type="number" value={sortOrder} onChange={e => setSortOrder(Number(e.target.value) || 0)} style={fieldStyle} />
+              <input type="number" value={sortOrder} onChange={e => setSortOrder(Number(e.target.value) || 0)} className={w.field} />
             </LabeledField>
-            <div style={{ display: "flex", alignItems: "flex-end", paddingBottom: 8 }}>
-              <label style={checkLabel}>
+            <div className={w.secretCell}>
+              <label className={w.checkLabel}>
                 <input type="checkbox" checked={secret} onChange={e => setSecret(e.target.checked)} /> Secret (hidden until earned)
               </label>
             </div>
           </div>
           <LabeledField label="Description">
-            <textarea value={description} onChange={e => setDescription(e.target.value)} rows={2} style={fieldStyle} />
+            <textarea value={description} onChange={e => setDescription(e.target.value)} rows={2} className={w.field} />
           </LabeledField>
-          <button className="btn btn--primary btn--sm" onClick={save} disabled={saving} style={{ justifySelf: "start" }}>
+          <button className={`btn btn--primary btn--sm ${w.saveButton}`} onClick={save} disabled={saving}>
             {saving ? "Saving…" : "Save"}
           </button>
 
           <div>
-            <div className="label-micro" style={{ marginBottom: 6 }}>Icon</div>
+            <div className={`label-micro ${w.blockLabel}`}>Icon</div>
             <input
               ref={fileRef}
               type="file"
               accept="image/png,image/webp,image/svg+xml"
-              style={{ display: "none" }}
+              className={w.hiddenInput}
               onChange={e => handleFile(e.target.files?.[0])}
             />
             <div
               onClick={() => { if (!iconUploading) fileRef.current?.click(); }}
               onDragOver={e => e.preventDefault()}
               onDrop={e => { e.preventDefault(); if (!iconUploading) handleFile(e.dataTransfer.files?.[0]); }}
-              style={{
-                border: "1px dashed var(--border)", borderRadius: "var(--r-md)",
-                padding: 14, textAlign: "center", cursor: iconUploading ? "default" : "pointer",
-                fontSize: 12, color: "var(--text-muted)", opacity: iconUploading ? 0.7 : 1,
-              }}
+              className={`${w.dropzone} ${iconUploading ? w.dropzoneBusy : ""}`}
             >
               {iconUploading ? "Uploading…" : "Drop a 512×512 PNG, WebP or SVG here, or click to choose (≤512 KB)"}
             </div>
           </div>
 
           <div>
-            <div className="label-micro" style={{ marginBottom: 6 }}>Triggers · {triggers.length}</div>
-            {triggers.length === 0 && <div style={{ fontSize: 12, color: "var(--text-muted)" }}>None.</div>}
+            <div className={`label-micro ${w.blockLabel}`}>Triggers · {triggers.length}</div>
+            {triggers.length === 0 && <div className={w.none}>None.</div>}
+            <AnimatePresence initial={false}>
             {triggers.map(t => (
-              <div key={t.id} style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 6 }}>
+              <motion.div key={t.id} className={w.row} {...m.fadeUp}>
                 <input
                   value={triggerDrafts[t.id]?.trigger_type ?? t.trigger_type}
                   onChange={e => setTriggerDrafts(prev => ({
@@ -582,7 +596,7 @@ function AchievementCard({
                   }))}
                   onBlur={() => commitTrigger(t.id)}
                   onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
-                  style={{ ...fieldStyle, flex: 1 }}
+                  className={`${w.field} ${w.grow}`}
                 />
                 <input
                   type="number"
@@ -593,23 +607,24 @@ function AchievementCard({
                   }))}
                   onBlur={() => commitTrigger(t.id)}
                   onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
-                  style={{ ...fieldStyle, width: 80 }}
+                  className={`${w.field} ${w.thresholdField}`}
                 />
                 <button className="btn btn--sm btn--ghost" onClick={() => deleteTriggerInline(t.id)}>×</button>
-              </div>
+              </motion.div>
             ))}
-            <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 6 }}>
+            </AnimatePresence>
+            <div className={w.addRow}>
               <input
                 placeholder="trigger_type (e.g. login_streak)"
                 value={newTrigger.trigger_type}
                 onChange={e => setNewTrigger(v => ({ ...v, trigger_type: e.target.value }))}
-                style={{ ...fieldStyle, flex: 1 }}
+                className={`${w.field} ${w.grow}`}
               />
               <input
                 type="number"
                 value={newTrigger.trigger_threshold}
                 onChange={e => setNewTrigger(v => ({ ...v, trigger_threshold: Number(e.target.value) || 0 }))}
-                style={{ ...fieldStyle, width: 80 }}
+                className={`${w.field} ${w.thresholdField}`}
               />
               <button
                 className="btn btn--sm btn--primary"
@@ -622,16 +637,17 @@ function AchievementCard({
           </div>
 
           <div>
-            <div className="label-micro" style={{ marginBottom: 6 }}>Linked cosmetics · {linkedCosmeticIds.length}</div>
-            {linkedCosmeticIds.length === 0 && <div style={{ fontSize: 12, color: "var(--text-muted)" }}>None.</div>}
+            <div className={`label-micro ${w.blockLabel}`}>Linked cosmetics · {linkedCosmeticIds.length}</div>
+            {linkedCosmeticIds.length === 0 && <div className={w.none}>None.</div>}
+            <AnimatePresence initial={false}>
             {linkedCosmeticIds.map(cid => {
               const c = cosmetics.find(x => x.id === cid);
               return (
-                <div key={cid} style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 6 }}>
-                  <span style={{ ...fieldStyle, flex: 1, display: "flex", alignItems: "center", gap: 8 }}>
+                <motion.div key={cid} className={w.row} {...m.fadeUp}>
+                  <span className={`${w.field} ${w.grow} ${w.cosmeticName}`}>
                     <span>{c ? c.name : cid}</span>
                     {c && (
-                      <span style={{ fontSize: 10, color: "var(--text-muted)", textTransform: "uppercase" }}>
+                      <span className={w.cosmeticMeta}>
                         {c.type} · {c.rarity}
                       </span>
                     )}
@@ -643,10 +659,11 @@ function AchievementCard({
                   >
                     ×
                   </button>
-                </div>
+                </motion.div>
               );
             })}
-            <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 6 }}>
+            </AnimatePresence>
+            <div className={w.addRow}>
               <CustomSelect
                 ariaLabel="Cosmetic to link"
                 size="sm"
@@ -668,7 +685,9 @@ function AchievementCard({
             </div>
           </div>
         </div>
+        </motion.div>
       )}
+      </AnimatePresence>
     </div>
   );
 }
@@ -711,8 +730,8 @@ function GrantPanel({ achievements, users }: { achievements: Achievement[]; user
   };
 
   return (
-    <div className="card" style={{ padding: "var(--pad-lg)" }}>
-      <div className="label-micro" style={{ marginBottom: 10 }}>Grant to user</div>
+    <div className={`card ${w.grant}`}>
+      <div className={`label-micro ${w.grantTitle}`}>Grant to user</div>
       <LabeledField label="User">
         <CustomSelect
           ariaLabel="User"
@@ -733,14 +752,13 @@ function GrantPanel({ achievements, users }: { achievements: Achievement[]; user
           placeholder="Pick one…"
         />
       </LabeledField>
-      <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: -4, marginBottom: 10 }}>
+      <div className={w.grantNote}>
         Drafts are disabled here — publish a badge first.
       </div>
       <button
-        className="btn"
+        className={`btn ${w.grantButton}`}
         onClick={doGrant}
         disabled={granting || !grant.userId || !grant.achievementId}
-        style={{ width: "100%" }}
       >
         {granting ? "Granting…" : "Grant achievement"}
       </button>
@@ -754,6 +772,7 @@ interface XpRule { key: string; label: string; amount: number; enabled: boolean 
 
 function XpRulesPanel() {
   const toast = useToast();
+  const m = useMotionPresets();
   const [rules, setRules] = React.useState<XpRule[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [busyKey, setBusyKey] = React.useState<string | null>(null);
@@ -807,19 +826,17 @@ function XpRulesPanel() {
   if (loading) return <AdminTableSkeleton />;
 
   return (
-    <div className="card" style={{ padding: 0 }}>
-      <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--border)" }}>
+    <div className={`card ${w.rules}`}>
+      <div className={w.rulesHead}>
         <div className="label-micro">XP rules · {rules.length}</div>
       </div>
       {rules.length === 0 && (
-        <div style={{ padding: 28, textAlign: "center", color: "var(--text-muted)", fontSize: 13 }}>No XP rules defined.</div>
+        <div className={w.rulesEmpty}>No XP rules defined.</div>
       )}
+      <motion.div variants={m.list.container} initial="hidden" animate="shown">
       {rules.map(r => (
-        <div key={r.key} style={{
-          display: "flex", alignItems: "center", gap: 12,
-          padding: "10px 16px", borderTop: "1px solid var(--border)", fontSize: 13,
-        }}>
-          <span style={{ flex: 1, fontWeight: 500 }}>{r.label}</span>
+        <motion.div key={r.key} className={w.rule} variants={m.list.item}>
+          <span className={w.ruleLabel}>{r.label}</span>
           <input
             type="number"
             value={drafts[r.key] ?? String(r.amount)}
@@ -827,9 +844,9 @@ function XpRulesPanel() {
             onBlur={() => commitAmount(r.key)}
             onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
             disabled={busyKey === r.key}
-            style={{ ...fieldStyle, width: 90 }}
+            className={`${w.field} ${w.xpField}`}
           />
-          <label style={checkLabel}>
+          <label className={w.checkLabel}>
             <input
               type="checkbox"
               checked={r.enabled}
@@ -837,8 +854,9 @@ function XpRulesPanel() {
               onChange={e => toggleEnabled(r.key, e.target.checked)}
             /> Enabled
           </label>
-        </div>
+        </motion.div>
       ))}
+      </motion.div>
     </div>
   );
 }
@@ -847,23 +865,9 @@ function XpRulesPanel() {
 
 function LabeledField({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div style={{ marginBottom: 10 }}>
-      <div className="label-micro" style={{ marginBottom: 4 }}>{label}</div>
+    <div className={w.labeled}>
+      <div className={`label-micro ${w.labeledLabel}`}>{label}</div>
       {children}
     </div>
   );
 }
-
-const fieldStyle: React.CSSProperties = {
-  width: "100%",
-  padding: "7px 10px",
-  border: "1px solid var(--border)",
-  borderRadius: "var(--r-sm)",
-  fontSize: 13,
-  background: "var(--bg-input)",
-  fontFamily: "inherit",
-};
-
-const checkLabel: React.CSSProperties = {
-  display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text-dim)",
-};
