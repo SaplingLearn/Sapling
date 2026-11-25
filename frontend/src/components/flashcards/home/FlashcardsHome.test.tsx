@@ -114,7 +114,7 @@ const VARS_SET = savedSet({ id: "s3", name: "Vars and recursion", concepts: ["Va
 /** The decks' ids in grid order (a deck is the list item; its parts have testids of their own). */
 const deckIds = () => [...document.querySelectorAll("li[data-testid^='flashcards-deck-']")].map(el => el.getAttribute("data-testid")!.replace("flashcards-deck-", ""));
 const mastery = (id: string) =>
-  [...within(deck(id)).getByTestId("flashcards-mastery").querySelectorAll("i")].map(i => `${i.getAttribute("data-kind")} ${i.style.width}`);
+  [...within(deck(id)).getByTestId("flashcards-mastery").querySelectorAll("i")].map(i => `${i.getAttribute("data-kind")} ${i.style.getPropertyValue("--share")}`);
 const legend = (id: string) => within(deck(id)).getByTestId("flashcards-deck-legend").textContent;
 const peek = (id: string) => [...within(deck(id)).getByTestId("flashcards-deck-peek").children].map(el => el.textContent);
 const fact = (id: string) => within(deck(id)).getByTestId("flashcards-deck-fact").textContent;
