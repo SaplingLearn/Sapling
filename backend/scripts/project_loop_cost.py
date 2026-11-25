@@ -85,8 +85,27 @@ GEMINI_PRO_THINKING = 800
 #: students keep every prefix warm, so every call reads.
 STEADY_TRAFFIC = False
 
-HAIKU, SONNET = "claude-haiku-5-5", "claude-sonnet-5-5"
 TUTOR_SLOTS = tuple(TIER_MIX)
+#: ANTHROPIC_BASE_URL during a projection: port 9 (discard) on loopback, a
+#: closed port, so nothing the SDK sends can connect anywhere.
+CLOSED_PORT_URL = "http://127.0.0.1:9"
+
+
+def _claude_models() -> tuple[str, str]:
+    """(Haiku, Sonnet), read from agents/_providers.py, the one home of model
+    ids: Haiku is the cheapest Claude model (HEALTH_PROBE_MODEL), Sonnet the
+    tutor's step-up model (the chat_tutor slot's default)."""
+    from agents._providers import _DEFAULTS, HEALTH_PROBE_MODEL
+
+    return HEALTH_PROBE_MODEL, _DEFAULTS["chat_tutor"]
+
+
+def _gemini_deep_model() -> str | None:
+    """The deep tier's Gemini model (loop_tutor_deep's Gemini fallback), the
+    one Gemini loop slot that runs with thinking on (GEMINI_PRO_THINKING)."""
+    from agents._providers import _GEMINI_FALLBACKS
+
+    return _GEMINI_FALLBACKS["loop_tutor_deep"]
 
 
 def mixes() -> dict[str, dict[str, str]]:
@@ -99,6 +118,7 @@ def mixes() -> dict[str, dict[str, str]]:
     from agents._providers import _DEFAULTS, EVIDENCE_SLOTS
 
     today = {slot: _DEFAULTS[slot] for slot in EVIDENCE_SLOTS}
+    haiku, sonnet = _claude_models()
 
     def claude(tutor: dict[str, str], rest: str, partners: str | None) -> dict[str, str]:
         mix = {slot: rest for slot in EVIDENCE_SLOTS}
@@ -111,17 +131,17 @@ def mixes() -> dict[str, dict[str, str]]:
             mix["check_items_solve"] = partners
         return mix
 
-    haiku_tutor = {s: HAIKU for s in TUTOR_SLOTS}
-    sonnet_deep = {"loop_tutor_lite": HAIKU, "loop_tutor": HAIKU, "loop_tutor_deep": SONNET}
-    sonnet_tutor = {s: SONNET for s in TUTOR_SLOTS}
+    haiku_tutor = {s: haiku for s in TUTOR_SLOTS}
+    sonnet_deep = {"loop_tutor_lite": haiku, "loop_tutor": haiku, "loop_tutor_deep": sonnet}
+    sonnet_tutor = {s: sonnet for s in TUTOR_SLOTS}
     return {
         "today (Gemini defaults)": today,
-        "Haiku, Gemini partners": claude(haiku_tutor, HAIKU, None),
-        "Haiku + Sonnet deep, Gemini partners": claude(sonnet_deep, HAIKU, None),
-        "Sonnet tutor, Haiku rest, Gemini partners": claude(sonnet_tutor, HAIKU, None),
-        "Haiku, all Claude (Sonnet partners)": claude(haiku_tutor, HAIKU, SONNET),
-        "Sonnet tutor, Haiku rest, all Claude": claude(sonnet_tutor, HAIKU, SONNET),
-        "Sonnet, all Claude (Haiku partners)": claude(sonnet_tutor, SONNET, HAIKU),
+        "Haiku, Gemini partners": claude(haiku_tutor, haiku, None),
+        "Haiku + Sonnet deep, Gemini partners": claude(sonnet_deep, haiku, None),
+        "Sonnet tutor, Haiku rest, Gemini partners": claude(sonnet_tutor, haiku, None),
+        "Haiku, all Claude (Sonnet partners)": claude(haiku_tutor, haiku, sonnet),
+        "Sonnet tutor, Haiku rest, all Claude": claude(sonnet_tutor, haiku, sonnet),
+        "Sonnet, all Claude (Haiku partners)": claude(sonnet_tutor, sonnet, haiku),
     }
 
 
@@ -157,7 +177,7 @@ def _request(agent, task: str, **run) -> dict:
 
     deps = SaplingDeps(user_id="u", course_id="c", supabase=None, request_id="r")
     try:
-        asyncio.run(agent.run("x", deps=deps, model=provider_model(HAIKU, task=task), **run))
+        asyncio.run(agent.run("x", deps=deps, model=provider_model(_claude_models()[0], task=task), **run))
     except _Sent as sent:
         return sent.kwargs
     raise RuntimeError(f"no request captured for {task}")
@@ -395,7 +415,7 @@ def _effort(slot: str) -> str:
 def _thinking(slot: str, model: str) -> int:
     if model.startswith("claude-"):
         return CLAUDE_THINKING[_effort(slot)]
-    return GEMINI_PRO_THINKING if model == "gemini-2.5-pro" else 0
+    return GEMINI_PRO_THINKING if model == _gemini_deep_model() else 0
 
 
 def call_cost(call: Call, model: str, *, cached: bool, calls: float) -> tuple[float, float]:
@@ -481,7 +501,7 @@ def _guard() -> None:
     if os.getenv("SAPLING_EVAL_MODE", "replay").lower() != "replay":
         raise SystemExit("refusing: SAPLING_EVAL_MODE must be replay (this script makes no model call)")
     os.environ["SAPLING_EVAL_MODE"] = "replay"
-    os.environ["ANTHROPIC_BASE_URL"] = "http://127.0.0.1:9"  # a closed port: nothing can connect
+    os.environ["ANTHROPIC_BASE_URL"] = CLOSED_PORT_URL
 
 
 def main(argv: list[str] | None = None) -> int:

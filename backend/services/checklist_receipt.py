@@ -26,6 +26,7 @@ from pydantic_ai.usage import RequestUsage, RunUsage
 from services import checklist_budget
 from services.events_service import build_llm_usage_row
 from services.usage_receipts import (
+    INT4_MAX,
     PreparedUsageReceipt,
     UsageReceiptUnavailable,
     prepare_checklist_usage_receipt,
@@ -37,7 +38,9 @@ _CLAUDE_PROVIDER = "anthropic"
 _CLAUDE_DETAILS = frozenset(
     {"input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"}
 )
-_MAX_COUNT = 2_147_483_647  # llm_usage counters are INTEGER
+_MAX_COUNT = INT4_MAX  # llm_usage counters are INTEGER
+#: A Claude snapshot suffix is a YYYYMMDD date (`claude-haiku-5-5-20261001`).
+_SNAPSHOT_DATE_DIGITS = 8
 
 
 def _count(value: object) -> int:
@@ -62,7 +65,7 @@ def _reserved_model(models: tuple[str, ...], provider: object, name: object) -> 
             label_provider, _, reserved = label.partition(":")
             snapshot = name.removeprefix(f"{reserved}-")
             if label_provider == _CLAUDE_PROVIDER and (
-                name == reserved or (snapshot != name and len(snapshot) == 8 and snapshot.isdigit())
+                name == reserved or (snapshot != name and len(snapshot) == _SNAPSHOT_DATE_DIGITS and snapshot.isdigit())
             ):
                 return reserved
     raise UsageReceiptUnavailable("The served model is outside the reserved price policy")

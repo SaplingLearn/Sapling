@@ -41,7 +41,6 @@ import csv
 import sys
 from collections import Counter
 from pathlib import Path
-from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 
@@ -49,6 +48,7 @@ BASE = Path(__file__).parent.parent
 load_dotenv(BASE / ".env")
 sys.path.insert(0, str(BASE))
 
+from scripts._project import project_ref  # noqa: E402
 from db.connection import SUPABASE_URL  # noqa: E402
 from learning.item_audit import KEY_STATUSES, stratified_sample, summary  # noqa: E402
 from learning.params import (  # noqa: E402
@@ -65,8 +65,6 @@ from services.check_item_service import (  # noqa: E402
     record_item_audit,
 )
 
-_LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "0.0.0.0", "host.docker.internal"}
-_SUPABASE_SUFFIX = ".supabase.co"
 CSV_COLUMNS = (
     "id",
     "concept_key",
@@ -81,13 +79,8 @@ CSV_COLUMNS = (
 
 
 def _project_ref() -> str:
-    """The project SUPABASE_URL points at (scripts/backfill_check_items.py's rule)."""
-    host = (urlparse(SUPABASE_URL).hostname or "").lower()
-    if not host or host in _LOCAL_HOSTS:
-        return "local"
-    if host.endswith(_SUPABASE_SUFFIX):
-        return host[: -len(_SUPABASE_SUFFIX)].split(".")[0]
-    return host
+    """The project SUPABASE_URL points at (scripts/_project.py::project_ref)."""
+    return project_ref(SUPABASE_URL)
 
 
 def _pct(value) -> str:

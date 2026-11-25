@@ -58,24 +58,32 @@ _LOST_USAGE = "log_llm_usage failed; row dropped"
 _PLATFORM = "ai_budget: platform spend today is %s USD, at or above %s of the %s USD daily budget"
 _TABLES = frozenset({"events", "llm_usage"})
 _NUMBER = re.compile(r"[0-9]+(?:\.[0-9]+)?\Z")
+#: A count is mirrored only below this (a signed 64-bit integer's range).
+_COUNT_LIMIT = 2**63
+#: An amount given as text is mirrored only up to this many characters.
+_AMOUNT_MAX_CHARS = 80
+#: An amount's largest decimal exponent (below 10**16) and its finest
+#: (10**-12): beyond either it is not a USD figure this logger reports.
+_AMOUNT_MAX_EXPONENT = 15
+_AMOUNT_MIN_EXPONENT = -12
 
 
 def _count(value):
-    return type(value) is int and 0 < value < 2**63
+    return type(value) is int and 0 < value < _COUNT_LIMIT
 
 
 def _amount(value):
     if type(value) not in (Decimal, int, float, str):
         return None
-    if type(value) is str and (len(value) > 80 or not _NUMBER.fullmatch(value)):
+    if type(value) is str and (len(value) > _AMOUNT_MAX_CHARS or not _NUMBER.fullmatch(value)):
         return None
     try:
         amount = Decimal(str(value))
         if (
             not amount.is_finite()
             or amount < 0
-            or amount.adjusted() > 15
-            or amount.as_tuple().exponent < -12
+            or amount.adjusted() > _AMOUNT_MAX_EXPONENT
+            or amount.as_tuple().exponent < _AMOUNT_MIN_EXPONENT
         ):
             return None
         return format(amount, "f")

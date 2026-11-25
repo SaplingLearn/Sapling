@@ -20,6 +20,12 @@ from pydantic_ai.usage import RunUsage
 from services.events_service import build_llm_usage_row
 
 
+#: llm_usage counters are INTEGER (Postgres int4): the largest a counter may be.
+INT4_MAX = 2_147_483_647
+#: The longest model / owner / request-identity label a receipt carries.
+_MAX_LABEL_CHARS = 255
+
+
 class UsageReceiptUnavailable(ValueError):
     """Incomplete or inconsistent usage must retain financial exposure."""
 
@@ -38,13 +44,13 @@ class PreparedUsageReceipt:
 def _count(value: object) -> int:
     # SQL llm_usage counters are INTEGER; bool/string/float coercion would hide
     # malformed native usage that the permissive analytics seam can tolerate.
-    if type(value) is not int or not 0 <= value <= 2_147_483_647:
+    if type(value) is not int or not 0 <= value <= INT4_MAX:
         raise UsageReceiptUnavailable("Usage counters must be measured nonnegative integers")
     return value
 
 
 def _label(value: object, name: str) -> str:
-    if not isinstance(value, str) or not value.strip() or len(value) > 255:
+    if not isinstance(value, str) or not value.strip() or len(value) > _MAX_LABEL_CHARS:
         raise UsageReceiptUnavailable(f"Invalid {name}")
     return value
 

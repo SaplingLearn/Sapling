@@ -32,7 +32,6 @@ function_handlers_e2e.py::_quiz_handler answers both schemas.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 from collections.abc import Sequence
@@ -42,6 +41,7 @@ from pydantic import BaseModel, Field, field_validator
 from pydantic_ai import Agent
 from pydantic_core import PydanticCustomError
 
+from agents._prompt_hash import prompt_version
 from agents._providers import model_for
 from agents.deps import SaplingDeps
 from agents.quiz import MAX_ACCEPTED_ANSWERS, MAX_QUESTIONS, QuizQuestionType
@@ -222,15 +222,16 @@ GROUNDING = (
     "ASKED question.\n\n"
 )
 _PROMPT = INTRO + MC_RULES + WRITTEN_RULES + FORMAT_RULES + GROUNDING + INJECTION_GUARD_PROMPT
-PROMPT_VERSION = hashlib.sha256(_PROMPT.encode("utf-8")).hexdigest()[:12]
+PROMPT_VERSION = prompt_version(_PROMPT)
+#: The output-validation budget (#153), the plain quiz agent's output retries.
+QUIZ_PLANNED_OUTPUT_RETRIES = 2
 
 quiz_planned_agent = Agent[SaplingDeps, PlannedQuiz](
     model=model_for("quiz"),
     deps_type=SaplingDeps,
     output_type=PlannedQuiz,
-    # Tool-less agent, so `retries=` IS the output-validation budget (#153);
-    # the plain quiz agent's output_retries=2.
-    retries=2,
+    # Tool-less agent, so `retries=` IS the output-validation budget (#153).
+    retries=QUIZ_PLANNED_OUTPUT_RETRIES,
     system_prompt=_PROMPT,
     metadata={"prompt_version": PROMPT_VERSION, "agent": "quiz_planned"},
 )

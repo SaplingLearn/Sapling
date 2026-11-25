@@ -34,7 +34,7 @@ def _wire(concept, by_id: dict) -> dict:
         "concept_name": node.name,
         "course_id": node.course_id,
         "reason": concept.reason,
-        "p_known": round(concept.p_known, 4),
+        "p_known": round(concept.p_known, ql.P_KNOWN_WIRE_DIGITS),
         "band": concept.band,
         "due_at": _iso(concept.due_at),
         "open_misconceptions": concept.open_misconceptions,

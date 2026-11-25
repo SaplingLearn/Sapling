@@ -22,13 +22,13 @@ handler, told apart by its schema.
 
 from __future__ import annotations
 
-import hashlib
 from collections.abc import Sequence
 from typing import NamedTuple
 
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent
 
+from agents._prompt_hash import prompt_version
 from agents._providers import model_for
 from agents.check_items import CheckItemsUnavailable, one_line, run_drafting
 from agents.check_items_verify import (
@@ -99,7 +99,7 @@ _PROMPT = (
     "criterion and component ids exactly as listed.\n\n"
     f"{UNTRUSTED_ITEMS}"
 )
-_PROMPT_HASH = hashlib.sha256(_PROMPT.encode("utf-8")).hexdigest()[:12]
+_PROMPT_HASH = prompt_version(_PROMPT)
 
 check_items_combo_verify_agent = Agent[SaplingDeps, ComponentChecks](
     model=model_for(VERIFY_TASK),

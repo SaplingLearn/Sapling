@@ -22,11 +22,11 @@ off until one has (spec §13 A140).
 
 from __future__ import annotations
 
-import hashlib
 from collections.abc import Mapping, Sequence
 
 from pydantic_ai import Agent
 
+from agents._prompt_hash import prompt_version
 from agents._providers import model_for
 from agents.check_items import (
     _CARRIES,
@@ -88,7 +88,7 @@ _PROMPT = (
     f"{_WRONG_REASONS}{ANSWER_RULES}{_NO_REFERENCE_IN_PROMPT}{_SHAPES}"
     f"{_CHUNK_IDS}{_UNTRUSTED}"
 )
-_PROMPT_HASH = hashlib.sha256(_PROMPT.encode("utf-8")).hexdigest()[:12]
+_PROMPT_HASH = prompt_version(_PROMPT)
 
 check_items_varied_agent = Agent[SaplingDeps, VariedCheckItemsOutput](
     model=model_for("check_items"),

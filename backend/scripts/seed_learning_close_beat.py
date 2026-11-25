@@ -14,23 +14,16 @@ Frontend: `frontend/e2e/support/db.ts::seedCloseBeatItems`.
 
 from __future__ import annotations
 
-import os
-from urllib.parse import urlsplit
-
 from db import seed_helpers as h
 from db.connection import table
 from db.seed_local_rich import COURSE_CS, LOOP_NODES
 from learning.checks import question_hash
 from services.encryption import bind, decrypt_if_present, encrypt_if_present
+from scripts._project import require_local_test_db
 
 
 def _require_local() -> None:
-    host = urlsplit(os.getenv("SUPABASE_URL", "")).hostname
-    if host not in {"127.0.0.1", "localhost", "::1"} or os.getenv("APP_ENV") not in {
-        "local",
-        "test",
-    }:
-        raise RuntimeError("Close-beat fixtures require a local/test loopback database")
+    require_local_test_db("Close-beat fixtures")
 
 
 def close_beat_item(template: dict, *, slug: str, concept: str, fmt: str) -> dict:

@@ -201,7 +201,7 @@ def main(argv: list[str] | None = None) -> int:
     analyze.add_argument("--clustering", choices=analysis.CLUSTERINGS, default="two-way")
     analyze.add_argument("--course-effects", action="store_true", help="course fixed effects (sensitivity)")
     analyze.add_argument("--arm-by-window", action="store_true", help="arm x window (pooled windows)")
-    analyze.add_argument("--boot", type=int, default=2000, help="bootstrap resamples (paired analysis)")
+    analyze.add_argument("--boot", type=int, default=analysis.DEFAULT_N_BOOT, help="bootstrap resamples (paired analysis)")
     analyze.add_argument("--randomization", type=int, default=0, help="re-randomizations (0 = skip)")
     analyze.add_argument("--glmm", action="store_true", help="also fit the GLMM (needs requirements-analysis.txt)")
     analyze.add_argument("--seed", type=int, default=analysis.DEFAULT_SEED)

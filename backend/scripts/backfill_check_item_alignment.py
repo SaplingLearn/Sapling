@@ -52,7 +52,6 @@ import sys
 from collections import Counter, defaultdict
 from datetime import UTC, datetime
 from pathlib import Path
-from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 
@@ -61,6 +60,7 @@ load_dotenv(BASE / ".env")
 sys.path.insert(0, str(BASE))
 
 from agents._providers import model_mode  # noqa: E402
+from scripts._project import project_ref  # noqa: E402
 from db.connection import SUPABASE_URL  # noqa: E402
 from learning.item_alignment import (  # noqa: E402
     ALIGNMENT_FLAGS,
@@ -77,18 +77,10 @@ from services.check_item_service import (  # noqa: E402
     retire_items_by_id,
 )
 
-_LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "0.0.0.0", "host.docker.internal"}
-_SUPABASE_SUFFIX = ".supabase.co"
-
 
 def _project_ref() -> str:
-    """The project SUPABASE_URL points at (scripts/backfill_check_items.py's rule)."""
-    host = (urlparse(SUPABASE_URL).hostname or "").lower()
-    if not host or host in _LOCAL_HOSTS:
-        return "local"
-    if host.endswith(_SUPABASE_SUFFIX):
-        return host[: -len(_SUPABASE_SUFFIX)].split(".")[0]
-    return host
+    """The project SUPABASE_URL points at (scripts/_project.py::project_ref)."""
+    return project_ref(SUPABASE_URL)
 
 
 def plan(course: str | None, *, reverify: bool) -> tuple[int, list[tuple]]:

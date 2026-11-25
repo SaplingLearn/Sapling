@@ -33,7 +33,15 @@ import math
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 
-from learning_trial.analysis import DEFAULT_SEED, PRIMARY_WINDOWS, AnalysisError, latent_total_d, theta_sd_effect
+from learning_trial._stats import norm_ppf
+from learning_trial.analysis import (
+    ALPHA,
+    DEFAULT_SEED,
+    PRIMARY_WINDOWS,
+    AnalysisError,
+    latent_total_d,
+    theta_sd_effect,
+)
 from learning_trial.table import TREATMENT, TrialRow, select
 
 INSTALL_HINT = (
@@ -41,6 +49,9 @@ INSTALL_HINT = (
     "python -m venv .venv-analysis && .venv-analysis/bin/pip install -r requirements-analysis.txt "
     "(from backend/); never into the app venv"
 )
+#: The two-sided (1 - ALPHA) normal quantile for the arm's interval
+#: (z(0.975) = 1.95996…, previously the literal 1.959964).
+_Z_CI = norm_ppf(1.0 - ALPHA / 2.0)
 
 
 class MissingAnalysisDependency(ImportError):
@@ -141,8 +152,8 @@ def fit_glmm(
         sd_concept=sd_concept,
         arm=arm,
         arm_sd=arm_sd,
-        arm_low=arm - 1.959964 * arm_sd,
-        arm_high=arm + 1.959964 * arm_sd,
+        arm_low=arm - _Z_CI * arm_sd,
+        arm_high=arm + _Z_CI * arm_sd,
         theta_sd=theta_sd_effect(arm, sd_student),
         latent_total=latent_total_d(arm, (sd_student**2, sd_concept**2)),
     )
