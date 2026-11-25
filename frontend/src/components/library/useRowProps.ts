@@ -85,7 +85,8 @@ export function useRowProps(input: RowPropsInput): RowPropsBundle {
       }),
       doc,
       isTrash,
-      selected: ui.selected === doc.id,
+      // Checked rows are the selection; the single "current row" steps aside.
+      selected: ui.selected === doc.id && checkedIds.length === 0,
       checked,
       dimmed: ui.dragging && ui.dragIds.current.includes(doc.id),
       menuOpen: ui.docMenu?.docId === doc.id,
@@ -137,7 +138,7 @@ export function useRowProps(input: RowPropsInput): RowPropsBundle {
     return {
       folder,
       count: documents.filter(d => d.folder_id === folder.id).length,
-      selected: ui.selectedFolder === folder.id,
+      selected: ui.selectedFolder === folder.id && checkedIds.length === 0,
       dragOver: ui.dropOn === `f:${folder.id}`,
       delay: `${index * 30 + 40}ms`,
       editing: editingFolder === folder.id,

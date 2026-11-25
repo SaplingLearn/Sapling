@@ -115,10 +115,8 @@ export function FolderRow(props: FolderRowProps) {
         animationDelay: delay,
         display: "grid", gridTemplateColumns: columns, gap: 12, minWidth: 0,
         alignItems: "center", padding: "10px 14px", borderRadius: 12,
-        background: dragOver ? "#DCE8CE" : selected ? "#EBF0E1" : "transparent",
-        boxShadow: dragOver
-          ? "inset 0 0 0 1.5px #597536"
-          : selected ? "inset 0 0 0 1px rgba(68,93,34,0.25)" : "none",
+        background: dragOver ? "#DCE8CE" : selected ? "#EDE9E0" : "transparent",
+        boxShadow: dragOver ? "inset 0 0 0 1.5px #597536" : "none",
         cursor: "pointer",
       }}
     >
@@ -199,8 +197,9 @@ export function DocRow(props: DocRowProps) {
         animationDelay: view.delay,
         display: "grid", gridTemplateColumns: columns, gap: 12, minWidth: 0,
         alignItems: "center", padding: "12px 14px", borderRadius: 12,
-        background: selected ? "#EBF0E1" : "transparent",
-        boxShadow: selected ? "inset 0 0 0 1px rgba(68,93,34,0.25)" : "none",
+        // The current row (a click, or the arrow keys) is a neutral tint with no
+        // outline, so it never reads as checked or as the green selection bar.
+        background: selected ? "#EDE9E0" : "transparent",
         cursor: "pointer",
         opacity: dimmed ? 0.45 : 1,
       }}

@@ -314,6 +314,24 @@ describe("what the redesign adds, end to end", () => {
       .toHaveBeenCalledWith("d1", "u1", { file_name: "Determinants, revised.pdf" }));
   });
 
+  it("the current row steps aside for checked rows, and stays gone after Clear", async () => {
+    await renderLibrary();
+    const row = screen.getByTestId("library-doc-d1");
+    fireEvent.click(row);
+    expect(row.getAttribute("aria-selected")).toBe("true");
+    // A neutral tint with no outline: never the selection bar's green.
+    expect(row.style.background).not.toBe("");
+    expect(row.style.boxShadow).toBe("");
+
+    fireEvent.click(screen.getByLabelText("Select all"));
+    expect(row.getAttribute("aria-selected")).toBe("false");
+
+    const bar = await screen.findByTestId("library-bulk-bar");
+    fireEvent.click(within(bar).getByText("Clear"));
+    await waitFor(() => expect(screen.queryByTestId("library-bulk-bar")).toBeNull());
+    expect(row.getAttribute("aria-selected")).toBe("false");
+  });
+
   it("checking rows offers the bulk bar, and clears", async () => {
     await renderLibrary();
     fireEvent.click(screen.getByLabelText("Select Determinants Lecture 7"));

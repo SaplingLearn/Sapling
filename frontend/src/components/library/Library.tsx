@@ -84,6 +84,16 @@ export function Library() {
     openDocMenu({ docId, position: menuPositionFor(button, section), sub: null });
   }, [setSelected, openDocMenu]);
 
+  // Checking rows takes over from the single current row: it clears, so it
+  // does not come back when the checks are cleared.
+  const anyChecked = scope.checkedIds.length > 0;
+  const { setSelectedFolder } = ui;
+  React.useEffect(() => {
+    if (!anyChecked) return;
+    setSelected(null);
+    setSelectedFolder(null);
+  }, [anyChecked, setSelected, setSelectedFolder]);
+
   const act = useLibraryActions({
     data, ui, userId, toast, courseById,
     folders: data.folders,
@@ -276,7 +286,7 @@ export function Library() {
                 act.purgeDocs(scope.checkedIds);
               }}
               deleteConfirm={ui.bulkConfirm}
-              onClear={() => { ui.closeAllMenus(); ui.clearChecked(); }}
+              onClear={() => { ui.closeAllMenus(); ui.clearChecked(); setSelected(null); }}
             />
           </BulkBarReveal>
 
