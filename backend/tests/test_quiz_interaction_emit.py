@@ -224,7 +224,29 @@ def test_keyless_projection_serves_the_sanitized_kit():
          "options": [{"label": "A", "text": "a", "correct": True}], "interaction": sort},
     ]
     kit, junk, mc = _strip_answer_key(stored)
-    assert kit["interaction"] == sort
+    assert kit["interaction"]["buckets"] == sort["buckets"]
+    assert sorted(kit["interaction"]["items"], key=lambda n: n["id"]) == sorted(
+        sort["items"], key=lambda n: n["id"])
+    assert "answer" not in kit["interaction"]
     assert "correct_answer" not in kit
     assert "interaction" not in junk
     assert "interaction" not in mc
+
+
+def test_keyless_projection_never_serves_the_pool_in_key_order():
+    """A sequence's steps are written in the answer's order (`id1;id2;…`)
+    and a rank's items likewise; the student view must scramble them, the
+    same way on every read (resume), and keep every node."""
+    from services.quiz.wire import _strip_answer_key
+
+    for kind, pool_key in (("sequence", "steps"), ("rank", "items")):
+        for n in (2, 3, 5):
+            pool = [{"id": f"s{i}", "label": f"Step {i}"} for i in range(n)]
+            stored = [{"id": 1, "question": f"Order {kind} {n}.", "type": "short_answer",
+                       "options": [], "correct_answer": ";".join(p["id"] for p in pool),
+                       "interaction": {"kind": kind, pool_key: pool}}]
+            first = _strip_answer_key(stored)[0]["interaction"][pool_key]
+            again = _strip_answer_key(stored)[0]["interaction"][pool_key]
+            assert [p["id"] for p in first] != [p["id"] for p in pool]
+            assert first == again
+            assert sorted(p["id"] for p in first) == [p["id"] for p in pool]

@@ -138,7 +138,7 @@ def seed_close() -> dict:
         "session_id": _session([node, next_node], "Close beat journey"),
         "node_id": node,
         "next_node_id": next_node,
-        "hashes": dict(zip(ids, _hashes(list(ids.values())))),
+        "hashes": dict(zip(ids, _hashes(list(ids.values())), strict=True)),
     }
 
 
@@ -149,7 +149,7 @@ def seed_reason() -> dict:
     return {
         "session_id": _session([node], "Reason before submit journey"),
         "node_id": node,
-        "hashes": dict(zip(ids, _hashes(list(ids.values())))),
+        "hashes": dict(zip(ids, _hashes(list(ids.values())), strict=True)),
         "mc_correct_text": FINAL,
     }
 

@@ -17,7 +17,7 @@ from services.quiz.grading import WRITTEN_TYPES, numeric_value
 from services.quiz.algebra import equivalent_algebra
 from services.fingerprint import fingerprint
 from services.quiz.identity import question_hash
-from services.quiz.interaction import sanitize_interaction
+from services.quiz.interaction import sanitize_interaction, scramble_pool
 from learning import quiz_gates
 
 # Log records keep the name they had in routes/quiz.py before the #118 split:
@@ -100,11 +100,13 @@ def _strip_answer_key(wire_questions: list[dict]) -> list[dict]:
         # W7: a short_answer's kit is what the student answers ON (Sort's
         # buckets and items…), so it must reach them. Re-sanitized here, not
         # copied: the sanitizers emit layout only (ids, labels, prompts),
-        # never the key, and a stored row of any other shape drops it.
+        # never the key, and a stored row of any other shape drops it. The
+        # pool is scrambled: written order IS a sequence's/rank's answer.
         if q.get("type") == "short_answer":
             interaction = sanitize_interaction(q.get("interaction"))
             if interaction is not None:
-                q2["interaction"] = interaction
+                seed = str(q.get("question") or q.get("id") or "")
+                q2["interaction"] = scramble_pool(interaction, seed)
         stripped.append(q2)
     return stripped
 

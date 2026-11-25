@@ -7,6 +7,7 @@ reason to reject the whole quiz. Client mirrors live in
 
 from __future__ import annotations
 
+import hashlib
 from typing import Any
 
 
@@ -272,3 +273,37 @@ def attach_interaction(wire: dict[str, Any], raw: Any) -> dict[str, Any]:
     if interaction is not None:
         wire["interaction"] = interaction
     return wire
+
+
+# The pool a student drags FROM. The model writes it in key order (a
+# sequence's steps ARE the answer `id1;id2;…`), so the student view must
+# never show it as written. Kits assign by id, never by index.
+_POOL_KEYS: dict[str, str] = {
+    "sequence": "steps",
+    "rank": "items",
+    "sort": "items",
+    "label": "labels",
+    "build": "parts",
+}
+
+
+def scramble_pool(interaction: dict[str, Any], seed: str) -> dict[str, Any]:
+    """Return a copy with the kit's pool in a stable, non-key order.
+
+    Ordered by sha256(seed|id), so a resume shows the same order; when that
+    happens to reproduce the written order it is rotated by one, so a pool of
+    two or more never arrives in key order.
+    """
+    key = _POOL_KEYS.get(str(interaction.get("kind")))
+    if key is None:
+        return interaction
+    pool = interaction.get(key)
+    if not isinstance(pool, list) or len(pool) < 2:
+        return interaction
+    ranked = sorted(
+        pool,
+        key=lambda n: hashlib.sha256(f"{seed}|{n.get('id', '')}".encode()).hexdigest(),
+    )
+    if [n.get("id") for n in ranked] == [n.get("id") for n in pool]:
+        ranked = ranked[1:] + ranked[:1]
+    return {**interaction, key: ranked}
