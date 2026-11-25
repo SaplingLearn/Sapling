@@ -37,6 +37,14 @@ class FitError(ValueError):
 
 #: |coefficient| beyond which the likelihood is treated as diverging (separation)
 _DIVERGED = 25.0
+#: Newton-Raphson defaults: the iteration cap and the relative convergence tolerance
+_MAX_ITER = 60
+_TOL = 1e-10
+#: step halving: the log-likelihood slack a step may lose and still be taken,
+#: the factor each rejected step is cut by, and the scale below which it stops
+_LL_SLACK = 1e-12
+_HALVING = 0.5
+_MIN_STEP_SCALE = 1e-8
 
 
 def _log1pexp(eta: float) -> float:
@@ -58,19 +66,16 @@ class LogitFit:
         return expit(sum(b * v for b, v in zip(self.beta, x, strict=True)))
 
 
-def fit_logit(
-    x_rows: Sequence[tuple[float, ...]],
-    y: Sequence[bool | int],
-    *,
-    max_iter: int = 60,
-    tol: float = 1e-10,
-) -> LogitFit:
-    """Maximum-likelihood logistic regression by Newton-Raphson with step
-    halving. `x_rows` are tuples (they key the pattern collapse)."""
-    n = len(x_rows)
-    if n == 0 or n != len(y):
-        raise FitError("need equal, non-zero numbers of rows and outcomes")
-    p = len(x_rows[0])
+@dataclass(frozen=True)
+class _Cells:
+    """The design collapsed into (pattern, n, successes) cells."""
+
+    keys: list[tuple]
+    counts: list[int]
+    successes: list[int]
+
+
+def _collapse(x_rows: Sequence[tuple[float, ...]], y: Sequence[bool | int]) -> _Cells:
     cells: dict[tuple, list[int]] = {}
     for x, yi in zip(x_rows, y, strict=True):
         cell = cells.get(x)
@@ -80,55 +85,84 @@ def fit_logit(
             cell[0] += 1
             cell[1] += 1 if yi else 0
     keys = list(cells)
-    counts = [cells[k][0] for k in keys]
-    successes = [cells[k][1] for k in keys]
-    total = sum(successes)
+    return _Cells(keys, [cells[k][0] for k in keys], [cells[k][1] for k in keys])
+
+
+def _loglik(cells: _Cells, beta: list[float]) -> float:
+    out = 0.0
+    for k, nk, n1 in zip(cells.keys, cells.counts, cells.successes, strict=True):
+        eta = sum(b * v for b, v in zip(beta, k, strict=True))
+        out += n1 * eta - nk * _log1pexp(eta)
+    return out
+
+
+def _score_and_info(cells: _Cells, beta: list[float], p: int) -> tuple[list[float], list[list[float]]]:
+    g = [0.0] * p
+    h = [[0.0] * p for _ in range(p)]
+    for k, nk, n1 in zip(cells.keys, cells.counts, cells.successes, strict=True):
+        mu = expit(sum(b * v for b, v in zip(beta, k, strict=True)))
+        resid = n1 - nk * mu
+        w = nk * mu * (1.0 - mu)
+        for a in range(p):
+            ka = k[a]
+            if ka == 0.0:
+                continue
+            g[a] += ka * resid
+            wa = w * ka
+            row = h[a]
+            for b in range(p):
+                row[b] += wa * k[b]
+    return g, h
+
+
+def _inverse(h: list[list[float]]) -> list[list[float]]:
+    try:
+        return mat_inv(h)
+    except SingularMatrixError as exc:
+        raise FitError(f"singular information matrix: {exc}") from None
+
+
+def _halved_step(
+    cells: _Cells, beta: list[float], step: list[float], ll: float
+) -> tuple[list[float], float, float]:
+    """The Newton step, halved until it does not lower the log-likelihood:
+    (new beta, its log-likelihood, the scale taken)."""
+    scale = 1.0
+    while True:
+        trial = [b + scale * s for b, s in zip(beta, step, strict=True)]
+        new_ll = _loglik(cells, trial)
+        if new_ll >= ll - _LL_SLACK or scale < _MIN_STEP_SCALE:
+            return trial, new_ll, scale
+        scale *= _HALVING
+
+
+def fit_logit(
+    x_rows: Sequence[tuple[float, ...]],
+    y: Sequence[bool | int],
+    *,
+    max_iter: int = _MAX_ITER,
+    tol: float = _TOL,
+) -> LogitFit:
+    """Maximum-likelihood logistic regression by Newton-Raphson with step
+    halving. `x_rows` are tuples (they key the pattern collapse)."""
+    n = len(x_rows)
+    if n == 0 or n != len(y):
+        raise FitError("need equal, non-zero numbers of rows and outcomes")
+    p = len(x_rows[0])
+    cells = _collapse(x_rows, y)
+    total = sum(cells.successes)
     if total == 0 or total == n:
         raise FitError("the outcome does not vary")
 
-    def loglik(beta: list[float]) -> float:
-        out = 0.0
-        for k, nk, n1 in zip(keys, counts, successes, strict=True):
-            eta = sum(b * v for b, v in zip(beta, k, strict=True))
-            out += n1 * eta - nk * _log1pexp(eta)
-        return out
-
-    def score_and_info(beta: list[float]) -> tuple[list[float], list[list[float]]]:
-        g = [0.0] * p
-        h = [[0.0] * p for _ in range(p)]
-        for k, nk, n1 in zip(keys, counts, successes, strict=True):
-            mu = expit(sum(b * v for b, v in zip(beta, k, strict=True)))
-            resid = n1 - nk * mu
-            w = nk * mu * (1.0 - mu)
-            for a in range(p):
-                ka = k[a]
-                if ka == 0.0:
-                    continue
-                g[a] += ka * resid
-                wa = w * ka
-                row = h[a]
-                for b in range(p):
-                    row[b] += wa * k[b]
-        return g, h
-
     beta = [0.0] * p
-    ll = loglik(beta)
+    ll = _loglik(cells, beta)
     converged = False
     iterations = 0
     for iterations in range(1, max_iter + 1):
-        g, h = score_and_info(beta)
-        try:
-            h_inv = mat_inv(h)
-        except SingularMatrixError as exc:
-            raise FitError(f"singular information matrix: {exc}") from None
+        g, h = _score_and_info(cells, beta, p)
+        h_inv = _inverse(h)
         step = [sum(hij * gj for hij, gj in zip(row, g, strict=True)) for row in h_inv]
-        scale = 1.0
-        while True:
-            trial = [b + scale * s for b, s in zip(beta, step, strict=True)]
-            new_ll = loglik(trial)
-            if new_ll >= ll - 1e-12 or scale < 1e-8:
-                break
-            scale *= 0.5
+        trial, new_ll, scale = _halved_step(cells, beta, step, ll)
         delta = max(abs(scale * s) for s in step)
         beta, ll_prev, ll = trial, ll, new_ll
         if max(abs(b) for b in beta) > _DIVERGED:
@@ -136,12 +170,9 @@ def fit_logit(
         if delta < tol * (1.0 + max(abs(b) for b in beta)) or abs(ll - ll_prev) < tol * (1.0 + abs(ll)):
             converged = True
             break
-    _, h = score_and_info(beta)
-    try:
-        bread_inv = mat_inv(h)
-    except SingularMatrixError as exc:
-        raise FitError(f"singular information matrix: {exc}") from None
-    mu = {k: expit(sum(b * v for b, v in zip(beta, k, strict=True))) for k in keys}
+    _, h = _score_and_info(cells, beta, p)
+    bread_inv = _inverse(h)
+    mu = {k: expit(sum(b * v for b, v in zip(beta, k, strict=True))) for k in cells.keys}
     return LogitFit(
         beta=tuple(beta),
         bread_inv=bread_inv,
