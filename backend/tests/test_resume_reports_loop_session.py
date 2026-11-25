@@ -45,7 +45,8 @@ BASE = {"user_id": "u1", "topic": "Loops", "mode": "socratic",
         "started_at": "2026-01-01T00:00:00", "ended_at": None, "offering_id": None}
 
 
-@pytest.mark.parametrize("phase", ["probe", "plan", "teach", "close"])
+# the marker is bool(phase): the first and the last phase stand for all four
+@pytest.mark.parametrize("phase", ["probe", "close"])
 def test_a_loop_session_resumes_marked_loop(phase):
     seen: dict = {}
     r = _resume({"id": "s-loop", **BASE, "loop_phase": phase}, seen)

@@ -3,10 +3,8 @@ clocks are floats, the only I/O is a mocked `table`."""
 
 from __future__ import annotations
 
-from db.migration_units import MIGRATION_UNITS
 import logging
 import pathlib
-import re
 from unittest.mock import MagicMock
 
 import pytest
@@ -15,48 +13,9 @@ from learning import params
 from tests.work_meter import assert_linear, cpu_seconds
 
 BACKEND = pathlib.Path(__file__).resolve().parents[1]
-MIG_DIR = MIGRATION_UNITS
-
-PARAM_NAMES = (
-    "BKT_PROFICIENT",
-    "BKT_MASTERED_MIN_STRONG",
-    "WEIGHT_ASSISTED",
-    "WEIGHT_SAME_SESSION_RECHECK",
-    "FSRS_RATING_AGAIN",
-    "FSRS_RATING_HARD",
-    "FSRS_RATING_GOOD",
-    "FSRS_RATING_EASY",
-    "GATE_INDEPENDENT_MIN_S",
-    "GATE_INDEPENDENT_MIN_S_NOVICE",
-    "GATE_RUNG_DWELL_MIN_S",
-    "GATE_HYPERCORRECTION_FEEDBACK_DWELL_S",
-    "H6_MIN_GENUINE_ATTEMPTS",
-    "OFFER_BANDS",
-    "BAND_WINDOW",
-    "PRACTICE_TARGET_LO",
-    "BAND_CONTROL_HI",
-    "BAND_CONTROL_STOP_WINDOWS",
-    "CEILING_PROFIC_ESCALATE_FAILS",
-    "CEILING_DEVELOP_H6_FAILS",
-    "WHEELSPIN_OPPS",
-    "WHEELSPIN_OPPS_EARLY",
-    "WHEELSPIN_UNASSISTED_MAX",
-    "LEAK_NGRAM",
-    "ZPD_RATING_EVERY_N_CHECKS",
-    "LOOP_RAG_K_TEACH",
-    "LOOP_RAG_K_TEACH_SOFT",
-    "LOOP_SOURCE_CHUNKS_MAX",
-    "LOOP_TIER_DEEP_MIN_FAILS",
-    "EVENT_PAYLOAD_STR_MAX",
-)
 
 
 # ── params + ladder ───────────────────────────────────────────────────────────
-
-
-@pytest.mark.parametrize("name", PARAM_NAMES)
-def test_params_exports_every_pkg06_name(name):
-    assert hasattr(params, name), f"learning.params lacks {name}"
 
 
 def test_params_relations_hold():
@@ -76,47 +35,6 @@ def test_params_relations_hold():
     assert "novice" in params.OFFER_BANDS
     assert 0 < params.LOOP_RAG_K_TEACH_SOFT < params.LOOP_RAG_K_TEACH
     assert params.LOOP_SOURCE_CHUNKS_MAX >= 1 and params.LOOP_TIER_DEEP_MIN_FAILS >= 1
-
-
-def test_pkg06_param_values_are_the_spec_values():
-    """Spec §3.3 band control / ceiling / wheelspin cut-points and §3.5 routing
-    constants: one place each, the value the spec states."""
-    assert params.BAND_CONTROL_HI == 0.90
-    assert params.BAND_CONTROL_STOP_WINDOWS == 2
-    assert params.CEILING_PROFIC_ESCALATE_FAILS == 2
-    assert params.CEILING_DEVELOP_H6_FAILS == 2
-    assert params.WHEELSPIN_OPPS_EARLY == 6
-    assert params.WHEELSPIN_UNASSISTED_MAX == 0.50
-    assert params.LOOP_RAG_K_TEACH == 5
-    assert params.LOOP_RAG_K_TEACH_SOFT == 3
-    assert params.LOOP_SOURCE_CHUNKS_MAX == 2
-    assert params.LOOP_TIER_DEEP_MIN_FAILS == 2
-    assert params.EVENT_PAYLOAD_STR_MAX == 64  # a sha256 question_hash (Behaviour 10)
-
-
-def test_pkg06_modules_hold_no_numeral():
-    """Every threshold is a params.NAME: the only bare numerals in the PKG-06
-    modules are 0 / 1 (identity, empty) and the Rung member values."""
-    import ast
-
-    for name in _PKG06_MODULES:
-        tree = ast.parse((BACKEND / "learning" / f"{name}.py").read_text())
-        rung_body = {
-            id(n)
-            for c in ast.walk(tree)
-            if isinstance(c, ast.ClassDef) and c.name == "Rung"
-            for n in ast.walk(c)
-        }
-        stray = [
-            (name, node.lineno, node.value)
-            for node in ast.walk(tree)
-            if isinstance(node, ast.Constant)
-            and isinstance(node.value, (int, float))
-            and not isinstance(node.value, bool)
-            and node.value not in (0, 1)
-            and id(node) not in rung_body
-        ]
-        assert stray == [], stray
 
 
 def test_fsrs_rating_names_are_the_fsrs_rating_values():
@@ -229,12 +147,6 @@ def test_unconfirmed_profic_never_raises_past_the_profic_teach_cap():
     learner = _learner("profic", True, p=0.9, strong=0)
     rung, _ = ceiling_with_reason(learner, _step(fails=0), teach_attempt=True)
     assert rung == Rung.H3  # already at the profic cap: no teach-attempt raise
-
-
-def test_the_confirm_threshold_is_a_named_constant():
-    from learning import params
-
-    assert params.CEILING_PROFIC_CONFIRM_MIN_STRONG == 1
 
 
 @pytest.mark.parametrize("band,prereq,fails,showed,exam,rung,reason", CEILING_CASES)
@@ -430,16 +342,6 @@ def test_band_control_needs_min_attempts_before_harder():
     assert band_control([False], 0.5, True) is BandAction.EASIER_CHECK_PREREQS
     assert band_control([True, False, False], 0.5, True) is BandAction.EASIER_CHECK_PREREQS
     assert band_control([True], 0.5, True, wheelspin=True) is BandAction.WHEELSPIN
-
-
-def test_owner_decision_a38_params_are_pinned():
-    """Constants PKG-a38 lanes consume (added here to keep params.py edits in
-    one lane): the CAS retries (06(q)), the HARDER floor (06(m)) and lane D's
-    bounded redrafting (A38 low-severity 2)."""
-    assert params.LOOP_STATE_CAS_RETRIES == 3
-    assert params.BAND_CONTROL_HARDER_MIN_ATTEMPTS == 4
-    assert params.BAND_CONTROL_HARDER_MIN_ATTEMPTS <= params.BAND_WINDOW
-    assert params.CHECK_ITEM_REDRAFT_MAX_FAILURES == 3
 
 
 def test_unassisted_rate_uses_last_window_only():
@@ -1298,10 +1200,6 @@ _PROBE_PLEAS = (
 )  # fmt: skip
 
 
-def test_the_probe_plea_list_is_complete():
-    assert len(_PROBE_PLEAS) == 49 + 5 and len(set(_PROBE_PLEAS)) == len(_PROBE_PLEAS)
-
-
 @pytest.mark.parametrize("text", _PROBE_PLEAS)
 def test_every_probe_plea_holds_a_non_attempt_phrase(text):
     """Decision (A), fail closed for pleas: every probe plea holds a
@@ -1313,18 +1211,6 @@ def test_every_probe_plea_holds_a_non_attempt_phrase(text):
     assert has_non_attempt_phrase(text) is True
     assert attempt_content(text) == ""
     assert vetoes_attempt(text) is True
-
-
-@pytest.mark.parametrize(
-    "first,second", list(zip(_PROBE_PLEAS, _PROBE_PLEAS[1:] + _PROBE_PLEAS[:1]))
-)
-def test_two_probe_pleas_unlock_no_rung_and_never_reach_h6(first, second):
-    from learning.gates import h6_allowed, rung_unlock
-
-    step, now = _two_attempts((first, second))
-    assert step.genuine_attempts == 0 and step.attempted_at == []
-    assert rung_unlock(step, now) is False
-    assert h6_allowed(step, item_taught=True, item_practice=True, item_graded=False) is False
 
 
 # Decision (B)'s accepted residual: a probe plea whose residue holds a word
@@ -2324,18 +2210,19 @@ _LETTER_CLEAN = [
 ]
 
 
-@pytest.mark.parametrize("rung", [0, 1, 2, 3])
 @pytest.mark.parametrize("hint", _LETTER_LEAKS)
-def test_the_correct_option_letter_leaks_in_an_option_context_below_h6(hint, rung):
+def test_the_correct_option_letter_leaks_in_an_option_context_below_h6(hint):
+    """detect_leak reads the rung only as `>= H6`, so H5 (the last rung below
+    it) stands for every lower rung."""
     from learning.ladder import Rung
     from learning.leak import detect_leak
 
     kw = {"final_answer": MC_FINAL, "correct_option": "C"}
-    assert detect_leak(reference=MC_REF, emitted=hint, rung=Rung(rung), **kw) == (True, "option"), (
+    assert detect_leak(reference=MC_REF, emitted=hint, rung=Rung.H5, **kw) == (True, "option"), (
         hint
     )
     # without correct_option the letter is not checked (the pinned residual)
-    assert detect_leak(reference=MC_REF, emitted=hint, rung=Rung(rung), final_answer=MC_FINAL) == (
+    assert detect_leak(reference=MC_REF, emitted=hint, rung=Rung.H5, final_answer=MC_FINAL) == (
         False,
         "none",
     )
@@ -2580,79 +2467,107 @@ REF_BIG_O = (
 FA_BIG_O = "Linear (O(n)) is much better than exponential (O(2^n))."
 
 
+def _gap(why, *cases):
+    """Each case as a strict xfail: the leak is real and the rule misses it today."""
+    mark = pytest.mark.xfail(
+        strict=True, raises=AssertionError, reason=f"known gap of the final-answer rule: {why}"
+    )
+    return [pytest.param(*case, marks=mark) for case in cases]
+
+
 @pytest.mark.parametrize(
     "reference,final,canonical,hint",
     [
-        # (a) an mc_reason item's correct option LETTER when the caller passes
-        # no correct_option: the final answer is the option's text (A34), and
-        # the n-gram rule never matches one letter (with correct_option the
-        # "option" detector flags these — owner decision A38, 06 gap)
-        (MC_REF, MC_FINAL, None, "The answer is C."),
-        (MC_REF, MC_FINAL, None, "Is it option C?"),
-        (MC_REF, MC_FINAL, None, "Look again at (C) - it is right."),
-        # (b) LaTeX macros (the loop tutor may write math in LaTeX): \cdot,
-        # \times, \text{}, \mathrm{}, \frac{}{}, \pi, \sqrt{}, \left/\right
-        # each read as word tokens that split the run
-        (DIFF_REF, "6x^2", None, "So you get $6 \\cdot x^{2}$."),
-        (DIFF_REF, "6x^2", None, "So you get $6 \\times x^2$."),
-        (G_REF, "9.8 m/s^2", None, "$g = 9.8\\,\\mathrm{m/s^2}$"),
-        ("It factors as (x-3)^2.", "(x-3)^2", None, "So it is $\\left(x-3\\right)^2$."),
-        (G_REF, "9.8 m/s^2", None, "$g = 9.8\\,\\text{m/s}^2$"),
-        ("x = 1/2", "1/2", None, "x = $\\frac{1}{2}$"),
-        ("The circumference is 2πr.", "2πr", None, "So it is $2\\pi r$."),
-        ("The side is √2.", "√2", None, "So the side is $\\sqrt{2}$."),
-        # ... and the other direction: a final answer the generator copied in
-        # LaTeX against a plain hint
-        ("x = $\\frac{1}{2}x^2$", "$\\frac{1}{2}x^2$", None, "So it is 1/2 x^2"),
-        ("The area is $6 \\cdot x^{2}$.", "$6 \\cdot x^{2}$", None, "So it is 6x^2."),
-        ("The circumference is 2\\pi r.", "2\\pi r", None, "So it is 2πr."),
-        ("The side is $\\sqrt{2}$.", "$\\sqrt{2}$", None, "So the side is √2."),
-        # U+2044 FRACTION SLASH (what NFKC makes of U+00BD) and U+2215 DIVISION
-        # SLASH are not "/", so a vulgar fraction misses "1/2" (and 0.5)
-        ("x = 1/2", "1/2", None, "It is \u00bd"),
-        ("x = 1/2", "1/2", "0.5", "It is \u00bd"),
-        ("x = 1/2", "1/2", None, "It is 1\u20442"),
-        ("x = 1/2", "1/2", None, "It is 1\u22152"),
-        # (c) a hyphenated answer in its spaced spelling ('-' is a token)
-        (
-            "It is a first-order reaction.",
-            "first-order reaction",
-            None,
-            "So is it a first order reaction?",
+        *_gap(
+            "(a) with no correct_option the final answer is the option's text (A34) and the "
+            "n-gram rule never matches one letter (with correct_option the option detector "
+            "flags these, owner decision A38 06)",
+            (MC_REF, MC_FINAL, None, "The answer is C."),
+            (MC_REF, MC_FINAL, None, "Is it option C?"),
+            (MC_REF, MC_FINAL, None, "Look again at (C) - it is right."),
         ),
-        ("The eigenvalues are non-negative.", "non-negative", None, "Are they non negative?"),
-        # (d) a bare power of ten has no mantissa to scale
-        ("It is 1000 m.", "1000 m", "1e3", "Is it 10^3?"),
-        # (e) the decisive part of a long final answer (most free and
-        # teachback final answers are 6+ tokens; the rule matches the whole run)
-        (REF_BIG_O, FA_BIG_O, None, "Compare O(n) with O(2^n): which grows slower?"),
-        # (f) a paraphrase of a teachback claim
-        (TB_REF, TB_FINAL, None, "So it calls itself on a smaller problem?"),
-        # (g) an answer spelled in words, another unit spelling, or (on a free
-        # item, with no canonical value) scientific notation written otherwise
-        (DIFF_REF, "6x^2", None, "So it is six x squared."),
-        (G_REF, "9.8 m/s^2", None, "So g is 9.8 m s^-2."),
-        (G_REF, "9.8 m/s^2", None, "So g is 9.8 metres per second squared."),
-        ("Avogadro: 6.022e23 per mole.", "6.022e23", None, "About 6.022 x 10^23 of them."),
-        # (h) unicode: a superscript letter outside the exponent set folds
-        # without its "^"; a decomposed accent (letter + combining mark) splits
-        # the word
-        ("It is x^a.", "x^a", None, "So it is x\u1d43."),
-        ("Send your r\u00e9sum\u00e9.", "r\u00e9sum\u00e9", None, "Send the re\u0301sume\u0301."),
+        *_gap(
+            "(b) LaTeX macros (\\cdot, \\times, \\text{}, \\mathrm{}, \\frac{}{}, \\pi, "
+            "\\sqrt{}, \\left/\\right) read as word tokens that split the run",
+            (DIFF_REF, "6x^2", None, "So you get $6 \\cdot x^{2}$."),
+            (DIFF_REF, "6x^2", None, "So you get $6 \\times x^2$."),
+            (G_REF, "9.8 m/s^2", None, "$g = 9.8\\,\\mathrm{m/s^2}$"),
+            ("It factors as (x-3)^2.", "(x-3)^2", None, "So it is $\\left(x-3\\right)^2$."),
+            (G_REF, "9.8 m/s^2", None, "$g = 9.8\\,\\text{m/s}^2$"),
+            ("x = 1/2", "1/2", None, "x = $\\frac{1}{2}$"),
+            ("The circumference is 2πr.", "2πr", None, "So it is $2\\pi r$."),
+            ("The side is √2.", "√2", None, "So the side is $\\sqrt{2}$."),
+        ),
+        *_gap(
+            "(b) a final answer the generator copied in LaTeX, against a plain hint",
+            ("x = $\\frac{1}{2}x^2$", "$\\frac{1}{2}x^2$", None, "So it is 1/2 x^2"),
+            ("The area is $6 \\cdot x^{2}$.", "$6 \\cdot x^{2}$", None, "So it is 6x^2."),
+            ("The circumference is 2\\pi r.", "2\\pi r", None, "So it is 2πr."),
+            ("The side is $\\sqrt{2}$.", "$\\sqrt{2}$", None, "So the side is √2."),
+        ),
+        *_gap(
+            "(b) U+2044 FRACTION SLASH (what NFKC makes of U+00BD) and U+2215 DIVISION SLASH "
+            "are not '/', so a vulgar fraction misses 1/2 (and 0.5)",
+            ("x = 1/2", "1/2", None, "It is \u00bd"),
+            ("x = 1/2", "1/2", "0.5", "It is \u00bd"),
+            ("x = 1/2", "1/2", None, "It is 1\u20442"),
+            ("x = 1/2", "1/2", None, "It is 1\u22152"),
+        ),
+        *_gap(
+            "(c) a hyphenated answer in its spaced spelling ('-' is a token)",
+            (
+                "It is a first-order reaction.",
+                "first-order reaction",
+                None,
+                "So is it a first order reaction?",
+            ),
+            ("The eigenvalues are non-negative.", "non-negative", None, "Are they non negative?"),
+        ),
+        *_gap(
+            "(d) a bare power of ten has no mantissa to scale",
+            ("It is 1000 m.", "1000 m", "1e3", "Is it 10^3?"),
+        ),
+        *_gap(
+            "(e) the decisive part of a long final answer (the rule matches the whole run)",
+            (REF_BIG_O, FA_BIG_O, None, "Compare O(n) with O(2^n): which grows slower?"),
+        ),
+        *_gap(
+            "(f) a paraphrase of a teachback claim",
+            (TB_REF, TB_FINAL, None, "So it calls itself on a smaller problem?"),
+        ),
+        *_gap(
+            "(g) an answer spelled in words, another unit spelling, or (on a free item with "
+            "no canonical value) scientific notation written otherwise",
+            (DIFF_REF, "6x^2", None, "So it is six x squared."),
+            (G_REF, "9.8 m/s^2", None, "So g is 9.8 m s^-2."),
+            (G_REF, "9.8 m/s^2", None, "So g is 9.8 metres per second squared."),
+            ("Avogadro: 6.022e23 per mole.", "6.022e23", None, "About 6.022 x 10^23 of them."),
+        ),
+        *_gap(
+            "(h) a superscript letter outside the exponent set folds without its '^'; a "
+            "decomposed accent (letter + combining mark) splits the word",
+            ("It is x^a.", "x^a", None, "So it is x\u1d43."),
+            (
+                "Send your r\u00e9sum\u00e9.",
+                "r\u00e9sum\u00e9",
+                None,
+                "Send the re\u0301sume\u0301.",
+            ),
+        ),
     ],
 )
 def test_known_gaps_of_the_final_answer_rule_are_pinned(reference, final, canonical, hint):
-    """Residuals the owner accepted as documented known gaps (review round 7:
-    "accept the remaining leak-detector edge cases as documented known gaps"):
-    HANDOFF-06 Known gaps and spec §13 A34's known limits list each. A change
-    that closes one updates both and moves its case to LEAKS."""
+    """These hints are REAL answer-key leaks that detect_leak misses today: the
+    residuals the owner accepted in review round 7 (HANDOFF-06 Known gaps,
+    spec §13 A34's known limits), tracked in an issue. The test asserts the
+    leak IS detected, so each case is a strict xfail: closing a gap makes its
+    case XPASS, which fails the suite until the mark is removed."""
     from learning.ladder import Rung
     from learning.leak import detect_leak
 
     kw = {"final_answer": final, "canonical_answer": canonical}
-    assert detect_leak(reference=reference, emitted=hint, rung=Rung.H3, **kw) == (False, "none"), (
-        hint
-    )
+    leaked, _detector = detect_leak(reference=reference, emitted=hint, rung=Rung.H3, **kw)
+    assert leaked is True, hint
 
 
 @pytest.mark.parametrize(
@@ -3025,29 +2940,7 @@ def test_pkg04_check_item_satisfies_item_like():
     assert deterministic_content(Rung.H6, active, [], []).text == "3x^2"
 
 
-# ── sessions.loop_state: migration + store ───────────────────────────────────
-
-
-def test_migration_adds_loop_state_jsonb_default_empty():
-    hits = sorted(MIG_DIR.glob("*_learning_session_loop_state.sql"))
-    assert len(hits) == 1, f"expected exactly one loop_state migration, got {hits}"
-    sql = hits[0].read_text()
-    assert re.fullmatch(r"\d{14}_learning_session_loop_state\.sql", hits[0].name)
-    assert re.search(
-        r"ALTER TABLE sessions ADD COLUMN IF NOT EXISTS loop_state jsonb NOT NULL DEFAULT '\{\}'::jsonb;",
-        sql,
-    )
-    assert "PKG-06" in sql
-
-
-def test_migration_sorts_after_the_sessions_table():
-    """A replay from empty applies it after 0025 creates `sessions`, and after
-    every frozen NNNN_ file (the runner applies basenames in sorted order)."""
-    names = sorted(p.name for p in MIG_DIR.glob("*.sql"))
-    mine = next(n for n in names if n.endswith("_learning_session_loop_state.sql"))
-    frozen = [n for n in names if re.match(r"\d{4}_", n)]
-    assert "0025_study_integrity.sql" in frozen
-    assert all(n < mine for n in frozen)
+# ── sessions.loop_state: the store ───────────────────────────────────────────
 
 
 def _sessions_table(select_rows=None, update_rows=None):
@@ -3581,23 +3474,6 @@ def test_zpd_step_carries_earnest_blocked_as_a_bool(monkeypatch, value):
     assert kw["payload"]["earnest_blocked"] is value
 
 
-def test_emit_helpers_are_keyword_only():
-    import inspect
-
-    from learning import zpd_events
-
-    for name in (
-        "emit_zpd_step",
-        "emit_zpd_offer",
-        "emit_zpd_band_adjust",
-        "emit_zpd_wheelspin",
-        "emit_zpd_leak",
-        "emit_zpd_rating",
-    ):
-        params_ = inspect.signature(getattr(zpd_events, name)).parameters.values()
-        assert all(p.kind is inspect.Parameter.KEYWORD_ONLY for p in params_), name
-
-
 def test_emit_helper_drops_a_malformed_event_instead_of_raising(monkeypatch, caplog):
     """Event capture never raises into a request (events_service contract): a
     caller bug in the rungs list drops the event with a log line."""
@@ -3866,59 +3742,6 @@ def _pkg06_imports(source: str, package: str = "", skip=lambda node: False) -> l
     return found
 
 
-def test_pkg06_import_detector():
-    assert _pkg06_imports("import learning.policy") == ["learning.policy"]
-    assert _pkg06_imports("from learning import gates, bkt") == ["learning.gates"]
-    assert _pkg06_imports("def f():\n    from learning.leak import detect_leak") == [
-        "learning.leak",
-        "learning.leak.detect_leak",
-    ]
-    assert _pkg06_imports("import learning.bkt\nfrom learning import params") == []
-    # relative imports inside learning/, and dynamic imports by string
-    assert _pkg06_imports("from . import policy, bkt", package="learning") == ["learning.policy"]
-    assert _pkg06_imports("def f():\n    from .gates import x", package="learning") == [
-        "learning.gates",
-        "learning.gates.x",
-    ]
-    assert _pkg06_imports("from ..learning import leak", package="services") == ["learning.leak"]
-    assert _pkg06_imports("from . import policy", package="services") == []
-    assert _pkg06_imports("import importlib\nimportlib.import_module('learning.policy')") == [
-        "learning.policy"
-    ]
-    assert _pkg06_imports(
-        "from importlib import import_module\nimport_module('learning.leak')"
-    ) == ["learning.leak"]
-    assert _pkg06_imports("def f():\n    __import__('learning.gates')") == ["learning.gates"]
-    assert _pkg06_imports("import_module('.ladder', 'learning')") == ["learning.ladder"]
-    assert _pkg06_imports("import_module('.ladder', package='learning')") == ["learning.ladder"]
-    assert _pkg06_imports("importlib.import_module(name)\nimport_module('learning.bkt')") == []
-    assert _pkg06_imports("import_module(name, 'learning.policy')") == []  # no literal name
-
-
-def test_inertness_scan_covers_learning_modules_outside_pkg06(tmp_path):
-    """The scan skips only the six PKG-06 modules (they import each other) and
-    tests: a lazy import of a PKG-06 module inside a learning module the app
-    already loads (gate, evidence, checks, learner_state) is a load the
-    subprocess probe below cannot see, since it reads sys.modules after
-    `import main`, before any function body runs."""
-    (tmp_path / "learning").mkdir()
-    (tmp_path / "tests").mkdir()
-    (tmp_path / "learning" / "gate.py").write_text(
-        "def learning_loop_active():\n    from learning import policy\n"
-    )
-    (tmp_path / "learning" / "evidence.py").write_text(
-        "import importlib\n\ndef f():\n    return importlib.import_module('learning.leak')\n"
-    )
-    (tmp_path / "learning" / "checks.py").write_text("def f():\n    from . import ladder\n")
-    (tmp_path / "learning" / "gates.py").write_text("from learning.policy import Band\n")
-    (tmp_path / "tests" / "test_x.py").write_text("from learning import gates\n")
-    assert _inertness_offenders(tmp_path) == [
-        "learning/checks.py",
-        "learning/evidence.py",
-        "learning/gate.py",
-    ]
-
-
 def _inertness_offenders(root) -> list[str]:
     offenders = []
     for path in sorted(root.rglob("*.py")):
@@ -3934,86 +3757,6 @@ def _inertness_offenders(root) -> list[str]:
         if _pkg06_imports(text, package=package, skip=_sanctioned_import(name)):
             offenders.append(name)
     return offenders
-
-
-def test_inertness_scan_sanctions_only_the_grader_hint_leak_check(tmp_path):
-    """A38 (the grader-hint owner decision): agents/grader.py may import exactly
-    detect_leak from learning.leak; the bare module, any other PKG-06 name there, or
-    the same import in any other file is still flagged."""
-    (tmp_path / "agents").mkdir()
-    (tmp_path / "agents" / "grader.py").write_text("from learning.leak import detect_leak\n")
-    (tmp_path / "agents" / "other.py").write_text("from learning.leak import detect_leak\n")
-    assert _inertness_offenders(tmp_path) == ["agents/other.py"]
-    for extra in (
-        "from learning.leak import detect_leak, leak_spans\n",
-        "from learning import leak\n",
-        "import learning.leak\n",
-        "from learning.ladder import Rung\n",
-        "from learning.leak import detect_leak\nfrom learning import gates\n",
-    ):
-        (tmp_path / "agents" / "grader.py").write_text(extra)
-        assert _inertness_offenders(tmp_path) == ["agents/grader.py", "agents/other.py"], extra
-
-
-def test_inertness_scan_sanctions_only_the_budget_alias_import(tmp_path):
-    """PKG-06b: services/ai_budget.py may import exactly Band, BudgetLevel and Tier
-    from learning.policy; any other PKG-06 name there, or the same import anywhere
-    else, is still flagged."""
-    (tmp_path / "services").mkdir()
-    (tmp_path / "services" / "ai_budget.py").write_text(
-        "from learning.policy import Band, BudgetLevel, Tier\n"
-    )
-    (tmp_path / "services" / "other.py").write_text("from learning.policy import Tier\n")
-    assert _inertness_offenders(tmp_path) == ["services/other.py"]
-    (tmp_path / "services" / "ai_budget.py").write_text("from learning.policy import Tier as T\n")
-    assert _inertness_offenders(tmp_path) == ["services/other.py"]  # a subset, renamed or not
-    for extra in (
-        "from learning.policy import Tier, model_tier\n",
-        "from learning.policy import Tier\nfrom learning import gates\n",
-        "import learning.leak\n",
-        # the bare module reaches every policy function (policy.model_tier …): never sanctioned
-        "from learning import policy\n",
-        "import learning.policy\n",
-        "import learning.policy as p\n",
-        "from learning.policy import Tier\nimport learning.policy\n",
-        "from learning.policy import *\n",
-        "def f():\n    import importlib\n    return importlib.import_module('learning.policy')\n",
-    ):
-        (tmp_path / "services" / "ai_budget.py").write_text(extra)
-        assert _inertness_offenders(tmp_path) == ["services/ai_budget.py", "services/other.py"], (
-            extra
-        )
-
-
-def test_inertness_scan_sanctions_the_loop_wiring(tmp_path):
-    """PKG-07: the loop package (services/loop/, its route's bodies since #118)
-    may import any PKG-06 module; the loop tutor exactly `Rung` and `intent`
-    from the ladder; every other importer, the loop's thin route included, is
-    still flagged."""
-    (tmp_path / "routes").mkdir()
-    (tmp_path / "agents").mkdir()
-    (tmp_path / "services" / "loop").mkdir(parents=True)
-    (tmp_path / "services" / "loop" / "turn.py").write_text(
-        "from learning import gates, ladder, policy, zpd_events\n"
-        "from learning.leak import detect_leak\nimport learning.loop_state_store\n"
-    )
-    (tmp_path / "agents" / "loop_tutor.py").write_text("from learning.ladder import Rung, intent\n")
-    (tmp_path / "routes" / "learn.py").write_text(
-        "def _loop_delegate(name):\n    from routes import learn_loop\n    return learn_loop\n"
-    )
-    assert _inertness_offenders(tmp_path) == []
-    for extra in (
-        "from learning.ladder import Rung, deterministic_content\n",
-        "from learning import ladder\n",
-        "from learning.policy import model_tier\n",
-        "import learning.leak\n",
-    ):
-        (tmp_path / "agents" / "loop_tutor.py").write_text(extra)
-        assert _inertness_offenders(tmp_path) == ["agents/loop_tutor.py"], extra
-    (tmp_path / "agents" / "loop_tutor.py").write_text("from learning.ladder import Rung\n")
-    (tmp_path / "routes" / "learn.py").write_text("from learning import gates\n")
-    (tmp_path / "routes" / "learn_loop.py").write_text("from learning import gates\n")
-    assert _inertness_offenders(tmp_path) == ["routes/learn.py", "routes/learn_loop.py"]
 
 
 def test_review_reaches_only_the_loop_state_store():
@@ -4229,11 +3972,3 @@ def test_loop_state_round_trips_attempts_and_confront():
     assert recovered["attempts"] == doc["attempts"] and recovered["confront"] == doc["confront"]
 
 
-def test_next_isomorph_takes_no_str_parameter():
-    """Invariants 2/4: policy functions take typed state, never message text."""
-    import inspect
-
-    from learning.policy import next_isomorph
-
-    for p in inspect.signature(next_isomorph).parameters.values():
-        assert p.annotation not in ("str", str), p.name

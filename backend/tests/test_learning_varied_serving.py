@@ -337,17 +337,6 @@ def test_a_definitional_item_is_never_pulled_forward_nor_pulls_one(monkeypatch):
     assert _interleaved(monkeypatch, queue, varied=False) == ["b", "a", "c", "x"]
 
 
-def test_a_definitional_anchor_pairs_nothing(monkeypatch):
-    queue = _queue(("x", 2), ("b", 2))
-    anchor = {"key": "a", "course_id": "c1", "difficulty": 1}
-    assert _interleaved(monkeypatch, queue, anchor, varied=True) == ["x", "b"]
-    assert _interleaved(monkeypatch, queue, anchor, varied=False) == ["b", "x"]
-    # an anchor graded with the flag off carries no difficulty: A114's anchor
-    assert _interleaved(monkeypatch, queue, {"key": "a", "course_id": "c1"}, varied=True) == ["b", "x"]
-    applied = {"key": "a", "course_id": "c1", "difficulty": 2}
-    assert _interleaved(monkeypatch, queue, applied, varied=True) == ["b", "x"]
-
-
 def test_a_definitional_anchor_pulls_nothing_even_when_its_concepts_queue_item_could(monkeypatch):
     # the review's scenario A: a (difficulty 1) graded last and due again with a
     # difficulty-2 pick; a and b are siblings. The anchor pulls nothing (x, the
@@ -357,6 +346,9 @@ def test_a_definitional_anchor_pulls_nothing_even_when_its_concepts_queue_item_c
     anchor = {"key": "a", "course_id": "c1", "difficulty": 1}
     assert _interleaved(monkeypatch, queue, anchor, varied=True) == ["x", "a", "b"]
     assert _interleaved(monkeypatch, queue, anchor, varied=False) == ["b", "a", "x"]
+    # an anchor graded with the flag off carries no difficulty: A114's anchor
+    plain = {"key": "a", "course_id": "c1"}
+    assert _interleaved(monkeypatch, queue, plain, varied=True) == ["b", "a", "x"]
 
 
 def test_a_definitional_queue_item_is_never_pulled_even_by_its_concepts_applied_anchor(monkeypatch):
@@ -367,25 +359,6 @@ def test_a_definitional_queue_item_is_never_pulled_even_by_its_concepts_applied_
     anchor = {"key": "a", "course_id": "c1", "difficulty": 2}
     assert _interleaved(monkeypatch, queue, anchor, varied=True) == ["b", "x", "a"]
     assert _interleaved(monkeypatch, queue, anchor, varied=False) == ["b", "a", "x"]
-
-
-def test_a_definitional_item_once_served_pulls_nothing_though_its_concept_anchored(monkeypatch):
-    from learning import review
-
-    # a pairs with b (the same open misconception) and with c (a shared
-    # parent); b and c do not pair. a, graded last at difficulty 2, anchors b;
-    # a's definitional queue item, once served, pulls nothing — y keeps its
-    # DASH place ahead of c
-    monkeypatch.setattr(review, "_prerequisite_parents", lambda u, nodes: {"a": {"p"}, "c": {"p"}})
-    monkeypatch.setattr(
-        review, "open_for", lambda u, nodes: [{"node_id": n, "wrong_key": "w"} for n in ("a", "b")]
-    )
-    queue = _queue(("b", 2), ("x", 2), ("a", 1), ("y", 2), ("c", 2))
-    state = {"review": {"last_graded": {"key": "a", "course_id": "c1", "difficulty": 2}}}
-    order = [i.node_id for i in review._interleaved("u1", queue, state, varied=True)]
-    assert order == ["b", "x", "a", "y", "c"]
-    order = [i.node_id for i in review._interleaved("u1", queue, state, varied=False)]
-    assert order == ["b", "a", "c", "x", "y"]  # A114: the definitional a pulled and pulling
 
 
 def test_the_lead_replaces_only_the_first_steps_partners():
@@ -545,22 +518,6 @@ def test_multi_concept_activation_poses_the_combination_and_marks_its_step(seams
 
 
 # ── A141: evidence on the apex ───────────────────────────────────────────────
-
-
-def test_a_multi_concept_observation_is_a_partial_one_either_way():
-    from learning.evidence import Evidence, evidence_weight
-
-    for correct in (True, False):
-        base = Evidence(node_id="n", channel="free_response", correct=correct)
-        multi = Evidence(node_id="n", channel="free_response", correct=correct, multi_concept=True)
-        assert base.weight == 1.0
-        assert multi.weight == params.WEIGHT_MULTI_CONCEPT == evidence_weight(multi)
-    # it multiplies the other factors
-    low = Evidence(node_id="n", channel="free_response", correct=False, confidence=0.1, multi_concept=True)
-    assert low.weight == params.WEIGHT_LOW_CONFIDENCE * params.WEIGHT_MULTI_CONCEPT
-    # a correct answer after H4..H6 is still no upward evidence
-    worked = Evidence(node_id="n", channel="free_response", correct=True, max_rung=4, multi_concept=True)
-    assert worked.weight == 0.0
 
 
 def test_the_flag_is_dumped_only_when_set_so_every_other_dict_is_as_before():

@@ -63,8 +63,14 @@ def _submit(model, monkeypatch, *, answer=HONEST, item_format="free"):
     return outcome, deps.pending_evidence
 
 
-@pytest.mark.parametrize("entries", BAD_VERDICTS)
-@pytest.mark.parametrize("answer", [HONEST, "The base case is unnecessary because recursion stops itself."])
+WRONG = "The base case is unnecessary because recursion stops itself."
+
+
+# each bad verdict once, the honest and the wrong answer in turn: neither outcome is recorded
+@pytest.mark.parametrize(
+    "entries,answer",
+    [(entries, (HONEST, WRONG)[i % 2]) for i, entries in enumerate(BAD_VERDICTS)],
+)
 def test_incomplete_primary_verdict_never_records_either_outcome(monkeypatch, entries, answer):
     model, calls = grader_fakes.scripted_grader([{**_good(), "item_results": entries}])
     outcome, evidence = _submit(model, monkeypatch, answer=answer)
@@ -337,8 +343,16 @@ def test_replacement_keeps_actual_run_accounting_and_generation_bounds(monkeypat
     _assert_second_opinion_thinking(settings[1:])
 
 
-@pytest.mark.parametrize("stage,field", [("span", "asserted"), ("span", "item_results"), ("context", "withdrawn")])
-@pytest.mark.parametrize("failure", ["missing", "duplicate", "unknown-verdict", "extra-label"])
+# every checked field and every failure shape at least once (was the full 3 x 4 product)
+@pytest.mark.parametrize(
+    "stage,field,failure",
+    [
+        ("span", "asserted", "missing"),
+        ("span", "item_results", "duplicate"),
+        ("context", "withdrawn", "unknown-verdict"),
+        ("span", "item_results", "extra-label"),
+    ],
+)
 def test_invalid_support_checks_degrade_after_one_bounded_retry(monkeypatch, stage, field, failure):
     calls = {"span": 0, "context": 0}
 

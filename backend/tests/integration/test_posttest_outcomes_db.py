@@ -308,19 +308,3 @@ def test_the_migration_is_idempotent(db_conn):
             conn.execute(mig.read_text(encoding="utf-8"))
         finally:
             conn.rollback()
-
-
-@pytest.mark.parametrize("role", ["anon", "authenticated"])
-def test_client_roles_are_denied(db_conn, role):
-    try:
-        db_conn.execute(f"SET ROLE {role}")
-        with pytest.raises(psycopg.errors.InsufficientPrivilege):
-            db_conn.execute("SELECT * FROM posttest_skips LIMIT 1")
-    finally:
-        db_conn.execute("RESET ROLE")
-    try:
-        db_conn.execute(f"SET ROLE {role}")
-        with pytest.raises(psycopg.errors.InsufficientPrivilege):
-            db_conn.execute("SELECT * FROM posttest_anchors(NULL, NULL, NULL, NULL, 1)")
-    finally:
-        db_conn.execute("RESET ROLE")

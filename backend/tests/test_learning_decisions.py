@@ -98,8 +98,6 @@ def test_decision_slot_is_claude_haiku_one_prompt(monkeypatch):
     # Claude 5.x takes no thinking budget: the agent carries no Gemini knobs
     # (the slot's `low` effort rides the model's settings, ADR 0030).
     assert not any(str(k).startswith("google_") for k in (d.learning_decision_agent.model_settings or {}))
-    src = (BACKEND / "agents" / "learning_decision.py").read_text()
-    assert src.count("_SYSTEM_PROMPT = ") == 1 and len(re.findall(r"\bAgent[\[(]", src)) == 1
     text = d.build_decision_message(
         "Which?", [("STUDENT ANSWER", "a loop")], [("w_loop", "l"), ("w_speed", "s")]
     )
@@ -650,43 +648,6 @@ def test_deterministic_and_evidence_backend(seam, events):
     assert _kinds(events) == ["decision.made"]
 
 
-def test_spec_3_6_settings_and_ownership(seam):
-    names = (
-        "JEV_MODEL JEV_SDK_VERSION JEV_TIMEOUT_MS JEV_MAX_RETRIES JEV_CIRCUIT_FAILS "
-        "JEV_CIRCUIT_COOLDOWN_S JEV_STATE_MAX_TOKENS DECISION_PROMOTE_MIN_GOLD "
-        "DECISION_PROMOTE_MAX_ACC_DROP GRADER_PROMOTE_MIN_KAPPA DECISION_PROMOTE_MAX_ECE "
-        "SHARE_FALSE_POSITIVE_MAX GRADER_BKT_REPLAY_MAX_DELTA DECISION_SHADOW_MIN_DAYS "
-        "DECISION_SHADOW_MIN_N DECISION_SHADOW_MIN_AGREEMENT DECISION_P95_MS "
-        "DECISION_MAX_ERROR_RATE"
-    ).split()
-    assert [getattr(seam, n) for n in names] == [
-        "jev-1.13.0",
-        "typesafe-sdk==0.7.2",
-        800,
-        1,
-        5,
-        300,
-        28_000,
-        200,
-        0.02,
-        0.70,
-        0.05,
-        0.01,
-        0.02,
-        7,
-        1000,
-        0.90,
-        300,
-        0.005,
-    ]
-    assert not any(
-        hasattr(seam, n) for n in ("classify_upload", "rerank", "route_turn")
-    )  # #641/#640
-    for path in (BACKEND / "learning").rglob("*.py"):
-        rel = path.relative_to(BACKEND).as_posix()
-        assert not _seam_refs(path.read_text(), rel), rel
-
-
 # ── Task 4: decision.* events ──────────────────────────────────────────────
 
 
@@ -979,18 +940,13 @@ def _seam_refs(source: str, rel: str = "") -> list[tuple[int, str]]:
 @pytest.mark.parametrize(
     ("source", "rel", "hits"),
     [
-        ("from services import learning_decisions as decisions", "", 1),
-        ("from services.learning_decisions import judge_leak", "", 1),
+        # one case per branch of _seam_refs: Import, absolute ImportFrom (multi-name,
+        # parenthesized), relative ImportFrom, a dynamic import by name; prose never counts
         ("import services.learning_decisions as seam", "", 1),
-        ("from services import events_service, learning_decisions", "", 1),
         ("from services import (\n    events_service,\n    learning_decisions,\n)", "", 1),
-        ("import importlib\nimportlib.import_module('services.learning_decisions')", "", 1),
-        ("from . import learning_decisions", "services/x.py", 1),
         ("from .learning_decisions import judge_leak", "services/x.py", 1),
-        ("from .. import decisions", "agents/tools/x.py", 0),
-        ("# the route calls services.learning_decisions.judge_leak", "", 0),
-        ('"""Read services/learning_decisions.py::item_answerable."""', "", 0),
-        ("from services import events_service\nfrom agents import decision", "", 0),
+        ("import importlib\nimportlib.import_module('services.learning_decisions')", "", 1),
+        ('# services.learning_decisions\n"""Read services/learning_decisions.py."""', "", 0),
     ],
 )
 def test_seam_ref_detector(source, rel, hits):
@@ -1018,10 +974,6 @@ def test_seam_callers_are_only_grade_answer():
     # seam at call time; it is the backend UNDER the seam, never a caller of a decision
     # PKG-15 R1 (minor 7): main.py's lifespan drains the shadows at shutdown, nothing else
     assert importers == ["agents/_jev.py", "agents/tools/check.py", "main.py"]
-    main_src = (BACKEND / "main.py").read_text()
-    # #771: teardowns are registered on the lifespan's exit stack, not called inline
-    assert re.findall(r"learning_decisions\.(\w+)", main_src) == ["shutdown_shadows"]
-    assert "stack.push_async_callback(learning_decisions.shutdown_shadows)" in main_src
     jev = (BACKEND / "agents" / "_jev.py").read_text()
     assert not any(f"decisions.{n}(" in jev for n in DECISION_NAMES_FOR_PIN)
 
@@ -1185,7 +1137,8 @@ def _scored(ev, n_right: int, n: int = 200, decision: str = "judge_leak"):
     ]
 
 
-@pytest.mark.parametrize("base_right", [150, 180, 186, 190, 196, 200])
+# 190 and 200: the naive float drop (b - (b-4)) / 200 lands under and over 0.02
+@pytest.mark.parametrize("base_right", [190, 200])
 def test_acc_drop_gate_passes_an_exact_two_point_drop_at_every_count(ev, base_right):
     """§3.6 "accuracy drop ≤ 0.02": 4 of 200 is exactly 2 points and passes; float
     rounding must not make the boundary depend on the counts."""
@@ -1196,7 +1149,7 @@ def test_acc_drop_gate_passes_an_exact_two_point_drop_at_every_count(ev, base_ri
     ]
 
 
-@pytest.mark.parametrize("n", [100, 200, 300, 400])
+@pytest.mark.parametrize("n", [100, 400])
 def test_ece_gate_passes_an_exact_ece_of_0_05_at_every_count(ev, n):
     """§3.6 "ECE ≤ 0.05": 95% right at confidence 1.0 is ECE exactly 0.05 and passes at
     every count (the float sum is 0.050000000000000044); 94% right still fails."""

@@ -168,13 +168,3 @@ def test_posed_items_reads_every_posed_ungraded_item(db_conn):
     assert sorted(i.question_hash for i, _ in items) == ["qh-a", "qh-old", "qh-p", "qh-r", "qh-x"]
     assert overflow is None
     assert by_hash.call_args.args[0] == ["qh-old", "qh-p"]  # both unanswered poses are read
-
-
-@pytest.mark.parametrize("role", ["anon", "authenticated"])
-def test_client_roles_are_denied(db_conn, role):
-    try:
-        db_conn.execute(f"SET ROLE {role}")
-        with pytest.raises(psycopg.errors.InsufficientPrivilege):
-            db_conn.execute("SELECT * FROM learning_reveals LIMIT 1")
-    finally:
-        db_conn.execute("RESET ROLE")

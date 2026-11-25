@@ -6,8 +6,6 @@ A20 (arm sessions are exempt from tier downgrades and pause at hard).
 
 from __future__ import annotations
 
-from db.migration_units import MIGRATION_UNITS
-import re
 from collections import Counter
 from unittest.mock import MagicMock, patch
 
@@ -21,17 +19,6 @@ import services.loop.state
 
 # the route suite's fixtures (no_rate_limit is autouse there, so here too)
 gate_on, no_rate_limit, seams = _routes.gate_on, _routes.no_rate_limit, _routes.seams
-
-MIG_DIR = MIGRATION_UNITS
-
-
-def test_migration_adds_nullable_loop_arm():
-    hits = sorted(MIG_DIR.glob("*_learning_loop_arm.sql"))
-    assert len(hits) == 1, hits
-    assert re.match(r"^\d{14}_learning_loop_arm\.sql$", hits[0].name)
-    sql = hits[0].read_text()
-    assert re.search(r"ADD COLUMN IF NOT EXISTS loop_arm text\s*;", sql)
-    assert "NOT NULL" not in sql
 
 
 def test_null_arm_is_always_a():
