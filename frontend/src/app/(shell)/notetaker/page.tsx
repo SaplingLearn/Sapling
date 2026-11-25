@@ -25,8 +25,8 @@ import type {
   GraphNode,
 } from "@/lib/types";
 import { now } from "@/lib/testMode";
-import { motion, type Target } from "framer-motion";
-import { useMotionPresets, type MotionPreset } from "@/lib/motion";
+import { motion } from "framer-motion";
+import { useMotionPresets } from "@/lib/motion";
 import styles from "./notetaker.module.css";
 import { useToast } from "@/components/ToastProvider";
 import { humanizeError } from "@/lib/errorMessage";
@@ -44,10 +44,6 @@ import {
   noteDetailRailStyle,
   chatRailStyle,
 } from "@/lib/notes/notetakerLayout";
-
-/** A preset as motion props. Its `initial` is narrowed to `Target`: spread
- *  as-is, framer's prop union is too wide for TypeScript to check. */
-const asMotion = (p: MotionPreset) => ({ initial: p.initial as Target, animate: p.animate, exit: p.exit, transition: p.transition });
 
 type Mastery = "mastered" | "learning" | "struggling" | "unexplored";
 
@@ -1125,12 +1121,12 @@ function CoursePickerModal({
       aria-modal="true"
       onClick={onClose}
       className={styles.backdrop}
-      {...asMotion(m.fade)}
+      {...m.fade}
     >
       <motion.div
         onClick={stopClick}
         className={`card ${styles.modal}`}
-        {...asMotion(m.scaleIn)}
+        {...m.scaleIn}
       >
         <div className={styles.modalHead}>
           <div className={`label-micro ${styles.modalEyebrow}`}>
@@ -1238,12 +1234,12 @@ function ConceptPickerModal({
       aria-modal="true"
       onClick={onClose}
       className={styles.backdrop}
-      {...asMotion(m.fade)}
+      {...m.fade}
     >
       <motion.div
         onClick={stopClick}
         className={`card ${styles.modal} ${styles.modalTall}`}
-        {...asMotion(m.scaleIn)}
+        {...m.scaleIn}
       >
         <div className={styles.modalHead}>
           <div className={`label-micro ${styles.modalEyebrow}`}>
@@ -1401,19 +1397,19 @@ function AIChatPanel({ noteId, userId }: { noteId: string; userId: string }) {
             <motion.div
               key={i}
               className={`${styles.bubble} ${msg.role === "user" ? styles.bubbleUser : ""}`}
-              {...asMotion(m.fadeUp)}
+              {...m.fadeUp}
             >
               {msg.text}
             </motion.div>
           ))
         )}
         {sending && (
-          <motion.div className={styles.thinking} {...asMotion(m.fade)}>
+          <motion.div className={styles.thinking} {...m.fade}>
             Sapling is thinking…
           </motion.div>
         )}
         {error && (
-          <motion.div role="alert" className={styles.chatError} {...asMotion(m.fadeUp)}>
+          <motion.div role="alert" className={styles.chatError} {...m.fadeUp}>
             <Icon name="x" size={11} />
             {error}
           </motion.div>
