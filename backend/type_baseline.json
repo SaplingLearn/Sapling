@@ -30,7 +30,7 @@
   "routes/admin_flags.py::reportArgumentType": 1,
   "routes/admin_jobs.py::reportArgumentType": 1,
   "routes/auth.py::reportArgumentType": 3,
-  "routes/documents.py::reportArgumentType": 3,
+  "routes/documents.py::reportArgumentType": 2,
   "routes/gradebook.py::reportArgumentType": 2,
   "routes/gradescope.py::reportReturnType": 2,
   "routes/study_guide.py::reportArgumentType": 1,

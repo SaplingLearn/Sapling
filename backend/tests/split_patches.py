@@ -191,8 +191,10 @@ DOCUMENTS_MODULES = (
     "services.documents.persistence",
     "services.documents.post_roll",
     "services.documents.library",
+    "services.documents.library_api",
     "services.documents.scan",
     "services.documents.stream",
+    "services.documents.folders",
 )
 
 
