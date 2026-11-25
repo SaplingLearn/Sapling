@@ -150,32 +150,98 @@ export function Library() {
           position: "relative", flex: 1, minWidth: 0, display: "grid",
           gridTemplateColumns: "minmax(0, 1fr)", gridTemplateRows: "auto auto",
           alignContent: "start", overflowY: "auto", overflowX: "hidden",
-          padding: "36px 64px 0 56px", boxSizing: "border-box",
+          padding: "0 64px 0 56px", boxSizing: "border-box",
           background: "#FAF8F3", color: "#1A1814", fontSize: 15, lineHeight: 1.45,
           WebkitFontSmoothing: "antialiased",
         }}
       >
         {!booted && <LibrarySkeleton view={ui.view} />}
 
-        <LibraryHeader
-          query={ui.query}
-          onQuery={ui.setQuery}
-          searchRef={searchRef}
-          fileRef={fileRef}
-          onFiles={upload.pickFiles}
-          onNewDocument={act.newDocument}
-          onNewFolder={act.newFolder}
-          sort={ui.sortKey}
-          onSort={ui.setSortKey}
-          type={ui.type}
-          onType={ui.setType}
-          typeCounts={scope.typeCounts}
-          scopedCount={scope.scoped.length}
-          menu={ui.headerMenu}
-          onMenu={ui.openHeaderMenu}
-          menuClosing={ui.closing}
-          canUpload={courses.length > 0}
-        />
+        {/**
+          * The title, search, scope and view toggle, as one block that
+          * SCROLLS with the page and then stays. It is not pinned from the
+          * start: the row travels up with the documents, and once it reaches
+          * the top it holds there so the search and the buttons stay usable
+          * however far down the list you are.
+          *
+          * The scope bar moved in here from the documents section so the two
+          * stick together, and its `border-bottom` is the block's own bottom
+          * edge — the divider IS where this section ends.
+          *
+          * The page keeps the horizontal padding; the 36px top is this
+          * block's, so the air above the title comes WITH it when it sticks
+          * and the background covers the rows passing underneath.
+          */}
+        <div style={{
+          gridColumn: 1, gridRow: 1,
+          position: "sticky", top: 0, zIndex: 25,
+          background: "#FAF8F3", paddingTop: 36,
+        }}>
+          <LibraryHeader
+            query={ui.query}
+            onQuery={ui.setQuery}
+            searchRef={searchRef}
+            fileRef={fileRef}
+            onFiles={upload.pickFiles}
+            onNewDocument={act.newDocument}
+            onNewFolder={act.newFolder}
+            sort={ui.sortKey}
+            onSort={ui.setSortKey}
+            type={ui.type}
+            onType={ui.setType}
+            typeCounts={scope.typeCounts}
+            scopedCount={scope.scoped.length}
+            menu={ui.headerMenu}
+            onMenu={ui.openHeaderMenu}
+            menuClosing={ui.closing}
+            canUpload={courses.length > 0}
+          />
+            <LibraryScopeBar
+              isTrash={scope.isTrash}
+              title={labels.title}
+              dotColor={scope.scopeCourse?.color ?? null}
+              showDot={scope.kind !== "all" && !scope.isTrash}
+              courseMenuOpen={ui.courseMenu}
+              onCourseMenu={ui.openCourseMenu}
+              menuClosing={ui.closing}
+              scopeOptions={options}
+              trashDropOver={ui.dropOn === "trash"}
+              trashBump={ui.trashBump}
+              onTrash={() => ui.setLoc(scope.isTrash ? "all" : "trash")}
+              onTrashDragOver={trashDrop.onDragOver}
+              onTrashDragLeave={trashDrop.onDragLeave}
+              onTrashDrop={trashDrop.onDrop}
+              isFolder={scope.kind === "f"}
+              folderRenaming={ui.edit?.kind === "folder" && ui.edit.id === scope.openFolder?.id}
+              folderDraft={ui.edit ? ui.edit.draft : ""}
+              onFolderDraft={ui.setDraft}
+              onFolderRenameStart={() => {
+                const f = scope.openFolder;
+                if (f) ui.startEdit(f.id, "folder", f.name);
+              }}
+              onFolderRenameCommit={act.commitEdit}
+              onFolderRenameCancel={ui.cancelEdit}
+              onFolderDelete={act.deleteOpenFolder}
+              trashHasItems={scope.isTrash && data.trash.length > 0}
+              emptyConfirm={ui.emptyConfirm}
+              onEmptyTrash={() => {
+                if (!ui.emptyConfirm) { ui.setEmptyConfirm(true); return; }
+                act.purgeDocs(data.trash.map(d => d.id));
+              }}
+              scoped={scope.searchScoped}
+              scopeName={labels.name}
+              onSearchAll={() => ui.setLoc("all")}
+              courseScanLabel={scope.scopeCourse ? courseLabel(scope.scopeCourse) : null}
+              courseScanning={act.courseScanning}
+              onCourseScan={() => {
+                const id = scope.scopeCourseId;
+                if (id) act.runCourseScan(id);
+              }}
+              view={ui.view}
+              onView={ui.setView}
+            />
+        </div>
+
 
         <section
           ref={sectionRef}
@@ -185,50 +251,6 @@ export function Library() {
             flexDirection: "column", minWidth: 0,
           }}
         >
-          <LibraryScopeBar
-            isTrash={scope.isTrash}
-            title={labels.title}
-            dotColor={scope.scopeCourse?.color ?? null}
-            showDot={scope.kind !== "all" && !scope.isTrash}
-            courseMenuOpen={ui.courseMenu}
-            onCourseMenu={ui.openCourseMenu}
-            menuClosing={ui.closing}
-            scopeOptions={options}
-            trashDropOver={ui.dropOn === "trash"}
-            trashBump={ui.trashBump}
-            onTrash={() => ui.setLoc(scope.isTrash ? "all" : "trash")}
-            onTrashDragOver={trashDrop.onDragOver}
-            onTrashDragLeave={trashDrop.onDragLeave}
-            onTrashDrop={trashDrop.onDrop}
-            isFolder={scope.kind === "f"}
-            folderRenaming={ui.edit?.kind === "folder" && ui.edit.id === scope.openFolder?.id}
-            folderDraft={ui.edit ? ui.edit.draft : ""}
-            onFolderDraft={ui.setDraft}
-            onFolderRenameStart={() => {
-              const f = scope.openFolder;
-              if (f) ui.startEdit(f.id, "folder", f.name);
-            }}
-            onFolderRenameCommit={act.commitEdit}
-            onFolderRenameCancel={ui.cancelEdit}
-            onFolderDelete={act.deleteOpenFolder}
-            trashHasItems={scope.isTrash && data.trash.length > 0}
-            emptyConfirm={ui.emptyConfirm}
-            onEmptyTrash={() => {
-              if (!ui.emptyConfirm) { ui.setEmptyConfirm(true); return; }
-              act.purgeDocs(data.trash.map(d => d.id));
-            }}
-            scoped={scope.searchScoped}
-            scopeName={labels.name}
-            onSearchAll={() => ui.setLoc("all")}
-            courseScanLabel={scope.scopeCourse ? courseLabel(scope.scopeCourse) : null}
-            courseScanning={act.courseScanning}
-            onCourseScan={() => {
-              const id = scope.scopeCourseId;
-              if (id) act.runCourseScan(id);
-            }}
-            view={ui.view}
-            onView={ui.setView}
-          />
 
           {scope.checkedIds.length > 0 && (
             <BulkBar
