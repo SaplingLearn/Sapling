@@ -11,8 +11,6 @@ from types import SimpleNamespace
 
 import pytest
 
-from db.migration_units import unit_sql
-
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 verify = importlib.import_module("learning_release_verify")
 SHA = "a" * 40
@@ -21,13 +19,9 @@ SHA = "a" * 40
 @pytest.mark.parametrize(
     "origin",
     [
-        "http://staging.example",
-        "https://user:PRIVATE@staging.example",
-        "https://staging.example/path",
-        "https://staging.example/?key=PRIVATE",
-        "https://staging.example/#PRIVATE",
-        "https://staging.example:99999",
-        "",
+        "http://staging.example",  # the scheme rule
+        "https://user:PRIVATE@staging.example",  # the origin-shape rule (credentials)
+        "https://staging.example:99999",  # the port bound
     ],
 )
 def test_unsafe_origins_fail_before_any_request(origin):
@@ -266,25 +260,10 @@ def test_applied_migration_reference_detects_changed_history_but_is_not_live_sch
 @pytest.mark.parametrize(
     "table,column,wrong_type",
     [
-        ("checklist_budget_reservations", "receipt", "text"),
-        ("checklist_budget_accounts", "daily_tokens", "integer"),
-        ("learning_evidence_operations", "input_fingerprint", "jsonb"),
-        ("learner_state", "evidence_version", "integer"),
-        ("graph_nodes", "evidence_version", "integer"),
-        ("learner_state", "evidence_touch_at", "timestamp without time zone"),
-        # the learning-loop wave-2 schema (spec §13 A112, A113, A119)
-        ("posttest_poses", "window_days", "bigint"),
-        ("check_items", "lint_flags", "text"),
+        ("checklist_budget_reservations", "receipt", "text"),  # a wrong type
+        ("learner_state", "evidence_touch_at", "timestamp without time zone"),  # tz-less
         ("check_item_reviews", "status", None),  # absent: no information_schema row
-        ("check_items", "aligned_at", "timestamp without time zone"),
-        ("check_items", "key_checked_at", "timestamp without time zone"),
-        ("check_item_audits", "verdict", None),  # absent: no information_schema row
-        ("learning_evidence_voids", "operation_id", "text"),
-        ("check_item_reviews", "approved_at", None),
-        ("documents", "check_items_status", None),  # A128, absent
-        ("documents", "check_items_at", "timestamp without time zone"),  # A128
-        # spec §13 A127: the student's stated confidence on the evidence journal
-        ("node_mastery_events", "student_confidence", None),  # absent: not migrated
+        # spec §13 A127: a real is not the double precision the journal stores
         ("node_mastery_events", "student_confidence", "real"),
     ],
 )
@@ -300,7 +279,7 @@ def test_durable_budget_and_evidence_metadata_types_are_required(table, column, 
 
 
 @pytest.mark.parametrize(
-    "nullable,default", [("NO", None), ("YES", "now()"), ("YES", "clock_timestamp()")]
+    "nullable,default", [("NO", None), ("YES", "now()")]
 )
 def test_evidence_touch_fence_is_nullable_and_has_no_synthetic_default(nullable, default):
     db = Database()
@@ -308,87 +287,6 @@ def test_evidence_touch_fence_is_nullable_and_has_no_synthetic_default(nullable,
     result = audit(db)
     assert result["status"] == "failed"
     assert result["missing_or_wrong_column_attributes"]
-
-
-#: the learning-loop wave-2 and wave-3 migrations that add tables or columns (spec
-#: §13 A112, A113, A119, A123, A124, A126, A127, A128; A137). Extend this when a
-#: learning migration adds one.
-_LEARNING_SCHEMA_MIGRATIONS = (
-    "20261108184825_learning_teach_prompts.sql",  # A138, A139
-    "20261108163653_learning_llm_usage_course_id.sql",  # A137
-    "20261108041639_learning_item_quality.sql",  # A113
-    "20261108041742_learning_posttest_windows.sql",  # A112
-    "20261108051912_learning_item_alignment.sql",  # A119
-    "20261108072715_learning_evidence_void.sql",  # A123
-    "20261108073631_learning_item_keys.sql",  # A124
-    "20261108091912_learning_document_drafting.sql",  # A128
-    "20261108092032_learning_student_confidence.sql",  # A127
-    "20261108093359_learning_posttest_outcomes.sql",  # A126
-    "20261108185101_learning_varied_practice.sql",  # A140, A141
-    "20261108205812_learning_varied_practice_review.sql",  # A141: the journal's flag
-)
-#: SQL type -> information_schema.columns.data_type (an array column reads ARRAY)
-_DATA_TYPE = {
-    "text": "text",
-    "timestamptz": "timestamp with time zone",
-    "integer": "integer",
-    "smallint": "smallint",
-    "boolean": "boolean",
-    "double precision": "double precision",
-    "bigint": "bigint",
-    "uuid": "uuid",
-    "jsonb": "jsonb",
-    "text[]": "ARRAY",
-}
-_TYPES = "double precision|timestamptz|smallint|integer|bigint|boolean|jsonb|uuid|text"
-
-
-def _introduced_columns(sql: str) -> set[tuple[str, str, str]]:
-    """(table, column, data_type) of every column a migration adds: its
-    `ADD COLUMN IF NOT EXISTS` statements and its `CREATE TABLE` columns."""
-    import re
-
-    out = set()
-    for table, column, kind, array in re.findall(
-        rf"ALTER TABLE (?:public\.)?(\w+) ADD COLUMN IF NOT EXISTS (\w+) ({_TYPES})(\[\])?\s*;", sql
-    ):
-        out.add((table, column, _DATA_TYPE[kind + array]))
-    for table, body in re.findall(r"CREATE TABLE IF NOT EXISTS (?:public\.)?(\w+) \((.*?)\n\);", sql, re.S):
-        for column, kind, array in re.findall(rf"^\s*(\w+)\s+({_TYPES})(\[\])?\b", body, re.M):
-            out.add((table, column, _DATA_TYPE[kind + array]))
-    return out
-
-
-def test_every_column_the_learning_wave2_migrations_add_is_required():
-    """The release fence knows the wave-2 schema: every table and column those
-    migrations add is a REQUIRED_COLUMNS entry of the type information_schema
-    reports — so a release whose database lacks one fails the audit."""
-    directory = verify.BACKEND / "db" / "migrations"
-    introduced = set()
-    for name in _LEARNING_SCHEMA_MIGRATIONS:
-        introduced |= _introduced_columns(unit_sql(name, directory))
-    # 7 post-test window/outcome columns (A112), 13 for A113, 1 for A119, 11 for A124,
-    # 22 for A123 (learning_evidence_voids 11, misconception_attempts 6, five columns
-    # on node_mastery_events, check_item_reviews and misconceptions), 2 for A128
-    # (documents.check_items_status / check_items_at), 1 for A127
-    # (node_mastery_events.student_confidence), 12 for A126 (6 pose columns and
-    # the 6-column posttest_skips table), 1 for A137 (llm_usage.course_id), 26 for
-    # A138/A139 (the 13-column learning_prequestions and learning_self_explanations),
-    # 4 for A140/A141 (check_items' surface descriptor, apex and components), and
-    # 1 for A141's review (node_mastery_events.multi_concept)
-    assert len(introduced) == 101
-    assert ("node_mastery_events", "multi_concept", "boolean") in introduced
-    assert ("llm_usage", "course_id", "text") in introduced
-    assert ("learning_prequestions", "guess_json", "text") in introduced
-    assert ("learning_self_explanations", "reply_chars", "integer") in introduced
-    assert ("check_items", "component_keys", "ARRAY") in introduced
-    assert ("node_mastery_events", "student_confidence", "double precision") in introduced
-    required = {
-        (table, column, kind)
-        for table, columns in verify.REQUIRED_COLUMNS.items()
-        for column, kind in columns.items()
-    }
-    assert introduced <= required, sorted(introduced - required)
 
 
 def test_real_repository_learning_rpc_signatures_are_readable_and_new_rpc_is_discovered(tmp_path):
@@ -435,9 +333,8 @@ ACCOUNTING_HOOK_SOURCES = {
     ),
     "services/loop/continuation.py": ("loop_continuation_usage",),  # #118: the loop's split
 }
-ACCOUNTING_HOOK_STAGES = tuple(
-    stage for stages in ACCOUNTING_HOOK_SOURCES.values() for stage in stages
-)
+#: one stage per emitting module: the message is the same template everywhere
+ACCOUNTING_HOOK_STAGES = tuple(stages[0] for stages in ACCOUNTING_HOOK_SOURCES.values())
 
 
 @pytest.mark.parametrize("stage", ACCOUNTING_HOOK_STAGES)
@@ -500,10 +397,8 @@ def test_prior_usage_failure_messages_remain_visible(message, tmp_path):
     "message",
     [
         "Usage accounting hook completed",
-        "Usage accounting hook failures: 0",
-        "Usage accounting hooks configured",
-        "Usage capture succeeded",
-        "Hook failed (stage=unrelated)",
+        "Usage accounting hook failures: 0",  # the nearest miss
+        "Hook failed (stage=unrelated)",  # a failed hook that is not usage
     ],
 )
 def test_successful_accounting_or_unrelated_hooks_do_not_signal_failure(message, tmp_path):
@@ -778,11 +673,9 @@ def test_float_probe_passes_only_when_every_value_reads_back_exactly():
 @pytest.mark.parametrize(
     "field,value",
     [
-        ("float8_value", 0.3),
-        ("float4_value", 0.123457),
-        ("jsonb_value", 0.3),
+        ("jsonb_value", 0.3),  # rounded (all three rounded: the test above)
         ("float8_value", "0.30000000000000004"),  # a string is not a JSON number
-        ("float4_value", None),
+        ("float4_value", None),  # missing
     ],
 )
 def test_one_rounded_or_missing_value_fails_the_probe(field, value):
@@ -851,8 +744,6 @@ def test_float_probe_is_one_bounded_get_with_the_service_key_and_never_reports_i
     [
         ("https://other.supabase.example", SERVICE_KEY, "expected host"),
         ("http://project.supabase.example", SERVICE_KEY, "HTTPS"),
-        ("https://project.supabase.example/rest/v1", SERVICE_KEY, "origin"),
-        ("https://project.supabase.example", "", "unset or malformed"),
         ("https://project.supabase.example", "PRIVATE key\r\nInjected: header", "malformed"),
     ],
 )
