@@ -71,7 +71,8 @@ Recording hits each agent's live model — Claude since ADR 0030 — so it needs
 or judge an operator points back at a `gemini-*` model. Transient
 429/503/529s are retried automatically. The Claude datasets were re-recorded
 on 2026-10-22 (`chat_tutor` again, three runs, on 2026-11-18; the loop,
-confront, grader, decisions and check_items datasets on 2026-11-24); the
+confront, grader and decisions datasets on 2026-11-24, `check_items` on
+2026-11-25); the
 Gemini-era recordings are in git history. Follow the three-run procedure below
 for every re-record.
 
@@ -190,7 +191,7 @@ Offline (in `run_all.py` + CI): `document_classification`, `document_summary`,
 `loop_tutor` (the deep slot, with its `__flags` and `__pedagogy` datasets),
 `loop_rung_judge`, `check_items` and the `check_item_gates` variants, `grader`,
 `decisions`, `session_close` and `misconception_confront` (the deep slot) —
-232 cassettes, judge cassettes included.
+228 cassettes, judge cassettes included.
 
 Added by #866 (Z23–Z25), written as code and recorded in the A111 pass (three
 runs each, floors from their minimum); until then each fails closed or waits:
@@ -218,8 +219,11 @@ runs each, floors from their minimum); until then each fails closed or waits:
   `replay_variants()` adds a dataset to `run_all.py` the moment its cassette
   namespace holds a recording, so from then on CI keeps scoring it.
 
-`check_items` (learning loop PKG-04, 6 cassettes) drafts one course concept's
-nine items per case from `fixtures/tutor_course.json` passages and scores them
+`check_items` (learning loop PKG-04, 4 cassettes) drafts each fixture document's
+three concepts in one call (production's `CHECK_ITEM_CONCEPTS_PER_CALL`
+shape, 27 items), plus two one-concept calls (Chain Rule; Big-O Notation, the
+call whose mc_reason drafts came back option-less on 2026-11-24), nine items
+per concept, from `fixtures/tutor_course.json` passages and scores them
 with the same code rules the service stores by (`learning/checks.py::
 validate_draft`) plus grounding (cited chunk ids are input ids; no reference
 leaks into the prompt) and `FinalAnswerValid` (spec §13 A34, required 1.0:
