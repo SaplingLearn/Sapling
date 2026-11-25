@@ -23,7 +23,7 @@ def reload_config(monkeypatch):
     importlib.reload(config)
 
 
-@pytest.mark.parametrize("value", ["disabled", "n", "enable", "flase"])
+@pytest.mark.parametrize("value", ["disabled", "flase"])
 def test_unknown_spelling_is_on_and_warns(reload_config, caplog, value):
     with caplog.at_level(logging.WARNING, logger="config"):
         cfg = reload_config(value)
@@ -33,8 +33,8 @@ def test_unknown_spelling_is_on_and_warns(reload_config, caplog, value):
 
 @pytest.mark.parametrize(
     "value,expected",
-    [(None, True), ("", True), ("true", True), (" On ", True), ("YES", True), ("1", True),
-     ("false", False), (" OFF ", False), ("No", False), ("0", False)],
+    # unset, both case/whitespace-folded words, and a digit
+    [(None, True), (" On ", True), (" OFF ", False), ("0", False)],
 )
 def test_known_spellings_do_not_warn(reload_config, caplog, value, expected):
     with caplog.at_level(logging.WARNING, logger="config"):

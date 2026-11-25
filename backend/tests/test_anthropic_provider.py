@@ -78,12 +78,12 @@ def test_every_default_slot_is_claude():
     )
 
 
-def test_every_default_is_claude_and_the_pending_set_is_unevaluated():
-    """No slot defaults to Gemini (owner decision 2026-11-19). After A111 the
-    pending set is empty and every evidence default is in EVALUATED_MODELS."""
+def test_no_slot_is_pending_and_every_evaluated_slot_defaults_to_an_evaluated_model():
+    """After A111 no slot is pending a Claude eval, and each slot with an
+    evaluated set defaults to a model in it (the all-Claude half is
+    test_every_default_slot_is_claude)."""
     from agents._providers import EVALUATED_MODELS, LOOP_SLOTS_PENDING_CLAUDE_EVAL
 
-    assert {t for t, m in _DEFAULTS.items() if provider_for_model(m) != "anthropic"} == set()
     assert LOOP_SLOTS_PENDING_CLAUDE_EVAL == frozenset()
     for slot, models in EVALUATED_MODELS.items():
         if slot in _DEFAULTS:

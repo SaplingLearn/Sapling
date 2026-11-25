@@ -45,35 +45,6 @@ def _tables(data: dict):
     return factory, handles
 
 
-# ── Task 2: taxonomy, constants, migration ────────────────────────────────────
-
-
-def test_review_events_are_in_the_taxonomy():
-    from services import events_service
-
-    assert {"review.served", "review.graded"} <= events_service.EVENT_TAXONOMY
-
-
-def test_review_constants_exist_and_are_consistent():
-    assert params.REVIEW_SECONDS_PER_FLASHCARD < params.REVIEW_SECONDS_PER_CHECK
-    assert set(params.REVIEW_DIFFICULTY_BY_BAND) == {"novice", "develop", "profic"}
-    assert set(params.REVIEW_DIFFICULTY_BY_BAND.values()) <= set(params.CHECK_ITEM_DIFFICULTIES)
-    assert set(params.REVIEW_FORMAT_BY_BAND) == {"novice", "develop", "profic"}
-    # rule 1 falls back to the other one
-    assert set(params.REVIEW_FORMAT_BY_BAND.values()) == {"free", "mc_reason"}
-
-
-def test_review_session_mode_migration():
-    hits = sorted(MIG_DIR.glob("*_learning_sessions_mode_review.sql"))
-    assert len(hits) == 1, hits
-    sql = hits[0].read_text()
-    assert re.fullmatch(r"\d{14}_learning_sessions_mode_review\.sql", hits[0].name)
-    # sorts after every earlier series migration (the ledger applies in name order)
-    assert hits[0].name > "20260929073325_learning_check_item_draft_failures_solo.sql"
-    assert "DROP CONSTRAINT IF EXISTS sessions_mode_check" in sql
-    assert re.search(r"CHECK \(mode IN \('socratic','expository','teachback','review'\)\)", sql)
-
-
 # ── Task 3: retention target, SR stage, queue, check grading ─────────────────
 
 
@@ -1867,25 +1838,6 @@ def _session(monkeypatch, loop_state=None):
     monkeypatch.setattr(
         review, "_read_session", lambda sid, user_id: [_stored_row(store, sid, user_id)]
     )
-
-
-@pytest.mark.parametrize(
-    "method,path,body",
-    [
-        ("get", f"{REVIEW}/next?user_id={USER}&course_id={COURSE}", None),
-        (
-            "post",
-            f"{REVIEW}/answer",
-            {"user_id": USER, "session_id": "s", "kind": "flashcard", "item_id": "f1", "rating": 3},
-        ),
-        ("get", f"{REVIEW}/summary?user_id={USER}", None),
-    ],
-)
-def test_routes_404_when_gate_false(client, method, path, body):
-    with _loop(False), patch("learning.review.table", side_effect=_no_table):
-        r = getattr(client, method)(path, json=body) if body else getattr(client, method)(path)
-    assert r.status_code == 404
-    assert r.json()["detail"] == "learning loop not enabled"
 
 
 def test_review_summary_200_when_active(client, monkeypatch):

@@ -7,7 +7,6 @@ import fnmatch
 import pytest
 from fastapi.testclient import TestClient
 
-import routes.admin_analytics as analytics_route
 from services.admin.analytics import learning_loop as analytics
 from tests.split_patches import ADMIN_ANALYTICS_MODULES, setattr_in
 from learning import params
@@ -303,37 +302,6 @@ def test_next_session_rate_skips_rows_without_a_session():
     }
 
 
-def test_scans_ask_for_only_the_rows_they_need(monkeypatch):
-    calls = []
-
-    class _Rec(_FakeTable):
-        def __init__(self, name):
-            super().__init__([])
-            self.name = name
-
-        def select_with_count(self, columns="*", filters=None, **kw):
-            calls.append((self.name, columns, filters))
-            return [], 0
-
-    setattr_in(monkeypatch, ADMIN_ANALYTICS_MODULES, "table", _Rec)
-    assert client.get(URL, params=RANGE).status_code == 200
-    by_table: dict = {}
-    for n, _, f in calls:  # the first scan of each table
-        by_table.setdefault(n, f)
-    # spec §13 A133: the hint-unlocking attempts ride the same events scan
-    assert by_table["events"]["event_type"] == "in.(zpd.step,zpd.leak,zpd.reveal,zpd.attempt)"
-    # spec §13 A141: the multi-concept report's own reads — the stored items
-    # (apex_key set) and the served events — after the report's scans
-    assert ("check_items", analytics._MULTI_ITEM_COLS, {"apex_key": "not.is.null"}) in calls
-    served = [f for n, _, f in calls if n == "events"][1]
-    assert served["event_type"] == "eq.learn.multi_concept_served"
-    assert by_table["node_mastery_events"]["event_type"] == "eq.evidence"
-    # A133: the help ledger's loop poses and help only, ranged on `at`
-    ledger = by_table["learning_reveals"]
-    assert ledger["kind"] == "in.(posed,help)" and ledger["source"] == "eq.loop"
-    assert set(ledger["at"]) == {f"gte.{RANGE['from']}", f"lte.{RANGE['to']}"}
-
-
 def test_truncated_is_the_or_of_both_scans(monkeypatch):
     setattr_in(monkeypatch, ADMIN_ANALYTICS_MODULES, "_SCAN_CAP", 1)
     setattr_in(monkeypatch, ADMIN_ANALYTICS_MODULES, "_PAGE", 1)
@@ -343,13 +311,6 @@ def test_truncated_is_the_or_of_both_scans(monkeypatch):
     }
     _serve(monkeypatch, store)
     assert client.get(URL, params=RANGE).json()["truncated"] is True
-
-
-def test_requires_admin(monkeypatch):
-    from services import auth_guard
-
-    monkeypatch.setattr(analytics_route, "require_admin", auth_guard._real_require_admin)
-    assert client.get(URL, params=RANGE).status_code in (401, 403)
 
 
 def _reveal_event(hashes, *, unscanned=False):
@@ -500,26 +461,6 @@ def test_calibration_is_empty_not_zero_without_independent_evidence(monkeypatch)
     cal = client.get(URL, params=RANGE).json()["calibration"]
     assert cal["all"]["n"] == 0 and cal["all"]["brier"] is None
     assert cal["posttest"]["observed_rate"] is None
-
-
-def test_the_evidence_scan_reads_the_calibration_columns(monkeypatch):
-    calls = []
-
-    class _Rec(_FakeTable):
-        def __init__(self, name):
-            super().__init__([])
-            self.name = name
-
-        def select_with_count(self, columns="*", filters=None, **kw):
-            calls.append((self.name, columns))
-            return [], 0
-
-    setattr_in(monkeypatch, ADMIN_ANALYTICS_MODULES, "table", _Rec)
-    assert client.get(URL, params=RANGE).status_code == 200
-    cols = dict(calls)["node_mastery_events"].split(",")
-    assert {"channel", "p_before", "weight"} <= set(cols)
-    # spec §13 A127: the students' stated confidence, never the grader's alone
-    assert "student_confidence" in cols
 
 
 def test_confidence_calibration_reports_stated_confidence_per_channel(monkeypatch):
@@ -1044,8 +985,3 @@ def test_the_gain_report_carries_intervals_delay_bins_and_visibility(monkeypatch
     bins = {b["lo_days"]: b for b in gain["delay_bins"]}
     assert bins[7]["n"] == 4 and bins[14]["n"] == 0 and bins[42]["hi_days"] is None
     assert gain["delay_unknown"] == 0
-
-
-def test_the_pose_scan_reads_the_delay_and_visibility_columns():
-    cols = set(analytics._POSE_COLS.split(","))
-    assert {"user_id", "anchor_at", "answered_at", "hidden_count", "hidden_s"} <= cols

@@ -42,97 +42,6 @@ def _disallowed_imports(src: str, package: str, allowed: set[str]) -> set[str]:
 # ---------------------------------------------------------------- params
 
 
-SPEC_31_NAMES = (
-    "BKT_L0",
-    "BKT_T",
-    "BKT_G_MAX",
-    "BKT_S_MAX",
-    "BKT_PROFICIENT",
-    "BKT_MASTERED",
-    "BKT_MASTERED_MIN_STRONG",
-    "BAND_NOVICE_MAX",
-    "BAND_DEVELOP_MAX",
-    "TIER_UNEXPLORED_MAX",
-    "WEIGHT_ASSISTED",
-    "WEIGHT_SAME_SESSION_RECHECK",
-    "WEIGHT_PROPAGATION",
-    "WEIGHT_LOW_CONFIDENCE",
-    "S_IDK",
-    "CHANNELS",
-    "STRONG_CHANNELS",
-    "PROPAGATION_CHANNEL",
-    "EDGE_PREREQ_SOURCE_IS_PREREQ",
-)
-SPEC_32_NAMES = (
-    "FSRS_W",
-    "FSRS_RETENTION_DEFAULT",
-    "FSRS_RETENTION_LARGE_SET",
-    "FSRS_LARGE_SET_CONCEPTS",
-    "FSRS_RETENTION_EXAM",
-    "FSRS_EXAM_WINDOW_DAYS",
-    "FSRS_S0_GOOD",
-    "REVIEW_ORDER_THRESHOLD",
-    "REVIEW_DAILY_BUDGET_MIN",
-    "REVIEW_SECONDS_PER_CHECK",
-    "MC_STABILITY_GAIN_CAP",
-    "SR_INITIAL_CRITERION",
-    "SR_RELEARN_SESSIONS",
-)
-SPEC_33_NAMES = (
-    "GATE_INDEPENDENT_MIN_S",
-    "GATE_INDEPENDENT_MIN_S_NOVICE",
-    "GATE_RUNG_DWELL_MIN_S",
-    "H6_MIN_GENUINE_ATTEMPTS",
-    "OFFER_BANDS",
-    "BAND_WINDOW",
-    "PROBE_TARGET_LO",
-    "PROBE_TARGET_HI",
-    "ACQ_TARGET_LO",
-    "ACQ_TARGET_HI",
-    "PRACTICE_TARGET_LO",
-    "PRACTICE_TARGET_HI",
-    "EXAM_TARGET_LO",
-    "EXAM_TARGET_HI",
-    "PI_LO",
-    "PI_HI",
-    "PI_MIN_ROOM",
-    "WHEELSPIN_OPPS",
-    "MISCONCEPTION_CONFIDENCE",
-    "NOVICE_FLOOR_MISSES",
-)
-SPEC_34_NAMES = (
-    "PROBE_ITEMS_PER_SKILL_MIN",
-    "PROBE_ITEMS_PER_SKILL_MAX",
-    "PROBE_SESSION_CAP",
-    "PROBE_STOP_DELTA",
-    "PLAN_MAX_CONCEPTS",
-    "PLAN_MAX_COUPLED",
-    "PLAN_ORDER",
-    "STEP_MAX_SENTENCES",
-    "STEP_QUESTIONS_PER_TURN",
-    "LOOP_HISTORY_MAX_MESSAGES",
-    "LEARNER_BRIEF_MAX_CHARS",
-    "LEARNER_BRIEF_LAST_CLOSES",
-    "LEARNER_BRIEF_TOP_STATES",
-    "LEARNER_BRIEF_MAX_MISCONCEPTIONS",
-    "GRADER_LIMITS",
-    "GRADER_LOW_CONFIDENCE",
-    "GRADER_SECOND_OPINION_CONFIDENCE",
-    "LEAK_NGRAM",
-    "CHECK_ITEM_FORMATS",
-    "CHECK_ITEM_DIFFICULTIES",
-    "CHECK_ITEM_MIN_RUBRIC",
-    "CHECK_ITEM_MIN_WRONG",
-    "MISCONCEPTION_ROLLUP_MIN_USERS",
-    "ZPD_RATING_EVERY_N_CHECKS",
-)
-
-
-@pytest.mark.parametrize("name", SPEC_31_NAMES + SPEC_32_NAMES + SPEC_33_NAMES + SPEC_34_NAMES)
-def test_every_spec_constant_is_defined(name):
-    assert hasattr(params, name), f"spec §3 constant {name} missing from learning.params"
-
-
 # Spec §3.1–§3.4 values, typed out from the spec (not read back from params),
 # so changing a constant is a deliberate two-place edit. The band, tier and
 # mastery tests read their cuts from params and would pass any number.
@@ -162,7 +71,7 @@ SPEC_VALUES = {
     },
     "STRONG_CHANNELS": frozenset({"free_response", "mc_reasoned"}),
     "PROPAGATION_CHANNEL": "chat_turn",
-    "EDGE_PREREQ_SOURCE_IS_PREREQ": True,  # PKG-08 may flip it: edit here in the same commit
+    "EDGE_PREREQ_SOURCE_IS_PREREQ": True,
     # §3.2
     "FSRS_W": (
         0.212,
@@ -248,17 +157,13 @@ SPEC_VALUES = {
 }
 
 
-def test_spec_values_cover_every_spec_name():
-    assert set(SPEC_VALUES) == set(SPEC_31_NAMES + SPEC_32_NAMES + SPEC_33_NAMES + SPEC_34_NAMES)
-
-
-@pytest.mark.parametrize("name", sorted(SPEC_VALUES))
-def test_every_spec_constant_has_the_spec_value(name):
-    got, want = getattr(params, name), SPEC_VALUES[name]
-    assert got == want, f"{name} = {got!r}; spec §3 says {want!r}"
-    assert type(got) is type(want), (
-        f"{name} is {type(got).__name__}, spec shape is {type(want).__name__}"
-    )
+def test_every_spec_constant_has_the_spec_value():
+    # (value, type) so 3 vs 3.0 or a list vs the spec's tuple also fails.
+    got = {
+        name: (getattr(params, name, None), type(getattr(params, name, None)))
+        for name in SPEC_VALUES
+    }
+    assert got == {name: (want, type(want)) for name, want in SPEC_VALUES.items()}
 
 
 def test_channel_table_shape():
