@@ -4017,6 +4017,19 @@ def clear_drafting(document_id: str) -> None:
     )
 
 
+def forget_drafting(document_id: str) -> None:
+    """Take any drafting mark back to NULL (never drafted): a document restored
+    from the Trash, whose delete retired the items the mark speaks of. Draft on
+    enable then claims it. A document never drafted is not written. Never
+    raises (bookkeeping)."""
+    _write_drafting(
+        document_id,
+        {"check_items_status": None, "check_items_at": None},
+        {"check_items_status": "not.is.null"},
+        "forgotten",
+    )
+
+
 def _ids(rows) -> list[str]:
     """The string ids of a PostgREST answer; [] for anything else."""
     if not isinstance(rows, list):

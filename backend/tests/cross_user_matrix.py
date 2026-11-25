@@ -210,6 +210,9 @@ ID_SOURCES: dict[str, IdSource] = {
         "SELECT c.id::text FROM gradebook_categories c JOIN enrollments e "
         "ON e.id = c.enrollment_id WHERE e.user_id = %(a)s ORDER BY c.id LIMIT 1"
     ),
+    "folder_id": _owned(
+        "SELECT id::text FROM document_folders WHERE user_id = %(a)s ORDER BY id LIMIT 1"
+    ),
     "room_id": _owned(_PRIVATE_ROOM),
     "message_id": _owned(_PRIVATE_MESSAGE),
     "reply_to_id": _owned(_PRIVATE_MESSAGE),
@@ -415,6 +418,11 @@ SELF = Ref("<self>")
 BODY_OVERRIDES: dict[tuple[str, str], dict[str, Any]] = {
     ("PATCH", "/api/documents/doc/{document_id}"): {"category": "other", "user_id": SELF},
     ("POST", "/api/documents/doc/{document_id}/scan-concepts"): {"user_id": SELF},
+    ("POST", "/api/documents/doc/{document_id}/restore"): {"user_id": SELF},
+    # A rename refuses a blank name (400) before it reads the folder's owner.
+    ("PATCH", "/api/documents/folders/{folder_id}"): {
+        "user_id": SELF, "name": "Matrix Probe Folder",
+    },
     ("POST", "/api/documents/course/{course_id}/scan-concepts"): {"user_id": SELF},
     ("PATCH", "/api/calendar/assignments/{assignment_id}"): {"user_id": SELF, "title": "matrix"},
     # The default scope_kind is "course", which refuses any scope_id (422)

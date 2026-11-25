@@ -19,8 +19,8 @@ from services import chunk_visibility as cv
 U, OTHER = "user_wipe", "user_keep"
 
 WIPED = (
-    "enrollments", "documents", "notes", "flashcards", "flashcard_sets", "sessions",
-    "study_guides", "quiz_attempts", "quiz_context", "graph_nodes", "xp_events",
+    "enrollments", "documents", "document_folders", "notes", "flashcards", "flashcard_sets",
+    "sessions", "study_guides", "quiz_attempts", "quiz_context", "graph_nodes", "xp_events",
     "user_achievements", "document_uploads", "tutor_pending_sessions",
     # the learning loop (owner decision: erase)
     "learner_state", "misconceptions", "posttest_poses", "posttest_skips",
@@ -185,7 +185,9 @@ def _seed_user(db, uid, *, n=1):
         db.add("topic_checklists", enrollment_id=f"{p}-enr{i}")
         db.add("gradescope_course_links", id=f"{p}-gsl{i}", enrollment_id=f"{p}-enr{i}")
         db.add("gradescope_syncs", id=f"{p}-gss{i}", enrollment_id=f"{p}-enr{i}")
-        db.add("documents", id=f"{p}-doc{i}", user_id=uid, deleted_at=None)
+        db.add("document_folders", id=f"{p}-fold{i}", user_id=uid)
+        db.add("documents", id=f"{p}-doc{i}", user_id=uid, deleted_at=None,
+               folder_id=f"{p}-fold{i}")
         db.add("notes", id=f"{p}-note{i}", user_id=uid)
         db.add("flashcards", id=f"{p}-fc{i}", user_id=uid)
         db.add("flashcard_sets", id=f"{p}-fs{i}", user_id=uid, exam_id=f"{p}-asg{i}")
@@ -260,7 +262,7 @@ def test_wipes_the_scope_and_keeps_everything_else(db):
         assert db.of(name, user_id=U) or db.of(name, id=U), name
 
     assert counts == {
-        "enrollments": 2, "documents": 2, "course_chunks": 2,
+        "enrollments": 2, "documents": 2, "document_folders": 2, "course_chunks": 2,
         "course_chunk_contributors": 0, "notes": 2, "flashcards": 2, "flashcard_sets": 2,
         "sessions": 2,
         "study_guides": 2, "quiz_attempts": 2, "quiz_context": 2, "graph_nodes": 2,

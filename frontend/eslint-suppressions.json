@@ -83,11 +83,6 @@
       "count": 17
     }
   },
-  "src/components/screens/Library.tsx": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 2
-    }
-  },
   "src/components/screens/Settings.tsx": {
     "@next/next/no-location-assign-relative-destination": {
       "count": 2

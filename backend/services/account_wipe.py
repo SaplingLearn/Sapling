@@ -16,6 +16,7 @@ Deleted (directly, or through the FK cascades noted):
 * notes → note_concepts
 * flashcards
 * flashcard_sets (saved selections; they own no cards)
+* document_folders (library folders; their documents survive, unfiled)
 * sessions → messages (feedback.session_id is SET NULL; feedback is kept)
 * study_guides
 * quiz_attempts → quiz_responses
@@ -83,6 +84,9 @@ _USER_TABLES: tuple[tuple[str, str], ...] = (
     # Saved flashcard selections (a name, a course, concept names). Account
     # data like the cards themselves: wiped here AND copied by the bundle.
     ("flashcard_sets", "id"),
+    # Library folders. documents.folder_id is ON DELETE SET NULL, so these can
+    # go before or after documents; they go here with the other owned labels.
+    ("document_folders", "id"),
     ("sessions", "id"),
     ("study_guides", "id"),
     ("quiz_attempts", "id"),
