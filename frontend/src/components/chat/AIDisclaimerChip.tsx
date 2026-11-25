@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
-import { AnimatePresence, motion, type Target } from "framer-motion";
+import { AnimatePresence, motion } from "framer-motion";
 import { DisclaimerModal } from "../DisclaimerModal";
 import { useMotionPresets } from "@/lib/motion";
 import styles from "./AIDisclaimerChip.module.css";
@@ -39,7 +39,7 @@ export function AIDisclaimerChip({ height = DEFAULT_CHIP_HEIGHT }: { height?: nu
             <motion.div
               role="tooltip"
               className={styles.tooltip}
-              initial={m.scaleIn.initial as Target}
+              initial={m.scaleIn.initial}
               animate={m.scaleIn.animate}
               exit={m.scaleIn.exit}
               transition={m.scaleIn.transition}

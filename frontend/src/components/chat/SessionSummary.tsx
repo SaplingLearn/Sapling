@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { motion, type Target } from "framer-motion";
+import { motion } from "framer-motion";
 import type { SessionSummaryData } from "@/lib/api";
 import { useMotionPresets } from "@/lib/motion";
 import styles from "./SessionSummary.module.css";
@@ -24,14 +24,14 @@ export function SessionSummary({ summary, onClose }: SessionSummaryProps) {
     <motion.div
       className={styles.backdrop}
       onClick={onClose}
-      initial={m.fade.initial as Target}
+      initial={m.fade.initial}
       animate={m.fade.animate}
       transition={m.fade.transition}
     >
       <motion.div
         className={`card ${styles.dialog}`}
         onClick={e => e.stopPropagation()}
-        initial={m.scaleIn.initial as Target}
+        initial={m.scaleIn.initial}
         animate={m.scaleIn.animate}
         transition={m.scaleIn.transition}
       >

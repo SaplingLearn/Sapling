@@ -18,7 +18,7 @@
  * "N of M done".
  */
 import React from "react";
-import { AnimatePresence, motion, type Target } from "framer-motion";
+import { AnimatePresence, motion } from "framer-motion";
 import { Icon } from "../Icon";
 import { useMotionPresets } from "@/lib/motion";
 import styles from "./TodayColumn.module.css";
@@ -241,7 +241,7 @@ function PlanRow({ item, primary, onSelect }: { item: PlanItem; primary: boolean
       data-done={item.done}
       data-primary={primary}
       layout="position"
-      initial={m.fadeUp.initial as Target}
+      initial={m.fadeUp.initial}
       animate={m.fadeUp.animate}
       exit={m.fadeUp.exit}
       transition={{ ...m.fadeUp.transition, layout: m.transition.spring.gentle }}
