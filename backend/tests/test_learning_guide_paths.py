@@ -152,6 +152,10 @@ def _problem(span: str) -> str | None:
             return None
         word = r"(?<![A-Za-z0-9_])" + re.escape(symbol) + r"(?![A-Za-z0-9_])"
         return None if re.search(word, unit.read_text()) else f"`{symbol}` does not appear in {path_text}"
+    if path.name == ".env" and not symbol:
+        # Local config is gitignored, so CI has none: the committed template
+        # beside it is what makes the citation real, on every machine.
+        return None if (path.parent / ".env.example").exists() else "no .env.example beside it"
     if not path.exists():
         return "no such file"
     if not symbol:
