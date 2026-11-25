@@ -1,10 +1,12 @@
 "use client";
 import React from "react";
 import Link from "next/link";
+import { AnimatePresence, motion } from "framer-motion";
 
 import { Icon } from "@/components/Icon";
 import { tierFill, tierLabel, tierText } from "@/components/studyGuide/shared/tiers";
 import { useFlag } from "@/context/FlagsContext";
+import { useMotionPresets } from "@/lib/motion";
 import { HANDOFF_COPY } from "@/lib/learningHandoffs";
 import { buildQuizHref } from "@/lib/quiz/source";
 import type { ConceptMapBlock } from "@/lib/studyGuide/types";
@@ -97,6 +99,7 @@ function TutorPrompts({
 export function ConceptMapBlockView({ block }: { block: ConceptMapBlock }) {
   const { guide } = useReader();
   const quizShown = useFlag("hide_quiz") !== "on";
+  const m = useMotionPresets();
   const [picked, setPicked] = React.useState<number | null>(null);
   const selected = picked === null ? undefined : block.nodes[picked];
   const treeHref = selected ? `/tree?suggest=${encodeURIComponent(selected.concept)}` : "/tree";
@@ -143,14 +146,20 @@ export function ConceptMapBlockView({ block }: { block: ConceptMapBlock }) {
           );
         })}
       </div>
-      {selected && (
-        <TutorPrompts
-          blockId={block.id}
-          concept={selected.concept}
-          quizHref={quizHref}
-          onClose={() => setPicked(null)}
-        />
-      )}
+      {/* The prompts open under the map and close back into it; picking
+          another concept keeps the panel and swaps its text. */}
+      <AnimatePresence initial={false}>
+        {selected && (
+          <motion.div key="prompts" {...m.collapse}>
+            <TutorPrompts
+              blockId={block.id}
+              concept={selected.concept}
+              quizHref={quizHref}
+              onClose={() => setPicked(null)}
+            />
+          </motion.div>
+        )}
+      </AnimatePresence>
     </BlockFrame>
   );
 }
