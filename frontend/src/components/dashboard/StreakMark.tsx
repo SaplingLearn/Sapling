@@ -1,7 +1,7 @@
 "use client";
 /** The dashboard's streak week: the Monday-first days and each day's mark
  *  (moved out of screens/Dashboard.tsx). */
-import { AnimatePresence, motion } from "framer-motion";
+import { AnimatePresence, motion, type Target } from "framer-motion";
 import { useMotionPresets, type MotionPreset } from "@/lib/motion";
 
 const STREAK_SHIELD_PATH =
@@ -28,7 +28,7 @@ export function StreakMark({ state, day }: { state: MarkState; day: number }) {
 function Mark({ state, day, motionProps }: { state: MarkState; day: number; motionProps: MotionPreset }) {
   if (state === "done") {
     return (
-      <motion.svg {...motionProps} viewBox="0 0 32 32" width={MARK_PX} height={MARK_PX} aria-label="completed">
+      <motion.svg initial={motionProps.initial as Target} animate={motionProps.animate} exit={motionProps.exit} transition={motionProps.transition} viewBox="0 0 32 32" width={MARK_PX} height={MARK_PX} aria-label="completed">
         <path d={STREAK_SHIELD_PATH} fill="var(--alert-warn)" />
         <path
           d="M10.5 16.5 L14.2 20.2 L22 12.4"
@@ -43,7 +43,7 @@ function Mark({ state, day, motionProps }: { state: MarkState; day: number; moti
   }
   if (state === "today") {
     return (
-      <motion.svg {...motionProps} viewBox="0 0 32 32" width={MARK_PX} height={MARK_PX} aria-label="today">
+      <motion.svg initial={motionProps.initial as Target} animate={motionProps.animate} exit={motionProps.exit} transition={motionProps.transition} viewBox="0 0 32 32" width={MARK_PX} height={MARK_PX} aria-label="today">
         <circle cx="16" cy="16" r="13" fill="var(--alert-err)" />
         <path
           d="M16 10 V22 M10 16 H22"
@@ -56,7 +56,7 @@ function Mark({ state, day, motionProps }: { state: MarkState; day: number; moti
     );
   }
   return (
-    <motion.svg {...motionProps} viewBox="0 0 32 32" width={MARK_PX} height={MARK_PX} aria-label={state === "missed" ? "missed" : "upcoming"}>
+    <motion.svg initial={motionProps.initial as Target} animate={motionProps.animate} exit={motionProps.exit} transition={motionProps.transition} viewBox="0 0 32 32" width={MARK_PX} height={MARK_PX} aria-label={state === "missed" ? "missed" : "upcoming"}>
       <path
         d={STREAK_SHIELD_PATH}
         fill="none"
