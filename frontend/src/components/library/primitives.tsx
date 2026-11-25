@@ -75,33 +75,16 @@ export function DotsIcon({ size }: { size: number }) {
   );
 }
 
-/**
- * The trash can. Its lid is a separate group so it can tilt on drag-over and
- * play the bump keyframes when something lands in it.
- */
-export function TrashIcon({
-  size, lidTransform, lidAnimation,
-}: {
-  size: number;
-  lidTransform: string;
-  lidAnimation: string;
-}) {
+/** The trash can: the Trash's marker in the scope switcher. */
+export function TrashIcon({ size }: { size: number }) {
   return (
     <svg
       width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="#6F6857"
       strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"
       style={{ display: "block", flexShrink: 0 }}
     >
-      <g style={{
-        transformBox: "fill-box",
-        transformOrigin: "85% 100%",
-        transform: lidTransform,
-        transition: "transform 200ms cubic-bezier(0.2, 0.7, 0.2, 1)",
-        animation: lidAnimation,
-      }}>
-        <path d="M4 7h16" />
-        <path d="M9 7V4.5h6V7" />
-      </g>
+      <path d="M4 7h16" />
+      <path d="M9 7V4.5h6V7" />
       <path d="M6 7l1 13h10l1-13" />
       <path d="M10 11v5.5M14 11v5.5" />
     </svg>

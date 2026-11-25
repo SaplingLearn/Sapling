@@ -47,8 +47,6 @@ export interface RowPropsInput {
 export interface RowPropsBundle {
   rowProps: RowPropsFn;
   folderProps: FolderPropsFn;
-  /** Drop handlers for an arbitrary target key, e.g. `"trash"`. */
-  dropTarget: (key: string, onDrop: (ids: string[]) => void) => DropHandlers;
 }
 
 export function useRowProps(input: RowPropsInput): RowPropsBundle {
@@ -157,5 +155,5 @@ export function useRowProps(input: RowPropsInput): RowPropsBundle {
     };
   };
 
-  return { rowProps, folderProps, dropTarget };
+  return { rowProps, folderProps };
 }

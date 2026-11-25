@@ -91,7 +91,7 @@ export function Library() {
     openFolder: scope.openFolder,
   });
 
-  const { rowProps, folderProps, dropTarget } = useRowProps({
+  const { rowProps, folderProps } = useRowProps({
     ui, act,
     documents: data.documents,
     folders: data.folders,
@@ -102,9 +102,6 @@ export function Library() {
     isTrash: scope.isTrash,
     sectionRef,
     openDoc,
-  });
-  const trashDrop = dropTarget("trash", ids => {
-    if (!scope.isTrash) act.trashDocs(ids);
   });
 
   const notifySyllabus = React.useCallback(
@@ -132,8 +129,8 @@ export function Library() {
   });
   const options = React.useMemo(() => scopeOptions({
     documents: data.documents, courses, loc: ui.loc,
-    scopeCourseId: scope.scopeCourseId, go: ui.setLoc,
-  }), [data.documents, courses, ui.loc, scope.scopeCourseId, ui.setLoc]);
+    scopeCourseId: scope.scopeCourseId, trashCount: data.trash.length, go: ui.setLoc,
+  }), [data.documents, courses, ui.loc, scope.scopeCourseId, data.trash.length, ui.setLoc]);
 
   const empty = scope.rows.length + scope.folderItems.length === 0;
   const menuDoc = ui.docMenu
@@ -212,12 +209,6 @@ export function Library() {
               onCourseMenu={ui.openCourseMenu}
               menuClosing={ui.closing}
               scopeOptions={options}
-              trashDropOver={ui.dropOn === "trash"}
-              trashBump={ui.trashBump}
-              onTrash={() => ui.setLoc(scope.isTrash ? "all" : "trash")}
-              onTrashDragOver={trashDrop.onDragOver}
-              onTrashDragLeave={trashDrop.onDragLeave}
-              onTrashDrop={trashDrop.onDrop}
               isFolder={scope.kind === "f"}
               folderRenaming={ui.edit?.kind === "folder" && ui.edit.id === scope.openFolder?.id}
               folderDraft={ui.edit ? ui.edit.draft : ""}

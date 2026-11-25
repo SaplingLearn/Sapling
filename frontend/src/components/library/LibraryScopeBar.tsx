@@ -1,8 +1,8 @@
 "use client";
 /**
- * The filter row under the header: which scope is open (the course switcher),
- * the Trash, the folder's own Rename / Delete, the notices that belong to a
- * scope, and the List / Panel toggle.
+ * The filter row under the header: which scope is open (the course switcher,
+ * whose last option is the Trash), the folder's own Rename / Delete, the
+ * notices that belong to a scope, and the List / Panel toggle.
  *
  * The "Scan <COURSE>" button is the old Library's course-wide concept scan,
  * kept and moved here — it is the one control that only makes sense while a
@@ -12,7 +12,7 @@ import React from "react";
 
 import { Icon } from "../Icon";
 import {
-  FONT_SERIF, Glyph, MENU_IN, MENU_OUT, MENU_SURFACE, MenuScrim, TrashIcon,
+  FONT_SERIF, Glyph, MENU_IN, MENU_OUT, MENU_SURFACE, MenuDivider, MenuScrim, TrashIcon,
 } from "./primitives";
 
 export interface ScopeOption {
@@ -23,6 +23,8 @@ export interface ScopeOption {
   color: string | null;
   on: boolean;
   pick: () => void;
+  /** The Trash: a can instead of a dot, set off from the scopes above it. */
+  trash?: boolean;
 }
 
 export interface LibraryScopeBarProps {
@@ -38,13 +40,6 @@ export interface LibraryScopeBarProps {
   scopeOptions: ScopeOption[];
 
   isTrash: boolean;
-  trashDropOver: boolean;
-  /** Replays each time something lands in the Trash, so the can bumps. */
-  trashBump: number;
-  onTrash: () => void;
-  onTrashDragOver: (e: React.DragEvent) => void;
-  onTrashDragLeave: () => void;
-  onTrashDrop: (e: React.DragEvent) => void;
 
   isFolder: boolean;
   folderRenaming: boolean;
@@ -71,56 +66,6 @@ export interface LibraryScopeBarProps {
 
   view: "list" | "panel";
   onView: (v: "list" | "panel") => void;
-}
-
-/** The Trash button: a drop target, with the lid tilt and the landing bump. */
-function TrashButton({
-  isTrash, dropOver, bump, onClick, onDragOver, onDragLeave, onDrop,
-}: {
-  isTrash: boolean;
-  dropOver: boolean;
-  bump: number;
-  onClick: () => void;
-  onDragOver: (e: React.DragEvent) => void;
-  onDragLeave: () => void;
-  onDrop: (e: React.DragEvent) => void;
-}) {
-  // Two keyframe names, alternated, so a second drop restarts the animation
-  // instead of being ignored as "already running".
-  const suffix = bump % 2 ? "A" : "B";
-  return (
-    <button
-      data-testid="library-trash"
-      className="sapHoverWarmer"
-      onClick={onClick}
-      onDragOver={onDragOver}
-      onDragLeave={onDragLeave}
-      onDrop={onDrop}
-      aria-pressed={isTrash}
-      aria-label="Trash"
-      style={{
-        display: "inline-flex", alignItems: "center", gap: 6, height: 40,
-        padding: "0 14px", border: 0, borderRadius: 12,
-        background: dropOver ? "#F6E3E1" : isTrash ? "#EBF0E1" : "transparent",
-        boxShadow: dropOver
-          ? "inset 0 0 0 1.5px #A8443F"
-          : isTrash ? "inset 0 0 0 1px rgba(68,93,34,0.22)" : "none",
-        color: "#1A1814", font: "inherit", fontSize: 15,
-        fontWeight: isTrash ? 700 : 500, whiteSpace: "nowrap", flexShrink: 0,
-        cursor: "pointer",
-      }}
-    >
-      <TrashIcon
-        size={17}
-        lidTransform={dropOver ? "translateY(-2px) rotate(-16deg)" : "none"}
-        lidAnimation={bump ? `sapLid${suffix} 520ms cubic-bezier(0.2, 0.7, 0.2, 1)` : "none"}
-      />
-      {/* Owner's call 2026-11-25: no count. The handoff puts one after the
-          word; without it the label is the chip's only content, so it centres
-          on the icon rather than hanging to its left. */}
-      <span style={{ display: "inline-flex", alignItems: "center", lineHeight: 1 }}>Trash</span>
-    </button>
-  );
 }
 
 /** The course switcher: the heading, and the list of scopes behind it. */
@@ -172,36 +117,48 @@ function ScopeSwitcher({
             ...MENU_SURFACE,
           }}>
             {options.map(o => (
-              <button
-                key={o.id}
-                role="option"
-                aria-selected={o.on}
-                className="sapHoverMenu"
-                onClick={o.pick}
-                style={{
-                  display: "flex", alignItems: "flex-start", gap: 10, padding: "9px 10px",
-                  border: 0, borderRadius: 8, background: o.on ? "#F2F6EE" : "transparent",
-                  font: "inherit", textAlign: "left", cursor: "pointer",
-                }}
-              >
-                <span style={{ flex: 1, minWidth: 0 }}>
-                  <span style={{
-                    display: "flex", alignItems: "center", gap: 10,
-                    fontSize: 14, lineHeight: "21px", fontWeight: 700,
-                  }}>
+              <React.Fragment key={o.id}>
+                {o.trash && <MenuDivider />}
+                <button
+                  role="option"
+                  aria-selected={o.on}
+                  className="sapHoverMenu"
+                  onClick={o.pick}
+                  style={{
+                    display: "flex", alignItems: "flex-start", gap: 10, padding: "9px 10px",
+                    border: 0, borderRadius: 8, background: o.on ? "#F2F6EE" : "transparent",
+                    font: "inherit", textAlign: "left", cursor: "pointer",
+                  }}
+                >
+                  <span style={{ flex: 1, minWidth: 0 }}>
                     <span style={{
-                      width: 9, height: 9, borderRadius: "50%",
-                      background: o.color || "transparent",
-                      border: o.color ? "0" : "1.5px dashed #8A8372",
-                      boxSizing: "border-box", flexShrink: 0,
-                    }} />
-                    {o.id}
+                      display: "flex", alignItems: "center", gap: 10,
+                      fontSize: 14, lineHeight: "21px", fontWeight: 700,
+                    }}>
+                      {o.trash ? (
+                        // The can, drawn at a size its strokes survive, in the
+                        // dot's 9px slot so the label and sub-line stay aligned.
+                        <span style={{ position: "relative", width: 9, height: 9, flexShrink: 0 }}>
+                          <span style={{ position: "absolute", left: -2, top: -2 }}>
+                            <TrashIcon size={13} />
+                          </span>
+                        </span>
+                      ) : (
+                        <span style={{
+                          width: 9, height: 9, borderRadius: "50%",
+                          background: o.color || "transparent",
+                          border: o.color ? "0" : "1.5px dashed #8A8372",
+                          boxSizing: "border-box", flexShrink: 0,
+                        }} />
+                      )}
+                      {o.id}
+                    </span>
+                    <span style={{
+                      display: "block", paddingLeft: 19, fontSize: 13, color: "#6F6857",
+                    }}>{o.sub}</span>
                   </span>
-                  <span style={{
-                    display: "block", paddingLeft: 19, fontSize: 13, color: "#6F6857",
-                  }}>{o.sub}</span>
-                </span>
-              </button>
+                </button>
+              </React.Fragment>
             ))}
           </div>
         </>
@@ -308,8 +265,7 @@ function EmptyTrash({ confirm, onClick }: { confirm: boolean; onClick: () => voi
 export function LibraryScopeBar(props: LibraryScopeBarProps) {
   const {
     title, dotColor, showDot, courseMenuOpen, onCourseMenu, menuClosing, scopeOptions,
-    isTrash, trashDropOver, trashBump, onTrash, onTrashDragOver,
-    onTrashDragLeave, onTrashDrop, isFolder, folderRenaming, folderDraft, onFolderDraft,
+    isTrash, isFolder, folderRenaming, folderDraft, onFolderDraft,
     onFolderRenameStart, onFolderRenameCommit, onFolderRenameCancel, onFolderDelete,
     trashHasItems, emptyConfirm, onEmptyTrash, scoped, scopeName, onSearchAll,
     courseScanLabel, courseScanning, onCourseScan, view, onView,
@@ -344,26 +300,15 @@ export function LibraryScopeBar(props: LibraryScopeBarProps) {
           }}
         />
       ) : (
-        <>
-          <ScopeSwitcher
-            title={title}
-            dotColor={dotColor}
-            showDot={showDot}
-            open={courseMenuOpen}
-            onOpen={onCourseMenu}
-            closing={menuClosing}
-            options={scopeOptions}
-          />
-          <TrashButton
-            isTrash={isTrash}
-            dropOver={trashDropOver}
-            bump={trashBump}
-            onClick={onTrash}
-            onDragOver={onTrashDragOver}
-            onDragLeave={onTrashDragLeave}
-            onDrop={onTrashDrop}
-          />
-        </>
+        <ScopeSwitcher
+          title={title}
+          dotColor={dotColor}
+          showDot={showDot}
+          open={courseMenuOpen}
+          onOpen={onCourseMenu}
+          closing={menuClosing}
+          options={scopeOptions}
+        />
       )}
 
       {isFolder && !folderRenaming && (

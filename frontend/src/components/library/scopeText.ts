@@ -79,6 +79,8 @@ export interface ScopeOptionInput {
   loc: Loc;
   /** The course the current scope sits in, or null for "No Course". */
   scopeCourseId: string | null;
+  /** How many documents are in the Trash, for its option's count. */
+  trashCount: number;
   go: (loc: Loc) => void;
 }
 
@@ -88,13 +90,19 @@ export interface ScopeOptionModel {
   color: string | null;
   on: boolean;
   pick: () => void;
+  /** The Trash option: a trash-can marker instead of a dot, under a divider. */
+  trash?: boolean;
 }
 
 const plural = (n: number) => `${n} ${n === 1 ? "document" : "documents"}`;
 
-/** All Documents, then one per course, then No Course — each with its count. */
+/**
+ * All Documents, then one per course, then No Course, then the Trash — each
+ * with its count. The Trash used to be a button beside the switcher; owner's
+ * call 2026-11-25 moved it in here, last, so the row holds one scope control.
+ */
 export function scopeOptions({
-  documents, courses, loc, scopeCourseId, go,
+  documents, courses, loc, scopeCourseId, trashCount, go,
 }: ScopeOptionInput): ScopeOptionModel[] {
   const { kind } = parseLoc(loc);
   const isTrash = kind === "trash";
@@ -123,5 +131,14 @@ export function scopeOptions({
     pick: () => go("c:none"),
   };
 
-  return [all, ...perCourse, none];
+  const trash: ScopeOptionModel = {
+    id: "Trash",
+    sub: `Deleted after 30 days · ${plural(trashCount)}`,
+    color: null,
+    on: isTrash,
+    pick: () => go("trash"),
+    trash: true,
+  };
+
+  return [all, ...perCourse, none, trash];
 }

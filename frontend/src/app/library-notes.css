@@ -1,7 +1,7 @@
 /* Library — ported from the design handoff.
  *
  * `reference/library-global.css` from design_handoff_library_notes, verbatim
- * apart from two deliberate changes:
+ * apart from three deliberate changes:
  *
  *  1. The `body` / `a` rules are dropped: the shell already paints those from
  *     --bg and --brand-forest, which hold the same values.
@@ -9,6 +9,8 @@
  *     reduced-motion override — are scoped to `[data-sap-surface]`, the
  *     attribute the Library puts on its root, so they cannot repaint or
  *     flatten the rest of the app.
+ *  3. The Trash button's keyframes (sapBumpA/B, sapLidA/B) are dropped with
+ *     the button itself (owner's call 2026-11-25).
  *
  * Everything else (every keyframe, every literal value) is byte-for-byte what
  * the prototype ships. Hover and focus states, which the prototype expresses
@@ -29,7 +31,11 @@
 [data-sap-surface] ::-webkit-scrollbar-corner { background: transparent; }
 
 [data-sap-surface] input::placeholder { color: #8A8372; }
-@keyframes sapRowOut{from{opacity:1;transform:none}to{opacity:0;transform:translateX(-14px) scale(0.98)}}@keyframes sapBumpA{0%{transform:translateY(0.5px)}30%{transform:translateY(-1.5px) scale(1.2)}60%{transform:translateY(0.5px) scale(0.95)}100%{transform:translateY(0.5px)}}@keyframes sapBumpB{0%{transform:translateY(0.5px)}30%{transform:translateY(-1.5px) scale(1.2)}60%{transform:translateY(0.5px) scale(0.95)}100%{transform:translateY(0.5px)}}@keyframes sapLidA{0%,100%{transform:none}25%{transform:translateY(-2px) rotate(-14deg)}55%{transform:translateY(-1px) rotate(8deg)}}@keyframes sapLidB{0%,100%{transform:none}25%{transform:translateY(-2px) rotate(-14deg)}55%{transform:translateY(-1px) rotate(8deg)}}
+/* The design's Trash-can keyframes (sapBumpA/B, the landing bump, and
+   sapLidA/B, the lid tilt) are not ported: the Trash button they animated was
+   removed, owner's call 2026-11-25 — the Trash is now the scope switcher's
+   last option, which is not a drop target. */
+@keyframes sapRowOut{from{opacity:1;transform:none}to{opacity:0;transform:translateX(-14px) scale(0.98)}}
 @keyframes sapMenuIn{from{opacity:0;transform:translateY(-4px) scale(0.97)}to{opacity:1;transform:none}}@keyframes sapMenuOut{from{opacity:1;transform:none}to{opacity:0;transform:translateY(-4px) scale(0.97)}}@keyframes sapScrimIn{from{opacity:0}to{opacity:1}}@keyframes sapScrimOut{from{opacity:1}to{opacity:0}}@keyframes sapModalIn{from{opacity:0;transform:translateY(10px) scale(0.98)}to{opacity:1;transform:none}}@keyframes sapModalOut{from{opacity:1;transform:none}to{opacity:0;transform:translateY(6px) scale(0.98)}}
 @keyframes sapShimmer { 0% { background-position: -300px 0; } 100% { background-position: 300px 0; } }
 @keyframes sapSkelOut { from { opacity: 1; visibility: visible; } to { opacity: 0; visibility: hidden; } }

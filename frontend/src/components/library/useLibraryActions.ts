@@ -82,7 +82,6 @@ export function useLibraryActions(input: LibraryActionsInput): LibraryActions {
     ui.closeAllMenus();
     ui.leave(ids, async () => {
       await data.trashDocuments(ids);
-      ui.bumpTrash();
       ui.clearChecked();
       ui.setSelected(prev => (prev && ids.includes(prev) ? null : prev));
     });

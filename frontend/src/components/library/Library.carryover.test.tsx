@@ -245,7 +245,9 @@ describe("what the redesign adds, end to end", () => {
     } as never);
     await renderLibrary();
 
-    fireEvent.click(screen.getByTestId("library-trash"));
+    // The Trash is the course switcher's last option.
+    fireEvent.click(screen.getByTestId("library-course-switcher"));
+    fireEvent.click(screen.getByRole("option", { name: /Trash/ }));
     const row = await screen.findByTestId("library-doc-t1");
     expect(within(row).getByText("Restore")).toBeTruthy();
 
@@ -255,6 +257,46 @@ describe("what the redesign adds, end to end", () => {
     fireEvent.click(empty);
     expect(screen.getByTestId("library-empty-trash").textContent)
       .toBe("Click Again to Empty Trash");
+  });
+
+  it("the switcher lists the Trash last, with its count, and picking it opens the Trash", async () => {
+    const { getTrashedDocuments } = await import("@/lib/libraryApi");
+    vi.mocked(getTrashedDocuments).mockResolvedValue({
+      documents: [
+        { ...DOC, id: "t1", deleted_at: "2026-11-10T00:00:00Z" },
+        { ...DOC, id: "t2", file_name: "Old Notes.pdf", deleted_at: "2026-11-11T00:00:00Z" },
+      ],
+    } as never);
+    await renderLibrary();
+    // No Trash chip beside the switcher any more.
+    expect(screen.queryByTestId("library-trash")).toBeNull();
+
+    const switcher = screen.getByTestId("library-course-switcher");
+    fireEvent.click(switcher);
+    const options = screen.getAllByRole("option");
+    const trash = options[options.length - 1];
+    expect(trash.textContent).toContain("Trash");
+    await waitFor(() =>
+      expect(trash.textContent).toContain("Deleted after 30 days · 2 documents"));
+    expect(trash.getAttribute("aria-selected")).toBe("false");
+
+    fireEvent.click(trash);
+    // The heading names the Trash, and its rows offer Restore.
+    await waitFor(() => expect(switcher.textContent).toContain("Trash"));
+    const row = await screen.findByTestId("library-doc-t1");
+    expect(within(row).getByText("Restore")).toBeTruthy();
+
+    // A selection there offers Restore and Delete Forever, not Move To.
+    fireEvent.click(screen.getByLabelText("Select Determinants Lecture 7"));
+    const bar = await screen.findByTestId("library-bulk-bar");
+    expect(within(bar).getByText("Restore")).toBeTruthy();
+    expect(within(bar).getByText("Delete Forever")).toBeTruthy();
+    expect(within(bar).queryByText("Move To")).toBeNull();
+
+    // And reopened, the switcher marks the Trash as the open scope.
+    fireEvent.click(switcher);
+    const reopened = screen.getAllByRole("option");
+    expect(reopened[reopened.length - 1].getAttribute("aria-selected")).toBe("true");
   });
 
   it("a row can be renamed in place", async () => {

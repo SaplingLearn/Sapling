@@ -164,7 +164,7 @@ describe("the design's measurements are the rebuild's", () => {
 describe("the copy is the design's, verbatim", () => {
   /** Text the page shows straight away. */
   const ALWAYS_VISIBLE = [
-    "Library", "Upload", "All Documents", "Trash", "List", "Panel",
+    "Library", "Upload", "All Documents", "List", "Panel",
     "Name", "Course", "Pages", "Added",
   ];
 
@@ -182,6 +182,18 @@ describe("the copy is the design's, verbatim", () => {
     await renderLibrary();
     fireEvent.click(screen.getByTestId("library-upload"));
     expect(await screen.findByRole("menuitem", { name: text })).toBeTruthy();
+  });
+
+  // The design's "Trash" sat on a chip beside the course switcher. Owner's
+  // call 2026-11-25 moved it into the switcher as its last option, so the word
+  // is still the design's but is one click in, not on the page at rest.
+  it("the design says \"Trash\", and the course switcher offers it, last", async () => {
+    expect(declares(LIBRARY_DESIGN, "Trash")).toBe(true);
+    await renderLibrary();
+    expect(screen.queryByTestId("library-trash")).toBeNull();
+    fireEvent.click(screen.getByTestId("library-course-switcher"));
+    const options = screen.getAllByRole("option");
+    expect(options[options.length - 1].textContent).toContain("Trash");
   });
 
   it("the Type menu's options read as the design writes them", async () => {
@@ -261,18 +273,35 @@ describe("the animations are the design's", () => {
   /** Every keyframe the design file declares. */
   const DESIGN_KEYFRAMES = keyframeNames(LIBRARY_DESIGN);
 
+  /**
+   * The Trash chip's can: the landing bump and the lid tilt. The chip is gone
+   * (owner's call 2026-11-25; the Trash is the switcher's last option, not a
+   * drop target), and these four animated nothing else. Pinned both ways, so
+   * the exception cannot quietly grow or go stale.
+   */
+  const REMOVED_WITH_TRASH_CHIP = ["sapBumpA", "sapBumpB", "sapLidA", "sapLidB"];
+
   it("the stylesheet carries every keyframe the design declares", () => {
     const ported = keyframeNames(LIBRARY_CSS);
     for (const name of DESIGN_KEYFRAMES) {
+      if (REMOVED_WITH_TRASH_CHIP.includes(name)) continue;
       expect(ported.has(name), `${name} is missing from library-notes.css`).toBe(true);
+    }
+  });
+
+  it("only the Trash chip's keyframes are left out, and they really are out", () => {
+    const ported = keyframeNames(LIBRARY_CSS);
+    for (const name of REMOVED_WITH_TRASH_CHIP) {
+      expect(DESIGN_KEYFRAMES.has(name), `${name} is the design's`).toBe(true);
+      expect(ported.has(name), `${name} should be gone`).toBe(false);
     }
   });
 
   it("the named ones the handoff calls out are all there", () => {
     for (const name of [
       "sapFadeIn", "sapSlideUp", "sapMenuIn", "sapMenuOut",
-      "sapShimmer", "sapSkelOut", "sapRowOut", "sapBumpA", "sapBumpB",
-      "sapLidA", "sapLidB", "sapScrimIn", "sapScrimOut", "sapModalIn", "sapModalOut",
+      "sapShimmer", "sapSkelOut", "sapRowOut",
+      "sapScrimIn", "sapScrimOut", "sapModalIn", "sapModalOut",
     ]) {
       expect(keyframeNames(LIBRARY_CSS).has(name), name).toBe(true);
     }

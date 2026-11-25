@@ -67,7 +67,7 @@ export interface LibraryUi {
   setDraft: (draft: string) => void;
   cancelEdit: () => void;
 
-  /** The drop target under the pointer, e.g. `c:MATH210`, `f:…`, `trash`. */
+  /** The drop target under the pointer, e.g. `f:…` for a folder. */
   dropOn: string | null;
   setDropOn: (key: string | null) => void;
   dragIds: React.RefObject<string[]>;
@@ -83,8 +83,6 @@ export interface LibraryUi {
   setEmptyConfirm: (v: boolean) => void;
   bulkConfirm: boolean;
   setBulkConfirm: (v: boolean) => void;
-  trashBump: number;
-  bumpTrash: () => void;
 }
 
 export function useLibraryUi(): LibraryUi {
@@ -112,7 +110,6 @@ export function useLibraryUi(): LibraryUi {
   const [leaving, setLeaving] = React.useState<string[]>([]);
   const [emptyConfirm, setEmptyConfirm] = React.useState(false);
   const [bulkConfirm, setBulkConfirm] = React.useState(false);
-  const [trashBump, setTrashBump] = React.useState(0);
 
   const exitTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const leaveTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -215,8 +212,6 @@ export function useLibraryUi(): LibraryUi {
     }, ROW_EXIT_MS);
   }, []);
 
-  const bumpTrash = React.useCallback(() => setTrashBump(n => n + 1), []);
-
   return {
     loc, setLoc, query, setQuery, type, setType, sortKey, setSortKey, view, setView,
     selected, setSelected, selectedFolder, setSelectedFolder,
@@ -226,6 +221,6 @@ export function useLibraryUi(): LibraryUi {
     edit, startEdit, setDraft, cancelEdit,
     dropOn, setDropOn, dragIds, dragging, setDragging,
     leaving, leave,
-    emptyConfirm, setEmptyConfirm, bulkConfirm, setBulkConfirm, trashBump, bumpTrash,
+    emptyConfirm, setEmptyConfirm, bulkConfirm, setBulkConfirm,
   };
 }

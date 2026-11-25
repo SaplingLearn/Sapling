@@ -85,12 +85,19 @@ const LIBRARY_DESIGN = read("__fixtures__/library-v2.design.html");
  * the faithful offset at 40px is 46 — the rebuild writes `CONTROL_H + 6` so
  * the menu keeps following the button. It is the only `top: 54px` there.
  *
- * The Trash count: the handoff puts a tabular count after the word, and
- * baseline-aligns the label to it. Owner's call 2026-11-25 removed the count,
- * so the label is the chip's only content and centres on the icon instead —
- * which leaves `align-items: baseline` with nothing left to align. It is the
- * only baseline in the prototype. The count's own `display: inline-block`
- * (its bump animation needs a box) goes with the count; it is the only one.
+ * The Trash button: the handoff draws a Trash chip beside the course
+ * switcher — a drop target whose can lid tilts on drag-over and whose count
+ * bumps when something lands. Owner's calls 2026-11-25: first the count went
+ * (which left the label's `align-items: baseline` with nothing to align; it is
+ * the only baseline in the prototype), then the whole chip — the Trash is now
+ * the switcher's last option, which is not a drop target. What only that chip
+ * declared goes with it: the lid group's `transform-box` / `transform-origin`
+ * / tilt `transition`, and the count's `translateY(0.5px)` nudge and its `display: inline-block`
+ * (its bump animation needed a box). Each value
+ * occurs nowhere else in the prototype. The chip's colours and sizes are not
+ * listed: other controls still carry every one of them. The skeleton's
+ * 104px-wide bar was the chip's placeholder in the filter row, so it goes
+ * too; it is the only 104px in the prototype.
  */
 const EXPECTED_DEVIATIONS = [
   /^font-family: '(Aleo|SUSE|IBM Plex Mono)'/,
@@ -98,6 +105,9 @@ const EXPECTED_DEVIATIONS = [
   /^grid-template-rows: auto minmax\(0, 1fr\)$/, /^min-height: 0$/,
   /^height: 48px$/, /^top: 54px$/,
   /^align-items: baseline$/, /^display: inline-block$/,
+  /^transform-box: fill-box$/, /^transform-origin: 85% 100%$/,
+  /^transition: transform 200ms cubic-bezier\(0\.2, 0\.7, 0\.2, 1\)$/,
+  /^transform: translateY\(0\.5px\)$/, /^width: 104px$/,
 ];
 
 /** The rebuild's own source: components, hooks, and the ported stylesheet. */

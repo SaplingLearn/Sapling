@@ -120,8 +120,9 @@ export function LibrarySkeleton({ view }: { view: "list" | "panel" }) {
         display: "flex", alignItems: "center", gap: 12, paddingBottom: 14,
         borderBottom: "1px solid rgba(42,39,31,0.10)",
       }}>
+        {/* The course switcher. No second bar: the Trash chip that sat
+            beside it is now the switcher's last option. */}
         <Bar width={230} height={40} radius={12} />
-        <Bar width={104} height={40} radius={12} />
         <span style={{ flex: 1 }} />
         <Bar width={184} height={40} radius={12} />
       </div>
