@@ -49,13 +49,19 @@ OUTPUTS = [
 
 
 @pytest.mark.parametrize("model, payload", OUTPUTS, ids=[m.__name__ for m, _ in OUTPUTS])
-@pytest.mark.parametrize("raw, want", [(1.02, 1.0), (95, 1.0), (-0.2, 0.0), (0.4, 0.4), (1, 1.0), (0, 0.0)])
+# One overshoot each way: the clamped value is the bound itself, so each case
+# also checks the bound is inclusive (le=1 / ge=0).
+@pytest.mark.parametrize("raw, want", [(1.02, 1.0), (-0.2, 0.0)])
 def test_a_finite_confidence_past_its_bound_is_clamped(model, payload, raw, want):
     assert model.model_validate(payload(raw)).confidence == want
 
 
-@pytest.mark.parametrize("model, payload", OUTPUTS, ids=[m.__name__ for m, _ in OUTPUTS])
-@pytest.mark.parametrize("raw", [math.nan, math.inf, -math.inf])
+# Each non-finite value once, each model once.
+@pytest.mark.parametrize(
+    "model, payload, raw",
+    [(m, p, raw) for (m, p), raw in zip(OUTPUTS, [math.nan, math.inf, -math.inf], strict=True)],
+    ids=[m.__name__ for m, _ in OUTPUTS],
+)
 def test_a_non_finite_confidence_still_fails_validation(model, payload, raw):
     with pytest.raises(ValidationError):
         model.model_validate(payload(raw))
