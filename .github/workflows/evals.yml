@@ -32,6 +32,7 @@ on:
       - 'backend/learning/**'
       - 'backend/routes/learn_loop.py'
       - 'backend/services/learning_decisions.py'
+      - 'backend/services/typesafe_client.py'
       - 'backend/services/chat_stream.py'
       - 'backend/services/ai_budget.py'
       - 'backend/services/events_service.py'
