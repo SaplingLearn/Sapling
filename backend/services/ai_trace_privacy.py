@@ -68,6 +68,10 @@ _TOKEN_KEYS = frozenset(
     for suffix in _TOKEN_SUFFIXES
 )
 _IDENTIFIER = re.compile(r"[A-Za-z0-9_.:/-]{1,256}\Z")
+#: A numeric attribute is kept only inside [-_NUMBER_BOUND, _NUMBER_BOUND].
+_NUMBER_BOUND = 1e15
+#: The most finish reasons a span may carry (one per choice).
+_MAX_FINISH_REASONS = 8
 
 
 def _metadata(attributes):
@@ -78,7 +82,7 @@ def _metadata(attributes):
         elif (
             key in _NUMBERS | _TOKEN_KEYS
             and type(value) in (int, float)
-            and -1e15 <= value <= 1e15
+            and -_NUMBER_BOUND <= value <= _NUMBER_BOUND
             and math.isfinite(value)
         ):
             result[key] = value
@@ -87,7 +91,7 @@ def _metadata(attributes):
         elif (
             key == "gen_ai.response.finish_reasons"
             and isinstance(value, (list, tuple))
-            and len(value) <= 8
+            and len(value) <= _MAX_FINISH_REASONS
             and all(type(v) is str and _IDENTIFIER.fullmatch(v) for v in value)
         ):
             result[key] = value
