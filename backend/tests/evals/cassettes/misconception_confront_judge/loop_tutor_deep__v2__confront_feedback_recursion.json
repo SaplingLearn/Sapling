@@ -1,0 +1,11 @@
+{
+  "judge_model": "claude-opus-5-5",
+  "judge_prompt_hash": "59ea877759515c5dc619e30ae8b5388ab6da5eaf11ba2a4e5d4be1b0b7097e58",
+  "output": {
+    "affirms_misconception": false,
+    "confronts": true,
+    "evidence": "Start at factorial(2) and write down which call comes next, then the next, for at least five calls. Where in your list of calls does anything actually stop",
+    "only_states_correction": false
+  },
+  "served_sha256": "ddf6d7c2b635a373df6aec82519228c8f48c0e89868eb0f9d4725f23e1e900bb"
+}

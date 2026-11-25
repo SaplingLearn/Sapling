@@ -1,0 +1,21 @@
+{
+  "attempts": [
+    "{\"key_idea\": \"A recursive function solves a problem by handing a smaller copy of the same problem to itself, and it stops at a base case that it can answer directly.\", \"body\": \"Take countdown_sum(n), which equals n + (n-1) + ... + 1, with countdown_sum(0) = 0 as the base case. Without that base case the function would keep calling smaller copies forever, so the base case is the stopping point that the other steps rely on. Here is the plan for countdown_sum(3): it equals 3 + countdown_sum(2), and countdown_sum(2) equals 2 + countdown_sum(1), and countdown_sum(1) equals 1 + countdown_sum(0), and countdown_sum(0) = 0.\", \"question\": \"Starting from countdown_sum(0) = 0 and working back up that chain, what value do you get for countdown_sum(1), and then countdown_sum(2)?\"}",
+    "{\"key_idea\": \"A recursive function solves a problem by handing a smaller copy of the same problem to itself, and it stops at a base case that it can answer directly.\", \"body\": \"Take countdown_sum(n), which equals n + (n-1) + ... + 1, with countdown_sum(0) = 0 as the base case. Without that base case the calls would shrink forever, so the base case is what lets the chain stop. For countdown_sum(3) the chain is 3 + countdown_sum(2), then 2 + countdown_sum(1), then 1 + countdown_sum(0).\", \"question\": \"Starting from countdown_sum(0) = 0 and working back up that chain, what value do you get for countdown_sum(1), and then countdown_sum(2)?\"}",
+    "{\"key_idea\": \"A recursive function solves a problem by handing a smaller copy of the same problem to itself, and it stops at a base case that it can answer directly.\", \"body\": \"Take countdown_sum(n), the total of the whole numbers from n down to 1, with the base case countdown_sum(0) = 0. Without that base case the calls would shrink forever, so the base case is what lets the chain stop. For countdown_sum(3) the chain is 3 + countdown_sum(2), then 2 + countdown_sum(1), then 1 + countdown_sum(0).\", \"question\": \"Starting from countdown_sum(0) = 0 and working back up that chain, what value do you get for countdown_sum(1) and then for countdown_sum(2)?\"}"
+  ],
+  "input_sha256": "1a6ccd15960d7d572c96de957f6eae0ff470a031fd3568a0cec9f272acdfb746",
+  "model": "claude-sonnet-5-5",
+  "output": {
+    "body": "Take countdown_sum(n), the total of the whole numbers from n down to 1, with the base case countdown_sum(0) = 0. Without that base case the calls would shrink forever, so the base case is what lets the chain stop. For countdown_sum(3) the chain is 3 + countdown_sum(2), then 2 + countdown_sum(1), then 1 + countdown_sum(0).",
+    "key_idea": "A recursive function solves a problem by handing a smaller copy of the same problem to itself, and it stops at a base case that it can answer directly.",
+    "question": "Starting from countdown_sum(0) = 0 and working back up that chain, what value do you get for countdown_sum(1) and then for countdown_sum(2)?"
+  },
+  "prompt_hash": "575193db5424",
+  "requests": 3,
+  "rescued": false,
+  "retries": 2,
+  "schema_hash": "ee2a0f1f177f",
+  "slot": "loop_tutor_deep",
+  "tool_calls": []
+}

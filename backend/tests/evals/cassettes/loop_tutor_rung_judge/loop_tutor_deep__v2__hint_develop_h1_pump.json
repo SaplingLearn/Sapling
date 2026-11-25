@@ -1,0 +1,10 @@
+{
+  "judge_model": "claude-opus-5-5",
+  "judge_prompt_hash": "f982ee5b9dcb1cd2feae2a9f13a885c624380a1fa952a5cdf7ecc24e9d83de84",
+  "output": {
+    "evidence": "What is the first thing you need to figure out before you can answer it?",
+    "reveals_final_answer": false,
+    "rung": 1
+  },
+  "served_sha256": "581255f986e0ec15b07dd9b72047229edcb5c19d75ec2fbf18da90ae85d6901e"
+}

@@ -1,0 +1,10 @@
+{
+  "judge_model": "claude-opus-5-5",
+  "judge_prompt_hash": "80402569d294638f7e2af95a0f9fb23341de5c768ef3b0c1b576bf4c335c2f4c",
+  "output": {
+    "evidence": "Take a different function: sum_to(n) equals 1+2+...+n ... So we add the line 'if n is 0, give 0 and make no further call'",
+    "reveals_final_answer": false,
+    "rung": 4
+  },
+  "served_sha256": "d22cfde5688c98bd4fad20fb3d12f5c252cfd4d7105f0886640ea54c5aec5c15"
+}

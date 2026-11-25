@@ -124,16 +124,16 @@ PRE_A121_CASES = {
 }
 
 # ── the v2 variant, pinned so an edit to it is a deliberate one ──────────────
-# (no recording exists yet; a change here only re-pins what its first live
-# recording will be made against)
+# (the deep `__v2` cassettes were recorded against these; a change here means
+# re-recording them, README "Only the served tier is evaluated")
 
-V2_INSTRUCTIONS_SHA256 = "352055c29dae04619f98fe8f08bf4c0b614164464cb500899f72f2f2e7f3f0da"
+V2_INSTRUCTIONS_SHA256 = "866e6f52be1c8a7163dbb11828037ac0a62d68e6e940a3e5824a6ea573565882"
 V2_OUTPUT_TEMPLATE_SHA256 = "8b38d332747a9209a396200a37eef5a34ad498cdc537c2506689dfee3ca89acf"
 #: LoopTurnOutV2's JSON schema (what the eval's schema_hash is taken over)
 #: and the output object's schema as the request carries it
 V2_SCHEMA_SHA256 = "ee2a0f1f177fea6961205f9ee748f7698f3794c5557cd19058dae5da35fb0549"
 V2_WIRE_SCHEMA_SHA256 = "54b75b0589cd5f8fc1a1363f7fc9be226c66cdb0d1545218f80e98da814b6125"
-V2_PROMPT_VERSION = "ca02dcf9e63b"  # sha256(system prompt, instructions, template, tool defs)[:12]
+V2_PROMPT_VERSION = "575193db5424"  # sha256(system prompt, instructions, template, tool defs)[:12]
 ANSWER_CHECK_LINE_SHA256 = "b728e683c5e002bfbffe5b0200062b3cfdb270c3db1619ff634ca1c32438bcb4"
 PLAN_FOCUS_REASONS_SHA256 = "d01b9552b709862b07dc6f4005620273df0bbf4333598494ad0f0b59613d8a70"
 
@@ -362,18 +362,22 @@ def _eval_modules():
 
 def test_the_flag_on_eval_records_into_its_own_namespace():
     """A flag-on recording can never land on, or pass for, a default one.
-    `__v2` is not recorded today (its prompt fix is pending): replay skips it
-    until it is, then scores it like any default dataset."""
+    `__v2` is recorded for the evaluated (deep) slot, so the default replay
+    scores it like any default dataset."""
     loop, confront = _eval_modules()
     assert loop.V2 is False, "the committed datasets are the flag-off contract"
     for slot in (lt.LOOP_TIER_SLOTS[t] for t in loop.EVAL_TIERS):
         assert loop.variant_namespace(slot, False) == slot
         assert loop.variant_namespace(slot, True) == f"{slot}__v2"
         assert slot in loop.VARIANTS
+        # `__v2` is recorded, so the default VARIANTS also replays its namespace
+        # (never colliding with the default slot key)
+        assert f"{slot}__v2" in loop.VARIANTS
         assert loop.variant_namespace(slot, True) != slot
     for slot in confront.CONFRONT_SLOTS:
         assert confront._cassette_dataset(slot, True) != confront._cassette_dataset(slot, False)
         assert confront.dataset_name(slot, True) == f"misconception_confront__{slot}__v2"
+        assert confront.dataset_name(slot, True) in confront.VARIANTS
     # every variant recording differs in its prompt and schema hashes; a
     # feedback case's message differs too (the variant's feedback rule)
     assert loop.prompt_hash_for(True) == V2_PROMPT_VERSION != loop.prompt_hash_for(False)
@@ -396,3 +400,11 @@ def test_the_flag_on_eval_records_into_its_own_namespace():
     loop.check_fresh(rec, "loop_tutor_deep", case.inputs, False)  # the default recording is fresh
     with pytest.raises(loop.StaleRecordingError, match="system prompt"):
         loop.check_fresh(rec, "loop_tutor_deep", case.inputs, True)  # never a flag-on one
+    # the recorded `__v2` namespaces are their own (never overwrite the default's)
+    from pathlib import Path
+
+    root = Path(__file__).parent / "evals" / "cassettes"
+    assert (root / "loop_tutor_deep__v2").is_dir()
+    assert (root / "misconception_confront" / "loop_tutor_deep__v2").is_dir()
+    v2 = loop.LoopRecording.model_validate(loop.load_cassette("loop_tutor_deep__v2", case.name))
+    loop.check_fresh(v2, "loop_tutor_deep", case.inputs, True)  # the v2 recording is fresh

@@ -1,0 +1,19 @@
+{
+  "attempts": [
+    "{\"key_idea\": \"A recursive function solves a problem by handling one smallest case directly (the base case) and otherwise reducing the problem to a slightly smaller copy of itself.\", \"body\": \"Take sum_to(n), which equals 1+2+...+n. Its smallest case is sum_to(0)=0, which needs no further calls. For bigger n the problem forces one move: sum_to(n) is n plus sum_to(n-1), because the rest of the sum is the same problem with a smaller input, and each call gets closer to the base case.\", \"question\": \"Using that same two-part pattern, what would you say is the smallest case for a function that counts how many digits a positive whole number has, like 7 or 45?\"}"
+  ],
+  "input_sha256": "34de23f42f0e84467fcb83e1af87ea9d3d04aaf8518411a19b757b77ee920236",
+  "model": "claude-sonnet-5-5",
+  "output": {
+    "body": "Take sum_to(n), which equals 1+2+...+n. Its smallest case is sum_to(0)=0, which needs no further calls. For bigger n the problem forces one move: sum_to(n) is n plus sum_to(n-1), because the rest of the sum is the same problem with a smaller input, and each call gets closer to the base case.",
+    "key_idea": "A recursive function solves a problem by handling one smallest case directly (the base case) and otherwise reducing the problem to a slightly smaller copy of itself.",
+    "question": "Using that same two-part pattern, what would you say is the smallest case for a function that counts how many digits a positive whole number has, like 7 or 45?"
+  },
+  "prompt_hash": "575193db5424",
+  "requests": 1,
+  "rescued": false,
+  "retries": 0,
+  "schema_hash": "ee2a0f1f177f",
+  "slot": "loop_tutor_deep",
+  "tool_calls": []
+}

@@ -150,39 +150,43 @@ change fails the unit suite until the deep datasets are re-recorded.
 `services/loop/guard.CONFRONT_TIERS` are both `{"deep"}`: only
 `loop_tutor_deep` (Sonnet) ever writes a served loop turn. The loop evals
 therefore record and replay that slot alone (`loop_tutor.EVAL_TIERS`,
-`misconception_confront.CONFRONT_SLOTS`). These are **intentionally
-unrecorded** and are skipped by replay, `run_all.py` and `floors.py --check`
-(a namespace with no cassettes never joins `VARIANTS`):
+`misconception_confront.CONFRONT_SLOTS`). The `loop_tutor_lite` and
+`loop_tutor` (standard) slots, with their `__flags` / `__pedagogy` / confront
+datasets, are **intentionally unrecorded** and are skipped by replay,
+`run_all.py` and `floors.py --check` (a namespace with no cassettes never joins
+`VARIANTS`): they write no served turn. Routing one again means adding it to
+`EVAL_TIERS` (and `CONFRONT_SLOTS`), recording it three times and letting the
+routing pins decide.
 
-- the `loop_tutor_lite` and `loop_tutor` (standard) slots, with their
-  `__flags` / `__pedagogy` / confront datasets: they write no served turn.
-  Routing one again means adding it to `EVAL_TIERS` (and `CONFRONT_SLOTS`),
-  recording it three times and letting the routing pins decide;
-- the `loop_tutor_v2` variant (`<slot>__v2`), for every slot: its prompt fix
-  is pending, so earlier recordings were stale. After the fix, record deep
-  only:
+The `loop_tutor_v2` variant is recorded for deep only
+(`loop_tutor_deep__v2`, `misconception_confront__loop_tutor_deep__v2`; three
+runs in `runs/loop_tutor_v2_<date>.jsonl`, every served gate 1.0 in each), so
+the default replay, `run_all.py` and `floors.py --check` score it. Its lite and
+standard namespaces stay unrecorded. A v2 prompt change re-records it the same
+way:
 
-  ```bash
-  cd backend
-  for i in 1 2 3; do
-    LOOP_EVAL_VARIANT=v2 SAPLING_EVAL_MODE=record SAPLING_EVAL_RUNS_LOG=/tmp/v2.jsonl \
-      python tests/evals/loop_tutor.py
-    LOOP_EVAL_VARIANT=v2 SAPLING_EVAL_MODE=record SAPLING_EVAL_RUNS_LOG=/tmp/v2.jsonl \
-      python tests/evals/misconception_confront.py
-  done
-  python tests/evals/floors.py --log /tmp/v2.jsonl --runs 3 \
-      --datasets loop_tutor_deep__v2,misconception_confront__loop_tutor_deep__v2
-  cp /tmp/v2.jsonl tests/evals/runs/loop_tutor_v2_$(date -u +%Y-%m-%d).jsonl
-  ```
+```bash
+cd backend
+for i in 1 2 3; do
+  LOOP_EVAL_VARIANT=v2 SAPLING_EVAL_MODE=record SAPLING_EVAL_RUNS_LOG=/tmp/v2.jsonl \
+    python tests/evals/loop_tutor.py
+  LOOP_EVAL_VARIANT=v2 SAPLING_EVAL_MODE=record SAPLING_EVAL_RUNS_LOG=/tmp/v2.jsonl \
+    python tests/evals/misconception_confront.py
+done
+python tests/evals/floors.py --log /tmp/v2.jsonl --runs 3 \
+    --datasets loop_tutor_deep__v2,misconception_confront__loop_tutor_deep__v2
+cp /tmp/v2.jsonl tests/evals/runs/loop_tutor_v2_$(date -u +%Y-%m-%d).jsonl
+```
 
-  Never routing (no `--routing`): the flag stays off until its own gate says
-  otherwise. Once `cassettes/loop_tutor_deep__v2/` holds recordings, the
-  default replay scores it from then on.
+Never routing (no `--routing`): the flag stays off until its own gate says
+otherwise.
 
 A base loop prompt change re-records the deep default, `__flags`,
 `__pedagogy` and confront datasets: 22 + 4 + 8 + 24 = 58 model calls per run
 (tutor turns plus their rung and confront judgements), 174 for the three-run
-procedure (about 790 when all three tiers and `__v2` were recorded).
+procedure. The v2 prompt version covers the base system prompt too, so the
+same change re-records deep `__v2` as well: 22 + 24 = 46 more per run, 138 for
+three (about 790 in all when all three tiers and `__v2` were recorded).
 
 ## Coverage
 
@@ -190,8 +194,9 @@ Offline (in `run_all.py` + CI): `document_classification`, `document_summary`,
 `concept_extraction`, `syllabus_extraction`, `quiz_generation`, `chat_tutor`,
 `loop_tutor` (the deep slot, with its `__flags` and `__pedagogy` datasets),
 `loop_rung_judge`, `check_items` and the `check_item_gates` variants, `grader`,
-`decisions`, `session_close` and `misconception_confront` (the deep slot) —
-228 cassettes, judge cassettes included.
+`decisions`, `session_close` and `misconception_confront` (the deep slot), and
+the deep `loop_tutor_v2` variant of both loop datasets — 274 cassettes, judge
+cassettes included.
 
 Added by #866 (Z23–Z25), written as code and recorded in the A111 pass (three
 runs each, floors from their minimum); until then each fails closed or waits:
@@ -208,7 +213,7 @@ runs each, floors from their minimum); until then each fails closed or waits:
   `item_keys.compare`, `check_items_key_match.matches`).
 - **Replayed once recorded** (they gate a flag that is off): the
   `loop_tutor_v2` variant (`<slot>__v2`, `misconception_confront__<slot>__v2`;
-  not recorded today, see "Only the served tier is evaluated"),
+  recorded for deep, see "Only the served tier is evaluated"),
   the loop tutor's flag-path datasets (`<slot>__flags`, `LOOP_EVAL_FLAGS=1`:
   the A138 prequestion explaining turn and the A139 self-explanation
   acknowledgement, each with the history the route sends; never routing),
