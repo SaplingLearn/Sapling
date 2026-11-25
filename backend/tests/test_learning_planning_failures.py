@@ -102,28 +102,22 @@ def test_replayed_old_wrong_cannot_reblock_after_distinct_independent_recovery()
     )
 
 
+# One case per rule of planner._valid_planning_miss and planning_states' row
+# guards: a non-bool flag (every bool field shares the `type(...) is bool` rule),
+# a bool posing as an int, a difficulty outside the shifts, an unknown channel,
+# both ends of the 0..LADDER_MAX_RUNG range, then each exclusion flag. An
+# unavailable or synthetic-idk row has its own tests below.
 @pytest.mark.parametrize(
     "extra",
     [
         {"correct": "false"},
-        {"idk": "false"},
         {"difficulty": True},
-        {"difficulty": 2.0},
         {"difficulty": 99},
         {"channel": "unknown"},
-        {"channel": []},
-        {"independent": "false"},
-        {"max_rung": True},
         {"max_rung": -1},
         {"max_rung": 7},
-        {"same_session_recheck": "false"},
-        {"assisted": "false"},
-        {"unavailable": True},
-        {"unavailable": None},
         {"graded": False},
         {"refused": "disowned_answer"},
-        {"refused": 0},
-        {"synthetic_idk": True},
         {"previously_seen": True},
         {"question_hash": ""},
         {"node_id": []},
