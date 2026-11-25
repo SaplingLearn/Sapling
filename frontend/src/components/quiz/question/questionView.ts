@@ -82,35 +82,60 @@ export interface ItemView {
   verdict: Verdict | null;
 }
 
+type KitInteraction = NonNullable<QuizItem["question"]["interaction"]>;
+/** One kit's completeness check: null when the interaction is not that kit. */
+type KitCheck = (interaction: KitInteraction | undefined, text: string | undefined) => boolean | null;
+
+/** Each kit's check, in the order the kinds are tried. */
+const KIT_CHECKS: KitCheck[] = [
+  (i, t) => { const k = asSortInteraction(i); return k ? isSortComplete(k, decodeSortAnswer(k, t)) : null; },
+  (i, t) => { const k = asSequenceInteraction(i); return k ? isSequenceComplete(k, decodeSequenceAnswer(k, t)) : null; },
+  (i, t) => { const k = asLabelInteraction(i); return k ? isLabelComplete(k, decodeLabelAnswer(k, t)) : null; },
+  (i, t) => { const k = asBuildInteraction(i); return k ? isBuildComplete(k, decodeBuildAnswer(k, t)) : null; },
+  (i, t) => { const k = asCompareInteraction(i); return k ? isCompareComplete(k, t) : null; },
+  (i, t) => { const k = asDialogueInteraction(i); return k ? isDialogueComplete(k, t) : null; },
+  (i, t) => (asExplainInteraction(i) ? isExplainComplete(t) : null),
+  (i, t) => { const k = asHighlightInteraction(i); return k ? isHighlightComplete(k, t) : null; },
+  (i, t) => (asCalculateInteraction(i) ? isCalculateComplete(t) : null),
+  (i, t) => { const k = asPositionInteraction(i); return k ? isPositionComplete(k, decodePositionAnswer(k, t)) : null; },
+  (i, t) => { const k = asRankInteraction(i); return k ? isRankComplete(k, t) : null; },
+  (i, t) => { const k = asConnectInteraction(i); return k ? isConnectComplete(k, decodeConnectAnswer(k, t)) : null; },
+];
+
+/** The kit kinds a short_answer can carry, in the order they are tried. */
+export const KIT_KINDS = [
+  "sort", "sequence", "label", "build", "compare", "dialogue",
+  "explain", "highlight", "calculate", "position", "rank", "connect",
+] as const;
+export type KitKind = (typeof KIT_KINDS)[number];
+
+const KIT_GUARDS: Record<KitKind, (interaction: KitInteraction | undefined) => unknown> = {
+  sort: asSortInteraction,
+  sequence: asSequenceInteraction,
+  label: asLabelInteraction,
+  build: asBuildInteraction,
+  compare: asCompareInteraction,
+  dialogue: asDialogueInteraction,
+  explain: asExplainInteraction,
+  highlight: asHighlightInteraction,
+  calculate: asCalculateInteraction,
+  position: asPositionInteraction,
+  rank: asRankInteraction,
+  connect: asConnectInteraction,
+};
+
+/** Which kit an interaction is (a usable payload of that kind), or null. */
+export function kitKindOf(interaction: KitInteraction | undefined): KitKind | null {
+  return KIT_KINDS.find(kind => KIT_GUARDS[kind](interaction) != null) ?? null;
+}
+
 /** Kit placements that gate Check the same way a non-blank written answer does. */
 function kitHasAnswer(item: QuizItem | undefined): boolean | null {
   const interaction = item?.question.interaction;
-  const sort = asSortInteraction(interaction);
-  if (sort) return isSortComplete(sort, decodeSortAnswer(sort, item?.answerText));
-  const sequence = asSequenceInteraction(interaction);
-  if (sequence) {
-    return isSequenceComplete(sequence, decodeSequenceAnswer(sequence, item?.answerText));
+  for (const check of KIT_CHECKS) {
+    const complete = check(interaction, item?.answerText);
+    if (complete !== null) return complete;
   }
-  const label = asLabelInteraction(interaction);
-  if (label) return isLabelComplete(label, decodeLabelAnswer(label, item?.answerText));
-  const build = asBuildInteraction(interaction);
-  if (build) return isBuildComplete(build, decodeBuildAnswer(build, item?.answerText));
-  const compare = asCompareInteraction(interaction);
-  if (compare) return isCompareComplete(compare, item?.answerText);
-  const dialogue = asDialogueInteraction(interaction);
-  if (dialogue) return isDialogueComplete(dialogue, item?.answerText);
-  const explain = asExplainInteraction(interaction);
-  if (explain) return isExplainComplete(item?.answerText);
-  const highlight = asHighlightInteraction(interaction);
-  if (highlight) return isHighlightComplete(highlight, item?.answerText);
-  const calculate = asCalculateInteraction(interaction);
-  if (calculate) return isCalculateComplete(item?.answerText);
-  const position = asPositionInteraction(interaction);
-  if (position) return isPositionComplete(position, decodePositionAnswer(position, item?.answerText));
-  const rank = asRankInteraction(interaction);
-  if (rank) return isRankComplete(rank, item?.answerText);
-  const connect = asConnectInteraction(interaction);
-  if (connect) return isConnectComplete(connect, decodeConnectAnswer(connect, item?.answerText));
   return null;
 }
 
@@ -337,6 +362,9 @@ export function skipSlotState({
 
 export type PrimaryAction = "none" | "next" | "submit";
 
+/** The footer button with its press bound to the session. */
+export type Primary = PrimaryButton & { activate: () => void };
+
 export interface PrimaryButton {
   label: string;
   testid: "quiz-next" | "quiz-submit-answer";
@@ -413,60 +441,29 @@ export function nextOptionIndex(selectedIndex: number | null, step: 1 | -1, coun
   return (from + step + count) % count;
 }
 
+/** The kit flags `formatHint` takes, each naming the kit on screen. */
+export type KitHintFlags = Partial<Record<KitKind, boolean>>;
+
+/** Each kit's rules, in the order the flags are tried. */
+const KIT_HINTS: [keyof KitHintFlags, string][] = [
+  ["sort", "Select an item, then tap a bucket to place it. Tap a placed item to return it to the tray. Check unlocks once every item is sorted."],
+  ["sequence", "Select a step, then tap a numbered slot to place it. Tap a placed step to return it to the tray. Check unlocks once every slot is filled."],
+  ["label", "Select a label, then tap a numbered region to place it. Tap a placed label to return it to the tray. Check unlocks once every region is labelled."],
+  ["build", "Select a part, then tap a slot to place it. Tap a placed part to return it to the tray. Check unlocks once every slot is filled."],
+  ["compare", "Read both sides, then tap one relation. Tap again to clear. Check unlocks once a relation is selected."],
+  ["dialogue", "Reply to your partner. After your first message they follow up. Check unlocks once you have sent enough replies."],
+  ["explain", "Write a short explanation in your own words. Check unlocks once the box is not empty."],
+  ["highlight", "Tap passages to highlight them. Tap again to clear. Check unlocks once enough passages are selected."],
+  ["calculate", "Enter the number and its unit. Check unlocks once both fields are filled."],
+  ["position", "Select a marker, then tap a stop on the scale. Tap a placed marker to return it. Check unlocks once every marker is placed."],
+  ["rank", "Select an item, then tap a numbered slot. Add a short reason for your top choice. Check unlocks once the order is full and a why is written."],
+  ["connect", "Select a left item, then tap its match on the right. Tap a paired left item to clear. Check unlocks once every left item is paired."],
+];
+
 /** The grading rules shown under a written answer, per format. */
-export function formatHint(
-  type: QuestionType | undefined,
-  opts?: {
-    sort?: boolean;
-    sequence?: boolean;
-    label?: boolean;
-    build?: boolean;
-    compare?: boolean;
-    dialogue?: boolean;
-    explain?: boolean;
-    highlight?: boolean;
-    calculate?: boolean;
-    position?: boolean;
-    rank?: boolean;
-    connect?: boolean;
-  },
-): string {
-  if (opts?.sort) {
-    return "Select an item, then tap a bucket to place it. Tap a placed item to return it to the tray. Check unlocks once every item is sorted.";
-  }
-  if (opts?.sequence) {
-    return "Select a step, then tap a numbered slot to place it. Tap a placed step to return it to the tray. Check unlocks once every slot is filled.";
-  }
-  if (opts?.label) {
-    return "Select a label, then tap a numbered region to place it. Tap a placed label to return it to the tray. Check unlocks once every region is labelled.";
-  }
-  if (opts?.build) {
-    return "Select a part, then tap a slot to place it. Tap a placed part to return it to the tray. Check unlocks once every slot is filled.";
-  }
-  if (opts?.compare) {
-    return "Read both sides, then tap one relation. Tap again to clear. Check unlocks once a relation is selected.";
-  }
-  if (opts?.dialogue) {
-    return "Reply to your partner. After your first message they follow up. Check unlocks once you have sent enough replies.";
-  }
-  if (opts?.explain) {
-    return "Write a short explanation in your own words. Check unlocks once the box is not empty.";
-  }
-  if (opts?.highlight) {
-    return "Tap passages to highlight them. Tap again to clear. Check unlocks once enough passages are selected.";
-  }
-  if (opts?.calculate) {
-    return "Enter the number and its unit. Check unlocks once both fields are filled.";
-  }
-  if (opts?.position) {
-    return "Select a marker, then tap a stop on the scale. Tap a placed marker to return it. Check unlocks once every marker is placed.";
-  }
-  if (opts?.rank) {
-    return "Select an item, then tap a numbered slot. Add a short reason for your top choice. Check unlocks once the order is full and a why is written.";
-  }
-  if (opts?.connect) {
-    return "Select a left item, then tap its match on the right. Tap a paired left item to clear. Check unlocks once every left item is paired.";
-  }
+export function formatHint(type: QuestionType | undefined, opts?: KitHintFlags): string {
+  const kit = KIT_HINTS.find(([flag]) => opts?.[flag]);
+  if (kit) return kit[1];
   if (type === "symbolic") {
     return "Enter an expression using single-letter variables, + − * / ^ and parentheses, with whole-number powers from −8 to 8. For example, 2(x + 1) and 2x + 2 are equivalent wherever both are defined. Functions and equations are not supported.";
   }

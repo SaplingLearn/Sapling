@@ -186,6 +186,10 @@ const eslintConfig = [
       "src/components/quiz/home/TopicList.tsx",
       "src/components/quiz/home/QuizSettings.tsx",
       "src/components/quiz/question/QuizQuestion.tsx",
+      // QuizQuestion's chrome (session top, pager, action bar) and its answer
+      // field, moved out of it. No backlog.
+      "src/components/quiz/question/QuestionChrome.tsx",
+      "src/components/quiz/question/AnswerField.tsx",
       "src/components/quiz/question/WrittenAnswer.tsx",
       "src/components/quiz/question/AskPanel.tsx",
       "src/components/quiz/question/LeaveDialog.tsx",
