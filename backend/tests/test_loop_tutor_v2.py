@@ -127,13 +127,13 @@ PRE_A121_CASES = {
 # (no recording exists yet; a change here only re-pins what its first live
 # recording will be made against)
 
-V2_INSTRUCTIONS_SHA256 = "352055c29dae04619f98fe8f08bf4c0b614164464cb500899f72f2f2e7f3f0da"
+V2_INSTRUCTIONS_SHA256 = "866e6f52be1c8a7163dbb11828037ac0a62d68e6e940a3e5824a6ea573565882"
 V2_OUTPUT_TEMPLATE_SHA256 = "8b38d332747a9209a396200a37eef5a34ad498cdc537c2506689dfee3ca89acf"
 #: LoopTurnOutV2's JSON schema (what the eval's schema_hash is taken over)
 #: and the output object's schema as the request carries it
 V2_SCHEMA_SHA256 = "ee2a0f1f177fea6961205f9ee748f7698f3794c5557cd19058dae5da35fb0549"
 V2_WIRE_SCHEMA_SHA256 = "54b75b0589cd5f8fc1a1363f7fc9be226c66cdb0d1545218f80e98da814b6125"
-V2_PROMPT_VERSION = "ca02dcf9e63b"  # sha256(system prompt, instructions, template, tool defs)[:12]
+V2_PROMPT_VERSION = "575193db5424"  # sha256(system prompt, instructions, template, tool defs)[:12]
 ANSWER_CHECK_LINE_SHA256 = "b728e683c5e002bfbffe5b0200062b3cfdb270c3db1619ff634ca1c32438bcb4"
 PLAN_FOCUS_REASONS_SHA256 = "d01b9552b709862b07dc6f4005620273df0bbf4333598494ad0f0b59613d8a70"
 
