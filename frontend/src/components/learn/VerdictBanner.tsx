@@ -1,6 +1,9 @@
 "use client";
+import { motion } from "framer-motion";
 import type { LoopCredit, LoopCreditReason } from "@/lib/loopCredit";
+import { useMotionPresets } from "@/lib/motion";
 import tutorStyles from "./tutor/tutor.module.css";
+import styles from "./VerdictBanner.module.css";
 
 const VERDICT_COPY: Record<string, { title: string; note: string }> = {
   correct: { title: "Correct", note: "That answer counts toward this concept." },
@@ -49,11 +52,17 @@ export function VerdictBanner({ verdict, concept, next, credit, reasons }: {
   const copy = known && verdict !== "not_yet" ? known : { ...VERDICT_COPY.not_yet, note: VERDICT_COPY.not_yet.note + notYetNext(next) };
   const yes = verdict === "correct";
   const note = yes && (credit === "full" || credit === "partial" || credit === "none") ? creditNote(credit, reasons) : copy.note;
+  // The banner rises into place (`fadeUp`); its title then confirms the grade:
+  // a pulse for a right answer, a shake for a wrong one. "I don't know" is not
+  // a wrong answer, so it is not shaken. Keyed by the verdict so a new grade
+  // replays it.
+  const m = useMotionPresets();
+  const pulse = yes ? m.pulse("correct") : verdict === "not_yet" ? m.pulse("wrong") : null;
   return (
-    <div data-testid="loop-verdict" data-verdict={verdict} data-credit={yes ? credit ?? undefined : undefined} className={`${yes ? tutorStyles.verdictYes : tutorStyles.verdictNo} fade-in`}>
+    <motion.div {...m.fadeUp} data-testid="loop-verdict" data-verdict={verdict} data-credit={yes ? credit ?? undefined : undefined} className={yes ? tutorStyles.verdictYes : tutorStyles.verdictNo}>
       {concept && <span className="label-micro">{concept} · check</span>}
-      <div style={{ font: "600 17px var(--font-display)", color: yes ? "var(--sap-600)" : "var(--warn)" }}>{copy.title}</div>
-      <div style={{ fontSize: 14 }}>{note}</div>
-    </div>
+      <motion.div key={verdict} {...pulse} className={yes ? `${styles.title} ${styles.titleYes}` : styles.title}>{copy.title}</motion.div>
+      <div className={styles.note}>{note}</div>
+    </motion.div>
   );
 }
