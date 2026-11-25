@@ -87,6 +87,8 @@ _UNAVAILABLE = "unavailable"
 _NO_VERDICT = "no_verdict"
 _UNREADABLE = "unreadable"
 _MC_REASON = "mc_reason"
+# Why an item is skipped: a human found its key wrong or ambiguous.
+_AUDITED = "audited"
 
 
 def _project_ref() -> str:
@@ -122,7 +124,7 @@ def plan(course: str | None, *, reverify: bool) -> tuple[int, list[tuple], Count
     by_course: dict[str, list] = defaultdict(list)
     for row, item in rows:
         if audit_decided(item):
-            skipped["audited"] += 1  # a human found its key wrong or ambiguous
+            skipped[_AUDITED] += 1  # a human found its key wrong or ambiguous
             continue
         by_course[item.course_id].append((row, item))
     planned: list[tuple] = []
@@ -152,7 +154,7 @@ def plan(course: str | None, *, reverify: bool) -> tuple[int, list[tuple], Count
     return len(rows), planned, skipped
 
 
-def main(argv: list[str] | None = None) -> int:
+def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Solve-verify stored check items' answer keys (spec §13 A124)."
     )
@@ -169,8 +171,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Allow SAPLING_MODEL_MODE other than 'real' (deterministic local runs).",
     )
-    args = parser.parse_args(argv)
+    return parser.parse_args(argv)
 
+
+def _refused(args: argparse.Namespace) -> bool:
+    """Print the connected project, then True (and why) when this run must not go on."""
     connected = _project_ref()
     print(f"Project: {connected}")
     if args.apply and args.project != connected:
@@ -178,38 +183,49 @@ def main(argv: list[str] | None = None) -> int:
             f"Refusing: --apply needs --project {connected} (the connected project); got "
             f"{args.project!r}. Check the env file this run loaded."
         )
-        return 2
+        return True
     mode = model_mode()
     if mode != "real" and not args.function_mode:
         print(
             f"Refusing: SAPLING_MODEL_MODE is {mode!r}, not 'real'. Unset it or pass "
             "--function-mode deliberately."
         )
-        return 2
+        return True
+    return False
 
-    read, planned, skipped = plan(args.course, reverify=args.reverify)
-    at = datetime.now(UTC).isoformat()
-    writes: list[tuple] = []
-    unchecked: Counter = Counter()
-    verified = 0
-    held: Counter = Counter()
-    recorded: Counter = Counter()  # a dispute of a key already confirmed: recorded, not held
-    for item, check, why in planned:
-        if check is None:
-            unchecked[why] += 1
-            continue
-        writes.append((item, key_check_update(item, check, at=at)))
-        if check.verified:
-            verified += 1
-        elif item.canonical_verified:
-            recorded[check.flag] += 1
-        else:
-            held[check.flag] += 1
+
+class _Tally:
+    """The planned items as writes and counts."""
+
+    def __init__(self, planned: list[tuple], *, at: str) -> None:
+        self.writes: list[tuple] = []
+        self.unchecked: Counter = Counter()
+        self.verified = 0
+        self.held: Counter = Counter()
+        # a dispute of a key already confirmed: recorded, not held
+        self.recorded: Counter = Counter()
+        for item, check, why in planned:
+            if check is None:
+                self.unchecked[why] += 1
+                continue
+            self.writes.append((item, key_check_update(item, check, at=at)))
+            if check.verified:
+                self.verified += 1
+            elif item.canonical_verified:
+                self.recorded[check.flag] += 1
+            else:
+                self.held[check.flag] += 1
+
+
+def _print_plan(
+    read: int, planned: list[tuple], skipped: Counter, tally: _Tally, *, apply: bool
+) -> None:
+    held, recorded, unchecked = tally.held, tally.recorded, tally.unchecked
     print(
-        f"  {read} row(s) read; {verified} verified, {sum(held.values())} to hold, "
+        f"  {read} row(s) read; {tally.verified} verified, {sum(held.values())} to hold, "
         f"{sum(recorded.values())} dispute(s) of a confirmed key recorded, "
-        f"{sum(unchecked.values())} unchecked, {skipped['audited']} skipped (audited)"
-        + (" — dry run" if not args.apply else "")
+        f"{sum(unchecked.values())} unchecked, {skipped[_AUDITED]} skipped (audited)"
+        + (" — dry run" if not apply else "")
     )
     for flag in (KEY_DISPUTED, KEY_UNSOLVED):
         if held[flag]:
@@ -222,20 +238,39 @@ def main(argv: list[str] | None = None) -> int:
         if check is not None and not check.verified:
             print(f"    {check.flag} {item.id}")
 
+
+def _apply(writes: list[tuple]) -> tuple[int, int, int]:
+    """Write each update: (written, failed, changed since read)."""
     failed = written = changed = 0
+    for item, update in writes:
+        try:
+            if apply_key_check(item, update):
+                written += 1
+            else:
+                # Z35: an audit verdict or an approval landed during the
+                # solve; the row is left as staff left it for the next run
+                changed += 1
+                print(f"    changed since read, not written: {item.id}")
+        except Exception as exc:  # noqa: BLE001 — one failed write is reported, the rest still run
+            failed += 1
+            print(f"  write failed for {item.id}: {type(exc).__name__}")
+    return written, failed, changed
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _parse_args(argv)
+    if _refused(args):
+        return 2
+
+    read, planned, skipped = plan(args.course, reverify=args.reverify)
+    at = datetime.now(UTC).isoformat()
+    tally = _Tally(planned, at=at)
+    unchecked = tally.unchecked
+    _print_plan(read, planned, skipped, tally, apply=args.apply)
+
+    failed = changed = 0
     if args.apply:
-        for item, update in writes:
-            try:
-                if apply_key_check(item, update):
-                    written += 1
-                else:
-                    # Z35: an audit verdict or an approval landed during the
-                    # solve; the row is left as staff left it for the next run
-                    changed += 1
-                    print(f"    changed since read, not written: {item.id}")
-            except Exception as exc:  # noqa: BLE001 — one failed write is reported, the rest still run
-                failed += 1
-                print(f"  write failed for {item.id}: {type(exc).__name__}")
+        written, failed, changed = _apply(tally.writes)
         print(
             f"Done: {written} row(s) written, {failed} failed, {sum(unchecked.values())} unchecked"
             + (f", {changed} changed since read" if changed else "")
