@@ -35,7 +35,9 @@
 .hero .heroTitle { margin: 0 0 6px; font-size: 24px; line-height: 1.2; letter-spacing: -0.01em; color: #fff; }
 .heroLede {
   margin: 0 0 12px; max-width: 36rem; font-size: var(--fs-sm); line-height: 1.4;
-  color: color-mix(in srgb, #fff 72%, transparent);
+  /* Full white: 72% white on the olive hero was 3.4:1 (axe color-contrast,
+     WCAG AA needs 4.5:1 at 12px); white is 4.85:1. */
+  color: #fff;
 }
 .prompt { display: flex; gap: 8px; }
 .promptField {

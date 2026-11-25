@@ -235,6 +235,9 @@ export function QuestionHeader({
         className="quiz-question__exam-distance"
         data-testid="quiz-exam-distance"
         data-pips={dist}
+        // role="img": an aria-label on a bare span is prohibited (axe
+        // aria-prohibited-attr); the pips are its picture, not content.
+        role="img"
         title={`Exam distance ${dist} of 5`}
         aria-label={`Exam distance ${dist} of 5`}
       >
