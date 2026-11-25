@@ -77,7 +77,7 @@ Walk [`alvar-trilogy-implementation-plan.md`](./alvar-trilogy-implementation-pla
 - [ ] **W3.5** learner mini-map — only if product still wants beyond wrap-up stub (never mastery edges)
 - [ ] **W4** Stage B SVG verify / grounded cite-or-rewrite — cost-gated; Stage A withheld figure done
 - [ ] **W5.E2–E4** code/dogfood readiness docs; enable remains operator
-- [ ] **W8** residual: any Hub/Dashboard call site still bypassing `learner_next`
+- [x] **W8** residual: Hub/Dashboard call sites on `learner_next` (Dashboard Today-plan quiz item was the last bypass; Tutor T1 `weakestConcept` and quiz-results `next_step.learn` still rank on their own — Tutor/Quiz-summary, out of W8.6 scope)
 - [ ] Cross-surface copy pass ([`w3-handoffs.md`](./w3-handoffs.md))
 
 ### D. Explicit non-goals for this handoff

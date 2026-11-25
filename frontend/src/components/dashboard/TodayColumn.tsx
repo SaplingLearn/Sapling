@@ -5,7 +5,9 @@
  * so none carries a label.
  *
  * The plan is derived ENTIRELY from data the Dashboard already loads
- * (sessions, graph nodes, upcoming assignments). There is no stored
+ * (sessions, graph nodes, upcoming assignments, and — with `learning_loop` +
+ * `quiz_concept_plan` on — the shared learner-next buckets that pick the
+ * quiz's concept, W8.6). There is no stored
  * "plan" or "done" record: an item ticks itself off when the app already
  * has evidence it happened today —
  *   - the session item: a session started or ended today;
@@ -18,8 +20,11 @@
 import React from "react";
 import { Icon } from "../Icon";
 import { buildQuizHref } from "@/lib/quiz/source";
+import { planReasonShort } from "@/lib/quiz/proposals";
+import { firstNextIn } from "@/lib/learnerNext";
 import type { Assignment, Session } from "@/lib/api";
 import type { GraphNode } from "@/lib/data";
+import type { StudyNext } from "@/lib/studyApi";
 
 type DatedAssignment = Assignment & { due_date: string };
 
@@ -74,16 +79,53 @@ export function dueChip(dueIso: string, nowMs: number): PlanChip {
 /** A deadline earns a plan slot only when it is this close. */
 const DUE_SOON_DAYS = 3;
 
+/**
+ * The concept the plan's quiz item names, and the meta line that says why.
+ * A concept worked on today holds the slot (ticked), even if that work moved
+ * it out of the weak tiers or off the learner's plan — re-picking on every
+ * render would swap the finished item for a fresh one and the checklist could
+ * never complete. Otherwise:
+ *   - learner-next on (`learnerNext` non-null): the first concept of its
+ *     due → misconception → ready order that is on the scoped map, the same
+ *     set Study Focus and the quiz home propose; none there = no quiz item;
+ *   - off (null): the concept you're struggling with most, falling back to
+ *     the shakiest one you're still learning.
+ */
+export function pickQuizConcept(
+  concepts: GraphNode[],
+  todayKey: string | null,
+  learnerNext: StudyNext | null,
+): { node: GraphNode; why: string } | null {
+  const byScore = (a: GraphNode, b: GraphNode) => a.mastery_score - b.mastery_score;
+  const doneToday = concepts
+    .filter((n) => localDayKey(n.last_studied_at) === todayKey && n.mastery_tier !== "unexplored")
+    .sort(byScore)[0];
+  if (doneToday) return { node: doneToday, why: "reviewed today" };
+  if (learnerNext) {
+    const byId = new Map(concepts.map((n) => [n.id, n]));
+    const next = firstNextIn(learnerNext, (id) => byId.has(id));
+    const node = next ? byId.get(next.node_id) : undefined;
+    return next && node ? { node, why: planReasonShort(next.reason) } : null;
+  }
+  const struggling = concepts.filter((n) => n.mastery_tier === "struggling").sort(byScore);
+  const learning = concepts.filter((n) => n.mastery_tier === "learning").sort(byScore);
+  const weak = struggling[0] ?? learning[0];
+  if (!weak) return null;
+  return { node: weak, why: weak.mastery_tier === "struggling" ? "you're struggling here" : "still learning" };
+}
+
 export function buildTodayPlan(input: {
   sessions: Session[];
   nodes: GraphNode[];
+  /** Learner-next buckets (W8.6); null/absent = the graph-tier pick. */
+  learnerNext?: StudyNext | null;
   assignments: DatedAssignment[];
   hasCourses: boolean;
   nowMs: number;
   courseLabel: (courseId: string | null | undefined) => string | null;
   relTime: (iso: string | null | undefined) => string;
 }): PlanItem[] {
-  const { sessions, nodes, assignments, hasCourses, nowMs, courseLabel, relTime } = input;
+  const { sessions, nodes, learnerNext = null, assignments, hasCourses, nowMs, courseLabel, relTime } = input;
   const todayKey = localDayKey(new Date(nowMs));
   const join = (...parts: (string | null | undefined)[]) => parts.filter(Boolean).join(" · ");
   const items: PlanItem[] = [];
@@ -125,29 +167,14 @@ export function buildTodayPlan(input: {
     });
   }
 
-  // 2. The weak spot: a quiz on the concept you're struggling with most,
-  //    falling back to the shakiest one you're still learning.
-  const concepts = nodes.filter((n) => !n.is_subject_root);
-  const byScore = (a: GraphNode, b: GraphNode) => a.mastery_score - b.mastery_score;
-  const struggling = concepts.filter((n) => n.mastery_tier === "struggling").sort(byScore);
-  const learning = concepts.filter((n) => n.mastery_tier === "learning").sort(byScore);
-  // A concept worked on today holds the slot (ticked), even if that work
-  // moved it out of the weak tiers or another concept is now weaker —
-  // re-picking the weakest on every render would swap the finished item for
-  // a fresh one and the checklist could never complete.
-  const doneToday = concepts
-    .filter((n) => localDayKey(n.last_studied_at) === todayKey && n.mastery_tier !== "unexplored")
-    .sort(byScore)[0];
-  const weak = doneToday ?? struggling[0] ?? learning[0];
-  if (weak) {
+  // 2. The quiz: the learner's next concept (pickQuizConcept).
+  const pick = pickQuizConcept(nodes.filter((n) => !n.is_subject_root), todayKey, learnerNext);
+  if (pick) {
+    const weak = pick.node;
     items.push({
       key: `quiz-${weak.id}`,
       title: `Quiz: ${weak.name}`,
-      meta: join(
-        courseLabel(weak.course_id),
-        doneToday ? "reviewed today"
-          : weak.mastery_tier === "struggling" ? "you're struggling here" : "still learning",
-      ),
+      meta: join(courseLabel(weak.course_id), pick.why),
       checkable: true,
       done: localDayKey(weak.last_studied_at) === todayKey,
       chip: { label: "QUIZ", tone: "struggle" },
@@ -296,6 +323,8 @@ export function DashboardActions({ navigate }: { navigate: (href: string) => voi
 export function TodayColumn(props: {
   sessions: Session[];
   nodes: GraphNode[];
+  /** Learner-next buckets for the plan's quiz item (W8.6); null = tier pick. */
+  learnerNext?: StudyNext | null;
   assignments: DatedAssignment[];
   hasCourses: boolean;
   stats: { streak: number; mastered: number; total: number; learning: number; struggling: number; unexplored: number };
@@ -314,11 +343,11 @@ export function TodayColumn(props: {
    *  under a "Courses · Manage →" header (the Courses & Semesters hub). */
   courseRows?: React.ReactNode;
 }) {
-  const { sessions, nodes, assignments, hasCourses, stats, bestStreak, xpDays, today, weekDays, nowMs, courseLabel, relTime, navigate, openCourses, courseRows } = props;
+  const { sessions, nodes, learnerNext = null, assignments, hasCourses, stats, bestStreak, xpDays, today, weekDays, nowMs, courseLabel, relTime, navigate, openCourses, courseRows } = props;
 
   const plan = React.useMemo(
-    () => buildTodayPlan({ sessions, nodes, assignments, hasCourses, nowMs, courseLabel, relTime }),
-    [sessions, nodes, assignments, hasCourses, nowMs, courseLabel, relTime],
+    () => buildTodayPlan({ sessions, nodes, learnerNext, assignments, hasCourses, nowMs, courseLabel, relTime }),
+    [sessions, nodes, learnerNext, assignments, hasCourses, nowMs, courseLabel, relTime],
   );
   const checkable = plan.filter((i) => i.checkable);
   const doneCount = checkable.filter((i) => i.done).length;

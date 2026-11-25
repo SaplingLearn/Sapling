@@ -548,7 +548,7 @@ Five concurrent tracks kicked off from this plan. **No flag enables** until W0 e
 |---|---|---|
 | W6 + W1.5 | `amendments.md` Alvar adopted/narrowed/refused table; glossary + README pointer | **done** |
 | W1.1 / W1.2 / W1.4 | Safe-anchor + motivated-derivation in `loop_tutor.py`; band copy alignment | **done** (eval cases still open) |
-| W8.6 | Shared `learner_next` helper (due / fringe / misconceptions) | **done** (Hub/Dashboard wire still open) |
+| W8.6 | Shared `learner_next` helper (due / fringe / misconceptions) | **done** (Hub/Dashboard wired: Study Focus + Due Reviews, Dashboard Learn-next **and** Today-plan quiz item share one `GET /api/study/{id}/next` read; quiz launcher via `/api/quiz/plan` → `rank_concepts` → `learner_next`; flags off = graph tiers unchanged) |
 | W0 + W7 kickoff | Eval re-record runbook (no API spend yet); `quiz-shell-port-map.md` | **done** (record still blocked on spend) |
 | W3.1 spike | Plan dependency view data + UX note (`w3-plan-dependency-spike.md`); `GET /plan` `prereq_edges` | **done** (UI still open) |
 

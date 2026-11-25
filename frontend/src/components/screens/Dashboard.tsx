@@ -23,7 +23,6 @@ import {
   getCourses,
   getUpcomingAssignments,
   getSessions,
-  getRecommendations,
   fetchActivity,
   fetchGamificationMe,
   type EnrolledCourse,
@@ -31,14 +30,13 @@ import {
   type Assignment,
 } from "@/lib/api";
 import { LEARNING_LOOP_FLAG } from "@/lib/learningLoopFlag";
-import { recommendationsFromNext } from "@/lib/learnerNext";
-import { getStudyNext } from "@/lib/studyApi";
 import type { GraphNode as ApiNode, GraphEdge as ApiEdge } from "@/lib/types";
 import { apiToGraphNode, learnHrefForNode, type GraphNode, type GraphEdge } from "@/lib/data";
 import { IS_TEST_MODE, now } from "@/lib/testMode";
 import { buildQuizHref } from "@/lib/quiz/source";
 import { DashboardActions, PANEL_GAP, TodayColumn } from "../dashboard/TodayColumn";
 import { LearnNextCard, type Recommendation } from "../dashboard/LearnNextCard";
+import { fetchLearnNext, type LearnNext } from "../dashboard/learnNext";
 import {
   activeDaysFrom,
   assignmentUrgency,
@@ -159,28 +157,6 @@ function Typewriter({
 
 type Navigate = (href: string) => void;
 
-/** W8.7: Learn-next from learner_next when both loop + plan flags are on;
- *  otherwise the graph mastery-tier recommendations (flag-off path). */
-async function fetchLearnNext(
-  userId: string,
-  activeSemester: string,
-  useLearnerNext: boolean,
-): Promise<Recommendation[]> {
-  if (useLearnerNext) {
-    try {
-      return recommendationsFromNext(await getStudyNext(userId));
-    } catch {
-      return [];
-    }
-  }
-  try {
-    const r = await getRecommendations(userId, activeSemester || undefined);
-    return r.recommendations || [];
-  } catch {
-    return [];
-  }
-}
-
 function fetchDashboard(userId: string, activeSemester: string, useLearnerNext: boolean) {
   // Empty `activeSemester` means "All semesters" — the DEFAULT — so the
   // fetch goes out unscoped. Scoping is opt-in: it only applies once the
@@ -205,13 +181,13 @@ type DashboardSetters = {
   setStats: (v: DashboardStats) => void;
   setAssignments: (v: DatedAssignment[]) => void;
   setSessions: (v: Session[]) => void;
-  setRecommendations: (v: Recommendation[]) => void;
+  setLearnNext: (v: LearnNext) => void;
   setActiveDays: (v: Set<string>) => void;
 };
 
 /** Writes one load's replies into state, in the order load() always has. */
 function applyDashboardResult(
-  [graphRes, coursesRes, assignsRes, sessionsRes, recommendations]: DashboardFetch,
+  [graphRes, coursesRes, assignsRes, sessionsRes, learnNext]: DashboardFetch,
   set: DashboardSetters,
 ) {
   const cs = coursesRes.courses || [];
@@ -225,7 +201,7 @@ function applyDashboardResult(
   // so the urgency chips can never compute from new Date(null) (1970).
   set.setAssignments((assignsRes.assignments || []).filter(hasDueDate));
   set.setSessions(sessionsRes.sessions || []);
-  set.setRecommendations(recommendations);
+  set.setLearnNext(learnNext);
   set.setActiveDays(activeDaysFrom(gNodes));
 }
 
@@ -253,7 +229,8 @@ function useDashboardData({
   const [courses, setCourses] = React.useState<EnrolledCourse[]>([]);
   const [sessions, setSessions] = React.useState<Session[]>([]);
   const [assignments, setAssignments] = React.useState<DatedAssignment[]>([]);
-  const [recommendations, setRecommendations] = React.useState<Recommendation[]>([]);
+  // Learn-next and the Today plan's quiz item read this one answer (W8.6).
+  const [learnNext, setLearnNext] = React.useState<LearnNext>({ recommendations: [], next: null });
   const [loading, setLoading] = React.useState(true);
   const [loadError, setLoadError] = React.useState<string | null>(null);
   const [activeDays, setActiveDays] = React.useState<Set<string>>(new Set());
@@ -281,7 +258,7 @@ function useDashboardData({
       const res = await fetchDashboard(userId, activeSemester, useLearnerNext);
       if (!run.isCurrent()) return;
       applyDashboardResult(res, {
-        setCourses, setNodes, setEdges, setStats, setAssignments, setSessions, setRecommendations, setActiveDays,
+        setCourses, setNodes, setEdges, setStats, setAssignments, setSessions, setLearnNext, setActiveDays,
       });
     } catch (err) {
       if (!run.isCurrent()) return;
@@ -318,7 +295,8 @@ function useDashboardData({
   }, [userReady, userId, semesterHydrated, load]);
 
   return {
-    nodes, edges, stats, courses, sessions, assignments, recommendations,
+    nodes, edges, stats, courses, sessions, assignments,
+    recommendations: learnNext.recommendations, learnerNext: learnNext.next,
     loading, loadError, activeDays, xpDays, bestStreak, load,
   };
 }
@@ -406,7 +384,7 @@ export function Dashboard() {
   const weekDays = React.useMemo(() => getWeekDays(today), [today]);
 
   const {
-    nodes, edges, stats, courses, sessions, assignments, recommendations,
+    nodes, edges, stats, courses, sessions, assignments, recommendations, learnerNext,
     loading, loadError, activeDays, xpDays, bestStreak, load,
   } = useDashboardData({ userId, userReady, activeSemester, semesterHydrated });
 
@@ -528,6 +506,7 @@ export function Dashboard() {
     <TodayColumn
       sessions={sessions}
       nodes={nodes}
+      learnerNext={learnerNext}
       assignments={assignments}
       hasCourses={courses.length > 0}
       stats={stats}

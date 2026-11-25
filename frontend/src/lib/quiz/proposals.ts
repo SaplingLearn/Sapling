@@ -363,17 +363,22 @@ export function planReasonCopy(reason: PlanReason): string {
   }
 }
 
+/** Why the learner model proposes a concept, in a row's few words (the quiz
+ *  home's alternatives, the Dashboard's Today plan). */
+export function planReasonShort(reason: PlanReason): string {
+  switch (reason) {
+    case "due":
+      return "due for review";
+    case "misconception":
+      return "mixed up before";
+    default:
+      return "ready to learn";
+  }
+}
+
 /** The short form for an alternative row. */
 function planRowCopy(concept: PlannedConcept): string {
-  const skill = `skill ${skillPercent(concept.p_known)}`;
-  switch (concept.reason) {
-    case "due":
-      return `${skill} · due for review`;
-    case "misconception":
-      return `${skill} · mixed up before`;
-    default:
-      return `${skill} · ready to learn`;
-  }
+  return `skill ${skillPercent(concept.p_known)} · ${planReasonShort(concept.reason)}`;
 }
 
 /** The plan's concepts as candidates, in the plan's order, over the scoped

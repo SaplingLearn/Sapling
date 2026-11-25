@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { recommendationsFromNext } from "./learnerNext";
+import { firstNextIn, orderedNext, recommendationsFromNext } from "./learnerNext";
 import type { StudyNext } from "./studyApi";
 
 const concept = (
@@ -53,5 +53,27 @@ describe("recommendationsFromNext (W8.7)", () => {
 
   it("returns [] for empty buckets", () => {
     expect(recommendationsFromNext({ due: [], misconceptions: [], ready: [] })).toEqual([]);
+  });
+});
+
+describe("orderedNext / firstNextIn (W8.6)", () => {
+  const next: StudyNext = {
+    due: [concept("d1", "Arrays", "due")],
+    misconceptions: [concept("m1", "Heaps", "misconception")],
+    ready: [concept("r1", "Graphs", "ready")],
+  };
+
+  it("flattens due → misconceptions → ready, uncapped", () => {
+    expect(orderedNext(next).map((c) => c.node_id)).toEqual(["d1", "m1", "r1"]);
+  });
+
+  it("returns the first concept in scope, in proposal order", () => {
+    expect(firstNextIn(next, (id) => id !== "d1")?.node_id).toBe("m1");
+    expect(firstNextIn(next, () => true)?.node_id).toBe("d1");
+  });
+
+  it("is null when nothing proposed is in scope", () => {
+    expect(firstNextIn(next, () => false)).toBeNull();
+    expect(firstNextIn({ due: [], misconceptions: [], ready: [] }, () => true)).toBeNull();
   });
 });

@@ -306,6 +306,17 @@ describe("Dashboard load → screen", () => {
     expect(href).toContain("course=c-CS-101");
   });
 
+  it("with the flags on but study next failing, Learn next falls back to the graph recommendations", async () => {
+    flagState.flags = { learning_loop: "on", quiz_concept_plan: "on" };
+    vi.mocked(getStudyNext).mockRejectedValue(new Error("503"));
+    vi.mocked(getRecommendations).mockResolvedValue({
+      recommendations: [{ concept_name: "Legacy Rec" }],
+    });
+    render(<Dashboard />);
+    expect(await screen.findByText("Legacy Rec")).toBeInTheDocument();
+    expect(getStudyNext).toHaveBeenCalledWith("u1");
+  });
+
   it("never asks study next while learning_loop or quiz_concept_plan is off", async () => {
     flagState.flags = { learning_loop: "on" }; // plan sibling still off
     vi.mocked(getRecommendations).mockResolvedValue({
@@ -509,6 +520,35 @@ describe("Dashboard sidebar layout", () => {
     expect(screen.getByTestId("dashboard-courses-key")).toBeInTheDocument();
     expect(screen.queryByTestId("dashboard-graph-course-chip")).toBeNull();
     expect(screen.queryByText("My courses")).toBeNull();
+  });
+
+  it("Today's plan quizzes the graph's weakest concept with the learner-next flags off", async () => {
+    layoutState.pref = "sidebar";
+    render(<Dashboard />);
+    expect(await screen.findByTestId("dashboard-plan-quiz")).toHaveTextContent("Quiz: Recursion");
+    expect(getStudyNext).not.toHaveBeenCalled();
+  });
+
+  it("Today's plan quizzes learner-next's first concept with learning_loop + quiz_concept_plan on", async () => {
+    layoutState.pref = "sidebar";
+    flagState.flags = { learning_loop: "on", quiz_concept_plan: "on" };
+    vi.mocked(getStudyNext).mockResolvedValue({
+      due: [],
+      misconceptions: [],
+      ready: [{
+        node_id: "n2", concept_name: "Loops", course_id: "c-CS-101", reason: "ready",
+        p_known: 0.4, band: "develop", due_at: null, open_misconceptions: 0,
+      }],
+    });
+    render(<Dashboard />);
+    const quiz = await screen.findByTestId("dashboard-plan-quiz");
+    await waitFor(() => expect(quiz).toHaveTextContent("Quiz: Loops"));
+    expect(quiz).toHaveTextContent("ready to learn");
+    // One read feeds Learn-next and the plan; the graph ranking is never asked.
+    expect(getStudyNext).toHaveBeenCalledTimes(1);
+    expect(getRecommendations).not.toHaveBeenCalled();
+    fireEvent.click(quiz);
+    expect(push).toHaveBeenCalledWith(expect.stringContaining("concept=n2"));
   });
 
   it("mobile: Start learning button in the main column, no greeting-row actions", async () => {

@@ -3,6 +3,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, cleanup, fireEvent } from "@testing-library/react";
 import type { Session } from "@/lib/api";
 import type { GraphNode } from "@/lib/data";
+import type { StudyNext } from "@/lib/studyApi";
 
 vi.mock("../Icon", () => ({ Icon: () => null }));
 
@@ -32,6 +33,15 @@ const base = {
 };
 
 afterEach(() => cleanup());
+
+/** One learner-next concept (GET /api/study/{id}/next), as the plan reads it. */
+function planned(node_id: string, reason: "due" | "misconception" | "ready") {
+  return {
+    node_id, concept_name: node_id, course_id: "c-math", reason, p_known: 0.6, band: "develop" as const,
+    due_at: reason === "due" ? "2026-11-06T00:00:00Z" : null, open_misconceptions: reason === "misconception" ? 1 : 0,
+  };
+}
+const NOTHING_NEXT: StudyNext = { due: [], misconceptions: [], ready: [] };
 
 describe("dueAtMs", () => {
   it("reads a date-only due date as the end of that local day, not UTC midnight", () => {
@@ -145,6 +155,53 @@ describe("buildTodayPlan", () => {
   });
 });
 
+describe("buildTodayPlan with learner-next (W8.6: learning_loop + quiz_concept_plan)", () => {
+  const nodes = [
+    node("weak", "Eigenvalues", "struggling", 0.1),
+    node("due1", "Matrices", "mastered", 0.9),
+    node("mis1", "Vectors", "learning", 0.5),
+  ];
+
+  it("quizzes the learner model's first concept, not the weakest tier", () => {
+    const plan = buildTodayPlan({
+      ...base,
+      nodes,
+      learnerNext: { due: [planned("due1", "due")], misconceptions: [planned("mis1", "misconception")], ready: [] },
+    });
+    const quiz = plan.find((i) => i.key.startsWith("quiz-"));
+    expect(quiz).toMatchObject({ key: "quiz-due1", title: "Quiz: Matrices", meta: "MATH210 · due for review", done: false });
+    expect(quiz?.href).toContain("concept=due1");
+  });
+
+  it("follows due → misconception → ready, skipping concepts off the scoped map", () => {
+    const plan = buildTodayPlan({
+      ...base,
+      nodes,
+      learnerNext: { due: [planned("other-term", "due")], misconceptions: [planned("mis1", "misconception")], ready: [] },
+    });
+    expect(plan.find((i) => i.key.startsWith("quiz-"))).toMatchObject({ key: "quiz-mis1", meta: "MATH210 · mixed up before" });
+  });
+
+  it("offers no quiz when the learner model proposes nothing on the map (no tier fallback)", () => {
+    const plan = buildTodayPlan({ ...base, nodes, learnerNext: NOTHING_NEXT });
+    expect(plan.some((i) => i.key.startsWith("quiz-"))).toBe(false);
+  });
+
+  it("still holds a concept reviewed today in the slot, ticked", () => {
+    const plan = buildTodayPlan({
+      ...base,
+      nodes: [...nodes, node("today", "Rank", "learning", 0.4, TODAY)],
+      learnerNext: { due: [planned("due1", "due")], misconceptions: [], ready: [] },
+    });
+    expect(plan.find((i) => i.key.startsWith("quiz-"))).toMatchObject({ key: "quiz-today", done: true, meta: "MATH210 · reviewed today" });
+  });
+
+  it("null learner-next (flags off or the read failed) keeps the tier pick", () => {
+    const plan = buildTodayPlan({ ...base, nodes, learnerNext: null });
+    expect(plan.find((i) => i.key.startsWith("quiz-"))).toMatchObject({ key: "quiz-weak", meta: "MATH210 · you're struggling here" });
+  });
+});
+
 describe("DashboardActions", () => {
   it("routes to the calendar and the tutor", () => {
     const navigate = vi.fn();
@@ -179,6 +236,20 @@ describe("TodayColumn", () => {
 
     fireEvent.click(screen.getByTestId("dashboard-resume-s1"));
     expect(props.navigate).toHaveBeenCalledWith("/learn?resume=s1");
+  });
+
+  it("names the learner-next concept in the plan's quiz row when given buckets", () => {
+    render(
+      <TodayColumn
+        {...props}
+        nodes={[node("n1", "Matrices", "struggling", 0.2), node("n2", "Vectors", "learning", 0.5)]}
+        learnerNext={{ due: [], misconceptions: [], ready: [planned("n2", "ready")] }}
+      />,
+    );
+    expect(screen.getByTestId("dashboard-plan-quiz")).toHaveTextContent("Quiz: Vectors");
+    expect(screen.getByTestId("dashboard-plan-quiz")).toHaveTextContent("ready to learn");
+    fireEvent.click(screen.getByTestId("dashboard-plan-quiz"));
+    expect(props.navigate).toHaveBeenCalledWith(expect.stringContaining("concept=n2"));
   });
 
   it("never says 'Today counted' over a zero streak", () => {
