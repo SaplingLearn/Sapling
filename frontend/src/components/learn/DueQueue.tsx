@@ -34,6 +34,7 @@
 // owns focus when the page opens. The answer box is described by the question,
 // the options are a radio group named by it.
 import React from "react";
+import { motion } from "framer-motion";
 import {
   answerReview,
   budgetPauseOf,
@@ -60,11 +61,14 @@ import { answerPauseMessage, gradingPausedMessage, pausedConceptsMessage } from 
 import tutorStyles from "./tutor/tutor.module.css";
 import { useCrisisSupport } from "../safety/CrisisSupportCard";
 import { LOOP_ANSWER_MAX } from "@/lib/inputLimits";
+import { type MotionPresets, useMotionPresets } from "@/lib/motion";
+import styles from "./DueQueue.module.css";
 
 // #866 Z29: Tailwind's preflight strips a textarea's border, padding and fill, so
 // each answer box takes the loop's field style and a visible label (as the
 // loop's check card does); the label sits close to its box in the card's gap.
-const FIELD_LABEL_STYLE: React.CSSProperties = { marginBottom: -4 };
+const FIELD_LABEL_CLASS = `${tutorStyles.fl} ${styles.fieldLabel}`;
+const START_BUTTON = `btn btn--sm ${styles.start} ${styles.press}`;
 
 // Review 409s (routes/learn_loop.py): "loop state changed, retry" — a concurrent write
 // won; it can come BEFORE the grade (nothing recorded) or AFTER it (the record lost its
@@ -309,18 +313,18 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
   };
 
   const canSubmit = !busy && !answered && checkHasAnswer(item, choice, reason, answer);
+  const m = useMotionPresets();
 
   return (
     <div
       ref={panelRef}
       data-testid="review-due-panel"
-      className="card"
-      style={{ minWidth: 0, padding: 16, display: "flex", flexDirection: "column", gap: 12 }}
+      className={`card ${styles.panel}`}
     >
       {crisis.dialog}
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <div className="h-serif" style={{ fontSize: 17 }}>Due today</div>
-        <div style={{ flex: 1 }} />
+      <div className={styles.head}>
+        <div className={`h-serif ${styles.title}`}>Due today</div>
+        <div className={styles.spacer} />
         {next && (
           <span data-testid="review-budget" className="chip chip--accent">
             {Math.max(0, Math.round(next.remaining_budget_s / 60))} min left
@@ -331,12 +335,11 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
       {/* Its "review keeps working" would contradict a queue that did not load. */}
       {!loadFailed && renderPauseBanner(pause, summary)}
 
-      {error && <div ref={errorRef} tabIndex={-1} role="alert" data-testid={loadFailed ? "review-load-error" : undefined} style={{ fontSize: 13, color: "var(--text-muted)" }}>{error}</div>}
+      {error && <div ref={errorRef} tabIndex={-1} role="alert" data-testid={loadFailed ? "review-load-error" : undefined} className={styles.note}>{error}</div>}
       {loadFailed && (
         <button
           data-testid="review-load-retry"
-          className="btn btn--sm"
-          style={{ alignSelf: "flex-start" }}
+          className={START_BUTTON}
           disabled={busy}
           onClick={() => {
             focusNext.current = "item";
@@ -347,12 +350,13 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
         </button>
       )}
       {/* Always in the DOM, so the note is announced when it appears. */}
-      <div aria-live="polite">{renderNotice(notice)}</div>
+      <div aria-live="polite">{renderNotice(notice, m)}</div>
 
       {renderNothingServed(next, item, statusRef, held(summary))}
 
+      {/* Keyed on the item: the next one due rises in as a new card. */}
       {item && (
-        <div data-testid="review-item" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        <motion.div key={item.id} {...m.fadeUp} data-testid="review-item" className={styles.item}>
           {item.kind === "check"
             ? renderCheckItem({
                 item, promptId, choice, setChoice, reason, setReason, answer, setAnswer,
@@ -360,7 +364,7 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
                 onSubmit: () => submit(), onReport: report,
               })
             : renderFlashcardItem({
-                item, flipped, backRef, flipRef, answered, busy,
+                item, flipped, backRef, flipRef, answered, busy, m,
                 onRate: (rating) => submit({ rating }),
                 onFlip: () => {
                   focusNext.current = "back";
@@ -369,15 +373,15 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
               })}
 
           {result && (
-            <div ref={resultRef} tabIndex={-1} data-testid="review-hint" style={{ fontSize: 14, whiteSpace: "pre-wrap" }}>
+            <motion.div {...resultMotion(result, m)} ref={resultRef} tabIndex={-1} data-testid="review-hint" className={styles.result}>
               {resultText(result)}
-            </div>
+            </motion.div>
           )}
 
           {alreadyGraded && !result && (
-            <div ref={resultRef} tabIndex={-1} data-testid="review-graded" style={{ fontSize: 14, color: "var(--text-muted)" }}>
+            <motion.div {...m.fade} ref={resultRef} tabIndex={-1} data-testid="review-graded" className={styles.status}>
               Your answer is already recorded.
-            </div>
+            </motion.div>
           )}
 
           {/* #866 K16: after a grade the grader could not make, Next goes on and
@@ -386,8 +390,7 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
             <>
               <button
                 data-testid="review-next"
-                className="btn btn--sm"
-                style={{ alignSelf: "flex-start" }}
+                className={START_BUTTON}
                 disabled={busy || hypercorrectionHold}
                 onClick={() => {
                   focusNext.current = "item";
@@ -397,13 +400,13 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
                 Next
               </button>
               {hypercorrectionHold && (
-                <span role="status" data-testid="loop-feedback-dwell" style={{ fontSize: 13, color: "var(--text-muted)" }}>
+                <span role="status" data-testid="loop-feedback-dwell" className={styles.note}>
                   {HYPERCORRECTION_DWELL_COPY}
                 </span>
               )}
             </>
           )}
-        </div>
+        </motion.div>
       )}
     </div>
   );
@@ -452,12 +455,12 @@ const NOTICE_TESTID: Record<Notice, string> = {
   newDayLater: "review-new-day", newDayPlain: "review-new-day", unreported: "review-not-reported",
 };
 
-function renderNotice(notice: Notice | null) {
+function renderNotice(notice: Notice | null, m: MotionPresets) {
   if (!notice) return null;
   return (
-    <div data-testid={NOTICE_TESTID[notice]} role="status" style={{ fontSize: 13, color: "var(--text-muted)" }}>
+    <motion.div {...m.fade} data-testid={NOTICE_TESTID[notice]} role="status" className={styles.note}>
       {NOTICE_TEXT[notice]}
-    </div>
+    </motion.div>
   );
 }
 
@@ -546,11 +549,11 @@ function renderNothingServed(
 ) {
   if (!next || item) return null;
   return next.due_total > 0 ? (
-    <div ref={statusRef} tabIndex={-1} data-testid="review-budget-spent" style={{ fontSize: 14, color: "var(--text-muted)" }}>
+    <div ref={statusRef} tabIndex={-1} data-testid="review-budget-spent" className={styles.status}>
       That&apos;s today&apos;s review time. {stillWaiting(next)}
     </div>
   ) : (
-    <div ref={statusRef} tabIndex={-1} data-testid="review-empty" style={{ fontSize: 14, color: "var(--text-muted)" }}>
+    <div ref={statusRef} tabIndex={-1} data-testid="review-empty" className={styles.status}>
       {heldBack > 0 ? "Nothing else is due right now." : "All caught up — nothing is due right now."}
     </div>
   );
@@ -566,6 +569,13 @@ function stillWaiting(next: ReviewNextResponse): string {
   if (!fresh) return `${due} more due — they'll wait for tomorrow.`;
   if (!due) return `${cards} will wait for tomorrow.`;
   return `${due} more due and ${cards} — they'll wait for tomorrow.`;
+}
+
+/** How the result line arrives: a graded answer lands with the verdict's pulse
+ *  (right) or shake (wrong); a refusal or an outage, which graded nothing, fades in. */
+function resultMotion(result: ReviewAnswerResponse, m: MotionPresets) {
+  if (result.refused || result.unavailable) return m.fade;
+  return m.pulse(result.correct ? "correct" : "wrong");
 }
 
 function resultText(result: ReviewAnswerResponse): React.ReactNode {
@@ -604,9 +614,9 @@ function renderCheckAnswer({ item, promptId, choice, setChoice, reason, setReaso
   if (item.format === "mc_reason") {
     return (
       <>
-        <div role="radiogroup" aria-labelledby={promptId} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        <div role="radiogroup" aria-labelledby={promptId} className={styles.options}>
           {(item.options ?? []).map((o, i) => (
-            <label key={o.letter} style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: 14 }}>
+            <label key={o.letter} className={styles.option}>
               <input
                 data-testid={`review-option-${o.letter}`}
                 data-answer-start={(choice ? choice === o.letter : i === 0) ? "" : undefined}
@@ -621,7 +631,7 @@ function renderCheckAnswer({ item, promptId, choice, setChoice, reason, setReaso
             </label>
           ))}
         </div>
-        <label className={tutorStyles.fl} htmlFor={`${promptId}-reason`} style={FIELD_LABEL_STYLE}>Your reasoning</label>
+        <label className={FIELD_LABEL_CLASS} htmlFor={`${promptId}-reason`}>Your reasoning</label>
         <textarea
           id={`${promptId}-reason`}
           data-testid="review-reason-input"
@@ -638,7 +648,7 @@ function renderCheckAnswer({ item, promptId, choice, setChoice, reason, setReaso
   }
   return (
     <>
-      <label className={tutorStyles.fl} htmlFor={`${promptId}-answer`} style={FIELD_LABEL_STYLE}>Your answer</label>
+      <label className={FIELD_LABEL_CLASS} htmlFor={`${promptId}-answer`}>Your answer</label>
       <textarea
         id={`${promptId}-answer`}
         data-testid="review-answer-input"
@@ -660,9 +670,9 @@ function renderCheckItem(view: CheckItemView) {
   return (
     <>
       {item.concept_name && (
-        <span className="chip" style={{ alignSelf: "flex-start" }}>{item.concept_name}</span>
+        <span className={`chip ${styles.start}`}>{item.concept_name}</span>
       )}
-      <div id={promptId} style={{ fontSize: 15, whiteSpace: "pre-wrap" }}>{item.prompt}</div>
+      <div id={promptId} className={styles.face}>{item.prompt}</div>
       {renderCheckAnswer(view)}
       {!answered && (
         <ConfidenceControl
@@ -675,8 +685,7 @@ function renderCheckItem(view: CheckItemView) {
       {!answered && (
         <button
           data-testid="review-submit"
-          className="btn btn--sm btn--primary"
-          style={{ alignSelf: "flex-start" }}
+          className={`${START_BUTTON} btn--primary`}
           disabled={!canSubmit}
           onClick={onSubmit}
         >
@@ -690,36 +699,38 @@ function renderCheckItem(view: CheckItemView) {
   );
 }
 
-function renderFlashcardItem({ item, flipped, backRef, flipRef, answered, busy, onRate, onFlip }: {
+function renderFlashcardItem({ item, flipped, backRef, flipRef, answered, busy, m, onRate, onFlip }: {
   item: ReviewItem;
   flipped: boolean;
   backRef: React.RefObject<HTMLDivElement | null>;
   flipRef: React.RefObject<HTMLButtonElement | null>;
   answered: boolean;
   busy: boolean;
+  m: MotionPresets;
   onRate: (rating: number) => void;
   onFlip: () => void;
 }) {
   return (
     <>
       {(item.new || item.topic) && (
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+        <div className={styles.tags}>
           {/* #866 K14: a never-rated card is a new card, not a review that is due */}
           {item.new && <span data-testid="review-new-card" className="chip chip--accent">New card</span>}
           {item.topic && <span className="chip">{item.topic}</span>}
         </div>
       )}
-      <div style={{ fontSize: 15, whiteSpace: "pre-wrap" }}>{item.front}</div>
+      <div className={styles.face}>{item.front}</div>
       {flipped ? (
         <>
-          <div ref={backRef} tabIndex={-1} style={{ fontSize: 15, whiteSpace: "pre-wrap", color: "var(--text-dim)" }}>{item.back}</div>
+          {/* The back rises in under the front as the card turns. */}
+          <motion.div {...m.fadeUp} ref={backRef} tabIndex={-1} className={`${styles.face} ${styles.back}`}>{item.back}</motion.div>
           {!answered && (
-            <div style={{ display: "flex", gap: 8 }}>
+            <div className={styles.ratings}>
               {RATINGS.map((r) => (
                 <button
                   key={r.n}
                   data-testid={`review-rate-${r.n}`}
-                  className="btn btn--sm"
+                  className={`btn btn--sm ${styles.press}`}
                   disabled={busy}
                   onClick={() => onRate(r.n)}
                 >
@@ -733,8 +744,7 @@ function renderFlashcardItem({ item, flipped, backRef, flipRef, answered, busy, 
         <button
           ref={flipRef}
           data-testid="review-flip"
-          className="btn btn--sm"
-          style={{ alignSelf: "flex-start" }}
+          className={START_BUTTON}
           onClick={onFlip}
         >
           Show answer
