@@ -966,26 +966,16 @@ def slot_events(monkeypatch):
     return seen
 
 
-def test_the_defaults_are_evaluated_or_pending_and_always_independent(slot_events):
-    """Every default is either evaluated or a loop slot awaiting its Claude eval
-    (owner decision 2026-11-19: everything runs on Claude now); the boot check
-    reports exactly the pending ones, and no default breaks A22/A124."""
+def test_the_defaults_are_evaluated_and_always_independent(slot_events):
+    """Every evidence slot's default is a model it was evaluated on, so the boot
+    check reports nothing, and no default breaks A22/A124."""
     from agents import _providers as p
 
     for task in p.EVIDENCE_SLOTS:
-        if task in p.LOOP_SLOTS_PENDING_CLAUDE_EVAL:
-            assert p._DEFAULTS[task] not in p.EVALUATED_MODELS[task], task
-            assert not any(m.startswith("claude-") for m in p.EVALUATED_MODELS[task]), task
-        else:
-            assert p._DEFAULTS[task] in p.EVALUATED_MODELS[task], task
-    assert set(p.EVALUATED_MODELS) == set(p.EVIDENCE_SLOTS)
+        assert p._DEFAULTS[task] in p.EVALUATED_MODELS[task], task
     assert p.slot_independence_violations() == []
-    warnings = p.check_slot_guards()
-    assert {(w["kind"], w["slot"], w["reason"]) for w in warnings} == {
-        ("unevaluated", t, "pending_claude_eval") for t in p.LOOP_SLOTS_PENDING_CLAUDE_EVAL
-    }
-    # the defaults were warned about at boot (the after-boot test state): no repeat
-    assert slot_events == []
+    assert p.check_slot_guards() == []
+    assert slot_events == []  # and no system.unevaluated_slot event
 
 
 @pytest.mark.parametrize(
@@ -1090,16 +1080,6 @@ def test_a_second_opinion_on_its_partners_model_is_an_error_at_boot(
     assert independence == [{"slot": slot, "model": model, "independent_of": partner}]
     kinds = {(w["kind"], w["slot"]) for w in p.slot_warnings()}
     assert ("not_independent", slot) in kinds
-
-
-def test_the_lifespan_runs_the_boot_check():
-    import inspect
-
-    import main
-
-    source = inspect.getsource(main._lifespan)
-    assert "check_slot_guards()" in source
-    assert source.index("freeze_model_mode()") < source.index("check_slot_guards()")
 
 
 def test_the_admin_learning_loop_panel_lists_the_active_warnings(monkeypatch):
