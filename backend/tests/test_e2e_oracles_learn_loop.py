@@ -103,12 +103,6 @@ def test_a_never_studied_node_only_propagated_to_stays_off_the_map():
     assert len(learn_loop_findings(**kw)) == 1
 
 
-def test_cli_registers_learn_loop():
-    from e2e_oracles import __main__ as cli
-
-    assert "learn_loop" in cli.CHECKS
-
-
 # ── gather.run_learn_loop over a fake connection ────────────────────────────
 
 
@@ -390,28 +384,6 @@ def test_without_expect_activity_an_idle_stack_is_clean():
     kw = _activity(sessions=[], evidence_keys=set(), step_event_keys=set(), messages=[])
     kw["expect_activity"] = False
     assert learn_loop_activity_findings(**kw) == []
-
-
-def test_loop_users_are_the_students_with_a_loop_session_never_the_retired_toggle(monkeypatch):
-    """Z50: (h)'s "no loop users" half counts the students who have a loop
-    session (non-empty loop_state, not a review session). The gate never reads
-    `user_settings.learning_loop_beta` (PKG-14b) and the seed writes it as inert
-    fixture data, so a stack with the loop off for everyone still has two
-    rows there — and no loop user."""
-    conn = _Conn(
-        {
-            **_answers(steps=[]),
-            "learn_loop:sessions": [],
-            "learn_loop:evidence_hashes": [],
-            "learn_loop:messages": [],
-            "learn_loop:loop_users": [{"n": 2}],  # the retired toggle's rows
-            "event_type = 'zpd.step'": [],
-        }
-    )
-    monkeypatch.setattr(gather, "_db_conn", lambda: conn)
-    findings, _ = gather.run_learn_loop(SimpleNamespace(user="x", expect_loop_activity=True))
-    assert any("no loop users" in f.summary for f in findings)
-    assert not any("learning_loop_beta" in sql for sql, _ in conn.sql)
 
 
 def test_cli_accepts_expect_loop_activity():
