@@ -7,6 +7,7 @@ import type { LoopDiagnosis, LoopGoal, LoopGoalProgress } from "@/lib/api";
 import type { GraphNode } from "@/lib/data";
 import styles from "./LoopLearn.module.css";
 import own from "./LearningScope.module.css";
+import { LOOP_GOAL_MAX_TARGETS, LOOP_GOAL_TEXT_MAX } from "./loopShared";
 
 /** The session's learning scope under the stepper: its goal, or the whole course. */
 export function ScopeSummary({ error, ready, goal, names, onRetry }: {
@@ -61,7 +62,7 @@ export function GoalEditor({ goal, nodes, busy, error, onSave, onCancel, loading
   const m = useMotionPresets();
   const available = new Set(nodes.map((n) => n.id));
   const confirmed = targets.filter((id) => available.has(id));
-  const canSave = !busy && (wholeCourse || (!loadingNodes && !nodesError && confirmed.length > 0 && confirmed.length <= 12));
+  const canSave = !busy && (wholeCourse || (!loadingNodes && !nodesError && confirmed.length > 0 && confirmed.length <= LOOP_GOAL_MAX_TARGETS));
   return (
     <div className={styles.scopeEditor}>
       <form className={`card ${styles.scopeCard}`} aria-label="Learning goal" onSubmit={(event) => {
@@ -73,7 +74,7 @@ export function GoalEditor({ goal, nodes, busy, error, onSave, onCancel, loading
           Describe your objective, then confirm the concepts it covers. The tutor will check those concepts and their prerequisites.
         </p>
         <label htmlFor="loop-goal-text">Your objective <span className={own.muted}>(optional)</span></label>
-        <textarea ref={firstField} id="loop-goal-text" data-testid="loop-goal-text" value={text} maxLength={500} rows={3}
+        <textarea ref={firstField} id="loop-goal-text" data-testid="loop-goal-text" value={text} maxLength={LOOP_GOAL_TEXT_MAX} rows={3}
           disabled={busy || wholeCourse} className={styles.scopeText} onChange={(event) => setText(event.target.value)}
           placeholder="For example: explain how negative numbers are represented" />
         <fieldset disabled={busy} className={styles.scopeFieldset}>
@@ -92,7 +93,7 @@ export function GoalEditor({ goal, nodes, busy, error, onSave, onCancel, loading
         {!wholeCourse && (
           <motion.div key="targets" {...m.collapse}>
           <fieldset disabled={busy} className={styles.scopeFieldset}>
-            <legend>Confirm target concepts <span className={own.muted}>(1–12)</span></legend>
+            <legend>Confirm target concepts <span className={own.muted}>(1–{LOOP_GOAL_MAX_TARGETS})</span></legend>
             <p className={own.hint}>
               Only concepts from this course are listed. Your text does not select concepts automatically.
             </p>
@@ -103,7 +104,7 @@ export function GoalEditor({ goal, nodes, busy, error, onSave, onCancel, loading
               {nodes.map((node) => (
                 <label key={node.id} className={styles.scopeOption}>
                   <input type="checkbox" checked={confirmed.includes(node.id)} data-testid={`loop-goal-target-${node.id}`}
-                    disabled={!confirmed.includes(node.id) && confirmed.length >= 12}
+                    disabled={!confirmed.includes(node.id) && confirmed.length >= LOOP_GOAL_MAX_TARGETS}
                     onChange={(event) => setTargets((current) => event.target.checked
                       ? [...current, node.id] : current.filter((id) => id !== node.id))} />
                   <span>{node.name}</span>
@@ -111,7 +112,7 @@ export function GoalEditor({ goal, nodes, busy, error, onSave, onCancel, loading
               ))}
             </div>
             {nodes.length === 0 && !loadingNodes && !nodesError && <p role="status">No target concepts are available for this course yet. You can explore the whole course or add material in Library.</p>}
-            <p role="status" className={own.count}>{confirmed.length} of 12 selected</p>
+            <p role="status" className={own.count}>{confirmed.length} of {LOOP_GOAL_MAX_TARGETS} selected</p>
           </fieldset>
           </motion.div>
         )}
