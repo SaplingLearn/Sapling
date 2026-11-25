@@ -150,7 +150,14 @@ export function ConceptMapBlockView({ block }: { block: ConceptMapBlock }) {
           another concept keeps the panel and swaps its text. */}
       <AnimatePresence initial={false}>
         {selected && (
-          <motion.div key="prompts" {...m.collapse}>
+          <motion.div
+            key="prompts"
+            variants={{ closed: m.collapse.initial, open: m.collapse.animate, gone: m.collapse.exit }}
+            initial="closed"
+            animate="open"
+            exit="gone"
+            transition={m.collapse.transition}
+          >
             <TutorPrompts
               blockId={block.id}
               concept={selected.concept}
