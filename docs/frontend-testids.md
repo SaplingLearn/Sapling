@@ -129,6 +129,14 @@ route:
   `ui/EmptyState`, `ui/InlineBanner`, `ui/ProgressDots` and
   `graph/ConceptNeighbourhood` — take the id as a `testid` prop, so the value is
   always written at the quiz call site, never inside the primitive.
+- **Search fields.** `ui/SearchField` (the one search input, in the eslint file
+  list) takes the id the same way, as a `testid` prop written at the call site.
+  It lands on the native `<input>` itself, not a wrapper, because tests fire
+  `change` on it — so a screen that migrates keeps its existing id
+  (`allowlist-search`, `guides-search`, `upload-modal-course-search`, …)
+  unchanged. Its clear button is `${testid}-clear`. The input is
+  `type="search"`, so a test that finds it by role uses `searchbox`, not
+  `textbox`.
 
 ## Current inventory
 
