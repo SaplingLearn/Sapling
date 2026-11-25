@@ -91,8 +91,9 @@ import { TutorSidebar } from "./tutor/TutorSidebar";
 import { LoadFailed, TutorAllSessions, TutorCourse, TutorHome, type SessionFilter } from "./tutor/TutorPages";
 import { SessionPanel, type PanelConcept } from "./tutor/SessionPanel";
 import { SessionMap } from "./tutor/SessionMap";
-import { PhaseStepper } from "./tutor/PhaseStepper";
+import { PhaseStepper, stepOf } from "./tutor/PhaseStepper";
 import { TutorDrawer } from "./tutor/TutorDrawer";
+import { ChangeFade } from "./tutor/ChangeFade";
 import { useTutorLayout } from "./tutor/useTutorLayout";
 import { useTutorCourses, useTutorLists } from "./tutor/useTutorLists";
 import { useSessionEdits } from "./tutor/useSessionEdits";
@@ -1959,7 +1960,7 @@ export function LoopLearn() {
   const renderHeader = () => (
     <header className={tutorStyles.topbar}>
       {(!layout.sideOpen || isMobile) && (
-        <button type="button" className={tutorStyles.iconBtn} style={{ alignSelf: "center" }}
+        <button type="button" className={`${tutorStyles.iconBtn} ${styles.selfCenter}`}
           data-testid="tutor-sidebar-show" aria-label="Show tutor sidebar" onClick={layout.showSide}>
           <SidebarGlyph />
         </button>
@@ -2049,7 +2050,7 @@ export function LoopLearn() {
   );
 
   const renderChatHeader = (firstConcept: LoopPlanConcept | undefined) => (
-    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+    <div className={styles.chatHeader}>
       {askRating && askRating === sessionId && <RatingPrompt onRate={rate} />}
       {item ? (
         <CheckCard
@@ -2110,12 +2111,12 @@ export function LoopLearn() {
       )}
       {/* Always in the DOM, so a close that must wait is announced (spec §13 A135). */}
       <div aria-live="polite">
-        {closeNote && <div role="status" style={{ fontSize: 13, color: "var(--text-muted)" }}>{closeNote}</div>}
+        {closeNote && <div role="status" className={styles.statusNote}>{closeNote}</div>}
       </div>
       {/* Always in the DOM, so a saved explanation is announced (spec §13 A139, A135). */}
       <div aria-live="polite">
         {selfExplainSaved && (
-          <div role="status" data-testid="loop-self-explain-saved" style={{ fontSize: 13, color: "var(--text-muted)" }}>
+          <div role="status" data-testid="loop-self-explain-saved" className={styles.statusNote}>
             {SELF_EXPLAIN_SAVED_COPY}
           </div>
         )}
@@ -2128,7 +2129,7 @@ export function LoopLearn() {
   const renderTeach = () => {
     const firstConcept = plan?.[0];
     return (
-      <div data-testid="loop-messages" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+      <div data-testid="loop-messages" className={styles.fill}>
         <ChatPanel
           messages={logMessages}
           composerRef={composerRef}
@@ -2164,8 +2165,8 @@ export function LoopLearn() {
     if (sessionsError) {
       return (
         <CenteredCard testId="loop-sessions-error">
-          <h2 className="h-serif" style={{ margin: "0 0 6px", fontSize: 20 }}>Couldn&apos;t load your sessions</h2>
-          <p style={{ color: "var(--text-dim)", fontSize: 14, margin: "0 0 16px" }}>
+          <h2 className={`h-serif ${styles.cardTitle}`}>Couldn&apos;t load your sessions</h2>
+          <p className={styles.cardText}>
             Nothing was started. Try again to pick up where you left off.
           </p>
           <button data-testid="loop-sessions-retry" className="btn btn--primary" onClick={retrySessions}>
@@ -2176,8 +2177,8 @@ export function LoopLearn() {
     } else if (noCourses) {
       return (
         <CenteredCard testId="loop-no-course">
-          <h2 className="h-serif" style={{ margin: "0 0 6px", fontSize: 20 }}>Add a course to start learning</h2>
-          <p style={{ color: "var(--text-dim)", fontSize: 14, margin: 0 }}>
+          <h2 className={`h-serif ${styles.cardTitle}`}>Add a course to start learning</h2>
+          <p className={`${styles.cardText} ${styles.flush}`}>
             {/* Z61: courses are added in the Dashboard's course manager (the Tree has no control for it) */}
             The tutor works course by course — add one from your{" "}
             <Link data-testid="loop-no-course-link" href="/dashboard">dashboard</Link>.
@@ -2198,8 +2199,8 @@ export function LoopLearn() {
     } else if (loadError === "start" && !sessionId) {
       return (
         <CenteredCard testId="loop-start-error">
-          <h2 className="h-serif" style={{ margin: "0 0 6px", fontSize: 20 }}>Couldn&apos;t start a session</h2>
-          <p style={{ color: "var(--text-dim)", fontSize: 14, margin: "0 0 16px" }}>
+          <h2 className={`h-serif ${styles.cardTitle}`}>Couldn&apos;t start a session</h2>
+          <p className={styles.cardText}>
             Nothing was started. Try again in a moment.
           </p>
           <button data-testid="loop-start-retry" className="btn btn--primary" disabled={starting} onClick={() => void retryStart()}>
@@ -2208,17 +2209,16 @@ export function LoopLearn() {
         </CenteredCard>
       );
     } else if (loadingSessions) {
-      return <div style={{ padding: 40, color: "var(--text-dim)" }}>{starting ? "Starting your session…" : "Loading…"}</div>;
+      return <div className={styles.loading}>{starting ? "Starting your session…" : "Loading…"}</div>;
     } else if (pendingGrade) {
       const busy = anyOf(probeBusy, attemptBusy, streaming, starting, scopeLoading);
       return (
         <CenteredCard testId="loop-pending-grade">
-          <h2 className="h-serif" style={{ margin: "0 0 8px", fontSize: 22 }}>Finish checking saved answer</h2>
-          <p role="status" style={{ fontSize: 14, lineHeight: 1.5, color: "var(--text-dim)", margin: "0 0 16px" }}>
+          <h2 className={`h-serif ${styles.cardTitle} ${styles.cardTitleLg}`}>Finish checking saved answer</h2>
+          <p role="status" className={`${styles.cardText} ${styles.cardTextLoose}`}>
             Your answer was saved before checking finished. Continue with that saved result; you don&apos;t need to answer again.
           </p>
-          <button type="button" data-testid="loop-recover-grade" className="btn btn--primary"
-            style={{ minHeight: 44, maxWidth: "100%", whiteSpace: "normal" }}
+          <button type="button" data-testid="loop-recover-grade" className={`btn btn--primary ${styles.recoverBtn}`}
             disabled={busy} aria-busy={busy} onClick={() => void recoverGrade()}>
             {busy ? "Finishing check…" : "Finish checking saved answer"}
           </button>
@@ -2306,7 +2306,7 @@ export function LoopLearn() {
           practicedNodeIds={practicedNodeIds}
         />
       ) : graphError ? <LoadFailed testId="tutor-map-error" what="your map" onRetry={() => void refreshGraph()} /> : (
-        <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Concepts appear here as you learn.</div>
+        <div className={styles.railEmpty}>Concepts appear here as you learn.</div>
       )}
     />
   );
@@ -2377,11 +2377,11 @@ export function LoopLearn() {
         {goalProgress && goal && <GoalProgressNote progress={goalProgress} names={conceptNames} />}
         {notices}
         {allOf(!showPanel, live, !!learner) && (
-          <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px clamp(16px, 4vw, 56px) 0" }}>
+          <div className={styles.learnerRow}>
             {learnerChip}
           </div>
         )}
-        {body}
+        <ChangeFade changeKey={`step-${stepOf(state.phase)}`} className={styles.fill}>{body}</ChangeFade>
       </>
     );
   };
@@ -2439,7 +2439,7 @@ export function LoopLearn() {
         <div className={tutorStyles.main}>
           {header}
           <div className={tutorStyles.body}>
-            <div className={tutorStyles.center}>{renderPage()}</div>
+            <ChangeFade changeKey={view} className={tutorStyles.center}>{renderPage()}</ChangeFade>
             {showPanel && renderRail()}
           </div>
         </div>
