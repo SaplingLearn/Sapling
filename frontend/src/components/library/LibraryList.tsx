@@ -53,6 +53,20 @@ export interface ListHeaderProps {
   onToggleAll: () => void;
 }
 
+/**
+ * A grid cell around a control that is itself the column's grid item:
+ * `display: contents` keeps the control as the grid child (no layout change)
+ * while the accessibility tree gets the cell a `row` requires (axe
+ * aria-required-children; the list is `role="grid"`, LibraryBody).
+ */
+function Cell({ header = false, children }: { header?: boolean; children: React.ReactNode }) {
+  return (
+    <span role={header ? "columnheader" : "gridcell"} style={{ display: "contents" }}>
+      {children}
+    </span>
+  );
+}
+
 export function ListHeader({ columns, showCourse, allChecked, onToggleAll }: ListHeaderProps) {
   return (
     <div role="row" style={{
@@ -60,13 +74,15 @@ export function ListHeader({ columns, showCourse, allChecked, onToggleAll }: Lis
       alignItems: "center", padding: "12px 14px 8px",
       fontSize: 13, fontWeight: 600, color: "#6F6857",
     }}>
-      <CheckBox checked={allChecked} onClick={onToggleAll} label="Select all" />
-      <span>Name</span>
-      {showCourse && <span>Course</span>}
-      <span>Type</span>
-      <span style={{ textAlign: "right" }}>Pages</span>
-      <span style={{ textAlign: "right" }}>Added</span>
-      <span />
+      <Cell header>
+        <CheckBox checked={allChecked} onClick={onToggleAll} label="Select all" />
+      </Cell>
+      <span role="columnheader">Name</span>
+      {showCourse && <span role="columnheader">Course</span>}
+      <span role="columnheader">Type</span>
+      <span role="columnheader" style={{ textAlign: "right" }}>Pages</span>
+      <span role="columnheader" style={{ textAlign: "right" }}>Added</span>
+      <span role="columnheader" aria-label="Actions" />
     </div>
   );
 }
@@ -120,8 +136,8 @@ export function FolderRow(props: FolderRowProps) {
         cursor: "pointer",
       }}
     >
-      <span />
-      <div style={{ display: "flex", alignItems: "center", gap: 14, minWidth: 0 }}>
+      <span role="gridcell" />
+      <div role="gridcell" style={{ display: "flex", alignItems: "center", gap: 14, minWidth: 0 }}>
         <span style={FOLDER_TILE}><FolderIcon size={30} strokeWidth={1.6} /></span>
         <div style={{ minWidth: 0, flex: 1 }}>
           {editing && (
@@ -136,13 +152,13 @@ export function FolderRow(props: FolderRowProps) {
           </div>
         </div>
       </div>
-      {showCourse && <span />}
-      <span style={{ fontSize: 14, color: "#3F3B31" }}>Folder</span>
-      <span style={{ fontSize: 14, color: "#8A8372", textAlign: "right" }}>—</span>
-      <span style={{ display: "flex", justifyContent: "flex-end", color: "#6F6857" }}>
+      {showCourse && <span role="gridcell" />}
+      <span role="gridcell" style={{ fontSize: 14, color: "#3F3B31" }}>Folder</span>
+      <span role="gridcell" style={{ fontSize: 14, color: "#8A8372", textAlign: "right" }}>—</span>
+      <span role="gridcell" style={{ display: "flex", justifyContent: "flex-end", color: "#6F6857" }}>
         <ChevronRight size={12} />
       </span>
-      <span />
+      <span role="gridcell" />
     </div>
   );
 }
@@ -204,14 +220,16 @@ export function DocRow(props: DocRowProps) {
         opacity: dimmed ? 0.45 : 1,
       }}
     >
-      <CheckBox
-        checked={checked}
-        onClick={onCheck}
-        label={checked ? `Deselect ${view.name.a}${view.name.m}${view.name.b}`
-                       : `Select ${view.name.a}${view.name.m}${view.name.b}`}
-      />
+      <Cell>
+        <CheckBox
+          checked={checked}
+          onClick={onCheck}
+          label={checked ? `Deselect ${view.name.a}${view.name.m}${view.name.b}`
+                         : `Select ${view.name.a}${view.name.m}${view.name.b}`}
+        />
+      </Cell>
 
-      <div style={{ display: "flex", alignItems: "center", gap: 14, minWidth: 0 }}>
+      <div role="gridcell" style={{ display: "flex", alignItems: "center", gap: 14, minWidth: 0 }}>
         <span
           title={`${view.typeLabel} · ${view.fmt}`}
           style={{
@@ -241,7 +259,7 @@ export function DocRow(props: DocRowProps) {
       </div>
 
       {showCourse && (
-        <span style={{ display: "flex", alignItems: "center", minWidth: 0, fontSize: 14 }}>
+        <span role="gridcell" style={{ display: "flex", alignItems: "center", minWidth: 0, fontSize: 14 }}>
           <span style={{
             display: "inline-flex", alignItems: "center", gap: 8, minWidth: 0, maxWidth: "100%",
             height: 20, lineHeight: "20px", color: view.courseColor ? "#1A1814" : "#6F6857",
@@ -259,15 +277,15 @@ export function DocRow(props: DocRowProps) {
         </span>
       )}
 
-      <span style={{ fontSize: 14, color: "#3F3B31" }}>{view.typeLabel}</span>
-      <span style={{
+      <span role="gridcell" style={{ fontSize: 14, color: "#3F3B31" }}>{view.typeLabel}</span>
+      <span role="gridcell" style={{
         fontSize: 14, color: view.pages ? "#3F3B31" : "#8A8372",
         textAlign: "right", fontVariantNumeric: "tabular-nums",
       }}>{view.pages || "—"}</span>
-      <span style={{ fontSize: 14, color: "#6F6857", textAlign: "right" }}>{view.added}</span>
+      <span role="gridcell" style={{ fontSize: 14, color: "#6F6857", textAlign: "right" }}>{view.added}</span>
 
       {isTrash ? (
-        <span style={{ justifySelf: "end" }}>
+        <span role="gridcell" style={{ justifySelf: "end" }}>
           <button
             className="sapHoverChip"
             onClick={onRestore}
@@ -279,6 +297,7 @@ export function DocRow(props: DocRowProps) {
           >Restore</button>
         </span>
       ) : (
+        <Cell>
         <button
           className="sapHoverStone"
           onClick={onMenu}
@@ -293,6 +312,7 @@ export function DocRow(props: DocRowProps) {
         >
           <DotsIcon size={18} />
         </button>
+        </Cell>
       )}
     </div>
   );

@@ -225,7 +225,7 @@ export function DocMenu(props: DocMenuProps) {
   );
 
   const subList = (children: React.ReactNode) => (
-    <div style={{ display: "flex", flexDirection: "column", gap: 1, paddingLeft: 10 }}>
+    <div role="group" style={{ display: "flex", flexDirection: "column", gap: 1, paddingLeft: 10 }}>
       {children}
     </div>
   );
@@ -257,6 +257,10 @@ export function DocMenu(props: DocMenuProps) {
         }}
       >
         <div style={{ padding: 6, display: "flex", flexDirection: "column", gap: 1 }}>
+          {/* The actions are menus inside the dialog (its facts and next steps
+              between them are not menu items), so every menuitem has the
+              parent ARIA requires. `display: contents` keeps the layout. */}
+          <div role="menu" aria-label="Document actions" style={{ display: "contents" }}>
           <button role="menuitem" className="sapHoverMenu" onClick={onRename} style={MENU_ITEM}>
             Rename
           </button>
@@ -337,12 +341,14 @@ export function DocMenu(props: DocMenuProps) {
                 : scanState === "done" ? "Scanned ✓" : "Scan to Knowledge Graph"}
             </span>
           </button>
+          </div>
 
           <DocumentFacts doc={doc} />
           <DocNextSteps doc={doc} />
 
           <MenuDivider />
 
+          <div role="menu" aria-label="Remove" style={{ display: "contents" }}>
           <button
             role="menuitem"
             data-testid="library-detail-delete"
@@ -352,6 +358,7 @@ export function DocMenu(props: DocMenuProps) {
           >
             Move to Trash
           </button>
+          </div>
         </div>
       </div>
     </>

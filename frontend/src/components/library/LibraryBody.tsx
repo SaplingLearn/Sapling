@@ -152,7 +152,13 @@ export function LibraryBody(props: LibraryBodyProps) {
 
   const renderView = (which: "list" | "panel", dir: "in" | "out") =>
     which === "list" ? (
-      <div key={`list-${dir}`} style={slide("list", dir)} aria-hidden={dir === "out"}>
+      <div
+        key={`list-${dir}`}
+        role="grid"
+        aria-label="Documents"
+        style={slide("list", dir)}
+        aria-hidden={dir === "out"}
+      >
         <ListHeader
           columns={columns}
           showCourse={showCourse}

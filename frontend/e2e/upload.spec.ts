@@ -58,6 +58,7 @@ import { BACKEND_URL, FRONTEND_URL, USER_ACTIVE } from "./support/stack";
 
 const FIXTURE_PDF = path.join(__dirname, "fixtures", "upload-journey.pdf");
 const FIXTURE_NAME = "upload-journey.pdf";
+const FIXTURE_STEM = "upload-journey";
 
 // Mirrors backend/agents/function_handlers_e2e.py — the scripted pipeline
 // output this journey asserts on. Keep in sync with that module.
@@ -205,7 +206,8 @@ test("upload → SSE → document appears in library and Postgres", async ({
 
   const where = page.getByTestId("library-upload-where");
   await expect(where).toBeVisible();
-  await expect(where).toContainText(FIXTURE_NAME);
+  // v2 names a file without its extension (the format is its own badge).
+  await expect(where).toContainText(FIXTURE_STEM);
   // A course must be chosen before "Add to Library" enables: take the
   // suggestion when the dialog made one, else the first enrolled course.
   const courses = where.getByRole("radiogroup", { name: "Course" });
@@ -286,7 +288,7 @@ test("upload → SSE → document appears in library and Postgres", async ({
 
   const card = page.getByTestId(`library-doc-${doc.id}`);
   await expect(card).toBeVisible();
-  await expect(card).toContainText(FIXTURE_NAME);
+  await expect(card).toContainText(FIXTURE_STEM);
   // Its details dialog renders the decrypted summary and the concepts — the
   // encryption round-trip (encrypt at persist, decrypt at read) closed
   // correctly, and the SSE result carried the scripted pipeline's output.

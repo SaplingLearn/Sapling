@@ -1779,7 +1779,8 @@ test("phone explicit goal warns before teaching when only protected practice rem
     await expect(page.getByTestId("loop-practice-sources")).toHaveAttribute("href", "/library");
     await page.getByTestId("loop-practice-sources").click();
     await expect(page).toHaveURL(/\/library$/);
-    await expect(page.getByTestId("library-doc-rich-doc-loop-cs-notes")).toContainText("binary-and-bits-notes.pdf");
+    // The v2 Library names a file without its extension (#717).
+    await expect(page.getByTestId("library-doc-rich-doc-loop-cs-notes")).toContainText("binary-and-bits-notes");
     expect(checks).toBe(1);
     expect(approvals).toBe(0);
     expect(modelPosts).toEqual([]);
