@@ -32,3 +32,19 @@ No dedicated table. Same durability as a pending `grade_checkpoint` on the step.
 
 - W2.4 low-trust next-probe routing from reasoning text — see [w2-next-probe-hint.md](./w2-next-probe-hint.md)
 - Mastery or evidence from self-explain / reasoning
+
+## E2E
+
+`frontend/e2e/learn-loop.spec.ts` — "W2.3 reason-before-submit" (default lane), on
+`python -m scripts.seed_learning_check_beats reason` (one free + one mc_reason item):
+
+- free: the box is optional and never the answer (reasoning alone leaves Submit
+  disabled); the reasoning carries the grader's correct token while the answer
+  does not, and the check grades **not yet** with one `correct=false` evidence
+  row — the reasoning is not a grader input and not evidence; it lands as
+  `reasoning_encrypted` ciphertext (nested-bind decrypt), absent from the
+  plaintext of `loop_state` and of every transcript row.
+- mc_reason: no optional box; Submit stays disabled until an option AND a
+  non-blank reason (K02); a `reasoning` field a client adds anyway is dropped
+  (no `reasoning_encrypted` on the step); the graded reason rides the encrypted
+  transcript as `(<letter>) <reason>`.

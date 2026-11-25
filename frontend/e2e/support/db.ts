@@ -258,6 +258,23 @@ export async function seedCloseBeatItems(): Promise<void> {
   });
 }
 
+/** Opt-in synthetic assets for the W1.3 close-beat and W2.3 reason-before-submit
+ * journeys: `python -m scripts.seed_learning_check_beats <stage>` adds concepts
+ * whose check formats the journey controls (through the graph writer and the
+ * encrypted check-item write) and one teach-phase session planned on them,
+ * printing the ids the journey drives the real UI with. Local stack only. */
+export async function seedCheckBeats(stage: "close" | "reason"): Promise<Record<string, unknown>> {
+  requireLocalDbUrl(DB_URL);
+  const backendDir = path.resolve(__dirname, "..", "..", "..", "backend");
+  const python = process.env.E2E_SEED_PYTHON?.trim() || path.join(backendDir, "venv", "bin", "python");
+  const { stdout } = await execFileAsync(python, ["-m", "scripts.seed_learning_check_beats", stage], {
+    cwd: backendDir,
+    timeout: 30_000,
+  });
+  const lines = stdout.trim().split("\n");
+  return JSON.parse(lines[lines.length - 1]) as Record<string, unknown>;
+}
+
 /** Opt-in synthetic assets for the varied-practice journeys (spec §13 A140,
  * A141): `python -m scripts.seed_learning_varied_practice <stage>` through the
  * canonical app writers (graph writer, encrypted check-item write), printing
