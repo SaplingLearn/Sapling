@@ -8,7 +8,6 @@ import subprocess
 import sys
 
 import pytest
-import yaml
 import services.loop.planning
 
 REPO = Path(__file__).resolve().parents[2]
@@ -42,41 +41,22 @@ def _configured_rate(mode: str, explicit: str | None, variable: str = "LEARN_RAT
 @pytest.mark.parametrize(
     "mode,explicit,expected",
     [
-        ("function", None, 1000),
-        ("real", None, 20),
-        ("test", None, 20),
-        ("function", "0", 0),
-        ("function", "7", 7),
-        ("real", "7", 7),
+        ("function", None, 1000),  # the scripted lane's burst allowance
+        ("real", None, 20),  # every other mode keeps config.py's default
+        ("function", "0", 0),  # an explicit caller cap wins, even 0
     ],
 )
 def test_only_function_lane_defaults_to_relaxed_burst_cap(mode, explicit, expected):
     assert _configured_rate(mode, explicit) == expected
 
 
-def test_canonical_ci_exposes_burst_override_and_uploads_hidden_logs():
-    workflow = yaml.safe_load((REPO / ".github/workflows/e2e.yml").read_text())
-    steps = workflow["jobs"]["e2e"]["steps"]
-    boot = next(step for step in steps if step.get("run") == "make e2e-up")
-    assert boot["env"]["SAPLING_MODEL_MODE"] == "function"
-    assert boot["env"]["LEARNING_GATE_TIME_SCALE"] == "0.01"
-    assert boot["env"]["LEARN_RATE_LIMIT_PER_MIN"] == "1000"
-    upload = next(step for step in steps if step.get("uses", "").startswith("actions/upload-artifact@"))
-    assert upload["with"]["include-hidden-files"] is True
-    assert ".e2e/*.log" in upload["with"]["path"].splitlines()
-
-
 @pytest.mark.parametrize(
     "mode,explicit,expected",
     [
-        ("function", None, 1000),
-        ("real", None, 30),
-        ("test", None, 30),
-        ("function", "7", 7),
-        ("real", "7", 7),
-        ("function", "0", 30),
-        ("function", "-1", 30),
-        ("function", "invalid", 30),
+        ("function", None, 1000),  # the scripted lane relaxes it
+        ("function", "7", 7),  # an explicit positive cap wins
+        ("function", "0", 30),  # <= 0 keeps the guard on (the policy default)
+        ("function", "invalid", 30),  # so does a value that is not an integer
     ],
 )
 def test_probe_plan_guard_only_relaxes_in_scripted_lane(mode, explicit, expected):

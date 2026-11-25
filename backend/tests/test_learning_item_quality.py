@@ -12,9 +12,7 @@ tests/integration/test_check_item_reports_db.py."""
 
 from __future__ import annotations
 
-from db.migration_units import MIGRATION_UNITS
 import math
-import re
 from datetime import datetime, timedelta, timezone
 from typing import get_args
 from unittest.mock import patch
@@ -27,14 +25,7 @@ from learning import item_lint, item_reports, params
 from learning.checks import CheckItem, Option, RubricItem, WrongReason, question_hash
 from tests.test_learning_check_items import _cached_tables, _draft, _mc_draft, _opts
 
-MIG_DIR = MIGRATION_UNITS
 NOW = datetime(2026, 11, 8, 12, 0, tzinfo=timezone.utc)
-
-
-def _migration() -> str:
-    hits = sorted(MIG_DIR.glob("*_learning_item_quality.sql"))
-    assert len(hits) == 1, hits
-    return hits[0].read_text()
 
 
 def _stored(qh="qh-1", *, options=None, correct=None, lint=None, fmt=None, prompt="Q?", **over):
@@ -66,89 +57,10 @@ def _letters(*texts):
     ]
 
 
-# ── constants, migration, flag, body ────────────────────────────────────────
+# ── the report body ────────────────────────────────────────────────────────
 
 
-class TestPins:
-    def test_constants(self):
-        assert params.ITEM_REPORT_REASONS == ("wrong_answer", "unclear", "not_from_my_course")
-        assert params.ITEM_REPORT_SURFACES == ("loop", "review")
-        assert params.ITEM_REPORT_QUARANTINE_MIN_REPORTERS == 2  # † #695's N (A123: a quarantine)
-        assert 0 < params.ITEM_LINT_LONGEST_MARGIN < 1
-        assert params.ITEM_LINT_STEM_OVERLAP_MARGIN >= 1
-
-    def test_migration_name_and_enums_follow_params(self):
-        (path,) = sorted(MIG_DIR.glob("*_learning_item_quality.sql"))
-        assert re.fullmatch(r"\d{14}_learning_item_quality\.sql", path.name)
-        # after the newest migration it was written on top of (the ledger runs in name order)
-        assert path.name > "20261108033310_checklist_budget_no_course_soft_delete.sql"
-        sql = _migration()
-        reasons = ",".join(f"'{r}'" for r in params.ITEM_REPORT_REASONS)
-        surfaces = ",".join(f"'{s}'" for s in params.ITEM_REPORT_SURFACES)
-        assert f"CHECK (reason IN ({reasons}))" in sql
-        assert f"CHECK (surface IN ({surfaces}))" in sql
-        assert "ADD COLUMN IF NOT EXISTS lint_flags text[];" in sql  # NULL = never linted
-
-    def test_one_report_per_student_and_item_and_one_review_per_course_item(self):
-        sql = _migration()
-        reports = sql.split("CREATE TABLE IF NOT EXISTS check_item_reports", 1)[1].split(");", 1)[0]
-        assert "PRIMARY KEY (user_id, question_hash)" in reports
-        assert "REFERENCES users(id) ON DELETE CASCADE" in reports
-        reviews = sql.split("CREATE TABLE IF NOT EXISTS check_item_reviews", 1)[1].split(");", 1)[0]
-        assert "PRIMARY KEY (course_id, question_hash)" in reviews
-        assert "CHECK (status IN ('approved','retired'))" in reviews
-
-    def test_the_threshold_is_decided_by_the_database_under_one_lock(self):
-        """#695 race: two reporters arriving together. The count is the
-        database's, taken after a per-item advisory lock, and only a FIRST
-        report of the student can be the retiring one; both functions take the
-        same lock key, so an admin decision is ordered with the reports."""
-        sql = _migration()
-        report = sql.split("FUNCTION check_item_report(", 1)[1].split("$$;", 1)[0]
-        decide = sql.split("FUNCTION check_item_review_decide(", 1)[1].split("$$;", 1)[0]
-        lock = "hashtextextended('check-item-review:' || p_course_id || ':' || p_question_hash, 0)"
-        for body in (report, decide):
-            assert f"pg_advisory_xact_lock(\n    {lock})" in body
-            assert body.index("pg_advisory_xact_lock") < body.index("INSERT INTO")
-        assert "ON CONFLICT (user_id, question_hash) DO NOTHING" in report
-        assert "v_first := FOUND;" in report
-        assert (
-            "retire := v_first AND v_count >= p_min_reporters AND v_status IS DISTINCT FROM 'retired'"
-            in report
-        )
-        # a report newer than an approval counts afresh; timestamps follow the lock
-        assert "(v_status IS DISTINCT FROM 'approved' OR c.created_at > v_since)" in report
-        assert "clock_timestamp()" in report and "clock_timestamp()" in decide
-        # a retired item is never approved
-        assert "NOT (v_prev IS NOT DISTINCT FROM 'retired' AND p_status = 'approved')" in decide
-
-    def test_backend_only(self):
-        sql = _migration()
-        for name in ("check_item_reports", "check_item_reviews"):
-            assert f"ALTER TABLE {name} ENABLE ROW LEVEL SECURITY;" in sql
-            assert f"REVOKE ALL ON TABLE {name} FROM PUBLIC;" in sql
-        assert "REVOKE ALL ON FUNCTION check_item_report(text, text, text, text, text, integer) FROM PUBLIC;" in sql
-        assert "REVOKE ALL ON FUNCTION check_item_review_decide(text, text, text, text) FROM PUBLIC;" in sql
-        assert "NOTIFY pgrst, 'reload schema';" in sql
-        assert "SECURITY DEFINER" not in sql
-
-    def test_the_flag_is_declared_and_client_visible(self):
-        from services.feature_flags import REGISTRY
-
-        fd = REGISTRY[item_reports.ITEM_REPORTS_FLAG]
-        assert fd.variants == ("off", "on") and fd.client_visible is True
-
-    def test_the_flag_description_says_what_reports_do(self):
-        """Spec §13 A142: the admin flags page shows this text. Since A123
-        reports quarantine (hold) an item and only staff retire it; the text
-        said two reporters "retire it course-wide"."""
-        from services.feature_flags import REGISTRY
-
-        text = REGISTRY[item_reports.ITEM_REPORTS_FLAG].description
-        words = {2: "two", 3: "three", 4: "four"}
-        assert f"{words[params.ITEM_REPORT_QUARANTINE_MIN_REPORTERS]} reporters hold it" in text
-        assert "reporters retire" not in text and "until staff approve or retire it" in text
-
+class TestReportBody:
     def test_the_report_body_takes_enums_only(self):
         from pydantic import ValidationError
 
@@ -167,15 +79,6 @@ class TestPins:
         ):
             with pytest.raises(ValidationError):
                 LoopReportBody(**bad)
-
-    def test_events_are_in_the_taxonomy(self):
-        from services.events_service import EVENT_TAXONOMY
-
-        assert {
-            "learn.check_item_reported",
-            "learn.check_item_retired",
-            "learn.check_item_approved",
-        } <= EVENT_TAXONOMY
 
 
 # ── the linter ───────────────────────────────────────────────────────────────

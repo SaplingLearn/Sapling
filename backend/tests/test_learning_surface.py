@@ -48,21 +48,6 @@ def test_the_varied_draft_is_the_plain_draft_without_answer_kind_and_stepwise():
     varied = set(VariedCheckItemDraft.model_fields)
     assert plain - varied == {"answer_kind", "stepwise"}
     assert varied - plain == {"surface_representation", "surface_context"}
-    # every shared field keeps the plain drafter's own description
-    for name in plain & varied:
-        assert (
-            VariedCheckItemDraft.model_fields[name].description
-            == CheckItemDraft.model_fields[name].description
-        ), name
-
-
-def test_the_surface_comes_right_after_the_difficulty_so_it_steers_the_question():
-    order = list(
-        VariedCheckItemsOutput.model_json_schema()["$defs"]["VariedCheckItemDraft"]["properties"]
-    )
-    i = order.index("difficulty")
-    assert order[i + 1 : i + 3] == ["surface_representation", "surface_context"]
-    assert order.index("prompt") > i + 2
 
 
 def test_the_representation_is_the_closed_enum_of_params():

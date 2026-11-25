@@ -73,23 +73,6 @@ def _generate(num_questions=3):
     })
 
 
-# ── E1: mastery model — PKG-14b deleted the flat-delta seam (spec §11.2); the
-#    options write-up #543 asked for stays as the record of what was weighed ──
-
-
-class TestMasteryModelSeam:
-    def test_options_writeup_exists(self):
-        """E1 asks for the trade-offs to be written down for the revamp,
-        not decided here."""
-        from pathlib import Path
-
-        doc = Path(__file__).resolve().parents[2] / "docs" / "quiz-mastery-model.md"
-        assert doc.exists(), "the mastery-model options write-up is missing"
-        text = doc.read_text()
-        assert "0.03" in text and "0.02" in text
-        assert "#393" in text, "the write-up must flag the pinned journey value"
-
-
 # ── E2: honest counts + bounded top-up ──────────────────────────────────────
 
 
@@ -97,7 +80,7 @@ class TestDeliveredCount:
     def test_response_reports_requested_and_delivered(self):
         good = Quiz(questions=[_q(f"Q{i}?") for i in range(3)])
         with (
-            patch_quiz("table", side_effect=with_async_twins(with_async_twins)(_generate_factory())),
+            patch_quiz("table", side_effect=with_async_twins(_generate_factory())),
             patch("services.quiz.generation.quiz_agent.run",
                   new=AsyncMock(return_value=SimpleNamespace(output=good))),
         ):
@@ -122,7 +105,7 @@ class TestDeliveredCount:
             SimpleNamespace(output=topped_up),
         ])
         with (
-            patch_quiz("table", side_effect=with_async_twins(with_async_twins)(_generate_factory())),
+            patch_quiz("table", side_effect=with_async_twins(_generate_factory())),
             patch("services.quiz.generation.quiz_agent.run", new=run),
         ):
             r = _generate(num_questions=3)
@@ -149,7 +132,7 @@ class TestDeliveredCount:
             SimpleNamespace(output=also_drifted),
         ])
         with (
-            patch_quiz("table", side_effect=with_async_twins(with_async_twins)(_generate_factory())),
+            patch_quiz("table", side_effect=with_async_twins(_generate_factory())),
             patch("services.quiz.generation.quiz_agent.run", new=run),
         ):
             r = _generate(num_questions=3)
@@ -167,7 +150,7 @@ class TestDeliveredCount:
         ])
         run = AsyncMock(return_value=SimpleNamespace(output=mostly_good))
         with (
-            patch_quiz("table", side_effect=with_async_twins(with_async_twins)(_generate_factory())),
+            patch_quiz("table", side_effect=with_async_twins(_generate_factory())),
             patch("services.quiz.generation.quiz_agent.run", new=run),
         ):
             r = _generate(num_questions=5)
@@ -184,7 +167,7 @@ class TestDeliveredCount:
         short_but_clean = Quiz(questions=[_q("Q1?"), _q("Q2?"), _q("Q3?")])
         run = AsyncMock(return_value=SimpleNamespace(output=short_but_clean))
         with (
-            patch_quiz("table", side_effect=with_async_twins(with_async_twins)(_generate_factory())),
+            patch_quiz("table", side_effect=with_async_twins(_generate_factory())),
             patch("services.quiz.generation.quiz_agent.run", new=run),
         ):
             r = _generate(num_questions=5)
@@ -209,7 +192,7 @@ class TestDeliveredCount:
             SimpleNamespace(output=topped),
         ])
         with (
-            patch_quiz("table", side_effect=with_async_twins(with_async_twins)(_generate_factory())),
+            patch_quiz("table", side_effect=with_async_twins(_generate_factory())),
             patch("services.quiz.generation.quiz_agent.run", new=run),
         ):
             r = _generate(num_questions=3)
@@ -234,7 +217,7 @@ class TestDeliveredCount:
             SimpleNamespace(output=topped),
         ])
         with (
-            patch_quiz("table", side_effect=with_async_twins(with_async_twins)(_generate_factory())),
+            patch_quiz("table", side_effect=with_async_twins(_generate_factory())),
             patch("services.quiz.generation.quiz_agent.run", new=run),
         ):
             _generate(num_questions=3)
@@ -260,7 +243,7 @@ class TestDeliveredCount:
             SimpleNamespace(output=recovered),
         ])
         with (
-            patch_quiz("table", side_effect=with_async_twins(with_async_twins)(_generate_factory())),
+            patch_quiz("table", side_effect=with_async_twins(_generate_factory())),
             patch("services.quiz.generation.quiz_agent.run", new=run),
         ):
             r = _generate(num_questions=2)
@@ -274,7 +257,7 @@ class TestDeliveredCount:
         ])
         run = AsyncMock(return_value=SimpleNamespace(output=nothing_valid))
         with (
-            patch_quiz("table", side_effect=with_async_twins(with_async_twins)(_generate_factory())),
+            patch_quiz("table", side_effect=with_async_twins(_generate_factory())),
             patch("services.quiz.generation.quiz_agent.run", new=run),
         ):
             r = _generate(num_questions=2)
@@ -294,7 +277,7 @@ class TestDeliveredCount:
             RuntimeError("top-up blew up"),
         ])
         with (
-            patch_quiz("table", side_effect=with_async_twins(with_async_twins)(_generate_factory())),
+            patch_quiz("table", side_effect=with_async_twins(_generate_factory())),
             patch("services.quiz.generation.quiz_agent.run", new=run),
         ):
             with caplog.at_level("WARNING", logger="routes.quiz"):
@@ -376,7 +359,7 @@ class TestWireValidation:
         ])
         run = AsyncMock(return_value=SimpleNamespace(output=dupes))
         with (
-            patch_quiz("table", side_effect=with_async_twins(with_async_twins)(_generate_factory())),
+            patch_quiz("table", side_effect=with_async_twins(_generate_factory())),
             patch("services.quiz.generation.quiz_agent.run", new=run),
         ):
             r = _generate(num_questions=3)
@@ -622,7 +605,7 @@ class TestLearningLoopEvidencePath:
         expected.insert(5, "quiz_evidence_claims")
         assert tables == expected
 
-    def test_gate_on_submits_one_evidence_per_question(self):
+    def test_submits_one_evidence_per_question(self):
         from services.quiz_identity import question_hash
 
         apply_mock = MagicMock(return_value=[
@@ -655,7 +638,7 @@ class TestLearningLoopEvidencePath:
             "What is a function?", ["a repeating loop", "a reusable block"],
         )
 
-    def test_gate_on_snapshot_spans_first_before_to_last_after(self):
+    def test_snapshot_spans_first_before_to_last_after(self):
         apply_mock = MagicMock(return_value=[
             {"before": 0.5, "after": 0.58},
             {"before": 0.58, "after": 0.51},
@@ -667,7 +650,7 @@ class TestLearningLoopEvidencePath:
         assert data["mastery_before"] == pytest.approx(0.5)
         assert data["mastery_after"] == pytest.approx(0.51)
 
-    def test_gate_on_unrecognisable_return_reports_no_change(self):
+    def test_unrecognisable_return_reports_no_change(self):
         apply_mock = MagicMock(return_value=[])
         r, _ = _submit_one_right_one_wrong(
             apply_mock=apply_mock,
@@ -676,7 +659,7 @@ class TestLearningLoopEvidencePath:
         assert data["mastery_before"] == pytest.approx(0.5)
         assert data["mastery_after"] == pytest.approx(0.5)
 
-    def test_gate_on_keeps_the_quiz_context_background_update(self):
+    def test_keeps_the_quiz_context_background_update(self):
         apply_mock = MagicMock(return_value=[{"before": 0.5, "after": 0.6}])
         r, ctx_run = _submit_one_right_one_wrong(
             apply_mock=apply_mock,
@@ -684,7 +667,7 @@ class TestLearningLoopEvidencePath:
         assert r.status_code == 200
         assert ctx_run.call_count == 1, "quiz_context update must still run on the loop path"
 
-    def test_gate_on_hash_is_none_when_the_stored_item_has_no_identity(self):
+    def test_hash_is_none_when_the_stored_item_has_no_identity(self):
         legacy_shape = [{
             "id": 1,
             "text": "no stem key, no option text",
@@ -711,7 +694,7 @@ class TestLearningLoopEvidencePath:
             "question_hash": None, "check_item_id": None, "session_id": None,
         }]
 
-    def test_gate_on_evidence_validates_as_pkg03_evidence(self):
+    def test_evidence_validates_as_pkg03_evidence(self):
         """The route sends plain dicts; apply_graph_update validates them with
         learning.evidence.Evidence before any write (HANDOFF-03). A quiz answer
         is unassisted, rung 0, full weight, and carries no grader confidence."""

@@ -14,6 +14,10 @@ root_packages =
     agents
     worker
     models
+    learning
+    learning_trial
+    e2e_oracles
+    promotion
 include_external_packages = False
 
 [importlinter:contract:layers]
@@ -127,4 +131,36 @@ forbidden_modules =
     services.study.*
     services.study_guides.*
     services.tutor.*
+allow_indirect_imports = True
+
+[importlinter:contract:learning-trial-offline]
+name = No application module reaches learning_trial (offline research tooling)
+type = forbidden
+# learning_trial is the within-student trial's analysis, outside the request
+# path: only tests/ and scripts/ (not in this graph) may import it, so no app
+# module may reach it directly OR through another module. Its other direction
+# (stdlib and itself only) is tests/test_learning_trial_import_guard.py's:
+# a forbidden contract cannot say "the stdlib only".
+source_modules =
+    routes
+    services
+    db
+    agents
+    worker
+    models
+    learning
+    e2e_oracles
+    promotion
+forbidden_modules =
+    learning_trial
+
+[importlinter:contract:ai-budget-no-model]
+name = services.ai_budget runs no model
+type = forbidden
+# The budget check decides before any model call and must never make one
+# (spec §3.5); direct imports only, as the hand-rolled check it replaces.
+source_modules =
+    services.ai_budget
+forbidden_modules =
+    agents
 allow_indirect_imports = True

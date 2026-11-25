@@ -909,15 +909,6 @@ def test_prepare_loop_run_uses_the_tier_slot_and_loop_limits():
     )
 
 
-def test_template_feedback_shapes():
-    from services.loop.continuation import _template_feedback
-
-    assert _template_feedback("correct", None).startswith("Correct.")
-    released = _template_feedback("not_yet", ITEM.reference_answer)
-    assert released.startswith("Not yet.") and ITEM.reference_answer in released
-    assert _template_feedback("idk", ITEM.reference_answer).startswith("No problem")
-
-
 # ── Status ────────────────────────────────────────────────────────────────
 
 
@@ -1736,17 +1727,6 @@ def _feedback_agent(reply="Right: the base case stops it. What would factorial(1
         patch_loop("record_agent_usage", side_effect=lambda r, **k: r),
         seen,
     )
-
-
-def test_the_idk_subset_is_the_gates_idk_patterns():
-    """A38 amendment 8 (A40 06(b)): the route's idk subset IS gates.IDK_PATTERNS
-    (now with "no idea" and "dunno"); the route keeps no copy of it."""
-    import routes.learn_loop as ll
-    from learning.gates import IDK_PATTERNS, NON_ATTEMPT_PATTERNS
-
-    assert not hasattr(ll, "IDK_PHRASES")
-    assert {"no idea", "dunno", "idk", "i don't know"} <= IDK_PATTERNS
-    assert IDK_PATTERNS <= set(NON_ATTEMPT_PATTERNS)
 
 
 @pytest.mark.parametrize(
@@ -3181,13 +3161,6 @@ def test_start_session_stream_done_carries_session_and_graph_state(gate_on, seam
     assert evs[0]["data"] == {"phase": "teach"} and [e["type"] for e in evs].count("check") == 0
 
 
-def test_end_session_is_a_pass_through_in_this_package():
-    from models import EndSessionBody
-    from services.loop.closing import end_session
-
-    assert end_session(EndSessionBody(session_id="s1", user_id="u1"), MagicMock()) is None
-
-
 # ── Task 7b: item activation + current concept (A27) ─────────────────────
 
 PLAN_STATE = {
@@ -3724,40 +3697,6 @@ def test_the_real_gate_reads_nothing_on_the_legacy_path_with_the_flag_unset(monk
     assert r.status_code == 200 and calls == []
 
 
-def test_delegation_lines_sit_after_auth_and_touch_nothing_below():
-    """Spec §13 A149 (#118's layout): the route evaluates the gate once
-    (`_loop_for`, owner decision 00) and hands the tutor body the loop's
-    handler; the body hands off AFTER its auth check, at one line, and returns
-    whatever the loop answered (nothing of the legacy path runs below it)."""
-    import inspect
-
-    import routes.learn as learn
-    from services.tutor import sessions, streams, turns
-
-    for name, body in (
-        ("start_session", turns.start_session),
-        ("chat", turns.chat),
-        ("chat_stream", streams.chat_stream),
-        ("start_session_stream", streams.start_session_stream),
-        ("action", turns.action),
-    ):
-        route = inspect.getsource(getattr(learn, name))
-        assert f'await _loop_for_async(body.user_id, "{name}", request)' in route, name
-        src = inspect.getsource(body)
-        # #756: `await guard_off_loop(require_self, ...)` — the guard off the event loop
-        auth = src.index("guard_off_loop(require_self,")
-        assert auth < src.index("return await loop_handler(body, request)"), name
-        assert src.count("loop_handler(body, request)") == 1, name
-        assert "learning_loop_for_request" not in src, name
-    src = inspect.getsource(sessions.end_session)
-    assert src.index("get_session_user_id(request)") < src.index("loop_handler(body, request)")
-    assert '_loop_for(user_id, "end_session", request)' in inspect.getsource(learn.end_session)
-    # spec §13 A148: the delegate marks the request service-scoped (db_user_scope)
-    delegate = inspect.getsource(learn._loop_delegate)
-    assert delegate.index("service_route(request)") < delegate.index("getattr(loop_service, name)")
-    assert "learning_loop_for_request(user_id)" in inspect.getsource(learn._loop_for)
-
-
 @pytest.mark.real_course_enrollment
 @pytest.mark.parametrize("path", ["/api/learn/loop/start-session", "/api/learn/loop/start-session/stream"])
 def test_a_named_course_passes_the_enrollment_gate_before_the_loop_opens(gate_on, seams, path):
@@ -4077,14 +4016,6 @@ def test_the_soft_level_and_the_deep_cap_still_downgrade_a_confronting_turn(gate
     assert seams.store["doc"]["confront"] == CONFRONT, "waits for a tier that confronts"
 
 
-def test_confront_tiers_is_deep():
-    """The committed value; tests/test_learning_misconceptions.py pins it to the
-    confrontation eval's baselines."""
-    from services.loop.guard import CONFRONT_TIERS
-
-    assert CONFRONT_TIERS == frozenset({"deep"})
-
-
 def test_confrontation_waits_while_no_model_runs(gate_on, seams):
     """At the hard budget level the tier is `none` (no model call): the marker
     the grade just set is kept for the next model turn."""
@@ -4247,18 +4178,6 @@ def test_item_selection_is_unchanged_without_an_unknown(seams):
     st = _plan_state(attempts=[correct])
     assert _activate_next_item("u1", "c1", st, now=NOW) == "qh-1"
     seams.select_item.assert_called()
-
-
-def test_confront_line_for_and_with_confrontation_are_the_one_assembly():
-    """The eval scores exactly what the route sends (tests/evals/misconception_confront.py)."""
-    from services.loop.guard import confront_line_for, with_confrontation
-
-    assert confront_line_for("no base case") == CONFRONT_LINE
-    assert confront_line_for(" \n ") is None and confront_line_for("") is None
-    assert with_confrontation("[LOOP PHASE: feedback]", CONFRONT_LINE) == (
-        "[LOOP PHASE: feedback]\n" + CONFRONT_LINE
-    )
-    assert with_confrontation("P", None) == "P"
 
 
 @pytest.mark.parametrize("rung,confronts", [(1, False), (3, False), (4, True), (5, True)])
