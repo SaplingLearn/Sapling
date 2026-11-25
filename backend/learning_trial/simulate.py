@@ -55,6 +55,16 @@ from learning_trial.table import CONTROL, TREATMENT, TrialRow
 #: hash bit is fair); the exporter takes it as an explicit argument.
 TREATMENT_VARIANT = "B"
 DEFAULT_SEED = 20261108
+#: The power the sample-size and detectable-effect readings aim for.
+TARGET_POWER = 0.8
+#: The simulated powers a detectable-effect fit uses (open interval): outside it
+#: probit(power) is too flat to read an effect from.
+_MDE_POWER_FLOOR = 0.02
+_MDE_POWER_CEILING = 0.995
+#: The sample size the sensitivity table reads its minimum detectable effect at.
+DEFAULT_MDE_STUDENTS = 200
+#: The scenario name of the base design (scenario_of).
+_BASE = "base"
 
 
 def variant_for(user_id: str, node_id: str, arm: str | None) -> str:
@@ -368,7 +378,7 @@ def scenario_of(design: Design, base: Design) -> str:
         for f in dataclasses.fields(Design)
         if f.name not in ("n_students", "attrition") and getattr(design, f.name) != getattr(base, f.name)
     ]
-    return ", ".join(diffs) or "base"
+    return ", ".join(diffs) or _BASE
 
 
 @dataclass(frozen=True)
@@ -396,7 +406,7 @@ def scenario_key(design: Design, effect_sd: float) -> tuple[Design, float]:
     return dataclasses.replace(design, n_students=2), effect_sd
 
 
-def unreached(cells: Iterable[CellResult], *, target: float = 0.8) -> set[tuple[Design, float]]:
+def unreached(cells: Iterable[CellResult], *, target: float = TARGET_POWER) -> set[tuple[Design, float]]:
     """The groups (`scenario_key`) with an effect > 0 none of whose simulated
     sample sizes reached `target` power: the ones only a larger n can settle.
     Simulating larger n for any other group would not change
@@ -413,7 +423,7 @@ def _probit(p: float) -> float:
     return norm_ppf(min(max(p, 1e-4), 1.0 - 1e-4))
 
 
-def students_for_power(cells: Iterable[CellResult], *, target: float = 0.8) -> list[SampleSize]:
+def students_for_power(cells: Iterable[CellResult], *, target: float = TARGET_POWER) -> list[SampleSize]:
     """Per scenario (the design apart from n) and effect: the number of students
     for `target` power, interpolated between the two simulated sample sizes
     that bracket it, with probit(power) linear in sqrt(n) between them (the
@@ -452,7 +462,7 @@ class DetectableEffect:
 
 
 def detectable_effects(
-    cells: Iterable[CellResult], *, target: float = 0.8, alpha: float = ALPHA
+    cells: Iterable[CellResult], *, target: float = TARGET_POWER, alpha: float = ALPHA
 ) -> list[DetectableEffect]:
     """Per scenario and sample size: the minimum detectable effect, from the
     same power curve read the other way — probit(power) + z_{1-alpha/2} linear in
@@ -465,7 +475,7 @@ def detectable_effects(
     z_alpha = norm_ppf(1.0 - alpha / 2.0)
     out = []
     for design, members in groups.items():
-        usable = [c for c in members if 0.02 < c.power < 0.995]
+        usable = [c for c in members if _MDE_POWER_FLOOR < c.power < _MDE_POWER_CEILING]
         num = sum((norm_ppf(c.power) + z_alpha) * c.effect_sd for c in usable)
         den = sum(c.effect_sd**2 for c in usable)
         if not usable or num <= 0:
@@ -484,23 +494,7 @@ def _n(size: SampleSize | None) -> str:
     return "n/a" if size is None else size.label()
 
 
-def render_markdown(
-    cells: Sequence[CellResult],
-    base: Design,
-    *,
-    seed: int,
-    alpha: float = ALPHA,
-    sensitivity: Sequence[CellResult] = (),
-    checks: Sequence[CellResult] = (),
-    mde_students: int = 200,
-    title: str = "Power of the primary analysis",
-) -> str:
-    """The power report: assumptions, effect scales, students needed for 80%
-    power, the minimum detectable effect by n, power by n per attrition level,
-    sensitivity scenarios, and checks of the extrapolated effects."""
-    effects = sorted({c.effect_sd for c in cells})
-    attritions = sorted({c.attrition for c in cells})
-    students = sorted({c.n_students for c in cells})
+def _intro_section(cells: Sequence[CellResult], base: Design, *, seed: int, alpha: float, title: str) -> list[str]:
     reps_by_n: dict[int, set[int]] = defaultdict(set)
     for c in cells:
         reps_by_n[c.n_students].add(c.reps)
@@ -508,9 +502,6 @@ def render_markdown(
         f"{'/'.join(str(r) for r in sorted(reps))} per cell at n = {', '.join(str(n) for n in ns)}"
         for reps, ns in _group_by_reps(reps_by_n)
     )
-    sizes = {
-        (s.effect_sd, s.attrition): s for s in students_for_power(cells) if scenario_of(s.design, base) == "base"
-    }
     lines = [
         f"## {title}",
         "",
@@ -527,7 +518,11 @@ def render_markdown(
     for f in dataclasses.fields(base):
         if f.name not in ("n_students", "attrition"):
             lines.append(f"| {f.name} | {getattr(base, f.name)} |")
-    lines += [
+    return lines
+
+
+def _effect_scales_section(base: Design, effects: list[float]) -> list[str]:
+    lines = [
         "",
         "### Effect scales",
         "",
@@ -545,7 +540,16 @@ def render_markdown(
             f"| {e:.2f} | {s.log_odds:.3f} | {s.treatment_rate:.3f} | {s.risk_difference:+.3f} | "
             f"{s.cox_d:.3f} | {s.latent_total_d:.3f} |"
         )
-    lines += [
+    return lines
+
+
+def _students_needed_section(
+    cells: Sequence[CellResult], base: Design, effects: list[float], attritions: list[float]
+) -> list[str]:
+    sizes = {
+        (s.effect_sd, s.attrition): s for s in students_for_power(cells) if scenario_of(s.design, base) == _BASE
+    }
+    lines = [
         "",
         f"### Students needed for 80% power ({base.concepts_per_student} concepts per student)",
         "",
@@ -558,36 +562,50 @@ def render_markdown(
     for e in effects:
         if e > 0:
             lines.append(f"| {e:.2f} | " + " | ".join(_n(sizes.get((e, a))) for a in attritions) + " |")
+    return lines
+
+
+def _mde_cell(base: Design, m: DetectableEffect | None) -> str:
+    if m is None or m.effect_sd is None:
+        return "n/a"
+    rd = effect_scales(base, m.effect_sd).risk_difference
+    return f"{m.effect_sd:.2f}{'*' if m.extrapolated else ''} ({100 * rd:+.1f} pp)"
+
+
+def _mde_section(
+    cells: Sequence[CellResult], base: Design, effects: list[float], attritions: list[float], *, alpha: float
+) -> list[str]:
     mdes = {
         (m.design.n_students, m.design.attrition): m
         for m in detectable_effects(cells, alpha=alpha)
-        if scenario_of(m.design, base) == "base"
+        if scenario_of(m.design, base) == _BASE
     }
     mde_ns = sorted({n for n, _ in mdes if sum(1 for c in cells if c.n_students == n and c.effect_sd > 0) > 1})
-    if mde_ns:
-        top = max(effects)
-        lines += [
-            "",
-            f"### Minimum detectable effect with 80% power ({base.concepts_per_student} concepts per student)",
-            "",
-            "In student-ability SDs, from the simulated effects at each sample size (probit of power linear in "
-            f"the effect); * = beyond the largest simulated effect ({top:.2f}), so extrapolated (checked by "
-            "simulation below). The bracket is the same effect as a risk difference at the control rate.",
-            "",
-            "| students | " + " | ".join(f"attrition {_pct(a)}" for a in attritions) + " |",
-            "|---|" + "---|" * len(attritions),
-        ]
-        for n in mde_ns:
-            row = []
-            for a in attritions:
-                m = mdes.get((n, a))
-                if m is None or m.effect_sd is None:
-                    row.append("n/a")
-                    continue
-                rd = effect_scales(base, m.effect_sd).risk_difference
-                row.append(f"{m.effect_sd:.2f}{'*' if m.extrapolated else ''} ({100 * rd:+.1f} pp)")
-            lines.append(f"| {n} | " + " | ".join(row) + " |")
+    if not mde_ns:
+        return []
+    top = max(effects)
+    lines = [
+        "",
+        f"### Minimum detectable effect with 80% power ({base.concepts_per_student} concepts per student)",
+        "",
+        "In student-ability SDs, from the simulated effects at each sample size (probit of power linear in "
+        f"the effect); * = beyond the largest simulated effect ({top:.2f}), so extrapolated (checked by "
+        "simulation below). The bracket is the same effect as a risk difference at the control rate.",
+        "",
+        "| students | " + " | ".join(f"attrition {_pct(a)}" for a in attritions) + " |",
+        "|---|" + "---|" * len(attritions),
+    ]
+    for n in mde_ns:
+        row = [_mde_cell(base, mdes.get((n, a))) for a in attritions]
+        lines.append(f"| {n} | " + " | ".join(row) + " |")
+    return lines
+
+
+def _power_by_n_sections(
+    cells: Sequence[CellResult], effects: list[float], attritions: list[float], students: list[int]
+) -> list[str]:
     by_cell = {(c.n_students, c.effect_sd, c.attrition): c for c in cells}
+    lines: list[str] = []
     for a in attritions:
         lines += [
             "",
@@ -609,59 +627,98 @@ def render_markdown(
         failures = sum(c.failures for c in cells if c.attrition == a)
         if failures:
             lines += ["", f"{failures} replicates could not be fitted; they count as non-rejections."]
-    if sensitivity:
-        sens_effects = sorted({c.effect_sd for c in sensitivity if c.effect_sd > 0})
-        sens_sizes: dict[str, dict[float, SampleSize]] = defaultdict(dict)
-        for s in students_for_power(sensitivity):
-            sens_sizes[scenario_of(s.design, base)][s.effect_sd] = s
-        sens_mde = {
-            scenario_of(m.design, base): m
-            for m in detectable_effects(sensitivity, alpha=alpha)
-            if m.design.n_students == mde_students
-        }
-        nulls: dict[str, list[CellResult]] = defaultdict(list)
-        for c in sensitivity:
-            if c.effect_sd == 0:
-                nulls[scenario_of(c.design, base)].append(c)
-        sens_reps = sorted({c.reps for c in sensitivity})
-        lines += [
-            "",
-            f"### Sensitivity, attrition {_pct(sensitivity[0].attrition)}",
-            "",
-            "One assumption changed at a time (the last row changes two); "
-            + "/".join(str(r) for r in sens_reps)
-            + " synthetic trials per cell. Students for 80% power, the minimum detectable effect at "
-            f"n = {mde_students} (ability SDs), and the false-positive rate pooled over the scenario's "
-            "d = 0 cells.",
-            "",
-            "| scenario (vs the assumptions above) | "
-            + " | ".join(f"n for 80% at d = {e:.2f}" for e in sens_effects)
-            + f" | MDE at n = {mde_students} | false-positive rate |",
-            "|---|" + "---|" * (len(sens_effects) + 2),
-        ]
-        for scenario, row in sens_sizes.items():
-            null = nulls.get(scenario, [])
-            fpr = sum(c.rejections for c in null) / sum(c.reps for c in null) if null else math.nan
-            mde = sens_mde.get(scenario)
-            mde_txt = "n/a" if mde is None or mde.effect_sd is None else f"{mde.effect_sd:.2f}"
-            lines.append(
-                f"| {scenario} | " + " | ".join(_n(row.get(e)) for e in sens_effects) + f" | {mde_txt} | {fpr:.3f} |"
-            )
-    if checks:
-        lines += [
-            "",
-            "### Check: simulated power at the extrapolated minimum detectable effects",
-            "",
-            f"{checks[0].reps} synthetic trials per cell, simulated directly at the extrapolated effect; "
-            "each should come out near 0.80.",
-            "",
-            "| d | attrition | students | power | Monte Carlo SE |",
-            "|---|---|---|---|---|",
-        ]
-        lines += [
-            f"| {c.effect_sd:.2f} | {_pct(c.attrition)} | {c.n_students} | {c.power:.3f} | {c.mc_se:.3f} |"
-            for c in checks
-        ]
+    return lines
+
+
+def _sensitivity_section(
+    sensitivity: Sequence[CellResult], base: Design, *, alpha: float, mde_students: int
+) -> list[str]:
+    if not sensitivity:
+        return []
+    sens_effects = sorted({c.effect_sd for c in sensitivity if c.effect_sd > 0})
+    sens_sizes: dict[str, dict[float, SampleSize]] = defaultdict(dict)
+    for s in students_for_power(sensitivity):
+        sens_sizes[scenario_of(s.design, base)][s.effect_sd] = s
+    sens_mde = {
+        scenario_of(m.design, base): m
+        for m in detectable_effects(sensitivity, alpha=alpha)
+        if m.design.n_students == mde_students
+    }
+    nulls: dict[str, list[CellResult]] = defaultdict(list)
+    for c in sensitivity:
+        if c.effect_sd == 0:
+            nulls[scenario_of(c.design, base)].append(c)
+    sens_reps = sorted({c.reps for c in sensitivity})
+    lines = [
+        "",
+        f"### Sensitivity, attrition {_pct(sensitivity[0].attrition)}",
+        "",
+        "One assumption changed at a time (the last row changes two); "
+        + "/".join(str(r) for r in sens_reps)
+        + " synthetic trials per cell. Students for 80% power, the minimum detectable effect at "
+        f"n = {mde_students} (ability SDs), and the false-positive rate pooled over the scenario's "
+        "d = 0 cells.",
+        "",
+        "| scenario (vs the assumptions above) | "
+        + " | ".join(f"n for 80% at d = {e:.2f}" for e in sens_effects)
+        + f" | MDE at n = {mde_students} | false-positive rate |",
+        "|---|" + "---|" * (len(sens_effects) + 2),
+    ]
+    for scenario, row in sens_sizes.items():
+        null = nulls.get(scenario, [])
+        fpr = sum(c.rejections for c in null) / sum(c.reps for c in null) if null else math.nan
+        mde = sens_mde.get(scenario)
+        mde_txt = "n/a" if mde is None or mde.effect_sd is None else f"{mde.effect_sd:.2f}"
+        lines.append(
+            f"| {scenario} | " + " | ".join(_n(row.get(e)) for e in sens_effects) + f" | {mde_txt} | {fpr:.3f} |"
+        )
+    return lines
+
+
+def _checks_section(checks: Sequence[CellResult]) -> list[str]:
+    if not checks:
+        return []
+    lines = [
+        "",
+        "### Check: simulated power at the extrapolated minimum detectable effects",
+        "",
+        f"{checks[0].reps} synthetic trials per cell, simulated directly at the extrapolated effect; "
+        "each should come out near 0.80.",
+        "",
+        "| d | attrition | students | power | Monte Carlo SE |",
+        "|---|---|---|---|---|",
+    ]
+    lines += [
+        f"| {c.effect_sd:.2f} | {_pct(c.attrition)} | {c.n_students} | {c.power:.3f} | {c.mc_se:.3f} |"
+        for c in checks
+    ]
+    return lines
+
+
+def render_markdown(
+    cells: Sequence[CellResult],
+    base: Design,
+    *,
+    seed: int,
+    alpha: float = ALPHA,
+    sensitivity: Sequence[CellResult] = (),
+    checks: Sequence[CellResult] = (),
+    mde_students: int = DEFAULT_MDE_STUDENTS,
+    title: str = "Power of the primary analysis",
+) -> str:
+    """The power report: assumptions, effect scales, students needed for 80%
+    power, the minimum detectable effect by n, power by n per attrition level,
+    sensitivity scenarios, and checks of the extrapolated effects."""
+    effects = sorted({c.effect_sd for c in cells})
+    attritions = sorted({c.attrition for c in cells})
+    students = sorted({c.n_students for c in cells})
+    lines = _intro_section(cells, base, seed=seed, alpha=alpha, title=title)
+    lines += _effect_scales_section(base, effects)
+    lines += _students_needed_section(cells, base, effects, attritions)
+    lines += _mde_section(cells, base, effects, attritions, alpha=alpha)
+    lines += _power_by_n_sections(cells, effects, attritions, students)
+    lines += _sensitivity_section(sensitivity, base, alpha=alpha, mde_students=mde_students)
+    lines += _checks_section(checks)
     return "\n".join(lines) + "\n"
 
 
