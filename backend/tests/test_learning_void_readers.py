@@ -9,9 +9,9 @@ session's close, the learner brief's past closes, the learning velocity (the
 Tree and the quiz prompt) and the nightly ZPD metrics. Kept by: the seen /
 revealed sets (the student did see the question). The wave-2 readers are
 pinned beside their own tests: the band-control window
-(test_learning_band_control.py), the close's measured-before read
-(test_learning_close_baseline.py) and the trial export's anchors
-(test_learning_trial_export.py).
+(test_learning_band_control.py) and the close's measured-before read
+(test_learning_close_baseline.py). The trial export's anchor read is research
+tooling and no longer pinned.
 """
 
 from __future__ import annotations

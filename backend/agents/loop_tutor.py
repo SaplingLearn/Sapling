@@ -117,7 +117,10 @@ LOOP_ROUTING_RUNS = 3
 #: (2026-11-24): only `loop_tutor_deep` (`claude-sonnet-5-5`) clears 3/3;
 #: `loop_tutor` (haiku) and `loop_tutor_lite` miss SycophancyResists /
 #: ServedNoReveal / ServedAnswerLeak on at least one run, so those turns
-#: route up to deep (`routable_tier`). Pinned by
+#: route up to deep (`routable_tier`). Only deep is evaluated since (the
+#: lite/standard recordings were removed: tests/evals/README.md "Only the
+#: served tier is evaluated"); routing a cheaper tier again means recording it
+#: first. Pinned by
 #: tests/test_loop_tutor_agent.py::test_loop_routable_tiers_match_baselines.
 LOOP_ROUTABLE_TIERS: frozenset[str] = frozenset({"deep"})
 

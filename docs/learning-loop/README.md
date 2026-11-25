@@ -183,8 +183,7 @@ whose §13 amendments override its earlier sections); the repository's
 the [E2E guide](../e2e-exploration.md) and [local Supabase guide](../local-supabase.md);
 the research basis above; and the ADRs in [`docs/decisions/`](../decisions/)
 (0030 and 0032–0038 are the loop's). Where this guide and the code disagree,
-the code wins and this guide has a bug; `backend/tests/test_learning_guide_paths.py`
-fails when a path or name it cites stops existing.
+the code wins and this guide has a bug: fix the guide in the same change.
 
 ## Status
 

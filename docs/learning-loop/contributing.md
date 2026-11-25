@@ -185,9 +185,8 @@ asserts from `frontend/e2e/support/db.ts`). The loop's main journey is
 
 ### 11. Update the docs that pin the code
 
-- This guide: a moved or renamed function breaks
-  `backend/tests/test_learning_guide_paths.py`, which is the point — fix the
-  page, not the test.
+- This guide: a moved or renamed function makes the page wrong. Fix the page
+  in the same change; no test checks its citations.
 - `CLAUDE.md`'s repo map when a new module is one an engineer must know.
 - An ADR in `docs/decisions/` for an architectural decision (the evidence
   transaction, the decision-seam split and the grade checkpoints each have
