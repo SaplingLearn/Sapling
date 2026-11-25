@@ -28,13 +28,25 @@ import { IS_TEST_MODE } from "@/lib/testMode";
 // changes — the orbit and home springs bound the wander, and
 // the simulation is only kept barely warm (IDLE_ALPHA), so those springs
 // stay gentle and the planned layout is never re-run.
-/** How hard the drift pushes a concept, per tick, before velocity decay.
- *  0.03 measured ~10 units of wander over five seconds, which at a normal
- *  zoom is a couple of screen pixels — indistinguishable from a dead stop.
- *  Tuned up until the motion is actually legible on screen. */
-const DRIFT_ACCEL = 0.14;
-/** How long one node's push takes to turn right round (ms). */
-const DRIFT_TURN_MS = 13_000;
+/**
+ * How hard the drift pushes a concept, per tick, before velocity decay.
+ *
+ * This constant sets the SPEED on its own: measured, a node travels about
+ * 89 * DRIFT_ACCEL units per second whatever the turn period is. 0.03 is the
+ * pace the map was designed to breathe at (~2.7 units/sec) and is deliberately
+ * unchanged — raising it to make the motion visible made it four times too
+ * fast, which read as drifting rather than breathing.
+ *
+ * Reach is `DRIFT_TURN_MS`'s job instead: amplitude measures about
+ * 28.6 * DRIFT_ACCEL * (DRIFT_TURN_MS / 1000) units. So a longer turn travels
+ * further at the same speed, which is what makes the wander legible without
+ * hurrying it.
+ */
+const DRIFT_ACCEL = 0.03;
+/** How long one node's push takes to turn right round (ms). At 40s a concept
+ *  reaches ~34 units from where it settled — three times the original 13s
+ *  reach, at the original's speed (see `DRIFT_ACCEL`). */
+const DRIFT_TURN_MS = 40_000;
 /** Course roots are anchors: they wander at half a concept's amplitude. */
 const DRIFT_ROOT_SCALE = 0.5;
 /** Below this heat a released concept adopts where it came to rest (the

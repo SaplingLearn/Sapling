@@ -59,29 +59,33 @@ describe("driftForce", () => {
   it("never has two nodes swinging together", () => {
     const a = node("concept-1");
     const b = node("concept-2");
+    // Sampled a comparable way INTO the turn, not at a fixed wall-clock time:
+    // two nodes' pushes separate as their phases advance, so with the 40s turn
+    // (DRIFT_TURN_MS) a 4s sample is barely a tenth of the way round and they
+    // have hardly parted yet. The claim is that they never swing together, not
+    // that they differ within four seconds.
     driftForce([a, b], 0);
-    driftForce([a, b], 4000);
+    driftForce([a, b], 12_000);
     expect(Math.abs((a.vx ?? 0) - (b.vx ?? 0))).toBeGreaterThan(0.001);
   });
 
-  // Both bounds below scale with DRIFT_ACCEL, raised 0.03 -> 0.14 on
-  // 2026-11-25 because the old amplitude was invisible on screen. What they
-  // assert is the SHAPE of the motion, not the number: that the push cancels
-  // itself over a full turn, and that a second of it is neither nothing nor a
-  // leap. Re-scale them if the constant moves again.
+  // What these assert is the SHAPE of the motion, not the numbers: that the
+  // push cancels itself over a full turn, and that a second of it is neither
+  // nothing nor a leap. The per-second bound is DRIFT_ACCEL's (unchanged); the
+  // full-turn bound is reach, which DRIFT_TURN_MS widened on 2026-11-25.
 
   it("turns right round, so a node wanders rather than flying off", () => {
     // Over a full turn the push cancels itself: the node comes back.
     const n = node("concept-1");
     const far = wander(n, 60_000);
-    expect(Math.hypot(far.x, far.y)).toBeLessThan(56);
+    expect(Math.hypot(far.x, far.y)).toBeLessThan(40);
   });
 
   it("wanders a few units, not pixels at a time", () => {
     const n = node("concept-1");
     const moved = wander(n, 1000);
-    expect(Math.hypot(moved.x, moved.y)).toBeGreaterThan(0.9);
-    expect(Math.hypot(moved.x, moved.y)).toBeLessThan(28);
+    expect(Math.hypot(moved.x, moved.y)).toBeGreaterThan(0.2);
+    expect(Math.hypot(moved.x, moved.y)).toBeLessThan(6);
   });
 });
 

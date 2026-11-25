@@ -73,12 +73,12 @@ const frames = (n: number) => vi.advanceTimersByTime(17 * n);
  * This is the drift's amplitude AND the guard that the graph opened settled:
  * a layout that re-ran would move nodes by hundreds of units across a graph
  * this wide, so anything in this range is wander rather than a re-plan.
- * Raised with `DRIFT_ACCEL` (2026-11-25) — at 0.03 the motion measured ~10
- * units over five seconds, which on screen was indistinguishable from a dead
- * stop; it is now legible, and 44 units was the worst seen over 20s in the
- * real app.
+ * Widened with `DRIFT_TURN_MS` (2026-11-25): the 13s turn only reached ~11
+ * units, which on screen was indistinguishable from a dead stop. The 40s turn
+ * reaches ~34 at the same SPEED — `DRIFT_ACCEL` is unchanged, since that is
+ * what sets the pace.
  */
-const DRIFT_BOUND = 50;
+const DRIFT_BOUND = 40;
 
 const COLOURS: Record<string, string> = { c1: "#3e6f8a", c2: "#7a874f" };
 const root = (course: string): GraphNode => ({
