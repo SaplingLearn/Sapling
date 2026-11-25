@@ -34,7 +34,6 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from learning.ladder import Rung
 from learning.params import SELF_EXPLAIN_JUNCTURES, SELF_EXPLAIN_MAX_PER_CONCEPT
 
 #: loop_state key: {"open": the open prompt | None, "prompted": [node ids],
@@ -60,7 +59,9 @@ def prompt_text(prompt: Mapping[str, Any]) -> str:
     """The text of a stored prompt (its `prompt_key`)."""
     return PROMPTS[prompt["prompt_key"]]
 
-_H4, _H5, _H6 = int(Rung.H4), int(Rung.H5), int(Rung.H6)
+# learning.ladder.Rung's H4..H6, restated: this module may not import the PKG-06
+# ladder (tests/test_learning_zpd_policy.py::test_zpd_layer_is_inert_nothing_imports_it)
+_H4, _H5, _H6 = 4, 5, 6
 
 
 def _doc(state: Mapping[str, Any]) -> dict:
