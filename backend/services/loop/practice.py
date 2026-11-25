@@ -375,39 +375,34 @@ def _pick_item(
             user_id, course_id, state, concept, items[0].concept_key,
             target=target, formats=formats, excluded=excluded,
         )
-    # W2.4b: low-trust next-probe hint among already-eligible items.
+    # W2.4b: low-trust next-probe hint among already-eligible items:
+    # select_item's own pool (not excluded, is_servable — A34, K16,
+    # A124), so the hint never poses what the ordinary pick refuses.
     # Flag off → None (no decrypt, no-op). Flag on → open the latest
-    # step reasoning_encrypted under the session bind and prefer();
-    # a returned hash wins only if still eligible for this format pass.
+    # graded step's reasoning_encrypted under the session bind and
+    # prefer(); a returned hash wins only in its own format's pass.
+    eligible = [i for i in items if i.question_hash not in exclude and is_servable(i)]
     hint_qh = preferred_next_question_hash(
         user_id,
         None,
-        tuple(
-            (i.question_hash, i.prompt)
-            for i in items
-            if i.question_hash not in exclude
-        ),
+        tuple((i.question_hash, i.prompt) for i in eligible),
         session_id=session_id,
         state=state,
     )
     if item is None:
-        item = _select_by_format(items, formats, hint_qh, target, exclude, familiarity)
+        item = _select_by_format(items, eligible, formats, hint_qh, target, exclude, familiarity)
     return item, learner, band
 
 
-def _select_by_format(items: list, formats, hint_qh, target, exclude: set, familiarity):
+def _select_by_format(
+    items: list, eligible: list, formats, hint_qh, target, exclude: set, familiarity
+):
     """Format by format: the hinted item when it is eligible in this format,
     else select_item at the target difficulty; the first hit wins."""
     for fmt in formats:
         if hint_qh:
             hinted = next(
-                (
-                    i
-                    for i in items
-                    if i.question_hash == hint_qh
-                    and i.format == fmt
-                    and i.question_hash not in exclude
-                ),
+                (i for i in eligible if i.question_hash == hint_qh and i.format == fmt),
                 None,
             )
             if hinted is not None:

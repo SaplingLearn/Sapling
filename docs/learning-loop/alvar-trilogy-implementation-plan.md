@@ -258,7 +258,7 @@ Pending slots (`LOOP_SLOTS_PENDING_CLAUDE_EVAL`): **empty**.
 | W2.1 Enable `segment_prequestion` after W0.3 | enable | S | **Operator self-target first** ([`w0-flag-enable-checklist.md`](w0-flag-enable-checklist.md) step 6); E2E A138 green before class/% |
 | W2.2 Enable `self_explanation_prompts` after W0.3 | enable | S | **Operator self-target** (checklist step 7); E2E A139 + admin report before class/% |
 | W2.3 **Reason-before-submit** on free / teachback checks: short optional “show your reasoning” field; stored encrypted; **not** evidence; grader still uses answer + rubric | new_feature | M | UI + API; never writes mastery; E2E |
-| W2.4 Optional **low-trust next-probe hint** from reason/self-explain text: may only choose *which check to pose next*, never bump `p_known` | new_feature | L | Unit + invariant test: no mastery mutation path |
+| W2.4 Optional **low-trust next-probe hint** from reason-before-submit text (self-explain replies not wired: see W2.4 non-goals): may only choose *which check to pose next*, never bump `p_known` | new_feature | L | Unit + invariant test: no mastery mutation path |
 | W2.5 Confidence on every graded check/review surface (already on probe/quiz); hypercorrection dwell on high-confidence wrong | ui + policy | S | Spec A132 coverage; help/feedback dwell |
 | W2.6 Do **not** implement per-step predict (U2) or self-explain→mastery (W) | non-goal | — | Invariants + plan checklist |
 

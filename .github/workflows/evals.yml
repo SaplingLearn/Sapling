@@ -125,8 +125,12 @@ jobs:
           pip install --require-hashes -r requirements.lock
       # Spec section 13 A40 06(s): every floor is the minimum of its recorded
       # runs (a routing block, or the newest committed run log); fails before
-      # the replay on a floor someone set from one run or by hand.
+      # the replay on a floor someone set from one run or by hand, or from a
+      # run that raised or was recorded under another prompt. It imports the
+      # agents for their current prompt hashes, so it needs a key set (no call).
       - name: Check the floors against their recorded runs
+        env:
+          ENCRYPTION_KEY: "0000000000000000000000000000000000000000000000000000000000000000"
         run: |
           cd backend
           python tests/evals/floors.py --check

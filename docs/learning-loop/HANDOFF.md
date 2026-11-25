@@ -114,7 +114,7 @@ Grouped by who can do it. Check boxes as you finish. Prefer smallest safe PRs th
 These blocked **Google sign-in** and human-stack quiz in the last session:
 
 - [ ] **Local Supabase project `sapling` not running** — `supabase status` fails (`supabase_db_sapling` missing). Port **54322** held by foreign project `novus` (`supabase_db_novus`). Fix: stop conflicting project **or** free 54322, then `npx supabase start` + migrate/seed (`scripts/local-up.sh`).
-- [ ] **Google OAuth placeholders** in `backend/.env`:
+- [ ] **Google OAuth placeholders** in `.env` under `backend/`:
   - `GOOGLE_CLIENT_ID=your_google_client_id_here`
   - `GOOGLE_CLIENT_SECRET=your_google_client_secret_here`
   - Default `GOOGLE_AUTH_REDIRECT_URI` → `http://localhost:5000/api/auth/google/callback`

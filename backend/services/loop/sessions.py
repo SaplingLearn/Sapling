@@ -29,6 +29,7 @@ from services.loop.learner import (
     _learner_state,
     _learner_view,
     _node_for_item,
+    _practiced_nodes,
     _prereq_proficient,
 )
 from learning.goals import approved_plan_view
@@ -83,8 +84,12 @@ def status(request: Request, user_id: str, session_id: str) -> dict:
     # spec §13 A138 / A139: an open card is restored READ-ONLY on resume — each
     # key present only when there is one (never null), behind its flag
     teach_prompts = _open_teach_prompts(user_id, state) if not pending_grade else {}
+    # W3.2: a resumed session's map redraws its practiced outlines — present only
+    # when a concept was graded this session (never empty, never a belief)
+    practiced = _practiced_nodes(user_id, state)
     return {
         **teach_prompts,
+        **({"practiced_node_ids": practiced} if practiced else {}),
         "active": True,
         "session_id": session_id,
         "loop_phase": _loop_phase(state),  # PKG-08: probe | plan | teach (resume point)

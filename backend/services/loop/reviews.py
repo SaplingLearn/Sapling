@@ -36,6 +36,7 @@ from services.loop.state import (
     _StateConflict,
 )
 from services.loop.learner import _node_for_item
+from services.loop.claims import _is_idk_phrase
 from services.loop.reveals import _ledger, _refloor, _reveal_floor
 
 
@@ -402,9 +403,13 @@ def _review_answer_body(body: ReviewAnswerBody, outcome, check, loop_state: dict
         "refused": outcome.refused,
     }
     if check is not None and outcome.correct is False and not outcome.unavailable:
+        # an "I don't know" is nothing the student was sure of (A16's phrases; the
+        # review body has no idk of its own), as on the check and the probe
+        idk = _is_idk_phrase(body.answer or body.reason or "")
         dwell = policy.hypercorrection_feedback_dwell_ms(
             correct=False,
-            student_confidence=stated_confidence(body.confidence),
+            student_confidence=stated_confidence(body.confidence, idk=idk),
+            idk=idk,
             time_scale=config.LEARNING_GATE_TIME_SCALE,
         )
         if dwell > 0:

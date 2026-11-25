@@ -11,6 +11,11 @@ export interface LoopUiState {
    *  it null until done.check (or GET /status) brings the pose. */
   item: LoopCheckItem | null;
   learnerState: Record<string, LoopLearnerState>;
+  /** W3.2: the concepts graded this session, the ones the map outlines — the ids
+   *  GET /status names plus the graded turns' (`isGradedTurn`) since. Not the
+   *  keys of `learnerState`: any turn, a plain chat one too, reports its
+   *  concept's skill. Never a mastery claim. */
+  practiced: readonly string[];
   /** The node the last `learner_state` event named — the turn's concept (the
    *  pose itself never names its node). */
   focusNodeId: string | null;
@@ -21,7 +26,9 @@ export interface LoopUiState {
 export type LoopUiEvent =
   | { type: "phase"; phase: string }
   | { type: "check"; item: LoopCheckItem | null }
-  | { type: "learner_state"; state: LoopLearnerState }
+  /** `graded`: the turn delivered a graded answer on the concept (W3.2). */
+  | { type: "learner_state"; state: LoopLearnerState; graded?: boolean }
+  | { type: "practiced"; nodeIds: readonly string[] }
   | { type: "budget"; level: string; resetAt: string | null; sessionCapped?: boolean; pauseNovice?: boolean; aiLimit?: boolean }
   | { type: "budget_clear" }
   | { type: "reset" };
@@ -44,10 +51,16 @@ export function initialLoopState(): LoopUiState {
     phase: "probe",
     item: null,
     learnerState: {},
+    practiced: [],
     focusNodeId: null,
     budgetPause: null,
   };
 }
+
+/** W3.2: the turn delivers a grade — the graded submission's own, or a later
+ *  turn retrying its owed feedback (no `graded` there: the server runs a turn in
+ *  `feedback` only on a step with `graded_at`, as GET /status counts it). */
+export const isGradedTurn = (t: LoopTurnResult): boolean => t.graded === true || t.phase === "feedback";
 
 /** What a served hint turn (POST /action) changes here: its phase, its learner
  *  state (#866 K33: the focus concept) and a hard budget notice. */
@@ -61,11 +74,13 @@ export function hintTurnEvents(t: LoopTurnResult): LoopUiEvent[] {
 }
 
 /** A turn's learner state: it focuses its concept and, when measured, records
- *  the concept's skill. #866 K52: an unmeasured one (`measured: false`, the
- *  prior) moves the focus only — the prior is never shown as a skill. */
-function withLearnerState(state: LoopUiState, ls: LoopLearnerState): LoopUiState {
+ *  the concept's skill; a graded one also practices the concept (W3.2). #866 K52:
+ *  an unmeasured one (`measured: false`, the prior) moves the focus only — the
+ *  prior is never shown as a skill. */
+function withLearnerState(state: LoopUiState, ls: LoopLearnerState, graded: boolean): LoopUiState {
   if (ls.measured === false) return { ...state, focusNodeId: ls.node_id };
-  return { ...state, learnerState: { ...state.learnerState, [ls.node_id]: ls }, focusNodeId: ls.node_id };
+  const practiced = graded && !state.practiced.includes(ls.node_id) ? [...state.practiced, ls.node_id] : state.practiced;
+  return { ...state, learnerState: { ...state.learnerState, [ls.node_id]: ls }, practiced, focusNodeId: ls.node_id };
 }
 
 /** The pause a hard `budget` event shows; `pauseNovice` (#866 K35) and
@@ -98,7 +113,9 @@ export function reduceLoopEvent(state: LoopUiState, ev: LoopUiEvent): LoopUiStat
       };
     }
     case "learner_state":
-      return withLearnerState(state, ev.state);
+      return withLearnerState(state, ev.state, ev.graded === true);
+    case "practiced":
+      return { ...state, practiced: ev.nodeIds };
     case "budget":
       // soft = the invisible downgrade (spec §3.5): nothing renders
       if (ev.level !== "hard") return state;

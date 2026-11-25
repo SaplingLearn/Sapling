@@ -4,7 +4,7 @@
     "src/app/(shell)/notetaker/page.tsx": 1308,
     "src/components/Gradebook/GradescopeSyncModal.tsx": 1502,
     "src/components/graph/KnowledgeGraph2D.tsx": 1334,
-    "src/components/learn/LoopLearn.tsx": 2037,
+    "src/components/learn/LoopLearn.tsx": 2034,
     "src/components/screens/Admin.tsx": 1102,
     "src/components/screens/AdminAnalytics.tsx": 948,
     "src/components/screens/Calendar.tsx": 827,
@@ -13,7 +13,7 @@
     "src/components/screens/Learn.tsx": 1937,
     "src/components/screens/Settings.tsx": 885,
     "src/components/screens/Social.tsx": 1506,
-    "src/lib/api.ts": 2014,
+    "src/lib/api.ts": 2005,
     "src/lib/graph/radialLayout.ts": 1022
   }
 }

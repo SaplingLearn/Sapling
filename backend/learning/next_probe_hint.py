@@ -1,4 +1,4 @@
-"""Low-trust next-probe hint from reason / self-explain text (W2.4 / plan S).
+"""Low-trust next-probe hint from reason-before-submit text (W2.4 / plan S).
 
 Given already-decrypted (or raw) student prose and candidate check items, pick
 at most one preferred ``question_hash`` to pose next. Diagnostic routing only:

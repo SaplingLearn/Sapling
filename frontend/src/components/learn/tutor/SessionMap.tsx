@@ -38,7 +38,7 @@ export function sessionMapGraph(
  *     pans, drags or pinch-zooms it; a double-click re-frames it, and so does
  *     a new set of concepts. A plain wheel scrolls the panel, never the map.
  *   - W3.2 dual encoding: fill = understood (mastery); solid outline =
- *     practiced this session (`practicedNodeIds` from measured learner_state).
+ *     practiced this session (`practicedNodeIds`: graded answers only).
  * Width is measured (the panel's own), as Learn.tsx's sidebar graph does.
  * Only concepts are drawn (`sessionMapGraph`); with none there is no map.
  */
@@ -51,7 +51,7 @@ export function SessionMap({
   nodes: GraphNode[];
   edges: GraphEdge[];
   highlightId?: string;
-  /** Node ids with a measured learner_state entry this session (covered/practiced). */
+  /** Node ids graded this session: a graded turn's on screen, or named by GET /status (a resume). */
   practicedNodeIds?: ReadonlySet<string> | readonly string[];
 }) {
   const graph = useMemo(() => sessionMapGraph(nodes, edges), [nodes, edges]);

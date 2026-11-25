@@ -5,7 +5,9 @@ attempt rule and the band ceiling.
 from __future__ import annotations
 
 import dataclasses
+import logging
 import config
+import httpx
 from db.connection import table
 from learning import gates, policy
 from learning.bkt import band as bkt_band
@@ -15,6 +17,9 @@ from learning.learner_state import LearnerState, read_states
 from learning.params import BAND_CONTROL_CEILING_STEP, BKT_L0, EDGE_PREREQ_SOURCE_IS_PREREQ
 from learning.policy import LearnerView, StepState
 from services.graph_service import _normalize_concept, _prerequisite_edges
+
+#: The package's one logger name (services/loop/state.py).
+logger = logging.getLogger("routes.learn_loop")
 
 
 # ── Learner state, band, ceiling ───────────────────────────────────────────
@@ -53,6 +58,27 @@ def _measured(state: LearnerState | None) -> bool:
     reads, but nothing the student did on this concept, so the meter never
     shows it as their skill (#866 K52)."""
     return state is not None and state.opps > 0
+
+
+def _practiced_nodes(user_id: str, state: dict) -> list[str]:
+    """W3.2: the concepts practiced this session — the nodes of its graded steps
+    (`graded_at`) that are still measured (`_measured`: a grade voided since, or
+    a node merged away, is not shown as practice). Node ids only, sorted; reads
+    one batch of learner_state, and nothing when no step is graded. It only
+    draws the map's outlines, so a failed read is [] — never a failed resume."""
+    nodes = {
+        e["node_id"]
+        for e in (state.get("steps") or {}).values()
+        if isinstance(e, dict) and e.get("graded_at") is not None and e.get("node_id")
+    }
+    if not nodes:
+        return []
+    try:
+        states = read_states(user_id, nodes)
+    except (httpx.HTTPError, RuntimeError, ValueError):
+        logger.warning("practiced concepts unavailable; the session map shows none")
+        return []
+    return sorted(n for n in nodes if _measured(states.get(n)))
 
 
 def _band_of(state: LearnerState | None) -> tuple[str, float]:

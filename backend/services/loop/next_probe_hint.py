@@ -2,8 +2,8 @@
 
 ``learning.next_probe_hint`` is pure selection. This module is the only
 request-path entry: flag off → ``None`` immediately (byte-identical picker);
-flag on → open the latest step ``reasoning_encrypted`` under the session bind
-(when plaintext was not already supplied) and run ``prefer`` over that prose
+flag on → open the latest graded step's ``reasoning_encrypted`` under the
+session bind (when plaintext was not already supplied) and run ``prefer`` over that prose
 plus caller-supplied candidates. Never mastery / never a graph mutation.
 """
 
@@ -15,8 +15,8 @@ from learning import check_reason
 from learning import next_probe_hint as hint
 from services.feature_flags import flag_on
 
-#: Plan W2.4 — optional low-trust next-check preference from reason /
-#: self-explain prose. Server-only; off = ordinary activation unchanged.
+#: Plan W2.4 — optional low-trust next-check preference from
+#: reason-before-submit prose. Server-only; off = ordinary activation unchanged.
 NEXT_PROBE_HINT_FLAG = "next_probe_hint"
 
 
@@ -36,8 +36,8 @@ def preferred_next_question_hash(
     """Preferred next check hash, or ``None``.
 
     Flag off → ``None`` without scoring or decrypt (no-op). Flag on → open
-    the latest free/teachback ``reasoning_encrypted`` under the session bind
-    when ``text`` is None, then ``learning.next_probe_hint.prefer`` over that
+    the latest graded step's ``reasoning_encrypted`` (free/teachback only) under
+    the session bind when ``text`` is None, then ``learning.next_probe_hint.prefer`` over that
     plaintext + candidates. Never writes mastery or evidence.
     """
     if not _next_probe_hint_on(user_id):

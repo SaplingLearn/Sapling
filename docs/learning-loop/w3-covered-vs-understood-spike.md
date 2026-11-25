@@ -14,7 +14,7 @@
 |---|---|---|---|
 | Graph `GET /api/graph/{userId}` → `mastery_score` / `mastery_tier` | concept | Yes | **Understood** (persisted BKT; what SessionMap paints today via `colorMode="mastery"`) |
 | Live `LoopLearnerState` (`p_known`, `band`) in `loopState.learnerState` | concept | Yes (session) | **Understood (live)** once `measured !== false`; Skill meters already prefer this over the map score |
-| Keys of `learnerState` (measured only) | concept | Yes | Best **practiced-this-session** proxy — evidence updated skill this turn/session |
+| Keys of `learnerState` (measured only) | concept | Yes | The spike's first **practiced-this-session** proxy; superseded (§2): every served turn, a plain chat one too, reports its concept's stored skill, whichever session measured it |
 | Approved plan + `cursor` (`ApprovedPlan`) | concept | Yes | **Plan progress:** indices `< cursor` = advanced past; `cursor` = current; ahead = not yet. Not the same as “understood” |
 | Plan concept ids (whole list) | concept | Yes | “On today’s plan” — scheduled coverage, not practiced |
 | Item `seen` / `revealed` hashes | **question** | Server-only in `loop_state` | Wrong grain for SessionMap; do **not** promote to concept “covered” without a new aggregation |
@@ -49,7 +49,7 @@ Keep two axes orthogonal; never collapse them into one colour.
 
 | Axis | Meaning for the student | Recommended source (v1) |
 |---|---|---|
-| **Covered / practiced** | “You engaged this concept with a graded signal this session” | Node id ∈ `Object.keys(state.learnerState)` after measured `learner_state` events (`measured !== false` never lands in the map — see `loopState.ts` K52) |
+| **Covered / practiced** | “You engaged this concept with a graded signal this session” | Node id ∈ `state.practiced` (`loopState.ts`): the `practiced_node_ids` of `GET /api/learn/loop/status` plus the concepts of graded turns in this view (`isGradedTurn`: a graded submission, or a later turn delivering its owed feedback; `measured: false` never counts, K52). **Not** the keys of `learnerState` |
 | **Understood** | “How well the model believes you know it” | Graph `mastery_tier` / `mastery_score` for fill; for plan-row meters, keep preferring live `p_known` / map `band` → tier |
 
 **Do not use as “covered” (v1):**
@@ -102,15 +102,15 @@ Add for W3.2:
 
 | testid | Where | Assert |
 |---|---|---|
-| `tutor-map-practiced-{nodeId}` | Outline mark on a practiced concept (KG2D / SessionMap) | Present after measured learner_state for that id |
+| `tutor-map-practiced-{nodeId}` | Outline mark on a practiced concept (KG2D / SessionMap) | Present after a graded answer on that concept this session (live or resumed); absent after a plain chat turn on it |
 | `tutor-map-key-practiced` | Legend row for outline = practiced | Present when dual encoding on |
 | `tutor-map-understood-{tier}` | Optional; only if tier swatches need stable ids | Prefer keep existing key `<li>` text unless E2E needs ids |
 
 Journey sketch (`learn-loop.spec.ts` or sibling):
 
-1. Start loop → teach → grade a check that emits measured `learner_state` for concept A.  
+1. Start loop → teach → grade a check on concept A (its turn reports a measured `learner_state`).  
 2. Expect `tutor-map-practiced-{A}` and tier fill still readable (not “mastered” solely from visit).  
-3. Advance cursor without measuring B → B has highlight when current, **no** practiced outline until measured.  
+3. Advance cursor without measuring B → B has highlight when current, **no** practiced outline until an answer on it is graded.  
 4. a11y: key names both channels; map `aria-label` / title text can mention practiced vs mastery if tooltips gain copy.
 
 ---
@@ -119,7 +119,7 @@ Journey sketch (`learn-loop.spec.ts` or sibling):
 
 | Slice | Size | Notes |
 |---|---|---|
-| Derive `practicedNodeIds` in LoopLearn; pass into SessionMap | XS | `new Set(Object.keys(state.learnerState))` |
+| Derive `practicedNodeIds` in LoopLearn; pass into SessionMap | XS | `state.practiced` (§2) |
 | KnowledgeGraph (+2D) prop: outline set by node id | S–M | New prop; do not hijack `comparison` |
 | SessionMap forward prop + SessionPanel legend row | S | Legend is SessionPanel (allowed for ship; spike avoided editing it) |
 | Optional live fill from `p_known` for practiced ids | S | Avoids graph-refresh lag |
@@ -129,7 +129,7 @@ Journey sketch (`learn-loop.spec.ts` or sibling):
 
 **Dependencies / risks**
 
-- Practiced set is **session-UI memory** today — resume must rehydrate measured learner_state (turns/`/status` paths) or outlines vanish on reload; confirm restore coverage before E2E.  
+- Practiced set survives a reload: `GET /status` returns `practiced_node_ids` — the nodes of the session's graded steps (`graded_at`) that are still measured, ids only (no skill rides along), the key absent when there are none — and resume seeds the reducer from it (`practiced` event). Live and resumed sets follow the same rule (graded check steps; a probe answer or an open review is not a step), so a reload changes no outline (bar a grade voided since, which resume drops).  
 - Sparse early teach: few outlines until first grades — legend still explains empty outline channel.  
 - W7.10 launcher map should reuse the same prop once KG supports it.
 
@@ -156,7 +156,7 @@ Journey sketch (`learn-loop.spec.ts` or sibling):
 
 1. Add id-based practiced outline to `KnowledgeGraph2D` (solid ring; testids).  
 2. `SessionMap({ …, practicedNodeIds? })` forwards to KG.  
-3. `LoopLearn`: `practicedNodeIds={new Set(Object.keys(state.learnerState))}` (or memo).  
+3. `LoopLearn`: `practicedNodeIds={state.practiced}` (§2).  
 4. Extend `tutor-map-key` with practiced outline swatch.  
 5. Unit + Playwright + testid doc.  
 6. Defer cursor-as-covered and live fill remint to a follow-up if needed.

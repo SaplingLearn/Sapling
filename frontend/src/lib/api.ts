@@ -27,6 +27,7 @@ import { REAUTH_REQUIRED, isReauthRequired, notifyReauthRequired } from '@/lib/r
 import { ApiError, apiErrorOf, errorFieldsFrom, parseErrorBody } from '@/lib/apiError';
 import { askOriginFields, quotedQuestionFields, type AskOrigin, type QuizAskOrigin } from '@/lib/askOrigin';
 import { loopBudgetNoticeOf, type LoopBudgetNotice } from '@/lib/loopBudget';
+import type { LoopSessionStatus } from '@/lib/loopStatusTypes';
 import type { LoopCreditFields } from '@/lib/loopCredit';
 import type {
   AdminCheckItemQueue, AdminAuditSample, AdminItemStatsReport, CheckItemAuditVerdict, CheckItemKeyStatus,
@@ -1401,25 +1402,7 @@ export const listLoopSessionsFor = async (
   return { sessions: r.sessions ?? [], resume: r.resume ?? null, complete: r.complete !== false };
 };
 
-/** GET /status for one session (read-only): where it stands and, while an item
- *  takes answers, its pose. The resume restore and the post-submission reconcile. */
-export interface LoopSessionStatus extends LoopLearningScope, LoopPlanMoved {
-  active: boolean;
-  session_id: string;
-  /** PKG-08's phase: probe | plan | teach | close. */
-  loop_phase: string;
-  /** PKG-07's teach refinement: teach | check | feedback. */
-  phase: string;
-  active_question_hash?: string | null;
-  check?: LoopCheckItem | null;
-  pending_grade?: LoopPendingGrade | null;
-  /** Spec §13 A138: the open segment-opening guess (absent when none). */
-  prequestion?: LoopPrequestion | null;
-  /** Spec §13 A139: the open self-explanation prompt (absent when none). */
-  self_explain?: LoopSelfExplain | null;
-  // approved_plan (LoopPlanMoved): the approved plan, in order, with its cursor
-  // (absent before approval) — always, on /status
-}
+export type { LoopSessionStatus } from '@/lib/loopStatusTypes';
 /** A concept as the Tutor's session panel lists it. */
 export interface LoopPanelConcept { node_id: string; concept_name: string; kind: string; reason?: LoopPlanConcept['reason'] }
 export const getLoopSessionStatus = (sessionId: string, userId: string) =>
