@@ -104,10 +104,7 @@ export function useKitMotion(): KitMotion {
     arrive: (isNew, step = 0) =>
       isNew
         ? {
-            // lib/motion types a preset's `initial` as TargetAndTransition,
-            // which framer's `initial` prop (a Target: no keyframes, no
-            // transition) does not accept; fadeUp's is a plain Target.
-            initial: m.fadeUp.initial as Target,
+            initial: m.fadeUp.initial,
             animate: m.fadeUp.animate,
             transition: { ...m.fadeUp.transition, delay: step * MOTION.stagger.base },
           }
