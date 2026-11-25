@@ -14,12 +14,10 @@
  */
 import React from "react";
 
+import { deleteDocument, getCourses, getDocuments, type EnrolledCourse } from "@/lib/api";
 import {
   createFolder as apiCreateFolder,
-  deleteDocument,
   deleteFolder as apiDeleteFolder,
-  getCourses,
-  getDocuments,
   getFolders,
   getTrashedDocuments,
   purgeDocument,
@@ -27,8 +25,7 @@ import {
   restoreDocument,
   updateDocument,
   type DocumentPatch,
-  type EnrolledCourse,
-} from "@/lib/api";
+} from "@/lib/libraryApi";
 import type { DocFolder, Document as Doc } from "@/lib/types";
 import { humanizeError } from "@/lib/errorMessage";
 import { useLatestRequest } from "@/lib/useLatestRequest";

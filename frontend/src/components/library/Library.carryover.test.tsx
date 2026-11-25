@@ -22,25 +22,28 @@ vi.mock("@/context/FlagsContext", () => ({
 vi.mock("@/lib/api", () => ({
   getDocuments: vi.fn(),
   getCourses: vi.fn(),
+  deleteDocument: vi.fn(async () => ({ deleted: true })),
+  scanDocumentConcepts: vi.fn(),
+  scanCourseConcepts: vi.fn(),
+  uploadDocumentStream: vi.fn(),
+}));
+vi.mock("@/lib/libraryApi", () => ({
   getFolders: vi.fn(async () => ({ folders: [] })),
   getTrashedDocuments: vi.fn(async () => ({ documents: [] })),
-  deleteDocument: vi.fn(async () => ({ deleted: true })),
   restoreDocument: vi.fn(async () => ({ restored: true })),
   purgeDocument: vi.fn(async () => ({ deleted: true, purged: true })),
   updateDocument: vi.fn(async () => ({ id: "d1" })),
   createFolder: vi.fn(),
   renameFolder: vi.fn(),
   deleteFolder: vi.fn(),
-  scanDocumentConcepts: vi.fn(),
-  scanCourseConcepts: vi.fn(),
-  uploadDocumentStream: vi.fn(),
 }));
 vi.mock("@/lib/studyGuide/api", () => ({ listGuides: vi.fn(async () => ({ guides: [] })) }));
 
 import {
   deleteDocument, getCourses, getDocuments, scanCourseConcepts,
-  scanDocumentConcepts, updateDocument, type EnrolledCourse,
+  scanDocumentConcepts, type EnrolledCourse,
 } from "@/lib/api";
+import { updateDocument } from "@/lib/libraryApi";
 import { Library } from "./Library";
 import { ToastProvider } from "../ToastProvider";
 
@@ -236,7 +239,7 @@ describe("the old page's actions all still work", () => {
 
 describe("what the redesign adds, end to end", () => {
   it("the Trash holds a deleted document, restores it, and purges it", async () => {
-    const { getTrashedDocuments } = await import("@/lib/api");
+    const { getTrashedDocuments } = await import("@/lib/libraryApi");
     vi.mocked(getTrashedDocuments).mockResolvedValue({
       documents: [{ ...DOC, id: "t1", deleted_at: "2026-11-10T00:00:00Z" }],
     } as never);

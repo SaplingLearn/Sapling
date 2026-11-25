@@ -32,18 +32,20 @@ vi.mock("@/context/FlagsContext", () => ({
 vi.mock("@/lib/api", () => ({
   getDocuments: vi.fn(),
   getCourses: vi.fn(),
+  deleteDocument: vi.fn(),
+  scanDocumentConcepts: vi.fn(),
+  scanCourseConcepts: vi.fn(),
+  uploadDocumentStream: vi.fn(),
+}));
+vi.mock("@/lib/libraryApi", () => ({
   getFolders: vi.fn(async () => ({ folders: [] })),
   getTrashedDocuments: vi.fn(async () => ({ documents: [] })),
-  deleteDocument: vi.fn(),
   restoreDocument: vi.fn(),
   purgeDocument: vi.fn(),
   updateDocument: vi.fn(),
   createFolder: vi.fn(),
   renameFolder: vi.fn(),
   deleteFolder: vi.fn(),
-  scanDocumentConcepts: vi.fn(),
-  scanCourseConcepts: vi.fn(),
-  uploadDocumentStream: vi.fn(),
 }));
 vi.mock("@/lib/studyGuide/api", () => ({ listGuides: vi.fn(async () => ({ guides: [] })) }));
 
