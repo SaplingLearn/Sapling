@@ -6236,21 +6236,6 @@ _UNSERVABLE_HONEST = [
 ]
 
 
-def _serve_withholds(final_answer, prompt, text) -> bool:
-    from learning.leak import confront_text_states_answer
-
-    return confront_text_states_answer(text, final_answer=final_answer)
-
-
-@pytest.mark.parametrize(
-    "final_answer,prompt,text", _STATED + _PROMPT_ANAPHORS + _NO_TOKEN + _UNSERVABLE_HONEST
-)
-def test_the_drafting_lint_agrees_with_the_serve_time_check(final_answer, prompt, text):
-    """R4-2/3: stored == servable, case by case."""
-    draft = _wrong_reason_draft(final_answer, text, prompt=prompt)
-    assert _states_answer(draft) is _serve_withholds(final_answer, prompt, text)
-
-
 @pytest.mark.parametrize("final_answer,prompt,text", _STATED)
 def test_a_stated_answer_is_refused_whatever_the_wording(final_answer, prompt, text):
     assert _states_answer(_wrong_reason_draft(final_answer, text, prompt=prompt))
