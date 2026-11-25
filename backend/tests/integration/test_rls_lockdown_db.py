@@ -95,6 +95,7 @@ AUTHENTICATED_TABLE_GRANTS: dict[str, frozenset[str]] = {
     **{t: _SIUD for t in (
         "oauth_tokens", "gradescope_credentials", "enrollments", "notes", "flashcards",
         "flashcard_sets",  # 20261112060028_flashcard_sets.sql
+        "document_folders",  # 20261125062932_library_folders.sql
         "sessions", "quiz_attempts", "quiz_context", "study_guides", "graph_nodes",
         "graph_edges", "friend_requests",
     )},

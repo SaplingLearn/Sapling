@@ -591,7 +591,8 @@ describe("the menu", () => {
     expect(mocks.patchGuide).toHaveBeenCalledWith("u1", GUIDE_ID, { saved: true });
     expect(saved).toHaveTextContent("Saved to Library");
     expect(saved).toHaveTextContent("Open it there");
-    expect(saved).toHaveAttribute("href", "/library");
+    // The Study Guides home lists saved guides; the Library no longer does (#717).
+    expect(saved).toHaveAttribute("href", "/study/guide");
     expect(screen.queryByTestId("guide-menu-save")).not.toBeInTheDocument();
   });
 

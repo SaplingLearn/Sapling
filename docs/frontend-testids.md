@@ -88,7 +88,7 @@ renders the element.
 | App shell | `app` | `frontend/src/components/ShellFrame.tsx` (the authed layout frame every `(shell)` route renders inside) |
 | Study rooms | `social` | `frontend/src/components/screens/Social.tsx` (rooms sidebar, chat, overview, study match, directory — added with the #394 two-context journey) |
 | Dashboard | `dashboard` | `frontend/src/components/screens/Dashboard.tsx` (rendered by `(shell)/dashboard/page.tsx`) |
-| Library | `library` | `frontend/src/components/screens/Library.tsx` (the `/library` document screen — upload trigger, document cards/rows, filters, detail panel) |
+| Library | `library` | `frontend/src/components/library/` (the `/library` document screen, rebuilt in #717 — header, course switcher, folders, document rows, the upload dialog) |
 | Study guide reader | `guide` | `frontend/src/components/studyGuide/reader/**` (the `/study/guide/{guideId}` screen: `GuideReader.tsx` mounts `ReaderTopBar`, `GuideHeader` + `GuideMenu`, `GenerationBanner`, `SectionView` + `Prose`, one file per block type under `blocks/` inside the shared `BlockFrame`, `Sources`, `FeedbackRow` and the rail under `rail/`); `guide-space-bar` is `studyGuide/shared/SpaceBar.tsx`. The ids on `ui/Toggle`, `ui/AnswerOption` and `ui/InlineBanner` are passed in as a `testid` prop |
 | Study Guides home | `guides` | `frontend/src/components/studyGuide/home/GuidesHome.tsx` (the `/study/guide` screen) + `GuidesToolbar.tsx`, `SortMenu.tsx`, `GuideCard.tsx`, `GuidesStates.tsx` |
 | New study guide dialog | `guide-new` | `frontend/src/components/studyGuide/home/NewGuideModal.tsx` (opened from the home) + `ScopeFields.tsx`, `ChoiceFields.tsx`, `MaterialTiles.tsx`, `PlannedOutline.tsx`. The ids on `CustomSelect`, `ui/Toggle` and `ui/Switch` are passed in as a `testId` / `testid` prop |
@@ -463,6 +463,7 @@ distinguishable from a genuinely empty calendar).
 | --- | --- |
 | `calendar-load-error` | the load-failure banner (`role="alert"`) rendered instead of the calendar views when the initial assignments/courses fetch fails |
 | `calendar-load-retry` | the banner's "Try again" button — re-runs the load through the skeleton state |
+| `calendar-import-syllabus` | the header's "Import syllabus" button, which opens the upload modal (`upload-modal`) |
 
 ### `gradebook`
 
@@ -736,25 +737,31 @@ for the mix bar).
 
 ### `library`
 
-Added with the upload → SSE → library journey (#387).
+Added with the upload → SSE → library journey (#387); redone with the Library
+rebuild (#717), which dropped the sidebar course filters, the detail panel and
+the saved-guides section (saved guides are listed on the Study Guides home).
 
 | testid | element |
 | --- | --- |
-| `library-upload` | TopBar "Upload" button that opens the upload modal (disabled with zero courses) |
-| `library-search` | TopBar "Search documents…" input |
-| `library-course-scan` | TopBar "Scan <course>" button (only while a course filter is active) |
-| `library-doc-{docId}` | one document card (grid view) / row (list view), suffixed with the document's id |
-| `library-course-filter-all` | sidebar "All" course filter |
-| `library-course-filter-uncategorized` | sidebar "Uncategorized" course filter |
-| `library-course-filter-{courseId}` | sidebar per-course filter row |
-| `library-detail-close` | detail panel × close |
-| `library-detail-scan` | detail panel "Scan" / "Re-scan" concept-scan button |
-| `library-detail-delete` | detail panel "Delete document" (click-twice confirm) |
-| `library-concepts-toggle-all` | detail panel "Expand all" / "Collapse all" |
-| `library-concept-toggle-{idx}` | one concept accordion toggle (render index) |
+| `library-upload` | header "Upload" button that opens the Upload menu (Upload Documents / New Folder; disabled with zero courses) |
+| `library-upload-input` | the hidden `<input type="file">` behind "Upload Documents" (use `setInputFiles`, or the menu item with a `filechooser` wait) |
+| `library-upload-where` | the "Where Does This Belong?" dialog: course + folder pickers, then the files' live progress |
+| `library-upload-confirm` | that dialog's "Add to Library" button (disabled until a course is picked) |
+| `library-upload-done` | that dialog's "Done" button once the upload has started (disabled while any file is still working) |
+| `library-guides` | header "Study Guide" link to the Study Guides home |
+| `library-search` | header search input |
+| `library-course-switcher` | the scope heading and its menu: All Documents, each course, No Course, Trash |
+| `library-course-scan` | "Scan <course>" concept-scan button (only while a course is the scope) |
+| `library-folder-{folderId}` | one folder row / tile |
+| `library-doc-{docId}` | one document row (list view) / tile (panel view); its subtitle is the summary |
+| `library-doc-menu` | a document's menu (summary, key concepts, actions) |
+| `library-detail-scan` / `library-detail-delete` | that menu's concept scan and delete |
+| `library-bulk-reveal` / `library-bulk-bar` / `library-bulk-menu` | the selection bar for checked rows and its menu |
+| `library-empty` / `library-empty-trash` | the empty state / "Empty Trash" |
+| `library-skeleton` | the first-load skeleton |
+| `library-toast` / `library-toast-undo` | the action toast and its Undo |
 | `library-load-error` | load-failure notice (#769): the full error state when nothing has loaded, or an inline banner over the last-loaded list |
 | `library-load-retry` | that notice's "Try again" / "Retry" button |
-| `library-guide-{guideId}` | one saved study guide's card in the "Study guides" section over the documents (`studyGuide/home/LibraryGuides.tsx`, mounted by `screens/Library.tsx`); a link to the reader, suffixed with the guide's id. The section is absent when no saved guide matches the course filter and search |
 
 ### `guide`
 
@@ -776,7 +783,7 @@ content carries (`s1`, `s1-i2`, ...); a block's id is its item id.
 | `guide-title` | the guide's title (`<h2>`: the top bar's "Study" is the page's `<h1>`, and each section's title is an `<h3>`) |
 | `guide-menu` | the three-dot menu button beside the title |
 | `guide-menu-save` | menu item "Save to Library" (only while the guide is not saved) |
-| `guide-menu-saved` | menu item "Saved to Library", a link to `/library` (only once saved; takes the focus when Save swaps it in) |
+| `guide-menu-saved` | menu item "Saved to Library", a link to the Study Guides home `/study/guide`, which lists saved guides (only once saved; takes the focus when Save swaps it in) |
 | `guide-menu-export` | menu item "Export PDF" (the browser's print dialog) |
 | `guide-menu-regenerate` | menu item "Regenerate whole guide" (disabled while the guide is generating or a block is being regenerated) |
 | `guide-space-bar` | the bar that shows each section's share of the guide by mastery (`shared/SpaceBar.tsx`). Also rendered on every home card and in the dialog's planned outline, so scope it to its parent there |

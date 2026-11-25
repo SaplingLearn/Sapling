@@ -296,6 +296,7 @@ function ModalFooter({
   if (started) {
     return (
       <button
+        data-testid="library-upload-done"
         className={finished ? "sapHoverForest" : "sapHoverWarm"}
         onClick={onClose}
         disabled={busy}

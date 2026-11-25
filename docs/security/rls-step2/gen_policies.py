@@ -35,6 +35,8 @@ History:
     as flashcards). Its four policies and its grant ship in the table's own
     migration (20261112060028_flashcard_sets.sql), written as this generator
     prints them; the applied step-2b/2c migrations are not regenerated.
+  * 2026-11-25 document_folders joins bucket A the same way (the Library's
+    folders; 20261125062932_library_folders.sql).
 """
 import json
 import sys
@@ -83,6 +85,7 @@ BUCKETS = {
         "issue_reports", "user_achievements", "user_cosmetics", "user_roles", "xp_events",
         "friend_requests", "friendships",
         "flashcard_sets",
+        "document_folders",
     ],
     "B_via_parent": [
         "messages", "node_mastery_events", "note_concepts", "quiz_responses",
@@ -126,6 +129,9 @@ for t in ("oauth_tokens", "gradescope_credentials", "enrollments", "notes",
 # Added after steps 2b/2c were applied: policies + grant live in the table's
 # own migration (20261112060028_flashcard_sets.sql), not in those two.
 owner("flashcard_sets", own); grant("flashcard_sets", "SELECT, INSERT, UPDATE, DELETE")
+# Same shape, own migration (20261125062932_library_folders.sql).
+owner("document_folders", own)
+grant("document_folders", "SELECT, INSERT, UPDATE, DELETE")
 owner("documents", own)
 grant("documents", "SELECT, INSERT, DELETE")
 # Not the index_* lease columns (document_indexing owns them, svc), nor id /
