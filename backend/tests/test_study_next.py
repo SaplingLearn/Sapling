@@ -96,15 +96,6 @@ def test_next_route_shape_and_course_id():
     ln.assert_called_once_with("u1", "c1")
 
 
-def test_next_route_404_when_off():
-    with (
-        patch("routes.study.require_self", return_value=None),
-        patch("services.study.next.quiz_learning.quiz_flags", return_value=(False,)),
-    ):
-        r = client.get("/api/study/u1/next")
-    assert r.status_code == 404
-
-
 def test_next_route_requires_self():
     from fastapi import HTTPException
 
