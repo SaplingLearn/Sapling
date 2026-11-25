@@ -52,10 +52,10 @@ def test_the_ocr_pipeline_live_tests_need_their_own_opt_in():
     """The one live file that used to run on a key alone (GEMINI_API_KEY)."""
     import tests.test_ocr_pipeline as ocr
 
-    for name in ("test_agent_parse", "test_save_to_db", "test_full_pipeline"):
-        func = getattr(ocr, name, None)
-        if func is None:
-            continue
+    names = ("test_agent_parse", "test_save_to_db", "test_full_pipeline")
+    found = {name: getattr(ocr, name) for name in names if hasattr(ocr, name)}
+    assert found, f"none of {names} is in tests/test_ocr_pipeline.py (renamed? re-point this pin)"
+    for name, func in found.items():
         marks = {mark.name: mark for mark in getattr(func, "pytestmark", [])}
         assert "live_llm" in marks, name
         skipif = marks.get("skipif")
