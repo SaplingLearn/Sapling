@@ -228,7 +228,14 @@
    Sized from its OWN width (it is anywhere from 300px to ~700px wide depending
    on the window and the side nav), not the page's. Wide: one row, the concept
    on the left and its actions on the right. Narrow: one column. */
-.focus { container-type: inline-size; container-name: focus; }
+.focus {
+  container-type: inline-size; container-name: focus;
+  /* The least room the concept (its ring, name and prerequisite line) is
+     given beside the actions: the 72px ring, its gap, and the ~230px the
+     prerequisite line is measured for (hubModel CHIP_LINE). With less, the
+     actions wrap under the concept instead of squeezing its name. */
+  --focus-text-min: calc(var(--sp-32) * 5);
+}
 .focusBody {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -257,6 +264,8 @@
 .focusName {
   display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2;
   overflow: hidden; text-wrap: balance;
+  /* A single word longer than the line breaks rather than being cut. */
+  overflow-wrap: anywhere;
   padding-bottom: 0.1em;
   margin-bottom: -0.1em;
 }
@@ -264,10 +273,16 @@
 /* With no concept to show (a course with none yet, or all mastered) the block
    keeps the height it has with one: padding + label line + gap + concept row. */
 .focusEmpty { box-sizing: border-box; min-height: calc(32px + 14.5px + 10px + 79px); }
+/* Wide: the concept and its actions share a row while the concept keeps
+   --focus-text-min; past that the actions wrap onto a row of their own. (A
+   grid row of `1fr auto` gave the actions their whole width first, so at
+   ~1456px the name was cut to "Binary / Numb".) The wrap point is set by the
+   block's width, never by the concept, so picking a different concept still
+   never changes the block's height. */
 @container focus (min-width: 480px) {
-  .focusBody { grid-template-columns: minmax(0, 1fr) auto; column-gap: var(--sp-9); align-items: center; }
-  .focusMain { grid-column: 1; grid-row: 1; }
-  .focusActions { grid-column: 2; grid-row: 1; }
+  .focusBody { display: flex; flex-wrap: wrap; align-items: center; column-gap: var(--sp-9); row-gap: var(--sp-7); }
+  .focusMain { flex: 1 1 var(--focus-text-min); }
+  .focusActions { flex: 0 0 auto; }
 }
 /* Stacked: the actions share the row equally, so a longer label ("Review 12
    flashcards") shortens with an ellipsis instead of wrapping to a second row. */
