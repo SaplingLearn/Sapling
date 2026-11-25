@@ -111,7 +111,7 @@ import { SESSION_CLOSED_DETAIL, sessionRefusal } from "./sessionErrors";
 import { withPlanHistory } from "./loopHistory";
 import { dropInterruptedTurn } from "./chatRetry";
 import { modalOpen } from "./modalOpen";
-import { hintDenial, type Draft, type HintView } from "./loopShared";
+import { LOOP_GOAL_MAX_TARGETS, LOOP_GOAL_TEXT_MAX, hintDenial, type Draft, type HintView } from "./loopShared";
 import { VerdictBanner } from "./VerdictBanner";
 import { ProbePanel } from "./ProbePanel";
 import { PlanPanel } from "./PlanPanel";
@@ -1141,9 +1141,9 @@ export function LoopLearn() {
     if (!sessionId || !courseId || goalBusy || !scopeReady || pendingGrade) return;
     if (state.phase !== "probe" && state.phase !== "plan") return;
     const ownIds = new Set(graph.nodes.filter((n) => n.course_id === courseId && !n.is_subject_root).map((n) => n.id));
-    if (requested && (requested.text.length > 500 || requested.target_node_ids.length < 1 || requested.target_node_ids.length > 12 ||
+    if (requested && (requested.text.length > LOOP_GOAL_TEXT_MAX || requested.target_node_ids.length < 1 || requested.target_node_ids.length > LOOP_GOAL_MAX_TARGETS ||
       requested.target_node_ids.some((id) => !ownIds.has(id)))) {
-      setGoalError("Confirm 1–12 concepts from this course.");
+      setGoalError(`Confirm 1–${LOOP_GOAL_MAX_TARGETS} concepts from this course.`);
       return;
     }
     const sid = sessionId;

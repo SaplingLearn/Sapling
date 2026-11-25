@@ -2,6 +2,11 @@
 import type { LoopHintResponse, StudentConfidence } from "@/lib/api";
 import fieldStyles from "./loopShared.module.css";
 
+/** A learning goal's free text, as the goal editor caps it (POST /goal's `text`),
+ *  and its target concepts' cap, re-exported beside it for the goal's checks. */
+export const LOOP_GOAL_TEXT_MAX = 500;
+export { LOOP_GOAL_MAX_TARGETS } from "@/lib/inputLimits";
+
 export const BAND_LABEL: Record<string, string> = { novice: "Getting started", develop: "Developing", profic: "Proficient" };
 
 /** The loop's written-answer field: a textarea carries it to read as a field
