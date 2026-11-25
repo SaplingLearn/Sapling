@@ -179,6 +179,8 @@ describe("start → answer → answer → submit", () => {
       // G5: an ordinary start practises nothing, and the client omits the
       // wire key entirely for a null source (see api.test.ts).
       sourceAttemptId: null,
+      // W7.8: a quiz is a Practice session unless Exam Twin is chosen.
+      sessionMode: "practice",
       // #760: every generation can be cancelled or timed out.
       signal: expect.any(AbortSignal),
     });
@@ -974,7 +976,8 @@ describe("exits and persistence", () => {
       feedback: "as-you-go",
     });
     const { loadPrefs } = await import("./prefs");
-    expect(loadPrefs()).toEqual({ count: 10, difficulty: "hard", feedback: "as-you-go" });
+    // W7.8: the stored prefs carry the session mode, Practice by default.
+    expect(loadPrefs()).toEqual({ count: 10, difficulty: "hard", feedback: "as-you-go", sessionMode: "practice" });
   });
 
   it("holds on the verdict in as-you-go mode instead of advancing", async () => {

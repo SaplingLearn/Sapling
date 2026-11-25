@@ -489,14 +489,15 @@ describe("the concept map and the tutor", () => {
     expect(within(block("s1-i7")).getByRole("link", { name: "Open in Tree" })).toHaveAttribute("href", "/tree?suggest=Loops");
     expect(screen.getByTestId("guide-concept-prompt-s1-i7-0")).toHaveTextContent("Explain it a simpler way");
     expect(screen.getByTestId("guide-concept-prompt-s1-i7-1")).toHaveTextContent("Give me another example");
-    expect(screen.getByTestId("guide-concept-prompt-s1-i7-2")).toHaveTextContent("Quiz me on this");
+    // W7.9: quizzing is the Quiz tool's link now, not a tutor prompt.
+    expect(screen.queryByTestId("guide-concept-prompt-s1-i7-2")).not.toBeInTheDocument();
 
-    await user.click(screen.getByTestId("guide-concept-prompt-s1-i7-2"));
+    await user.click(screen.getByTestId("guide-concept-prompt-s1-i7-1"));
 
     await waitFor(() => expect(routerPush).toHaveBeenCalledWith("/learn?resume=sid-1"));
     // #866 K01: a guide ask opens with the guide origin (the loop teaches at once)
     expect(mocks.openTutorSession).toHaveBeenCalledWith("u1", "Loops", "course-cs101", expect.any(AbortSignal), { guide: true });
-    expect(mocks.chatWithFallback.mock.calls[0][0]).toMatchObject({ sid: "sid-1", userId: "u1", message: "Quiz me on Loops." });
+    expect(mocks.chatWithFallback.mock.calls[0][0]).toMatchObject({ sid: "sid-1", userId: "u1", message: "Give me another example of Loops." });
   });
 
   it("closes the prompts", async () => {

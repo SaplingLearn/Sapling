@@ -30,7 +30,8 @@ describe("asCalculateInteraction", () => {
 describe("encode / complete", () => {
   it("requires both value and unit", () => {
     expect(encodeCalculateAnswer("12", "m/s")).toBe("12|m/s");
-    expect(decodeCalculateAnswer("12|m/s")).toEqual({ value: "12", unit: "m/s" });
+    // W7.2: the encoding's third part is the optional working ("steps").
+    expect(decodeCalculateAnswer("12|m/s")).toEqual({ value: "12", unit: "m/s", steps: "" });
     expect(isCalculateComplete("12|m/s")).toBe(true);
     expect(isCalculateComplete("12|")).toBe(false);
     expect(isCalculateComplete("12")).toBe(false);

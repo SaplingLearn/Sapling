@@ -161,6 +161,8 @@ describe("defaultConfigFor", () => {
       count: 5,
       difficulty: "medium",
       feedback: "at-end",
+      // W7.8: a quiz is a Practice session unless Exam Twin is chosen.
+      sessionMode: "practice",
     });
   });
 
@@ -174,12 +176,13 @@ describe("defaultConfigFor", () => {
       count: 4,
       difficulty: "gentle",
       feedback: "at-end",
+      sessionMode: "practice",
     });
   });
 
   it("lets stored prefs win over the config-derived defaults", () => {
     expect(defaultConfigFor(CONFIG, { count: 10, difficulty: "hard", feedback: "as-you-go" }))
-      .toEqual({ count: 10, difficulty: "hard", feedback: "as-you-go" });
+      .toEqual({ count: 10, difficulty: "hard", feedback: "as-you-go", sessionMode: "practice" });
   });
 
   it("degrades to a single scalar default before /config resolves", () => {
