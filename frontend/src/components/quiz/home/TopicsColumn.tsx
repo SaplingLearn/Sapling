@@ -45,7 +45,7 @@ function CoursePills({ byCourse, courseFilter, onCourse }: CoursePillsProps) {
           icon={
             <span
               className="quiz-home__course-dot"
-              style={{ background: colorFor(nodes[0], course) }}
+              style={{ "--quiz-home-course-tint": colorFor(nodes[0], course) } as React.CSSProperties}
               aria-hidden
             />
           }
