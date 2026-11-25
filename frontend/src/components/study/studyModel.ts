@@ -35,6 +35,9 @@
 
 import { handoffPracticeDueHref } from "@/lib/learningHandoffs";
 
+/** One day, in ms. */
+const DAY_MS = 86_400_000;
+
 export type Status = "mastered" | "progress" | "review" | "new";
 export type AssessType = "Exam" | "Quiz" | "Homework";
 
@@ -248,7 +251,7 @@ export function conceptsForCourse(
   const own = nodes.filter(n => n && n.course_id === courseId && !n.is_subject_root && n.mastery_tier !== "subject_root");
   const { pre, post } = prereqLinks(edges, new Set(own.map(n => String(n.id))));
   const depth = depthFinder(pre);
-  const weekAgo = now.getTime() - 7 * 86400000;
+  const weekAgo = now.getTime() - 7 * DAY_MS;
   const base = own.map((n): Concept => {
     const id = String(n.id);
     const st: Status = TIER[n.mastery_tier] ?? "new";
@@ -304,7 +307,7 @@ export const parseIso = (iso: string) => {
 };
 export const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
 export const daysTo = (iso: string, today: Date) =>
-  Math.round((parseIso(iso).getTime() - startOfDay(today).getTime()) / 86400000);
+  Math.round((parseIso(iso).getTime() - startOfDay(today).getTime()) / DAY_MS);
 const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 /** "Fri, Nov 13" */
@@ -318,7 +321,7 @@ export const fmtDow = (iso: string, today?: Date) => {
 export function fmtWhen(ts: string, today: Date): string {
   const t = new Date(ts);
   if (Number.isNaN(t.getTime())) return "";
-  const diff = Math.round((startOfDay(today).getTime() - startOfDay(t).getTime()) / 86400000);
+  const diff = Math.round((startOfDay(today).getTime() - startOfDay(t).getTime()) / DAY_MS);
   if (diff === 0) return "Today";
   if (diff === 1) return "Yesterday";
   return `${MON[t.getMonth()]} ${t.getDate()}`;
@@ -451,7 +454,7 @@ export function quickReviews(topics: Concept[], today: Date) {
     .map(t => {
       const last = t.lastStudied ? Date.parse(t.lastStudied) : NaN;
       const ago = Number.isFinite(last)
-        ? Math.max(0, Math.floor((startOfDay(today).getTime() - startOfDay(new Date(last)).getTime()) / 86400000))
+        ? Math.max(0, Math.floor((startOfDay(today).getTime() - startOfDay(new Date(last)).getTime()) / DAY_MS))
         : 0;
       return { t, ago, score: ago * 3 + (100 - t.m) };
     })
@@ -477,7 +480,7 @@ export function dueReviewsFromNext(
     if (!t) continue;
     const last = t.lastStudied ? Date.parse(t.lastStudied) : NaN;
     const ago = Number.isFinite(last)
-      ? Math.max(0, Math.floor((startOfDay(today).getTime() - startOfDay(new Date(last)).getTime()) / 86400000))
+      ? Math.max(0, Math.floor((startOfDay(today).getTime() - startOfDay(new Date(last)).getTime()) / DAY_MS))
       : 0;
     out.push({ t, ago });
   }

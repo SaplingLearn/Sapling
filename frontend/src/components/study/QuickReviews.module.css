@@ -1,0 +1,58 @@
+/* Quick Reviews (QuickReviews.tsx): one row that starts the flashcards, and
+   the list of what it covers on hover or focus. */
+
+.anchor { position: relative; }
+
+.row {
+  width: 100%; display: flex; align-items: center; gap: var(--sp-4);
+  padding: var(--sp-6) var(--sp-7); border: 0; border-radius: var(--r-md);
+  background: var(--info-soft); color: var(--text); font: inherit; text-align: left; cursor: pointer;
+  transition: filter var(--dur-fast) var(--ease), transform var(--dur-instant) var(--ease);
+  /* How far a press sinks the row. */
+  --press-scale: 0.99;
+}
+.row:hover { filter: brightness(0.97); }
+.row:active { transform: scale(var(--press-scale)); }
+.glyph { width: 24px; display: grid; place-items: center; flex-shrink: 0; color: var(--info); }
+.title { flex: 1; min-width: 0; font-size: var(--fs-md); font-weight: 600; color: var(--info); }
+/* The estimate and the chevron in ONE solid blue button. */
+.estimate {
+  flex-shrink: 0; height: 30px; padding: 0 var(--sp-6); border-radius: var(--r-sm);
+  background: var(--info); color: var(--accent-fg); border-color: transparent;
+  font-size: var(--fs-sm); font-weight: 700;
+}
+
+/* The hover list. */
+.listAnchor { position: absolute; left: 0; right: 0; top: 100%; padding-top: var(--sp-4); z-index: var(--z-popover); }
+.list {
+  width: 100%; box-sizing: border-box; padding: var(--sp-7) var(--sp-8);
+  display: flex; flex-direction: column; gap: var(--sp-5);
+}
+.head { display: flex; flex-direction: column; gap: var(--sp-1); }
+.headTitle { font-size: var(--fs-base); font-weight: 600; color: var(--text); }
+.headMeta { font-size: var(--fs-sm); color: var(--text-muted); }
+.scroll { display: flex; flex-direction: column; max-height: 200px; overflow-y: auto; padding-right: var(--sp-2); }
+.item {
+  display: flex; align-items: center; gap: var(--sp-5);
+  /* 7px: between --sp-3 and --sp-4, the row height the list was set at. */
+  --item-pad: 7px;
+  padding: var(--item-pad) 0; border-top: 1px solid var(--border);
+}
+/* The concepts arrive one after another as the list opens
+   (MOTION.stagger.tight between them). */
+@media (prefers-reduced-motion: no-preference) {
+  .item {
+    --item-stagger: 40ms;
+    animation: itemIn var(--dur) var(--ease-out) both;
+    animation-delay: calc(var(--i, 0) * var(--item-stagger));
+  }
+}
+@keyframes itemIn {
+  from { opacity: 0; transform: translateY(var(--sp-2)); }
+  to { opacity: 1; transform: none; }
+}
+.itemName { flex: 1; min-width: 0; font-size: var(--fs-md); font-weight: 600; }
+.itemReason { font-size: var(--fs-xs); color: var(--text-muted); white-space: nowrap; }
+.actions { display: flex; gap: var(--sp-4); }
+.action { height: 36px; justify-content: center; }
+.actionShare { flex: 1; }

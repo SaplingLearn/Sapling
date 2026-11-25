@@ -29,19 +29,19 @@ type Row = { id: string; color: string | null; code: string; name: string | null
 function RowContent({ row, withMeta }: { row: Row; withMeta: "show" | "reserve" }) {
   return (
     <>
-      <span style={{ width: 9, height: 9, borderRadius: "50%", background: row.color || "var(--text-muted)", flexShrink: 0 }} />
+      <span className={s.dot} style={row.color ? { background: row.color } : undefined} />
       {/* Code and name are ONE line box, not two flex items. They are
           different faces at different sizes (mono 14 over sans 13), so
           centring a box each left them on baselines ~1px apart; as inline
           children of one span they share the line's baseline by construction.
           The ellipsis moves here with them. */}
-      <span style={{ flex: withMeta === "show" ? 1 : undefined, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-        <span style={{ fontSize: "var(--fs-base)", fontWeight: 600 }}>{row.code}</span>
-        {row.name && <span style={{ marginLeft: 8, fontSize: "var(--fs-md)", fontWeight: 400, color: "var(--text-dim)" }}>{row.name}</span>}
+      <span className={withMeta === "show" ? `${s.label} ${s.labelGrow}` : s.label}>
+        <span className={s.code}>{row.code}</span>
+        {row.name && <span className={s.name}>{row.name}</span>}
       </span>
       {row.meta && (
         // In the field this only RESERVES the room the menu's row needs.
-        <span aria-hidden={withMeta === "reserve" || undefined} style={{ visibility: withMeta === "reserve" ? "hidden" : undefined, paddingLeft: 8, flexShrink: 0, fontSize: "var(--fs-xs)", fontWeight: 400, color: "var(--text-muted)", whiteSpace: "nowrap" }}>{row.meta}</span>
+        <span aria-hidden={withMeta === "reserve" || undefined} className={withMeta === "reserve" ? `${s.meta} ${s.metaReserve}` : s.meta}>{row.meta}</span>
       )}
     </>
   );
@@ -146,15 +146,14 @@ export function CoursePicker({
   const fieldName = chosen ? `Course, ${[chosen.code, chosen.name].filter(Boolean).join(" ")}` : "Course";
 
   return (
-    <div style={{ position: "relative", flex: fullWidth ? "1 1 100%" : "0 1 auto", minWidth: 0, maxWidth: 560 }}>
-      <button ref={fieldRef} type="button" className={`btn ${s.field}`} onClick={() => (open ? close(false) : openList())}
-        onKeyDown={onFieldKey} aria-haspopup="listbox" aria-expanded={open} aria-label={fieldName}
-        style={fullWidth ? { width: "100%" } : undefined}>
-        <span style={{ display: "grid", minWidth: 0 }}>
+    <div className={fullWidth ? `${s.anchor} ${s.anchorFull}` : s.anchor}>
+      <button ref={fieldRef} type="button" className={fullWidth ? `btn ${s.field} ${s.fieldFull}` : `btn ${s.field}`} onClick={() => (open ? close(false) : openList())}
+        onKeyDown={onFieldKey} aria-haspopup="listbox" aria-expanded={open} aria-label={fieldName}>
+        <span className={s.stack}>
           {rows.map(row => {
             const shown = row.id === chosen?.id;
             return (
-              <span key={row.id} aria-hidden={shown ? undefined : true} style={{ gridArea: "1 / 1", visibility: shown ? "visible" : "hidden", display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+              <span key={row.id} aria-hidden={shown ? undefined : true} className={shown ? `${s.stackRow} ${s.stackRowShown}` : s.stackRow}>
                 <RowContent row={row} withMeta="reserve" />
               </span>
             );
@@ -164,7 +163,7 @@ export function CoursePicker({
       </button>
       {open && (
         <>
-          <div onClick={() => close(false)} style={{ position: "fixed", inset: 0, zIndex: 30 }} />
+          <div onClick={() => close(false)} className={s.clickAway} />
           <div ref={listRef} role="listbox" aria-label="Courses" tabIndex={-1} className={s.menu}
             aria-activedescendant={optionId(active)} onKeyDown={onListKey}>
             {rows.map((row, i) => {
@@ -175,7 +174,7 @@ export function CoursePicker({
                   onMouseEnter={() => setActive(i)} onClick={() => pick(i)}>
                   <RowContent row={row} withMeta="show" />
                   {/* The tick sits where the field's chevron does. */}
-                  <span aria-hidden="true" style={{ marginLeft: "auto", width: 10, display: "grid", justifyItems: "center", flexShrink: 0, color: "var(--brand-forest)" }}>{on && <Icon name="check" size={12} />}</span>
+                  <span aria-hidden="true" className={s.tick}>{on && <Icon name="check" size={12} />}</span>
                 </div>
               );
             })}

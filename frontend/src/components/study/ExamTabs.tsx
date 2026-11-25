@@ -18,23 +18,20 @@
  * tabs, and the row holds only its "+ Add Exam or Deadline" link.
  */
 import React from "react";
-import { INHERIT_FONT } from "@/lib/inheritFont";
 import { Icon } from "../Icon";
 import { HUB_EASE, HUB_SWITCH_MS, HUB_WHOLE, reducedMotion } from "./hubMotion";
-import { DISPLAY, ELLIPSIS, POPOVER, READINESS_ID, ROADMAP_ID } from "./hubUi";
+import { READINESS_ID, ROADMAP_ID } from "./hubUi";
+import et from "./ExamTabs.module.css";
 import s from "./StudyHub.module.css";
 import { countdown, countFg, daysTo, fmtDow, type AssessType, type Assessment } from "./studyModel";
 
-const TYPE_DOT: Record<AssessType, string> = { Exam: "var(--err)", Quiz: "#6A3E68", Homework: "var(--info)" };
+const TYPE_DOT: Record<AssessType, string> = { Exam: et.dotExam, Quiz: et.dotQuiz, Homework: et.dotHomework };
 
-/* The 2px under every tab is a transparent border (a hover tints it); the
-   selected tab's line is drawn over it, so it can slide between tabs. */
-const TAB: React.CSSProperties = { position: "relative", display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 0, flexShrink: 0, padding: "0 0 8px", border: 0, borderBottom: "2px solid transparent", background: "transparent", ...INHERIT_FONT, textAlign: "left", cursor: "pointer" };
-/* The title darkens as the line arrives (the app-wide reduced-motion reset collapses it). */
-const TITLE_FADE = `color ${HUB_SWITCH_MS}ms ${HUB_EASE}`;
-const TAB_LINE: React.CSSProperties = { position: "absolute", left: 0, right: 0, bottom: -2, height: 2, background: "var(--brand-forest)", transformOrigin: "0 50%" };
-const ICON_BUTTON: React.CSSProperties = { width: 36, height: 36, display: "flex", alignItems: "center", justifyContent: "center", border: 0, borderRadius: "var(--r-sm)", background: "transparent", color: "var(--text-dim)", cursor: "pointer", position: "relative" };
-const BADGE: React.CSSProperties = { position: "absolute", top: 2, right: 1, minWidth: 16, height: 16, padding: "0 4px", boxSizing: "border-box", borderRadius: 8, background: "var(--err)", color: "#FFFFFF", fontSize: "var(--fs-2xs)", fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 0 0 2px var(--bg)" };
+/* The title darkens as the line arrives, on the hub's clock (the app-wide
+   reduced-motion reset collapses it). */
+const TITLE_FADE = { "--tab-fade": `${HUB_SWITCH_MS}ms` } as React.CSSProperties;
+/* The line grows from its left edge when it slides in (useSlidingLine). */
+const TAB_LINE: React.CSSProperties = { transformOrigin: "0 50%" };
 
 /** What every tab re-scopes. */
 const TAB_PANELS = `${READINESS_ID} ${ROADMAP_ID}`;
@@ -55,10 +52,10 @@ export function tabStep(key: string, at: number, count: number): number | null {
 function ExamTab({ exam, on, tabStop, today, onSelect }: { exam: Assessment; on: boolean; tabStop: boolean; today: Date; onSelect: () => void }) {
   return (
     <button type="button" role="tab" aria-selected={on} aria-controls={TAB_PANELS} tabIndex={tabStop ? 0 : -1} data-tab={exam.id}
-      className={on ? undefined : s.hoverTab} onClick={onSelect} style={TAB}>
-      <span style={{ fontSize: "var(--fs-base)", fontWeight: 600, color: on ? "var(--text)" : "var(--text-muted)", transition: TITLE_FADE, whiteSpace: "nowrap" }}>{exam.title}</span>
-      <span style={{ fontSize: "var(--fs-sm)", color: "var(--text-muted)", whiteSpace: "nowrap" }}>{fmtDow(exam.iso, today)}</span>
-      {on && <span data-tab-line="" aria-hidden="true" style={TAB_LINE} />}
+      className={on ? `${et.tab} ${et.tabOn}` : `${et.tab} ${s.hoverTab}`} onClick={onSelect} style={TITLE_FADE}>
+      <span className={et.tabTitle}>{exam.title}</span>
+      <span className={et.tabDate}>{fmtDow(exam.iso, today)}</span>
+      {on && <span data-tab-line="" aria-hidden="true" className={et.tabLine} style={TAB_LINE} />}
     </button>
   );
 }
@@ -104,17 +101,17 @@ function tabKeys(exams: Assessment[], onSelectExam: (id: string) => void) {
   };
 }
 
-function DeadlineRow({ item, today, onPick }: { item: Assessment; today: Date; onPick: () => void }) {
+/** `index`: its place in the list, which staggers its entrance. */
+function DeadlineRow({ item, index, today, onPick }: { item: Assessment; index: number; today: Date; onPick: () => void }) {
   const n = daysTo(item.iso, today);
   return (
-    <button className={s.hoverOption} onClick={onPick}
-      style={{ display: "flex", alignItems: "center", gap: 10, padding: 8, border: 0, borderRadius: "var(--r-sm)", background: "transparent", ...INHERIT_FONT, textAlign: "left", cursor: "pointer" }}>
-      <span style={{ width: 8, height: 8, borderRadius: "50%", background: TYPE_DOT[item.type], flexShrink: 0 }} />
-      <span style={{ flex: 1, minWidth: 0 }}>
-        <span style={{ display: "block", fontSize: "var(--fs-md)", fontWeight: 600, ...ELLIPSIS }}>{item.title}</span>
-        <span style={{ display: "block", fontSize: "var(--fs-sm)", color: "var(--text-muted)" }}>{item.type} · {fmtDow(item.iso)}</span>
+    <button className={`${et.deadline} ${s.hoverOption}`} onClick={onPick} style={{ "--i": index } as React.CSSProperties}>
+      <span className={`${et.dot} ${TYPE_DOT[item.type]}`} />
+      <span className={et.deadlineText}>
+        <span className={`${et.deadlineTitle} ${s.ellipsis}`}>{item.title}</span>
+        <span className={et.deadlineMeta}>{item.type} · {fmtDow(item.iso)}</span>
       </span>
-      <span style={{ fontSize: "var(--fs-sm)", fontWeight: 600, color: countFg(n), whiteSpace: "nowrap" }}>{countdown(n)}</span>
+      <span className={et.deadlineCount} style={{ color: countFg(n) }}>{countdown(n)}</span>
     </button>
   );
 }
@@ -130,15 +127,15 @@ function DeadlinesPanel({ upcoming, courseLabel, today, onClose, onPick, onManag
 }) {
   return (
     <>
-      <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 30 }} />
-      <div role="dialog" aria-label="Upcoming deadlines" className={s.pop} style={{ position: "absolute", right: 0, top: 44, zIndex: 31, width: 320, maxWidth: "calc(100vw - 32px)", ...POPOVER, padding: 6, display: "flex", flexDirection: "column" }}>
-        <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", padding: "6px 8px 8px" }}>
-          <span style={{ fontFamily: DISPLAY, fontSize: "var(--fs-lg)", fontWeight: 600 }}>Upcoming Deadlines</span>
-          <span style={{ fontSize: "var(--fs-sm)", color: "var(--text-muted)" }}>{courseLabel}</span>
+      <div onClick={onClose} className={s.clickAway} />
+      <div role="dialog" aria-label="Upcoming deadlines" className={`${s.pop} ${s.popover} ${et.panel}`}>
+        <div className={et.panelHead}>
+          <span className={et.panelTitle}>Upcoming Deadlines</span>
+          <span className={et.panelMeta}>{courseLabel}</span>
         </div>
-        {upcoming.length === 0 && <div style={{ padding: "4px 8px 10px", fontSize: "var(--fs-md)", color: "var(--text-muted)" }}>Nothing due for this course.</div>}
-        {upcoming.map(item => <DeadlineRow key={item.id} item={item} today={today} onPick={() => onPick(item)} />)}
-        <button onClick={onManage} style={{ marginTop: 4, padding: 8, border: 0, borderTop: "1px solid var(--border)", borderRadius: "0 0 8px 8px", background: "transparent", color: "var(--brand-forest)", ...INHERIT_FONT, fontSize: "var(--fs-md)", fontWeight: 600, cursor: "pointer" }}>Manage Dates</button>
+        {upcoming.length === 0 && <div className={et.panelEmpty}>Nothing due for this course.</div>}
+        {upcoming.map((item, i) => <DeadlineRow key={item.id} item={item} index={i} today={today} onPick={() => onPick(item)} />)}
+        <button onClick={onManage} className={et.manage}>Manage Dates</button>
       </div>
     </>
   );
@@ -177,11 +174,11 @@ export function ExamTabs(props: ExamTabsProps) {
   // for them is no tab (axe aria-required-children), but keeps their place.
   const tablist = exams.length > 0 ? { role: "tablist", "aria-label": "Exams", onKeyDown: tabKeys(exams, props.onSelectExam) } : {};
   return (
-    <div className={s.areaTabs} style={{ display: "flex", alignItems: "center", gap: 16, borderBottom: "1px solid var(--border)", minWidth: 0 }}>
-      <div ref={tabs} key={props.courseId} className={s.paneEnter} {...tablist} style={{ flex: "0 1 auto", minWidth: 0, alignSelf: "stretch", display: "flex", gap: 28, overflowX: "auto", overflowY: "hidden" }}>
+    <div className={`${s.areaTabs} ${et.row}`}>
+      <div ref={tabs} key={props.courseId} className={`${s.paneEnter} ${et.list}`} {...tablist}>
         {exams.map(e => <ExamTab key={e.id} exam={e} on={e.id === exam?.id} tabStop={e.id === stop} today={today} onSelect={() => props.onSelectExam(e.id)} />)}
         {exams.length === 0 && (
-          <button onClick={onAdd} style={{ alignSelf: "center", padding: "0 0 8px", border: 0, background: "transparent", ...INHERIT_FONT, fontSize: "var(--fs-md)", fontWeight: 600, color: "var(--brand-forest)", cursor: "pointer" }}>+ Add Exam or Deadline</button>
+          <button onClick={onAdd} className={et.addLink}>+ Add Exam or Deadline</button>
         )}
       </div>
       {/* Add an exam right where the exams are listed: the "+" follows the
@@ -195,12 +192,11 @@ export function ExamTabs(props: ExamTabsProps) {
       {/* Upcoming deadlines sit with the exams, at the end of the exam row.
           The gear that opened the dates editor is gone: "+" adds a date, and
           the bell's "Manage Dates" opens the editor to change or remove one. */}
-      <div style={{ display: "flex", alignItems: "center", gap: 2, flexShrink: 0, marginLeft: "auto", paddingBottom: 6 }}>
-        <div style={{ position: "relative" }}>
-          <button className={s.hoverIcon} onClick={() => onBell(!bellOpen)} aria-label={`Upcoming deadlines, ${soon} this week`} aria-expanded={bellOpen} title="Upcoming deadlines"
-            style={{ ...ICON_BUTTON, background: bellOpen ? "var(--bg-soft)" : "transparent" }}>
+      <div className={et.bellWrap}>
+        <div className={et.bellAnchor}>
+          <button className={`${et.iconButton} ${s.hoverIcon}${bellOpen ? ` ${et.iconButtonOpen}` : ""}`} onClick={() => onBell(!bellOpen)} aria-label={`Upcoming deadlines, ${soon} this week`} aria-expanded={bellOpen} title="Upcoming deadlines">
             <Icon name="nofitication" size={18} />
-            {soon > 0 && <span style={BADGE}>{soon}</span>}
+            {soon > 0 && <span className={et.badge}>{soon}</span>}
           </button>
           {bellOpen && (
             <DeadlinesPanel upcoming={props.upcoming} courseLabel={props.courseLabel} today={today}

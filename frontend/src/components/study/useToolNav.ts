@@ -18,6 +18,7 @@ import React from "react";
 import { useRouter } from "next/navigation";
 import { handoffLearnHref } from "@/lib/learningHandoffs";
 import { buildQuizHref } from "@/lib/quiz/source";
+import { MOTION } from "@/lib/designTokens";
 import { flashcardsHref, studyGuideHref, studyHref } from "@/lib/toolHrefs";
 
 export type ToolKey = "quiz" | "cards" | "guide";
@@ -29,8 +30,9 @@ const TOOL_HOME: Record<ToolKey, (courseId: string) => string> = {
   guide: () => studyGuideHref(),
 };
 
-/** How long the hub's fade-out runs before the route changes (`.leaving`). */
-const LEAVE_MS = 180;
+/** How long the hub's fade-out runs before the route changes: `.leaving`'s
+ *  --dur-fast, an exit's duration (MOTION mirrors the CSS token). */
+const LEAVE_MS = Math.round(MOTION.duration.fast * 1000);
 
 export interface ToolNav {
   /** True while the hub fades out on its way to a tool. */

@@ -10,6 +10,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }), usePathname: () => "/study" }));
 
 import { FocusCard } from "./FocusCard";
+import f from "./FocusCard.module.css";
 import type { Concept } from "./studyModel";
 import type { ToolNav } from "./useToolNav";
 
@@ -31,10 +32,14 @@ const PREREQS = [
   concept("fn", "Functions"),
 ];
 
+/** The block's one clipping box on the prerequisite line (`overflow: hidden`
+ *  in FocusCard.module.css; jsdom applies no stylesheet, so it is named). */
+const CLIPS = [f.prereqChips];
+
 /** The element between `el` and the block that cuts off whatever overflows it. */
 function clipperOf(el: HTMLElement): HTMLElement | null {
   for (let at = el.parentElement; at && at.dataset.testid !== "focus-card"; at = at.parentElement) {
-    if (at.style.overflow === "hidden") return at;
+    if (CLIPS.some(c => at!.classList.contains(c)) || at.style.overflow === "hidden") return at;
   }
   return null;
 }

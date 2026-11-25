@@ -1,0 +1,46 @@
+/* The readiness figure (ReadinessBand.tsx). */
+
+.band {
+  position: relative; align-self: stretch; min-width: 0;
+  display: flex; flex-direction: column; justify-content: center; gap: var(--sp-7);
+}
+.figureRow { display: flex; align-items: center; gap: var(--sp-7); }
+/* The figure: the hub's largest type, beyond the --fs-* scale. */
+.pct {
+  --pct-size: 72px;
+  font-family: var(--font-display); font-size: var(--pct-size); font-weight: 600;
+  line-height: 1; letter-spacing: -0.02em;
+}
+/* 3px: the label/trend stack's own rhythm (between --sp-1 and --sp-2). */
+.labels { --labels-gap: 3px; display: flex; flex-direction: column; gap: var(--labels-gap); }
+.label { font-size: var(--fs-base); line-height: 1.3; font-weight: 600; }
+.note { font-size: var(--fs-sm); line-height: 1.3; color: var(--text-muted); }
+.trend { align-self: flex-start; }
+
+.key { display: flex; flex-direction: column; gap: var(--sp-5); }
+.squares { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+.legend { display: flex; flex-wrap: wrap; gap: var(--sp-1) var(--sp-2); margin-left: calc(-1 * var(--sp-3)); }
+
+/* A square per concept: fades with the legend's filter and rings when
+   selected (the transitions are on StudyHub.module.css's .hoverSeg). */
+.square {
+  --square: 14px;
+  width: var(--square); height: var(--square); flex-shrink: 0;
+  padding: 0; border: 0; border-radius: var(--r-xs); cursor: pointer;
+  box-shadow: none;
+}
+.squareFaded { opacity: 0.3; }
+.squareSelected { box-shadow: 0 0 0 var(--ring-gap) var(--bg), 0 0 0 var(--ring-outer) var(--brand-forest); }
+.squares { --ring-gap: 1.5px; --ring-outer: 3px; }
+
+/* One legend entry: a round dot, the count, the state. */
+.chip {
+  position: relative; display: inline-flex; align-items: center; gap: var(--sp-2);
+  height: 22px; padding: 0 var(--sp-4) 0 var(--sp-3); border: 0; border-radius: var(--r-full);
+  background: transparent; font: inherit; font-size: var(--fs-xs); color: var(--text-muted); cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease), transform var(--dur-instant) var(--ease);
+  /* How far a press sinks the chip. */
+  --press-scale: 0.96;
+}
+.chip:active { transform: scale(var(--press-scale)); }
+.chipOn { background: var(--sap-100); color: var(--text); }

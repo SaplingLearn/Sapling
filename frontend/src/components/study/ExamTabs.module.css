@@ -1,0 +1,115 @@
+/* The exam row (ExamTabs.tsx): the tabs, "+", and the deadlines bell. */
+
+.row {
+  display: flex; align-items: center; gap: var(--sp-8);
+  border-bottom: 1px solid var(--border); min-width: 0;
+}
+.list {
+  flex: 0 1 auto; min-width: 0; align-self: stretch;
+  display: flex; gap: var(--sp-14); overflow-x: auto; overflow-y: hidden;
+}
+
+/* The 2px under every tab is a transparent border (a hover tints it); the
+   selected tab's line is drawn over it, so it can slide between tabs. */
+.tab {
+  --tab-line: 2px;
+  position: relative; display: flex; flex-direction: column; align-items: flex-start; gap: 0; flex-shrink: 0;
+  padding: 0 0 var(--sp-4); border: 0; border-bottom: var(--tab-line) solid transparent;
+  background: transparent; font: inherit; color: inherit;
+  text-align: left; cursor: pointer;
+  transition: border-bottom-color var(--dur-fast) var(--ease);
+}
+/* The title darkens as the line arrives, on the hub's switch clock
+   (hubMotion.ts HUB_SWITCH_MS, passed in as --tab-fade). */
+.tabTitle {
+  font-size: var(--fs-base); font-weight: 600; color: var(--text-muted); white-space: nowrap;
+  transition: color var(--tab-fade, var(--dur)) var(--ease);
+}
+.tabOn .tabTitle { color: var(--text); }
+.tabDate { font-size: var(--fs-sm); color: var(--text-muted); white-space: nowrap; }
+.tabLine {
+  position: absolute; left: 0; right: 0; bottom: calc(-1 * var(--tab-line)); height: var(--tab-line);
+  background: var(--brand-forest);
+}
+
+.addLink {
+  align-self: center; padding: 0 0 var(--sp-4); border: 0; background: transparent;
+  font: inherit; font-size: var(--fs-md); font-weight: 600;
+  color: var(--brand-forest); cursor: pointer;
+}
+
+.bellWrap {
+  display: flex; align-items: center; gap: var(--sp-1); flex-shrink: 0;
+  margin-left: auto; padding-bottom: var(--sp-3);
+}
+.bellAnchor { position: relative; }
+.iconButton {
+  position: relative; width: 36px; height: 36px;
+  display: flex; align-items: center; justify-content: center;
+  border: 0; border-radius: var(--r-sm); background: transparent;
+  color: var(--text-dim); cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+.iconButtonOpen { background: var(--bg-soft); }
+/* The count on the bell: lands with a small scale-in when it first shows. */
+.badge {
+  --badge-size: 16px;
+  position: absolute; top: var(--sp-1); right: 1px;
+  min-width: var(--badge-size); height: var(--badge-size); padding: 0 var(--sp-2); box-sizing: border-box;
+  border-radius: var(--r-full); background: var(--err); color: var(--text-on-fill);
+  font-size: var(--fs-2xs); font-weight: 600;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 0 0 var(--sp-1) var(--bg);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .badge { animation: badgeIn var(--dur) var(--ease-emphasized) both; }
+}
+@keyframes badgeIn {
+  from { opacity: 0; transform: scale(0.6); }
+  to { opacity: 1; transform: none; }
+}
+
+/* The deadlines pop-up. */
+.panel {
+  position: absolute; right: 0; top: calc(100% + var(--sp-4)); z-index: var(--z-popover);
+  width: 320px; max-width: calc(100vw - var(--sp-16));
+  padding: var(--sp-3); display: flex; flex-direction: column;
+}
+.panelHead { display: flex; align-items: baseline; justify-content: space-between; padding: var(--sp-3) var(--sp-4) var(--sp-4); }
+.panelTitle { font-family: var(--font-display); font-size: var(--fs-lg); font-weight: 600; }
+.panelMeta { font-size: var(--fs-sm); color: var(--text-muted); }
+.panelEmpty { padding: var(--sp-2) var(--sp-4) var(--sp-5); font-size: var(--fs-md); color: var(--text-muted); }
+.manage {
+  margin-top: var(--sp-2); padding: var(--sp-4); border: 0; border-top: 1px solid var(--border);
+  border-radius: 0 0 var(--r-md) var(--r-md); background: transparent; color: var(--brand-forest);
+  font: inherit; font-size: var(--fs-md); font-weight: 600; cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease);
+}
+.manage:hover { background: var(--bg-subtle); }
+
+.deadline {
+  display: flex; align-items: center; gap: var(--sp-5); padding: var(--sp-4);
+  border: 0; border-radius: var(--r-sm); background: transparent;
+  font: inherit; color: inherit; text-align: left; cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease);
+}
+/* Deadlines arrive one after another as the pop-up opens. */
+@media (prefers-reduced-motion: no-preference) {
+  .deadline {
+    --row-stagger: 30ms; /* under MOTION.stagger.tight: the pop-up is quick */
+    animation: deadlineIn var(--dur) var(--ease-out) both;
+    animation-delay: calc(var(--i, 0) * var(--row-stagger));
+  }
+}
+@keyframes deadlineIn {
+  from { opacity: 0; transform: translateY(calc(-1 * var(--sp-2))); }
+  to { opacity: 1; transform: none; }
+}
+.dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.dotExam { background: var(--err); }
+.dotQuiz { background: var(--tool-quiz); }
+.dotHomework { background: var(--info); }
+.deadlineText { flex: 1; min-width: 0; }
+.deadlineTitle { display: block; font-size: var(--fs-md); font-weight: 600; }
+.deadlineMeta { display: block; font-size: var(--fs-sm); color: var(--text-muted); }
+.deadlineCount { font-size: var(--fs-sm); font-weight: 600; white-space: nowrap; }
