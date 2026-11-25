@@ -116,8 +116,10 @@ def test_ruff_toml_has_no_other_way_to_hide_a_function():
     assert ratchet.c901_config_bypasses(ROOT) == []
 
 
-def test_threshold_is_the_phase_4_target():
-    assert ratchet.max_complexity(ROOT) == 25
+def test_threshold_is_the_complexity_target():
+    """Phase 4 (#118) set 25; PR #866 tightened it to 15 once its own code was
+    under 15. The functions still above 15 are baselined and may only shrink."""
+    assert ratchet.max_complexity(ROOT) == 15
     assert ratchet.ROUTE_FILE_MAX_LINES == 600
 
 

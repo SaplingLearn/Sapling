@@ -1,6 +1,6 @@
 # Domain modules (architecture-hardening Phase 4)
 
-As of 2026-11-08. Tracked in Trov ticket #118. Plan: `docs/architecture-hardening-plan.md`, Phase 4, which is done when **no route file is over 600 lines and no function is over complexity 25**.
+As of 2026-11-08; complexity ceiling tightened to 15 on 2026-11-25 (PR #866, see the note at the end). Tracked in Trov ticket #118. Plan: `docs/architecture-hardening-plan.md`, Phase 4, which is done when **no route file is over 600 lines and no function is over complexity 25**.
 
 This page sets the target layout, lists what misses the target today, and gives the order to split it in. The ratchet in this PR stops the numbers from growing while the splits wait. It does not move any code out of the large route files.
 
@@ -162,3 +162,7 @@ The learning system (#673) was ported onto the wave-3 layout before it landed (l
 **The loop split (follow-up, done).** `routes/learn_loop.py` (the loop's own router, new with #673) carried the one hand-edited `route_file_lines` ceiling (8,904) after the port. It is now split into the `services/loop/` domain package, one commit per area, and its entry is deleted: `code_size_baseline.json` is empty. The route (315 lines) keeps the kill-switch and crisis-screen dependencies and one thin wrapper per handler; the package holds every body and helper under its old name (module map in its `__init__` docstring), joins the `domains` contract and `DOMAIN_PACKAGES` in `tests/test_no_sync_db_in_async_handlers.py`, reaches the tutor's helpers through `services/tutor`'s `__init__`, and absorbs `services/loop_posed.py` as `services/loop/posed.py`. Unlike wave 3 it keeps no re-export shims: tests patch through `tests/split_patches.py::patch_loop`, and the one production importer outside the loop (the integrity guard's `posed_items`) imports the package. Every module logs as `routes.learn_loop`, the route's logger name. The loop's async handlers no longer make sync PostgREST calls on the event loop: each hops to a worker thread (`asyncio.to_thread`), the turn and opener are built off the loop, and `services/chat_stream.py::stream_structured_turn` runs its persist hook through `_run_on_complete`, as `stream_agent_turn` does.
 
 **Left:** the shim and re-export removal once the open teammate PRs land, the `services.document_jobs -> routes.documents` exception, and lowering `max-complexity` in steps as planned above.
+
+## Complexity ceiling 15 (2026-11-25, PR #866)
+
+PR #866 brought every function it added or changed to McCabe complexity 15 or less (39 functions refactored into same-module private helpers, behaviour unchanged) and then lowered `ruff.toml`'s `max-complexity` from 25 to 15. The 22 functions that were already over 15 on main are baselined in `code_size_baseline.json` at their current scores, with a `C901` per-file ignore for each of their 21 files; `--shrink` lowers or deletes them as they are split. A new function over 15 fails `tests/test_code_size_ratchet.py`.

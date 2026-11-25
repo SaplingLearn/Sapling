@@ -1,5 +1,28 @@
 {
   "_comment": "Phase 4 (#118) ratchet: ceilings for today's offenders. Entries may only be lowered or deleted (python scripts/code_size_ratchet.py --shrink). Enforced by tests/test_code_size_ratchet.py.",
-  "complexity": {},
+  "complexity": {
+    "agents/tools/graph_read.py::read_graph_neighborhood": 18,
+    "agents/tools/graph_read.py::read_graph_neighborhood.<locals>._fetch": 17,
+    "promotion/runner.py::run": 24,
+    "routes/auth.py::google_callback": 16,
+    "scripts/backfill_concept_edges.py::main": 19,
+    "scripts/code_size_ratchet.py::c901_config_bypasses": 19,
+    "scripts/prune_junk_concepts.py::main": 18,
+    "services/account_seed/seeder.py::_course_rows": 18,
+    "services/chat_stream.py::stream_agent_turn": 22,
+    "services/concept_edges.py::sanitize_edges": 18,
+    "services/course_context_service.py::update_course_context": 22,
+    "services/documents/stream.py::upload_event_stream": 23,
+    "services/email_service.py::send_email": 22,
+    "services/extraction_backends/docling_backend.py::extract_pdf_with_docling": 16,
+    "services/feature_flags.py::explain": 17,
+    "services/gradescope/client.py::login_via_bu_sso": 23,
+    "services/gradescope/sync.py::_run_linked_sync": 19,
+    "services/matching_service.py::find_study_matches": 18,
+    "services/profile/achievements.py::achievements_view": 18,
+    "services/quiz/submission.py::submit_quiz": 19,
+    "services/staged_jobs.py::watch_steps": 16,
+    "services/topic_checklist_service.py::build_snapshot": 16
+  },
   "route_file_lines": {}
 }
