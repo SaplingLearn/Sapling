@@ -1,6 +1,8 @@
 "use client";
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { motion } from "framer-motion";
+import { useMotionPresets } from "@/lib/motion";
 import type { LoopCloseBaseline, LoopCloseConcept, LoopCloseResponse } from "@/lib/api";
 import { useUser } from "@/context/UserContext";
 import { useFlag } from "@/context/FlagsContext";
@@ -15,6 +17,7 @@ import { LearnerMiniMapStub } from "./LearnerMiniMapStub";
 import { modalOpen } from "./modalOpen";
 import { WrapUpRating } from "./WrapUpRating";
 import tutorStyles from "./tutor/tutor.module.css";
+import styles from "./ClosePanel.module.css";
 
 /**
  * W3.3b: learner-next due ids for Practice what's due on wrap-up. Empty while
@@ -83,7 +86,7 @@ export function closeQuizConceptId(concepts: LoopCloseConcept[]): string | null 
 function MovedCard({ concepts, names }: { concepts: LoopCloseConcept[]; names: Map<string, string> }) {
   const up = concepts.filter((c) => closeConceptView(c).dir === "up").length;
   return (
-    <section className="card fade-in" aria-labelledby="loop-close-moved">
+    <section className="card" aria-labelledby="loop-close-moved">
       <div className={tutorStyles.cardHead}>
         <div>
           <span className="label-micro">What moved</span>
@@ -107,18 +110,18 @@ function MovedCard({ concepts, names }: { concepts: LoopCloseConcept[]; names: M
                     className={tutorStyles.movedRow}
                   >
                     <span>
-                      <span aria-hidden style={{ color: view.dir === "up" ? "var(--sap-600)" : view.dir === "down" ? "var(--warn)" : "var(--text-muted)", marginRight: 6 }}>{view.arrow}</span>
+                      <span aria-hidden data-dir={view.dir} className={styles.arrow}>{view.arrow}</span>
                       {names.get(c.node_id) ?? "A concept"}
                     </span>
-                    <span style={{ color: view.dir === "down" ? "var(--warn)" : "var(--text-muted)", fontSize: 13 }}>{view.label}</span>
+                    <span data-dir={view.dir} className={styles.movedLabel}>{view.label}</span>
                   </li>
                 );
               })}
             </ul>
-            <p data-testid="loop-close-moved-caption" style={{ margin: 0, fontSize: 12, color: "var(--text-muted)" }}>Change from where you started this session.</p>
+            <p data-testid="loop-close-moved-caption" className={styles.caption}>Change from where you started this session.</p>
           </>
         ) : (
-          <p style={{ margin: 0, fontSize: 13, color: "var(--text-muted)" }}>Your tutor picks up from here next session.</p>
+          <p className={styles.quiet}>Your tutor picks up from here next session.</p>
         )}
       </div>
     </section>
@@ -147,7 +150,7 @@ function CloseHandoffLinks({
           key={link.testId}
           data-testid={link.testId}
           href={link.href}
-          className="btn"
+          className={`btn ${styles.press}`}
         >
           {link.label}
         </Link>
@@ -188,12 +191,13 @@ export function ClosePanel({
   useLayoutEffect(() => {
     if (ready && !modalOpen()) focusTarget.current?.focus();
   }, [ready]);
+  const m = useMotionPresets();
   if (!close) {
-    if (!note) return <div style={{ padding: 40, color: "var(--text-dim)" }}>Wrapping up…</div>;
+    if (!note) return <div className={styles.wrapping}>Wrapping up…</div>;
     return (
       <CenteredCard testId="loop-close-done">
-        <p ref={setFocusTarget} tabIndex={-1} style={{ margin: "0 0 12px", fontSize: 14, color: "var(--text-dim)" }}>{note}</p>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <p ref={setFocusTarget} tabIndex={-1} className={styles.note}>{note}</p>
+        <div className={styles.links}>
           <CloseHandoffLinks courseId={courseId} visibility={visibility} />
         </div>
       </CenteredCard>
@@ -201,11 +205,13 @@ export function ClosePanel({
   }
   const rec = close.close;
   const quizConceptId = closeQuizConceptId(rec.concepts);
+  const item = m.list.item;
   return (
-    <div style={{ flex: 1, overflowY: "auto" }}>
-      <div className={tutorStyles.col}>
-        <h2 ref={setFocusTarget} tabIndex={-1} className="h-serif" style={{ margin: 0, fontSize: 24 }}>Session wrap-up</h2>
-        <div className={tutorStyles.closeGrid}>
+    <div className={styles.root}>
+      {/* The wrap-up replaces the lesson: its sections arrive one after another. */}
+      <motion.div className={tutorStyles.col} variants={m.list.container} initial="hidden" animate="shown">
+        <motion.h2 variants={item} ref={setFocusTarget} tabIndex={-1} className={`h-serif ${styles.title}`}>Session wrap-up</motion.h2>
+        <motion.div variants={item} className={tutorStyles.closeGrid}>
           <MovedCard concepts={rec.concepts} names={names} />
           <section className="card" aria-labelledby="loop-close-summary-h">
             <div className={tutorStyles.cardHead}>
@@ -215,42 +221,42 @@ export function ClosePanel({
               </div>
             </div>
             <div className={tutorStyles.cardPad}>
-              <p data-testid="loop-close-summary" style={{ margin: 0, font: "400 14px/1.6 var(--font-serif)", whiteSpace: "pre-wrap" }}>
+              <p data-testid="loop-close-summary" className={styles.summary}>
                 {rec.summary}
               </p>
             </div>
           </section>
-        </div>
+        </motion.div>
         {/* A60: the self-evaluation is a reflection prompt only — nothing is saved. */}
-        <section data-testid="loop-close-self-eval" className={`card ${tutorStyles.cardPad}`} style={{ gap: 6 }}>
+        <motion.section variants={item} data-testid="loop-close-self-eval" className={`card ${tutorStyles.cardPad} ${styles.tight}`}>
           <span className="label-micro">Reflect</span>
-          <div style={{ fontSize: 15, fontStyle: "italic", fontFamily: "var(--font-serif)" }}>{rec.self_eval}</div>
-          <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
+          <div className={styles.reflection}>{rec.self_eval}</div>
+          <div className={styles.aside}>
             Take a moment with it — it&apos;s just for you, nothing is saved.
           </div>
-        </section>
+        </motion.section>
         {/* W3.5a: generative mini-map — client edges only; never mastery / graph_edges. */}
+        {/* Never null here (two or more concepts), so the wrapper is never an empty gap. */}
         {rec.concepts.length >= 2 && (
-          <LearnerMiniMapStub
-            concepts={rec.concepts.map((c) => ({
-              id: c.node_id,
-              label: names.get(c.node_id) ?? "A concept",
-            }))}
-          />
+          <motion.div variants={item}>
+            <LearnerMiniMapStub
+              concepts={rec.concepts.map((c) => ({
+                id: c.node_id,
+                label: names.get(c.node_id) ?? "A concept",
+              }))}
+            />
+          </motion.div>
         )}
         {rec.if_then && (
-          <section data-testid="loop-close-if-then" className={`card ${tutorStyles.cardPad}`} style={{ gap: 6, background: "var(--accent-soft)", borderColor: "var(--accent-border)" }}>
+          <motion.section variants={item} data-testid="loop-close-if-then" className={`card ${tutorStyles.cardPad} ${styles.tight} ${styles.plan}`}>
             <span className="label-micro">Your plan for next time</span>
-            <div style={{ fontSize: 15 }}>{rec.if_then}</div>
-          </section>
+            <div className={styles.planText}>{rec.if_then}</div>
+          </motion.section>
         )}
         {rating && <WrapUpRating key={rating.sessionId} sessionId={rating.sessionId} topic={rating.topic} />}
-        <div
-          data-testid="loop-close-done"
-          style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", fontSize: 14, color: "var(--text-dim)" }}
-        >
-          <span style={{ flex: 1, minWidth: 120 }}>Session closed.</span>
-          {visibility.study && courseId && <Link data-testid="loop-close-retention-link" href={retentionHref([courseId])} className="btn">
+        <motion.div variants={item} data-testid="loop-close-done" className={styles.done}>
+          <span className={styles.closed}>Session closed.</span>
+          {visibility.study && courseId && <Link data-testid="loop-close-retention-link" href={retentionHref([courseId])} className={`btn ${styles.press}`}>
             Check retention after time away
           </Link>}
           <CloseHandoffLinks
@@ -259,12 +265,12 @@ export function ClosePanel({
             visibility={visibility}
           />
           {onNew && (
-            <button type="button" data-testid="loop-close-new-session" className="btn btn--primary" onClick={onNew}>
+            <button type="button" data-testid="loop-close-new-session" className={`btn btn--primary ${styles.press}`} onClick={onNew}>
               Start a new session
             </button>
           )}
-        </div>
-      </div>
+        </motion.div>
+      </motion.div>
     </div>
   );
 }

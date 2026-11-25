@@ -1,19 +1,18 @@
 "use client";
 import React, { useId, useLayoutEffect, useRef } from "react";
+import { motion } from "framer-motion";
+import { useMotionPresets } from "@/lib/motion";
 import { type LoopCheckItem, type LoopReportReason } from "@/lib/api";
 import { ReportQuestion } from "./ReportQuestion";
 import { ConfidenceControl } from "./ConfidenceControl";
 import { OptionList } from "./OptionList";
 import { Icon } from "../Icon";
 import tutorStyles from "./tutor/tutor.module.css";
+import styles from "./CheckCard.module.css";
 import { modalOpen } from "./modalOpen";
 import { type Draft, FIELD_CLASS, type HintView, focusAnswerStart } from "./loopShared";
 import { LOOP_ANSWER_MAX } from "@/lib/inputLimits";
-import {
-  KEY_VERIFIED_HINT,
-  KEY_VERIFIED_LABEL,
-  TRUST_CHROME_STYLE,
-} from "@/lib/loopTrustChrome";
+import { KEY_VERIFIED_HINT, KEY_VERIFIED_LABEL } from "@/lib/loopTrustChrome";
 
 /** Plain-English lines for POST /hint's denial reasons (routes/learn_loop.py::hint). */
 const HINT_DENIED_COPY: Record<string, string> = {
@@ -67,8 +66,12 @@ export function CheckCard({
   // While a hint loads the Hint button keeps focus (aria-disabled, not
   // disabled: a disabled control drops focus to the page).
   const hintUnavailable = hintBusy || busy;
+  const m = useMotionPresets();
   return (
-    <section
+    // Keyed on the question: the next check rises in as a new card.
+    <motion.section
+      key={item.question_hash}
+      {...m.fadeUp}
       ref={cardRef}
       aria-labelledby={headingId}
       className={`card ${tutorStyles.qcard}`}
@@ -77,7 +80,7 @@ export function CheckCard({
         data-testid="loop-check-prompt"
         data-question-hash={item.question_hash}
         data-format={item.format}
-        style={{ display: "flex", flexDirection: "column", gap: 10 }}
+        className={styles.prompt}
       >
         <div className={tutorStyles.qhead}>
           <h2 id={headingId} className={`label-micro ${tutorStyles.qlabel}`}>Check your understanding</h2>
@@ -94,7 +97,7 @@ export function CheckCard({
             role="status"
             title={KEY_VERIFIED_HINT}
             aria-label={`${KEY_VERIFIED_LABEL}. ${KEY_VERIFIED_HINT}`}
-            style={TRUST_CHROME_STYLE}
+            className={styles.trustChrome}
           >
             {KEY_VERIFIED_LABEL}
           </div>
@@ -106,11 +109,7 @@ export function CheckCard({
             data-testid="loop-figure-withheld"
             role="status"
             aria-label="No diagram for this check yet — the question describes it in words"
-            style={{
-              ...TRUST_CHROME_STYLE,
-              borderStyle: "dashed",
-              opacity: 0.9,
-            }}
+            className={`${styles.trustChrome} ${styles.figureWithheld}`}
           >
             Diagram described in words — no figure attached yet
           </div>
@@ -126,7 +125,7 @@ export function CheckCard({
             labelledBy={promptId}
             disabled={busy}
           />
-          <label className={tutorStyles.fl} htmlFor={`${ids}-reason`} style={{ marginBottom: -8 }}>Your reasoning</label>
+          <label className={`${tutorStyles.fl} ${styles.fieldLabel}`} htmlFor={`${ids}-reason`}>Your reasoning</label>
           <input
             id={`${ids}-reason`}
             data-testid="loop-attempt-reason"
@@ -143,7 +142,7 @@ export function CheckCard({
         </>
       ) : (
         <>
-        <label className={tutorStyles.fl} htmlFor={`${ids}-answer`} style={{ marginBottom: -8 }}>Your answer — this is what gets checked</label>
+        <label className={`${tutorStyles.fl} ${styles.fieldLabel}`} htmlFor={`${ids}-answer`}>Your answer — this is what gets checked</label>
         <textarea
           id={`${ids}-answer`}
           data-testid="loop-attempt-input"
@@ -164,7 +163,7 @@ export function CheckCard({
           }}
         />
         {/* W2.3: optional; never graded / never mastery — answer box above is what gets checked */}
-        <label className={tutorStyles.fl} htmlFor={`${ids}-reasoning`} style={{ marginBottom: -8 }}>Your reasoning (optional)</label>
+        <label className={`${tutorStyles.fl} ${styles.fieldLabel}`} htmlFor={`${ids}-reasoning`}>Your reasoning (optional)</label>
         <textarea
           id={`${ids}-reasoning`}
           data-testid="loop-attempt-reasoning"
@@ -187,58 +186,52 @@ export function CheckCard({
         onChange={(confidence) => setDraft((d) => ({ ...d, confidence }))}
         disabled={busy}
       />
-      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-        <button data-testid="loop-attempt-submit" className="btn btn--primary" disabled={!canSubmit} onClick={onSubmit}>
+      <div className={styles.actions}>
+        <button data-testid="loop-attempt-submit" className={`btn btn--primary ${styles.press}`} disabled={!canSubmit} onClick={onSubmit}>
           Submit answer
         </button>
         <button
           data-testid="loop-hint-button"
-          className="btn"
+          className={`btn ${styles.press}${hintUnavailable ? ` ${styles.unavailable}` : ""}`}
           aria-disabled={hintUnavailable}
-          style={hintUnavailable ? { cursor: "not-allowed" } : undefined}
           onClick={() => {
             if (!hintUnavailable) onHint();
           }}
         >
           <Icon name="sparkle" size={13} />{hintBusy ? "Hint…" : hintRetry ? "Retry earned hint" : "Hint"}
         </button>
-        <button data-testid="loop-attempt-idk" className="btn btn--ghost" disabled={busy || hintBusy} onClick={onIdk}>
+        <button data-testid="loop-attempt-idk" className={`btn btn--ghost ${styles.press}`} disabled={busy || hintBusy} onClick={onIdk}>
           I don&apos;t know
         </button>
       </div>
       {/* Always in the DOM, so a refusal is announced when it appears. */}
       <div aria-live="polite">
         {hint && "denied" in hint && (
-          <div
+          <motion.div
+            {...m.fade}
             data-testid="loop-hint-denied"
             data-reason={hint.denied}
             role="status"
-            style={{ fontSize: 13, color: "var(--text-muted)" }}
+            className={styles.hintDenied}
           >
             {HINT_DENIED_COPY[hint.denied] ?? HINT_DENIED_FALLBACK}
-          </div>
+          </motion.div>
         )}
       </div>
       {hint && "reply" in hint && (
-        <div
+        // Re-keyed per hint: each rung rises in, so a new one reads as new.
+        <motion.div
+          key={hint.reply}
+          {...m.fadeUp}
           data-testid="loop-hint-reply"
-          style={{
-            fontSize: 14,
-            padding: "10px 12px",
-            borderRadius: "var(--r-md)",
-            border: "1px solid var(--accent-border)",
-            background: "var(--accent-soft)",
-            whiteSpace: "pre-wrap",
-            display: "flex",
-            gap: 8,
-          }}
+          className={styles.hintReply}
         >
-          <span style={{ color: "var(--accent)", marginTop: 2 }} aria-hidden><Icon name="sparkle" size={13} /></span>
+          <span className={styles.hintIcon} aria-hidden><Icon name="sparkle" size={13} /></span>
           <span>{hint.reply}</span>
-        </div>
+        </motion.div>
       )}
       {selfExplain}
       {onReport && <ReportQuestion testIdPrefix="loop-check-report" disabled={busy} onReport={onReport} />}
-    </section>
+    </motion.section>
   );
 }
