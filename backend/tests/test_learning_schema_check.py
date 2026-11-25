@@ -61,4 +61,35 @@ def test_the_lifespan_runs_it_after_the_key_canary():
     import main
 
     source = inspect.getsource(main._lifespan)
-    assert source.index("verify_encryption_key()") < source.index("check_learning_schema()")
+    assert source.index("verify_encryption_key()") < source.index("await acheck_learning_schema()")
+
+
+def _loop_guarded_tables(name):
+    """A table whose sync select does what a real sync verb does first: report
+    itself to the event-loop guard (raises SyncDbOnLoop under the fixture)."""
+    from db import async_connection
+
+    t = MagicMock()
+    t.select.side_effect = lambda *a, **k: async_connection.note_sync_call(name) or []
+    return t
+
+
+def test_the_lifespan_check_reads_off_the_event_loop(no_sync_db_on_loop, caplog):
+    """#866 debug: at boot the four reads logged db.sync_on_loop (one per
+    table). The lifespan's async twin hops to the threadpool, so the guard
+    never fires and a complete schema stays silent."""
+    import asyncio
+
+    from services import learning_schema_check as check
+
+    with patch.object(check, "table", side_effect=_loop_guarded_tables), caplog.at_level(logging.WARNING):
+        assert asyncio.run(check.acheck_learning_schema()) == []
+    assert not caplog.records
+
+    async def inline():
+        return check.check_learning_schema()
+
+    # The guard is live here: the same reads made on the loop are caught.
+    with patch.object(check, "table", side_effect=_loop_guarded_tables), caplog.at_level(logging.WARNING):
+        assert asyncio.run(inline()) == []
+    assert "SyncDbOnLoop" in caplog.text

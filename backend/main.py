@@ -84,7 +84,7 @@ from services.request_context import (
 from services.body_limit import BodySizeLimitMiddleware
 from services.csrf_origin import CsrfOriginMiddleware
 from services.encryption_canary import verify_encryption_key
-from services.learning_schema_check import check_learning_schema
+from services.learning_schema_check import acheck_learning_schema
 from services.storage_service import (
     ALLOWED_CONTENT_TYPES,
     ICON_CONTENT_TYPES,
@@ -190,7 +190,8 @@ async def _lifespan(_app: FastAPI):
     verify_encryption_key()
     # Learning-loop spec §13 A138 review: one ERROR when the wave-4 learning
     # schema is behind the code. Warn only: its readers read no rows meanwhile.
-    check_learning_schema()
+    # Its reads are sync PostgREST calls, so they run off the event loop.
+    await acheck_learning_schema()
     async with AsyncExitStack() as stack:
         await _start(stack)
         yield

@@ -21,6 +21,8 @@ from __future__ import annotations
 
 import logging
 
+from starlette.concurrency import run_in_threadpool
+
 from db.connection import is_missing_relation, table
 
 logger = logging.getLogger("sapling.learning.schema_check")
@@ -70,3 +72,10 @@ def check_learning_schema() -> list[str]:
             ", ".join(missing),
         )
     return missing
+
+
+async def acheck_learning_schema() -> list[str]:
+    """`check_learning_schema` for the lifespan: its four sync PostgREST reads
+    run in the threadpool, never on the event loop (#117; at boot they logged
+    db.sync_on_loop once per table)."""
+    return await run_in_threadpool(check_learning_schema)
