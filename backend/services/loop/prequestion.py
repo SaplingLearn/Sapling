@@ -19,6 +19,7 @@ from services.tutor import _consume_pending_off_loop
 from services.tutor import _agent_turn_or_http_error
 from services.check_item_service import get_check_item
 
+from services.loop.constants import _MC_REASON
 from services.loop.flags import (
     _ANSWER_CLAIM,
     _GUESS_IN_FLIGHT,
@@ -67,7 +68,7 @@ def _validated_guess(body: PrequestionAnswerBody, item) -> tuple[bool, dict | No
     non-empty answer (free). Anything else is a 422 and nothing is stored."""
     if body.no_idea:
         return True, None
-    if item.format == "mc_reason":
+    if item.format == _MC_REASON:
         option = (body.option or "").strip()
         if option not in {o.letter for o in item.options or []}:
             raise HTTPException(status_code=422, detail="Choose one of the options, or say you have no idea.")
@@ -90,16 +91,9 @@ async def _prequestion_answer(body: PrequestionAnswerBody, request: Request) -> 
     state = await asyncio.to_thread(_load_loop_state, body.session_id)
     _require_teaching(state)
     if _pending_grade(state):
-        raise HTTPException(status_code=409, detail="Finish checking the saved answer before continuing")
+        raise HTTPException(status_code=409, detail=_FINISH_SAVED_CHECK)
     node = state.get("concept")
-    rec = prequestion_rules.record_for(state, node)
-    if (
-        rec is None
-        or state.get("current")
-        or rec.get("question_hash") != body.question_hash
-        or rec.get("status") not in (prequestion_rules.POSED, prequestion_rules.ANSWERED)
-    ):
-        raise HTTPException(status_code=409, detail=_NO_OPEN_PREQUESTION)
+    rec = _open_record_for(state, node, body.question_hash)
     item = (
         await asyncio.to_thread(get_check_item, rec["check_item_id"])
         if rec.get("check_item_id") else None
@@ -127,10 +121,61 @@ async def _prequestion_answer(body: PrequestionAnswerBody, request: Request) -> 
     # while the card is still `posed` and no check is open (a claim that went
     # stale may have lost its card to a check). A failure before (4) gives the
     # claim back; any retry finishes the commit.
+    await asyncio.to_thread(
+        _update_loop_state, body.session_id, _take_card(node, item.question_hash, claim, now),
+        require_open=True, require_existing=True,
+    )
+    stored = await _store_guess(
+        body, course_id, node, item, no_idea, guess, _posed_at(rec, now), _give_back_card(node, claim)
+    )
+    if (bool(stored["no_idea"]), stored["guess"]) != (no_idea, guess):
+        logger.info("prequestion answer: a stored earlier guess stands and is the one explained")
+    # its answer is about to be shown: spent now (A88, before any text), so the
+    # item never serves this student again — a check, a review item or a
+    # post-test item; its ledger 'posed' row closes
+    await asyncio.to_thread(_spend_prequestion_item, body.user_id, body.session_id, item.question_hash, at=now)
+    # #117: the loop_state write and the transcript row are sync PostgREST
+    # calls, so they hop off the event loop (spec §13 A149)
+    state = await asyncio.to_thread(
+        _update_loop_state, body.session_id, _commit_card(node, claim, now, stored),
+        require_open=True, require_existing=True,
+    )
+    await _record_answered(body, request, node, item, stored)
+    return state, scope
+
+
+#: The 409 detail while a saved grade checkpoint is still to be finished.
+_FINISH_SAVED_CHECK = "Finish checking the saved answer before continuing"
+
+
+def _open_record_for(state: dict, node, question_hash: str) -> dict:
+    """The concept's prequestion record when it is this hash's, posed or
+    answered, with no check open; 409 otherwise."""
+    rec = prequestion_rules.record_for(state, node)
+    if (
+        rec is None
+        or state.get("current")
+        or rec.get("question_hash") != question_hash
+        or rec.get("status") not in (prequestion_rules.POSED, prequestion_rules.ANSWERED)
+    ):
+        raise HTTPException(status_code=409, detail=_NO_OPEN_PREQUESTION)
+    return rec
+
+
+def _posed_at(rec: dict, now: float) -> datetime:
+    """When the card was posed (its numeric `posed_at`, else now)."""
+    posed = rec.get("posed_at")
+    return datetime.fromtimestamp(
+        float(posed) if isinstance(posed, (int, float)) and not isinstance(posed, bool) else now, tz=timezone.utc
+    )
+
+
+def _take_card(node, question_hash: str, claim: str, now: float) -> Callable[[dict], None]:
+    """(1) The compare-and-set mutate that claims the open card."""
     def take(doc: dict) -> None:
         _refuse_while_closing(doc, now)
         cur = prequestion_rules.open_record(doc, node)
-        if cur is None or cur.get("question_hash") != item.question_hash or doc.get("current"):
+        if cur is None or cur.get("question_hash") != question_hash or doc.get("current"):
             raise HTTPException(status_code=409, detail=_NO_OPEN_PREQUESTION)
         if _live(cur, _ANSWER_CLAIM, now):
             raise HTTPException(status_code=409, detail=_GUESS_IN_FLIGHT)
@@ -138,6 +183,11 @@ async def _prequestion_answer(body: PrequestionAnswerBody, request: Request) -> 
         records[node] = {**cur, _ANSWER_CLAIM: claim, f"{_ANSWER_CLAIM}_at": now}
         doc[prequestion_rules.KEY] = records
 
+    return take
+
+
+def _give_back_card(node, claim: str) -> Callable[[dict], None]:
+    """The mutate that gives this request's claim on the card back."""
     def give_back(doc: dict) -> None:
         cur = prequestion_rules.record_for(doc, node)
         if cur is not None and cur.get(_ANSWER_CLAIM) == claim:
@@ -145,13 +195,38 @@ async def _prequestion_answer(body: PrequestionAnswerBody, request: Request) -> 
             records[node] = _without_claim(cur)
             doc[prequestion_rules.KEY] = records
 
-    await asyncio.to_thread(
-        _update_loop_state, body.session_id, take, require_open=True, require_existing=True
-    )
-    posed = rec.get("posed_at")
-    posed_at = datetime.fromtimestamp(
-        float(posed) if isinstance(posed, (int, float)) and not isinstance(posed, bool) else now, tz=timezone.utc
-    )
+    return give_back
+
+
+def _commit_card(node, claim: str, now: float, stored: dict) -> Callable[[dict], None]:
+    """(4) The mutate that moves the claimed card to `answered`."""
+    def commit(doc: dict) -> None:
+        cur = prequestion_rules.record_for(doc, node)
+        if (
+            cur is None
+            or cur.get(_ANSWER_CLAIM) != claim
+            or cur.get("status") != prequestion_rules.POSED
+            or doc.get("current")
+        ):
+            # the claim went stale and the card was superseded or re-claimed,
+            # or a check opened: no explanation over it (second review, item 3)
+            raise HTTPException(status_code=409, detail=_NO_OPEN_PREQUESTION)
+        records = dict(prequestion_rules.records(doc))
+        records[node] = {
+            **_without_claim(cur), "status": prequestion_rules.ANSWERED, "answered_at": now,
+            "no_idea": bool(stored["no_idea"]),
+        }
+        doc[prequestion_rules.KEY] = records
+
+    return commit
+
+
+async def _store_guess(
+    body: PrequestionAnswerBody, course_id, node, item, no_idea: bool, guess: dict | None,
+    posed_at: datetime, give_back: Callable[[dict], None],
+) -> dict:
+    """(2) Store the guess and read the stored row back (the commit point: the
+    first stored guess stands). Any failure gives the claim back and is a 503."""
     try:
         await asyncio.to_thread(
             store_prequestion_answer,
@@ -171,36 +246,12 @@ async def _prequestion_answer(body: PrequestionAnswerBody, request: Request) -> 
         logger.warning("prequestion guess not stored", exc_info=True)
         await asyncio.to_thread(_give_back_quietly, body.session_id, give_back)
         raise HTTPException(status_code=503, detail="Your guess could not be saved; try again") from exc
-    if (bool(stored["no_idea"]), stored["guess"]) != (no_idea, guess):
-        logger.info("prequestion answer: a stored earlier guess stands and is the one explained")
-    # its answer is about to be shown: spent now (A88, before any text), so the
-    # item never serves this student again — a check, a review item or a
-    # post-test item; its ledger 'posed' row closes
-    await asyncio.to_thread(_spend_prequestion_item, body.user_id, body.session_id, item.question_hash, at=now)
+    return stored
 
-    def commit(doc: dict) -> None:
-        cur = prequestion_rules.record_for(doc, node)
-        if (
-            cur is None
-            or cur.get(_ANSWER_CLAIM) != claim
-            or cur.get("status") != prequestion_rules.POSED
-            or doc.get("current")
-        ):
-            # the claim went stale and the card was superseded or re-claimed,
-            # or a check opened: no explanation over it (second review, item 3)
-            raise HTTPException(status_code=409, detail=_NO_OPEN_PREQUESTION)
-        records = dict(prequestion_rules.records(doc))
-        records[node] = {
-            **_without_claim(cur), "status": prequestion_rules.ANSWERED, "answered_at": now,
-            "no_idea": bool(stored["no_idea"]),
-        }
-        doc[prequestion_rules.KEY] = records
 
-    # #117: the loop_state write and the transcript row are sync PostgREST
-    # calls, so they hop off the event loop (spec §13 A149)
-    state = await asyncio.to_thread(
-        _update_loop_state, body.session_id, commit, require_open=True, require_existing=True
-    )
+async def _record_answered(body: PrequestionAnswerBody, request: Request, node, item, stored: dict) -> None:
+    """The stored guess as the student's message, then `learn.prequestion`
+    (answered)."""
     stored_guess = stored["guess"] or {}
     await asyncio.to_thread(
         save_message,
@@ -219,13 +270,12 @@ async def _prequestion_answer(body: PrequestionAnswerBody, request: Request) -> 
         _request_id(request),
         body.session_id,
         node,
-        "answered",
+        prequestion_rules.ANSWERED,
         question_hash=item.question_hash,
         no_idea=bool(stored["no_idea"]),
         format=item.format,
         difficulty=int(item.difficulty),
     )
-    return state, scope
 
 
 def _give_back_quietly(session_id: str, give_back: Callable[[dict], None]) -> None:
