@@ -487,7 +487,7 @@ Use this as the merge/readiness checklist. Every row must be **Done (A+)**, **N/
 ### V1
 - [x] Safe-anchor teach (W1.1) — prompts + `__pedagogy` cassettes recorded  
 - [x] Motivated derivation default (W1.2) — prompts + `__pedagogy` cassettes recorded  
-- [x] Compression / generative core checks (W1.3) — policy + prompt + E2E journey (soft-skip if pool depleted)  
+- [x] Compression / generative core checks (W1.3) — policy + prompt + E2E journey (deterministic seeded pool, no soft-skip)  
 - [x] Edge / ZPD (exists; polish via W5 dogfood)  
 - [x] Durable structure via FSRS/post-test (exists; AH trial flags)  
 - [x] N/A logged: no “feels obvious” stop (W6)
@@ -570,7 +570,7 @@ Five concurrent tracks kicked off from this plan. **No flag enables** until W0 e
 | W2.5 | Confidence + hypercorrection dwell on loop check surfaces | **done** (`feedback_dwell_ms` on Sure+wrong) |
 | W3.3 | Practice mode spike (Study cue stream) | **done** (spike); **W3.3b entry landed** → [`w3-practice-mode-spike.md`](w3-practice-mode-spike.md) |
 | W7.D2 | Hub / Guide / Settings quiz design brief | **done** → [`w7-d2-hub-guide-settings.md`](w7-d2-hub-guide-settings.md) |
-| E2E | Exercise new learn-loop stubs under function mode | **partial** — vitest/pytest green (279+19); Playwright needs `e2e-up` in this checkout (slot 1 held elsewhere) |
+| E2E | Exercise new learn-loop stubs under function mode | **done** (2026-11-24) — the W1.3 / W2.3 / W3.1 stubs are deterministic Playwright journeys, 3/3 in a slot |
 
 **Day 4:** all no-Anthropic tracks complete. **Still blocked on key:** W0 cassettes, W5 flag enables, pedagogy `__pedagogy` live scoring.
 
@@ -622,7 +622,7 @@ Five concurrent tracks kicked off from this plan. **No flag enables** until W0 e
 | W8.1b | Library Tree `?course=` + Quiz concept-aware when ids exist | **done** (pass `conceptIds` when callers have node ids) |
 | W8.3b | Hub Due Reviews deep-link Quiz/Study (not only Flashcards) | **done** (Flashcards + Quiz split CTA) |
 | W3.1b | SessionPanel shows kept `prereq_edges` | **done** (`PlanDeps` + `session-plan-deps`) |
-| W2.3b | Series invariant scan + Playwright journey stub | **done** (`test_inv_31_*` + learn-loop E2E stubs; stack not run) |
+| W2.3b | Series invariant scan + Playwright journey stub | **done** (`test_inv_31_*`; the learn-loop stubs are now deterministic journeys, 3/3 on a slot — see W1.3 / W2.3 / W3.1 E2E below) |
 | W0 bounded | Record `loop_tutor_lite` Claude cassette (first slot) | **blocked** — Anthropic 401 invalid `ANTHROPIC_API_KEY` (refresh key, then retry) |
 
 ### Day 2 parallel launch (2026-11-23)
@@ -633,9 +633,9 @@ Five concurrent tracks kicked off from this plan. **No flag enables** until W0 e
 |---|---|---|
 | W3.1 UI | PlanPanel dependency block on `prereq_edges` | **done** |
 | W7.1 | Quiz focus-mode session chrome (first slice) | **done** (Hint/Skip/wager still deferred; forest retarget in W7.1b) |
-| W1.3 | Generative-core / compression check beat | **done** (E2E + Claude eval cases still open) |
+| W1.3 | Generative-core / compression check beat | **done** (E2E: `learn-loop.spec.ts` "W1.3 close beat" on `scripts/seed_learning_check_beats.py close`; Claude eval cases still open) |
 | W8.3 | Study Hub Focus ← `services.learner_next` | **done** (+ W8.3b Due→Quiz CTA) |
-| W2.3 | Reason-before-submit (encrypted, not evidence) | **done** (E2E still open) → [`w2-reason-before-submit.md`](w2-reason-before-submit.md) |
+| W2.3 | Reason-before-submit (encrypted, not evidence) | **done** (E2E: `learn-loop.spec.ts` "W2.3 reason-before-submit" on `seed_learning_check_beats.py reason`) → [`w2-reason-before-submit.md`](w2-reason-before-submit.md) |
 
 **Wave B (coherence + design — launched after Wave A)**
 
@@ -660,7 +660,7 @@ Five concurrent tracks kicked off from this plan. **No flag enables** until W0 e
 | W7.2 Label | Focus-shell Label kit (after Sort) | **done** |
 | W7.5 Hint | Client scaffolding Hint (Bastani ladder deferred) | **done** → [`w7-5-hint-scaffold.md`](w7-5-hint-scaffold.md) |
 | W5.E2 polish | Deep/lite/standard `__v2` anti-dodge + re-record | **done**; ×3 floors in `baselines.json` |
-| W1.3 / W2.3 E2E | generative-core + reason-before-submit journeys | **done** (soft-skip / nested decrypt) |
+| W1.3 / W2.3 E2E | generative-core + reason-before-submit journeys | **done** — soft-skips removed 2026-11-24: seeded format pools make the close beat discriminate (free over a servable mc_reason) and the reasoning provably not a grader input; W3.1 plan-deps journey goal-scoped (plan card + session panel rows). Each 3/3 on a slot, and each fails under the matching mutation |
 | W8.4 | Flashcards copy ↔ FSRS honesty | **done** |
 
 ### Day 9 remaining backlog (revise-then-build — 2026-11-24)

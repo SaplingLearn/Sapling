@@ -36,7 +36,7 @@ import type { Browser, Page, Response } from "@playwright/test";
 
 import { expect, killSwitchLane, test } from "./support/fixtures";
 import { loopOffLane } from "./support/lane";
-import { queryRaw, seedCloseBeatItems, seedGoalContinuationItems, seedTeachPromptItems, setUserFlag } from "./support/db";
+import { queryRaw, seedCheckBeats, seedCloseBeatItems, seedGoalContinuationItems, seedTeachPromptItems, setUserFlag } from "./support/db";
 import { decryptNestedText, decryptText, decryptTexts } from "./support/decrypt";
 import { learningParams } from "./support/params";
 import { runOracle } from "./support/oracle";
@@ -2101,156 +2101,334 @@ test("a new goal session respects an earlier helped prerequisite miss even when 
   } finally { await context.close(); }
 });
 
-/** W1.3: segment-close check prefers generative formats (free/teachback) via
- *  practice_formats — regenerate the idea, not MC surface recognition. The
- *  diagnostic keeps one practice reserve per concept, so seedCloseBeatItems
- *  (after probe) adds a fresh free+teachback pool for LOOP_CHECKS_PER_CONCEPT=2.
- *  Soft-skips the teachback pin when that pool still prefers free (format still
- *  generative). Default lane only (learning_loop on). */
-test("generative-core close beat poses a teachback/free check on the last check of a concept", async ({ browser }) => {
+/** A seeded teach-phase session (scripts/seed_learning_check_beats.py). */
+type BeatSession = { session_id: string; node_id: string; hashes: Record<string, string> };
+type BeatPose = {
+  question_hash: string;
+  format: string;
+  worked_first?: boolean;
+  options?: { letter: string; text: string }[] | null;
+};
+type BeatStep = {
+  graded_at?: number;
+  last_correct?: boolean;
+  last_verdict?: string;
+  reasoning_encrypted?: string;
+};
+type BeatState = {
+  concept?: string;
+  concept_checks?: number;
+  current?: string | null;
+  plan?: { cursor?: number };
+  steps?: Record<string, BeatStep>;
+};
+
+async function beatState(sessionId: string): Promise<{ state: BeatState; raw: string }> {
+  const [row] = (await queryRaw(
+    "SELECT loop_state, loop_state::text AS raw FROM sessions WHERE id = $1 AND user_id = $2",
+    [sessionId, USER_LOOP],
+  )) as { loop_state: BeatState; raw: string }[];
+  return { state: row.loop_state, raw: row.raw };
+}
+
+/** The evidence rows one item's grading wrote for the loop student. */
+async function evidenceOn(questionHash: string): Promise<{ correct: boolean }[]> {
+  return (await queryRaw(
+    `SELECT e.correct FROM node_mastery_events e JOIN graph_nodes g ON g.id = e.node_id
+      WHERE g.user_id = $1 AND e.event_type = 'evidence' AND e.question_hash = $2`,
+    [USER_LOOP, questionHash],
+  )) as { correct: boolean }[];
+}
+
+/** Open the seeded session (its ?resume= deep link) in the teach phase. */
+async function resumeBeatSession(page: Page, sessionId: string) {
+  await page.goto(`/learn?resume=${sessionId}`);
+  const phase = page.getByTestId("loop-phase");
+  await expect(phase).toHaveAttribute("data-session-id", sessionId);
+  await expect(phase).toHaveAttribute("data-phase", "teach");
+  return phase;
+}
+
+/** Check me → the pose the server activated, rendered as the check card. */
+async function poseCheck(page: Page): Promise<BeatPose> {
+  const next = page.waitForResponse((r) => new URL(r.url()).pathname === "/api/learn/loop/check/next");
+  await page.getByTestId("loop-check-me").click();
+  const res = await next;
+  expect(res.status()).toBe(200);
+  const pose = (await res.json()).check as BeatPose | null;
+  expect(pose, "a check is posed").toBeTruthy();
+  const card = page.getByTestId("loop-check-prompt");
+  await expect(card).toHaveAttribute("data-question-hash", pose!.question_hash);
+  await expect(card).toHaveAttribute("data-format", pose!.format);
+  // spec §13 A122: a novice's first item on a concept opens on its worked example
+  if (pose!.worked_first) await expect(page.getByTestId("loop-hint-reply")).toBeVisible();
+  return pose!;
+}
+
+/** Submit the open check and wait for its graded feedback turn. */
+async function submitGraded(page: Page) {
+  const graded = await markLoopStream(page, "/api/learn/loop/check/answer/stream");
+  const submitted = page.waitForRequest((r) => new URL(r.url()).pathname === "/api/learn/loop/check/answer/stream");
+  await page.getByTestId("loop-attempt-submit").click();
+  const body = JSON.parse((await submitted).postData() ?? "{}") as Record<string, unknown>;
+  const result = await expectCompletedLoopTurn(page, graded, [LOOP_FEEDBACK_BODY, LOOP_FEEDBACK_QUESTION]);
+  expect(result.graded).toBe(true);
+  expect(result.unavailable).toBe(false);
+  expect(result.refused).toBe(false);
+  await expect(page.getByTestId("loop-phase")).toHaveAttribute("data-phase", "feedback");
+  await expect(page.getByTestId("tutor-stop")).toHaveCount(0);
+  return body;
+}
+
+/** The session's user-turn texts, decrypted (messages.content binds to session_id). */
+async function userTurns(sessionId: string): Promise<{ raw: string[]; plain: string[] }> {
+  const rows = (await queryRaw(
+    "SELECT content FROM messages WHERE session_id = $1 AND role = 'user' ORDER BY created_at ASC",
+    [sessionId],
+  )) as { content: string }[];
+  const raw = rows.map((r) => r.content);
+  const plain = await decryptTexts(raw.map((value) => ({ value, table: "messages", column: "content", row: sessionId })));
+  return { raw, plain };
+}
+
+/** W1.3 (generative-core close beat; learning/policy.py::practice_formats).
+ *  The seeded concept holds two free items (F1 older than F2) and one
+ *  mc_reason item (M), no teachback, all at difficulty 1. Check 1 rotates free
+ *  first → F1. Check 2 is the segment close: the plain rotation there is
+ *  (teachback, mc_reason, free), so without the generative-core preference it
+ *  would pose M — the journey pins F2, the generative item. And a graded check
+ *  is the only thing that closes the segment: after check 1 the concept stays,
+ *  after the graded close beat the cursor moves to the plan's next concept. */
+test("W1.3 close beat: the segment's last check is a generative item over a servable mc_reason, and only the graded check closes the segment", async ({ browser }) => {
   test.skip(loopOffLane, "loop path: default lane only");
   test.setTimeout(LOOP_JOURNEY_TIMEOUT_MS);
-  const P = await learningParams(["PROBE_SESSION_CAP", "LOOP_CHECKS_PER_CONCEPT"]);
+  const P = await learningParams(["LOOP_CHECKS_PER_CONCEPT"]);
+  // The seed's F1 → F2 walk is shaped for a two-check segment.
   expect(Number(P.LOOP_CHECKS_PER_CONCEPT)).toBe(2);
+  const seeded = (await seedCheckBeats("close")) as BeatSession & { next_node_id: string };
+  const { F1, F2, M } = seeded.hashes;
   const { context, page } = await signIn(browser, USER_LOOP, "Lou Loop");
   try {
-    await openLearn(page);
-    const phase = page.getByTestId("loop-phase");
-    await walkProbeAndPlan(page, P);
-    // After probe: one practice reserve left. Close-beat fixtures refill free/teachback.
-    await seedCloseBeatItems();
-    await firstTeachTurn(page);
+    await resumeBeatSession(page, seeded.session_id);
 
-    const formats: string[] = [];
-    for (let n = 0; n < Number(P.LOOP_CHECKS_PER_CONCEPT); n += 1) {
-      const posed = page.waitForResponse((r) => new URL(r.url()).pathname === "/api/learn/loop/check/next");
-      await page.getByTestId("loop-check-me").click();
-      const check = page.getByTestId("loop-check-prompt");
-      await expect(check).toBeVisible();
-      const format = await check.getAttribute("data-format");
-      expect(format).toBeTruthy();
-      // Generative-core family (SEED_LOOP_FORMATS; never mc_reason recognition).
-      expect(["free", "teachback"]).toContain(format);
-      formats.push(format!);
-      if ((await (await posed).json()).check?.worked_first) {
-        await expect(page.getByTestId("loop-hint-reply")).toBeVisible();
-        await expect(page.getByTestId("loop-hint-button")).toBeEnabled();
-      }
-      // Close beat = last graded check before the concept cursor advances.
-      if (n === Number(P.LOOP_CHECKS_PER_CONCEPT) - 1) {
-        // practice_formats(1) pulls teachback ahead of free/mc_reason when available.
-        if (format !== "teachback") {
-          test.skip(true, "close-beat teachback preference unmet for this seed walk (still generative)");
-        }
-        await expect(page.getByTestId("loop-attempt-input")).toHaveAttribute(
-          "placeholder",
-          "Explain it in your own words",
-        );
-      }
-      await page.getByTestId("loop-attempt-input").fill(GRADER_CORRECT_TOKEN);
-      await page.getByTestId("loop-attempt-submit").click();
-      await expect(phase).toHaveAttribute("data-phase", "feedback");
-      await expect(page.getByTestId("tutor-stop")).toHaveCount(0);
-    }
-    expect(formats[formats.length - 1]).toBe("teachback");
-  } finally {
-    await context.close();
-  }
-});
-
-/** W2.3: optional “show your reasoning” on free/teachback — visible, not required,
- *  posts on the wire, and lands sealed as sessions.loop_state steps[].reasoning_encrypted
- *  (nested bind; plaintext never left on the step). Default lane only (learning_loop on). */
-test("reason-before-submit: free/teachback shows optional reasoning and seals it encrypted", async ({ browser }) => {
-  test.skip(loopOffLane, "loop path: default lane only");
-  test.setTimeout(LOOP_JOURNEY_TIMEOUT_MS);
-  const P = await learningParams(["PROBE_SESSION_CAP"]);
-  const { context, page } = await signIn(browser, USER_LOOP, "Lou Loop");
-  const reasoning = "base case stops the recursion";
-  try {
-    await openLearn(page);
-    const phase = page.getByTestId("loop-phase");
-    await walkProbeAndPlan(page, P);
-    await firstTeachTurn(page);
-    const posed = page.waitForResponse((r) => new URL(r.url()).pathname === "/api/learn/loop/check/next");
-    await page.getByTestId("loop-check-me").click();
-    const check = page.getByTestId("loop-check-prompt");
-    await expect(check).toBeVisible();
-    const format = await check.getAttribute("data-format");
-    expect(["free", "teachback"]).toContain(format);
-    await expect(page.getByTestId("loop-attempt-reasoning")).toBeVisible();
-    if ((await (await posed).json()).check?.worked_first) {
-      await expect(page.getByTestId("loop-hint-reply")).toBeVisible();
-      await expect(page.getByTestId("loop-hint-button")).toBeEnabled();
-    }
-    const sessionId = await phase.getAttribute("data-session-id");
-    const hash = await check.getAttribute("data-question-hash");
-    expect(sessionId).toBeTruthy();
-    expect(hash).toBeTruthy();
-    const submitted = page.waitForRequest((r) => r.url().includes("/api/learn/loop/check/answer"));
+    // Check 1: the rotation's first format, free → the older free item.
+    const first = await poseCheck(page);
+    expect(first.question_hash).toBe(F1);
+    expect(first.format).toBe("free");
     await page.getByTestId("loop-attempt-input").fill(`working: ${GRADER_CORRECT_TOKEN}`);
-    await page.getByTestId("loop-attempt-reasoning").fill(reasoning);
-    await page.getByTestId("loop-attempt-submit").click();
-    const body = JSON.parse((await submitted).postData() ?? "{}");
-    expect(body).toMatchObject({
-      answer: `working: ${GRADER_CORRECT_TOKEN}`,
-      reasoning,
-      idk: false,
-    });
-    await expect(phase).toHaveAttribute("data-phase", "feedback");
-    await expect(page.getByTestId("loop-messages")).toContainText(LOOP_FEEDBACK_BODY);
+    await submitGraded(page);
+    // One graded check is not the segment's close: the concept stays.
+    let { state } = await beatState(seeded.session_id);
+    expect(state.concept).toBe(seeded.node_id);
+    expect(state.plan?.cursor ?? 0).toBe(0);
+    expect(state.concept_checks).toBe(1);
 
-    // Encrypted nest at rest (learning/check_reason.KEY + nested_bind).
-    await expect
-      .poll(async () => {
-        const [row] = (await queryRaw(
-          `SELECT loop_state->'steps'->$2->>'reasoning_encrypted' AS sealed
-             FROM sessions WHERE id = $1 AND user_id = $3`,
-          [sessionId, hash, USER_LOOP],
-        )) as { sealed: string | null }[];
-        return row?.sealed ?? "";
-      }, { timeout: DB_POLL_TIMEOUT_MS })
-      .not.toBe("");
-    const [stored] = (await queryRaw(
-      `SELECT loop_state->'steps'->$2->>'reasoning_encrypted' AS sealed,
-              loop_state::text AS raw
-         FROM sessions WHERE id = $1 AND user_id = $3`,
-      [sessionId, hash, USER_LOOP],
-    )) as { sealed: string; raw: string }[];
-    expect(stored.sealed).toBeTruthy();
-    expect(stored.sealed).not.toContain(reasoning);
-    expect(stored.raw).not.toContain(reasoning);
-    expect(
-      await decryptNestedText({
-        value: stored.sealed,
-        table: "sessions",
-        column: "loop_state",
-        path: "reasoning_encrypted",
-        row: sessionId!,
-      }),
-    ).toBe(reasoning);
+    // Check 2, the close beat: the generative F2, although M (mc_reason, what
+    // the plain rotation reaches first with no teachback) is still servable.
+    const close = await poseCheck(page);
+    expect(close.question_hash).toBe(F2);
+    expect(close.format).toBe("free");
+    expect(close.question_hash).not.toBe(M);
+    await expect(page.getByTestId("loop-attempt-input")).toBeVisible();
+    await expect(page.getByTestId("loop-attempt-options")).toHaveCount(0);
+    ({ state } = await beatState(seeded.session_id));
+    expect(state.concept).toBe(seeded.node_id); // posing the close beat closes nothing
+    expect(Object.keys(state.steps ?? {})).not.toContain(M);
+    await page.getByTestId("loop-attempt-input").fill(`working: ${GRADER_CORRECT_TOKEN}`);
+    await submitGraded(page);
+
+    // The graded close beat closes the segment: the cursor moves on.
+    ({ state } = await beatState(seeded.session_id));
+    expect(state.plan?.cursor).toBe(1);
+    expect(state.concept).toBe(seeded.next_node_id);
+    expect(state.concept_checks).toBe(0);
+    expect(state.steps?.[F2]?.last_verdict).toBe("correct");
+    // Graded-only belief: one evidence row per graded check, none for M.
+    expect(await evidenceOn(F1)).toHaveLength(1);
+    expect(await evidenceOn(F2)).toEqual([{ correct: true }]);
+    expect(await evidenceOn(M)).toEqual([]);
   } finally {
     await context.close();
   }
 });
 
-/** W3.1b stub: PlanPanel lists prereq_edges among proposed concepts when the
- *  seed plan carries any. Skip cleanly when this walk's plan has none. */
-test("plan shows loop-plan-deps when prereq edges exist among proposed concepts", async ({ browser }) => {
+/** W2.3 (reason-before-submit; docs/learning-loop/w2-reason-before-submit.md).
+ *  The seeded concept holds one free item (F) and one mc_reason item (M).
+ *  Check 1 (F): "Your reasoning (optional)" is offered, neither required nor
+ *  a substitute for the answer; it travels on the wire, lands sealed in
+ *  sessions.loop_state (steps[F].reasoning_encrypted, nested AES-GCM bound to
+ *  the session) and is never a grader input or evidence — the reasoning carries
+ *  the grader's correct token, the answer does not, and the check grades not
+ *  yet. Check 2 (M, the close beat with no generative item left): the graded
+ *  one-sentence reason is required before Submit, there is no optional box,
+ *  and a `reasoning` field a client adds anyway is dropped. */
+test("W2.3 reason-before-submit: free reasoning is optional, sealed and never evidence; mc_reason needs its reason before Submit", async ({ browser }) => {
+  test.skip(loopOffLane, "loop path: default lane only");
+  test.setTimeout(LOOP_JOURNEY_TIMEOUT_MS);
+  const seeded = (await seedCheckBeats("reason")) as BeatSession & { mc_correct_text: string };
+  const { F, M } = seeded.hashes;
+  const sessionId = seeded.session_id;
+  const reasoning = `${GRADER_CORRECT_TOKEN} because each step is scaled by the rate`;
+  const { context, page } = await signIn(browser, USER_LOOP, "Lou Loop");
+  try {
+    await resumeBeatSession(page, sessionId);
+
+    // Check 1 (free): the reasoning box is optional and never the answer.
+    const free = await poseCheck(page);
+    expect(free.question_hash).toBe(F);
+    const submit = page.getByTestId("loop-attempt-submit");
+    const box = page.getByTestId("loop-attempt-reasoning");
+    await expect(box).toBeVisible();
+    await expect(page.getByLabel("Your reasoning (optional)")).toBeVisible();
+    await expect(page.getByTestId("loop-attempt-reason")).toHaveCount(0);
+    await expect(submit).toBeDisabled();
+    await box.fill(reasoning);
+    await expect(submit).toBeDisabled(); // reasoning alone is not an answer
+    await page.getByTestId("loop-attempt-input").fill(WORKING_ATTEMPT);
+    await expect(submit).toBeEnabled();
+    const evidenceBefore = await evidenceCount(USER_LOOP);
+    const freeBody = await submitGraded(page);
+    expect(freeBody).toMatchObject({ question_hash: F, answer: WORKING_ATTEMPT, reasoning, idk: false });
+
+    // Not evidence: graded on the answer alone — the token in the reasoning credited nothing.
+    expect(await evidenceOn(F)).toEqual([{ correct: false }]);
+    expect(await evidenceCount(USER_LOOP)).toBe(evidenceBefore + 1);
+    // Sealed at rest: ciphertext on the step, no plaintext anywhere in the document.
+    const { state, raw } = await beatState(sessionId);
+    expect(state.steps?.[F]).toMatchObject({ last_correct: false, last_verdict: "not_yet" });
+    const sealed = state.steps?.[F]?.reasoning_encrypted;
+    expect(sealed).toBeTruthy();
+    expect(sealed).not.toContain(reasoning);
+    expect(raw).not.toContain(reasoning);
+    expect(raw).not.toContain(GRADER_CORRECT_TOKEN);
+    expect(await decryptNestedText({
+      value: sealed!, table: "sessions", column: "loop_state", path: "reasoning_encrypted", row: sessionId,
+    })).toBe(reasoning);
+    // Nor did it ride the transcript: the user turn is the answer, sealed too.
+    let turns = await userTurns(sessionId);
+    const answered = turns.plain.indexOf(WORKING_ATTEMPT);
+    expect(answered, JSON.stringify(turns.plain)).toBeGreaterThanOrEqual(0);
+    expect(turns.raw[answered]).not.toContain(WORKING_ATTEMPT);
+    for (const text of turns.plain) expect(text).not.toContain(reasoning);
+
+    // Check 2 (mc_reason, the close beat once no generative item is left).
+    const mc = await poseCheck(page);
+    expect(mc.question_hash).toBe(M);
+    expect(mc.format).toBe("mc_reason");
+    await expect(page.getByTestId("loop-attempt-reasoning")).toHaveCount(0);
+    await expect(page.getByTestId("loop-attempt-input")).toHaveCount(0);
+    const reasonBox = page.getByTestId("loop-attempt-reason");
+    await expect(reasonBox).toBeVisible();
+    await expect(submit).toBeDisabled();
+    const letter = mc.options?.find((o) => o.text === seeded.mc_correct_text)?.letter;
+    expect(letter, JSON.stringify(mc.options)).toBeTruthy();
+    await page.getByTestId(`loop-attempt-option-${letter}`).click();
+    await expect(page.getByTestId(`loop-attempt-option-${letter}`)).toHaveAttribute("aria-checked", "true");
+    await expect(submit).toBeDisabled(); // K02: an option without its reason
+    await reasonBox.fill("   ");
+    await expect(submit).toBeDisabled(); // a blank reason is no reason
+    const reason = `${GRADER_CORRECT_TOKEN} it scales each update step`;
+    await reasonBox.fill(reason);
+    await expect(submit).toBeEnabled();
+    // A client that sends the optional field on mc_reason anyway: the server drops it.
+    const injected = "injected reasoning the server must drop";
+    let injectedSent = false;
+    await page.route("**/api/learn/loop/check/answer/stream", async (route) => {
+      const body = JSON.parse(route.request().postData() ?? "{}");
+      injectedSent = true;
+      await route.continue({ postData: JSON.stringify({ ...body, reasoning: injected }) });
+    });
+    const mcBody = await submitGraded(page);
+    await page.unroute("**/api/learn/loop/check/answer/stream");
+    expect(injectedSent).toBe(true);
+    expect(mcBody).toMatchObject({ question_hash: M, option: letter, reason });
+    expect(await evidenceOn(M)).toEqual([{ correct: true }]);
+    const after = await beatState(sessionId);
+    expect(after.state.steps?.[M]?.last_verdict).toBe("correct");
+    expect(after.state.steps?.[M]).not.toHaveProperty("reasoning_encrypted");
+    expect(after.raw).not.toContain(injected);
+    expect(after.raw).not.toContain(reason);
+    // The graded reason is the submission's own text: stored encrypted in the transcript.
+    turns = await userTurns(sessionId);
+    const chose = turns.plain.indexOf(`(${letter}) ${reason}`);
+    expect(chose, JSON.stringify(turns.plain)).toBeGreaterThan(answered);
+    expect(turns.raw[chose]).not.toContain(reason);
+    for (const text of turns.plain) expect(text).not.toContain(injected);
+  } finally {
+    await context.close();
+  }
+});
+
+/** W3.1 / W3.1b (plan dependency block): a goal on Bitwise Operators scopes the
+ *  plan to it and its prerequisite Binary Numbers (the rich seed's
+ *  prerequisite edge binary → bitwise), so GET /plan's prereq_edges is
+ *  non-empty by construction. The plan card's "How these connect" lists exactly
+ *  those edges, one row per edge, as structure only (names and an arrow — no
+ *  mastery); the session panel's twin is hidden while the plan is up and shows
+ *  the same rows once the plan is approved. Wide viewport: the rail is
+ *  wide-screen only. */
+test("W3.1 plan dependencies: the plan card and, after approve, the session panel list the goal plan's prerequisite edges", async ({ browser }) => {
   test.skip(loopOffLane, "loop path: default lane only");
   test.setTimeout(LOOP_JOURNEY_TIMEOUT_MS);
   const P = await learningParams(["PROBE_SESSION_CAP"]);
+  const binary = "rich-node-loop-binary";
+  const bitwise = "rich-node-loop-bitwise";
   const { context, page } = await signIn(browser, USER_LOOP, "Lou Loop");
   try {
+    await page.setViewportSize({ width: 1440, height: 900 });
     await openLearn(page);
-    await walkProbeAndPlan(page, P, /* approve */ false);
-    await expect(page.getByTestId("loop-phase")).toHaveAttribute("data-phase", "plan");
-    const deps = page.getByTestId("loop-plan-deps");
-    if ((await deps.count()) === 0) {
-      test.skip(true, "no prereq edges among proposed concepts in this seed plan");
+    const phase = page.getByTestId("loop-phase");
+    await expect(page.getByTestId("loop-set-goal")).toBeEnabled();
+    await page.getByTestId("loop-set-goal").click();
+    const editor = page.getByRole("form", { name: "Learning goal" });
+    await editor.getByRole("textbox", { name: /Your objective/ }).fill("Use bitwise operators on binary numbers");
+    await editor.getByRole("checkbox", { name: "Bitwise Operators", exact: true }).check();
+    const goalSaved = page.waitForResponse((r) => r.url().includes("/api/learn/loop/goal") && r.request().method() === "POST");
+    await editor.getByTestId("loop-goal-save").click();
+    expect((await goalSaved).status()).toBe(200);
+
+    // The check-in, answered "I don't know" (the phone goal journey's walk).
+    const planRead = page.waitForResponse((r) => new URL(r.url()).pathname === "/api/learn/loop/plan" && r.request().method() === "GET");
+    let answered = 0;
+    while ((await phase.getAttribute("data-phase")) === "probe" && answered < Number(P.PROBE_SESSION_CAP)) {
+      await expect(page.getByTestId("loop-probe-idk")).toBeVisible();
+      await page.getByTestId("loop-probe-idk").click();
+      answered += 1;
+      await expect.poll(async () => (await phase.getAttribute("data-phase")) !== "probe" || await page.getByTestId("loop-probe-reference").isVisible()).toBe(true);
+      if (await page.getByTestId("loop-probe-next").isVisible()) await page.getByTestId("loop-probe-next").click();
+      await expect.poll(async () => (await phase.getAttribute("data-phase")) !== "probe" || await page.getByTestId("loop-probe-idk").isVisible()).toBe(true);
     }
+    await expect(phase).toHaveAttribute("data-phase", "plan");
+    const plan = (await (await planRead).json()) as {
+      concepts: { node_id: string }[];
+      prereq_edges: { prerequisite: string; dependent: string }[];
+    };
+    // The edges are the student's own prerequisite edges, oriented (prerequisite, dependent).
+    expect(plan.prereq_edges).toEqual([{ prerequisite: binary, dependent: bitwise }]);
+    expect(plan.concepts.map((c) => c.node_id)).toContain(binary);
+
+    // The plan card: one row per edge, structure only.
+    const deps = page.getByTestId("loop-plan-deps");
     await expect(deps).toBeVisible();
-    await expect(page.locator("[data-testid^='loop-plan-dep-']").first()).toBeVisible();
+    await expect(deps).toContainText("How these connect");
+    const rows = deps.locator("[data-testid^='loop-plan-dep-']");
+    await expect(rows).toHaveCount(1);
+    const row = page.getByTestId(`loop-plan-dep-${binary}-${bitwise}`);
+    await expect(row).toHaveText("Binary Numbers → Bitwise Operators");
+    await expect(row).toHaveAttribute("aria-label", "Binary Numbers is a prerequisite for Bitwise Operators");
+    expect(await deps.textContent()).not.toMatch(/\d|%|mastery|known/i);
+    // The rail's twin waits while the plan is up (the rail plan is hidden).
+    await expect(page.getByTestId("loop-rail")).toBeVisible();
+    await expect(page.getByTestId("session-plan-deps")).toHaveCount(0);
+
+    await page.getByTestId("loop-plan-approve").click();
+    await expect(phase).toHaveAttribute("data-phase", "teach");
+    await expect(page.getByTestId("loop-plan-deps")).toHaveCount(0);
+    const railDeps = page.getByTestId("loop-rail").getByTestId("session-plan-deps");
+    await expect(railDeps).toBeVisible();
+    await expect(railDeps.locator("[data-testid^='session-plan-dep-']")).toHaveCount(1);
+    await expect(page.getByTestId(`session-plan-dep-${binary}-${bitwise}`)).toHaveText("Binary Numbers → Bitwise Operators");
+    expect(await railDeps.textContent()).not.toMatch(/\d|%|mastery|known/i);
   } finally {
     await context.close();
   }
