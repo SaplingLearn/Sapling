@@ -16,7 +16,7 @@
  */
 import React from "react";
 import dynamic from "next/dynamic";
-import { motion } from "framer-motion";
+import { motion, type Target } from "framer-motion";
 import Link from "next/link";
 import { useUser } from "@/context/UserContext";
 import { deleteFlashcard, rateFlashcard } from "@/lib/api";
@@ -312,7 +312,7 @@ function FlipCard({ flipped, onFlip, card, enter }: { flipped: boolean; onFlip: 
       key={card.id}
       className={rv.card}
       onClick={onFlip}
-      initial={enter ? m.fadeUp.initial : false}
+      initial={enter ? (m.fadeUp.initial as Target) : false}
       animate={m.fadeUp.animate}
       transition={m.fadeUp.transition}
     >
@@ -361,7 +361,7 @@ function Summary({
     <motion.div
       className={rv.summary}
       data-testid="flashcards-summary"
-      initial={enter ? m.fadeUp.initial : false}
+      initial={enter ? (m.fadeUp.initial as Target) : false}
       animate={m.fadeUp.animate}
       transition={m.fadeUp.transition}
     >
