@@ -69,7 +69,7 @@
   },
   "src/components/screens/Calendar.tsx": {
     "no-restricted-syntax": {
-      "count": 20
+      "count": 19
     }
   },
   "src/components/screens/Dashboard.tsx": {
@@ -91,11 +91,6 @@
     },
     "no-restricted-syntax": {
       "count": 17
-    }
-  },
-  "src/components/screens/Library.tsx": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 2
     }
   },
   "src/components/screens/Settings.tsx": {
