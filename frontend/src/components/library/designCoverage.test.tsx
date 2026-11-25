@@ -41,6 +41,8 @@ vi.mock("@/lib/api", () => ({
   scanDocumentConcepts: vi.fn(),
   scanCourseConcepts: vi.fn(),
   uploadDocumentStream: vi.fn(),
+}));
+vi.mock("@/lib/notesApi", () => ({
   getDocumentNotes: vi.fn(),
   saveDocumentNotes: vi.fn(),
   regenerateDocumentNotes: vi.fn(),
@@ -59,7 +61,8 @@ vi.mock("@/lib/libraryApi", () => ({
 }));
 vi.mock("@/lib/studyGuide/api", () => ({ listGuides: vi.fn(async () => ({ guides: [] })) }));
 
-import { getCourses, getDocumentNotes, getDocuments, type EnrolledCourse } from "@/lib/api";
+import { getCourses, getDocuments, type EnrolledCourse } from "@/lib/api";
+import { getDocumentNotes } from "@/lib/notesApi";
 import { Library } from "./Library";
 import { Notes } from "../notes/Notes";
 import { ToastProvider } from "../ToastProvider";

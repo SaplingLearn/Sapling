@@ -16,7 +16,7 @@ import React from "react";
 
 import {
   getDocumentNotes, regenerateDocumentNotes, saveDocumentNotes,
-} from "@/lib/api";
+} from "@/lib/notesApi";
 import type { DocumentNotes } from "@/lib/types";
 import { humanizeError } from "@/lib/errorMessage";
 

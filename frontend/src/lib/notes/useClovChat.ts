@@ -8,7 +8,7 @@
  */
 import React from "react";
 
-import { askDocumentNotes } from "@/lib/api";
+import { askDocumentNotes } from "@/lib/notesApi";
 import type { NotesChatTurn } from "@/lib/types";
 
 export interface ClovMessage {

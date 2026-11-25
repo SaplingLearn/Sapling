@@ -29,16 +29,18 @@ vi.mock("@/lib/notes/useNoteMath", () => ({
 vi.mock("@/lib/api", () => ({
   getDocuments: vi.fn(),
   getCourses: vi.fn(),
+}));
+vi.mock("@/lib/notesApi", () => ({
   getDocumentNotes: vi.fn(),
   saveDocumentNotes: vi.fn(),
   regenerateDocumentNotes: vi.fn(),
   askDocumentNotes: vi.fn(),
 }));
 
+import { getCourses, getDocuments, type EnrolledCourse } from "@/lib/api";
 import {
-  askDocumentNotes, getCourses, getDocumentNotes, getDocuments,
-  regenerateDocumentNotes, saveDocumentNotes, type EnrolledCourse,
-} from "@/lib/api";
+  askDocumentNotes, getDocumentNotes, regenerateDocumentNotes, saveDocumentNotes,
+} from "@/lib/notesApi";
 import { Notes } from "./Notes";
 import { ToastProvider } from "../ToastProvider";
 

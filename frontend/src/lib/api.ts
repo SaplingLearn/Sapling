@@ -10,7 +10,6 @@ import type {
   AdminAccountsMeta, AdminSeedAccountResult, AdminWipeAccountResult,
   AdminCopyAccountResult, AccountCopyDirection, AdminAccountSummary, AdminCopyPreview,
   Note, LinkedConcept,
-  DocumentNotes, NotesChatTurn,
   GraphUpdate, MasteryChange,
   AnalyticsBucket, LlmCostGroupBy,
   UsageSummaryData, UsageByUserData, LlmCostData, ErrorsPageData,
@@ -923,39 +922,6 @@ export const scanCourseConcepts = (courseId: string, userId: string) =>
   fetchJSON<ScanConceptsResponse>(`/api/documents/course/${courseId}/scan-concepts`, {
     method: 'POST',
     body: JSON.stringify({ user_id: userId }),
-  });
-
-// The per-document notes page (/library/[docId]/notes).
-export const getDocumentNotes = (documentId: string, userId: string) =>
-  fetchJSON<DocumentNotes>(
-    `/api/documents/doc/${documentId}/notes?user_id=${encodeURIComponent(userId)}`,
-  );
-
-export const saveDocumentNotes = (
-  documentId: string,
-  userId: string,
-  patch: { title?: string; content?: string; final?: boolean },
-) =>
-  fetchJSON<DocumentNotes>(`/api/documents/doc/${documentId}/notes`, {
-    method: 'PUT',
-    body: JSON.stringify({ user_id: userId, ...patch }),
-  });
-
-/** Rebuild the notes from the source document, replacing the student's edits. */
-export const regenerateDocumentNotes = (documentId: string, userId: string) =>
-  fetchJSON<DocumentNotes>(`/api/documents/doc/${documentId}/notes/regenerate`, {
-    method: 'POST',
-    body: JSON.stringify({ user_id: userId }),
-  });
-
-export const askDocumentNotes = (
-  documentId: string,
-  userId: string,
-  body: { message: string; notes: string; quote?: string | null; history?: NotesChatTurn[] },
-) =>
-  fetchJSON<{ reply: string }>(`/api/documents/doc/${documentId}/notes/ask`, {
-    method: 'POST',
-    body: JSON.stringify({ user_id: userId, ...body }),
   });
 
 // Flashcards
