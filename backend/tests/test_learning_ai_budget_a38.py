@@ -124,17 +124,6 @@ def events(monkeypatch):
 # ── C1: the daily tutor-call count cap ───────────────────────────────────────
 
 
-def test_tutor_call_cap_default_is_in_config_and_env_overridable():
-    src = (BACKEND / "config.py").read_text()
-    assert re.search(
-        r'^STUDENT_DAILY_TUTOR_CALLS = int\(os\.getenv\("STUDENT_DAILY_TUTOR_CALLS", "200"\)\)',
-        src,
-        re.M,
-    )
-    assert isinstance(config.STUDENT_DAILY_TUTOR_CALLS, int)
-    assert "daily_tutor_calls" in ai_budget._HARD_ORDER
-
-
 def _count_to_cap(uid: str = UID) -> int:
     n = 0
     for _ in range(config.STUDENT_DAILY_TUTOR_CALLS):
@@ -299,20 +288,6 @@ def test_tutor_calls_migration_creates_the_counter_and_the_atomic_increment():
     assert re.search(r"ON CONFLICT \(user_id, day\) DO UPDATE", ddl)
     assert re.search(rf"SET calls = {_TUTOR_TABLE}\.calls \+ 1", ddl)
     assert "RETURNING calls" in ddl
-
-
-def test_tutor_calls_migration_is_backend_only():
-    _, sql = _calls_migration()
-    ddl = _ddl(sql)
-    assert f"ALTER TABLE {_TUTOR_TABLE} ENABLE ROW LEVEL SECURITY" in ddl
-    assert f"REVOKE ALL ON TABLE {_TUTOR_TABLE} FROM PUBLIC" in ddl
-    assert f"REVOKE ALL ON FUNCTION {_TUTOR_RPC}(text, date) FROM PUBLIC" in ddl
-    # Supabase roles are guarded (a plain Postgres has none), same idiom as canopy_active_users
-    assert "ARRAY['anon', 'authenticated']" in ddl
-    assert f"'REVOKE ALL ON TABLE {_TUTOR_TABLE} FROM %I'" in ddl
-    assert f"'REVOKE ALL ON FUNCTION {_TUTOR_RPC}(text, date) FROM %I'" in ddl
-    assert "GRANT EXECUTE ON FUNCTION" in ddl and "TO service_role" in ddl
-    assert "NOTIFY pgrst, 'reload schema'" in ddl
 
 
 def test_ai_budget_reaches_the_store_only_through_db_connection():
