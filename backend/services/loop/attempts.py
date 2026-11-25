@@ -58,6 +58,14 @@ from services.loop.claims import _on_step, _record_attempt
 #: mirror and the tests key on this logger name).
 logger = logging.getLogger("routes.learn_loop")
 
+_ATTEMPT_HASH_CHARS = 16  # hex characters kept of an attempt's sha256 digest (stored in attempt_hashes)
+_MS_PER_S = 1000  # milliseconds per second (zpd.attempt's *_ms signals)
+_WAIT_TENTHS = 10  # a strict-gate wait is rounded UP to a tenth of a second
+#: /hint's denial: the response key, and the two reasons the rung gate gives
+_DENIED = "denied"
+_DENY_DWELL = "dwell"
+_DENY_NO_ATTEMPT = "no_genuine_attempt"
+
 
 # ── Attempt / hint / action / openers / end-session ───────────────────────
 
@@ -76,7 +84,7 @@ def _attempt_hash(text: str) -> str:
     repeat with other spacing or punctuation is the same attempt. The text
     itself is never stored."""
     words = " ".join(re.findall(r"[a-z0-9]+", (text or "").lower()))
-    return hashlib.sha256(words.encode("utf-8")).hexdigest()[:16]
+    return hashlib.sha256(words.encode("utf-8")).hexdigest()[:_ATTEMPT_HASH_CHARS]
 
 
 # ── Spec §13 A133/A134: one attempt's structured signals ────────────────────
@@ -165,7 +173,7 @@ def _remember_attempt_tokens(entry: dict, digests: frozenset[str]) -> None:
 
 
 def _ms_of(seconds: float) -> int:
-    return int(round(max(0.0, seconds) * 1000))
+    return int(round(max(0.0, seconds) * _MS_PER_S))
 
 
 # crisis support: a crisis attempt stops the hint flow — nothing counts toward a hint
@@ -281,7 +289,7 @@ def _time_still_needed(
         waits.append(signals.required_s - signals.alone_s)
     wait = max(waits)
     # rounded UP to a tenth: a wait under 0.05 s must never read as 0 (no wait)
-    return math.ceil(wait * 10) / 10 if wait > 0 else None
+    return math.ceil(wait * _WAIT_TENTHS) / _WAIT_TENTHS if wait > 0 else None
 
 
 def _mark_earnest_blocked(session_id: str, qh: str, step: StepState, entry: dict) -> None:
@@ -313,7 +321,7 @@ def _rung_gate_denial(step: StepState, now: float) -> dict | None:
         return None
     anchor = step.last_rung_at if step.last_rung_at is not None else step.first_shown_at
     attempted = any(t > anchor for t in step.attempted_at)
-    return {"denied": "dwell" if attempted else "no_genuine_attempt"}
+    return {_DENIED: _DENY_DWELL if attempted else _DENY_NO_ATTEMPT}
 
 
 def _hint_gate_denial(
@@ -326,7 +334,7 @@ def _hint_gate_denial(
     little longer before the next hint.") — the time is what is missing, not
     the attempt. Flag off: exactly `_rung_gate_denial`, and nothing more is read."""
     denied = _rung_gate_denial(step, now)
-    if denied != {"denied": "no_genuine_attempt"} or not _help_gate_strict_on(body.user_id):
+    if denied != {_DENIED: _DENY_NO_ATTEMPT} or not _help_gate_strict_on(body.user_id):
         return denied
     check = get_check_item(entry["check_item_id"]) if entry.get("check_item_id") else None
     node_id = _node_for_item(body.user_id, check) if check else None
@@ -336,7 +344,7 @@ def _hint_gate_denial(
         band, time_scale=config.LEARNING_GATE_TIME_SCALE, variant=variant
     )
     if _seconds_since(_help_anchor(entry), now) < required:
-        return {"denied": "dwell"}
+        return {_DENIED: _DENY_DWELL}
     return denied
 
 
@@ -356,7 +364,7 @@ def hint(body: LoopHintBody, request: Request) -> dict:
     qh = body.question_hash
     entry = _steps(state).get(qh)
     if not isinstance(entry, dict) or state.get("current") != qh:
-        return {"denied": "no_active_item"}
+        return {_DENIED: "no_active_item"}
     step = _step_state(state, qh)
     now = _now_s()
     may_jump = entry.get("worked_first") is True and step.rung < Rung.H4
@@ -380,13 +388,13 @@ def hint(body: LoopHintBody, request: Request) -> dict:
     next_rung = int(jump) if jump is not None else int(step.rung) + 1
     if next_rung > int(ceiling):
         _mark_earnest_blocked(body.session_id, qh, step, entry)
-        return {"denied": "ceiling"}
+        return {_DENIED: "ceiling"}
     if next_rung == int(Rung.H6) and not _h6_ok(state, qh, entry, check):
         _mark_earnest_blocked(body.session_id, qh, step, entry)
         # #866 K32: `lifts` (present only then) — another genuine try opens it;
         # otherwise the worked answer never unlocks on this item (A32)
         lifts = _h6_lifts_with_attempts(state, qh, entry, check)
-        return {"denied": "h6_gate", **({"lifts": "attempt"} if lifts else {})}
+        return {_DENIED: "h6_gate", **({"lifts": "attempt"} if lifts else {})}
     accepted: dict = {}
 
     def unlock(e: dict) -> None:
