@@ -1,7 +1,6 @@
 """The quiz flags' eval datasets, offline: the planned writer's (spec §13
 A144) and the item gates' live smoke (A145). Their cases are the route's own
-messages, their evaluators score the contract, and each stays out of
-run_all.py until it is recorded live."""
+messages and their evaluators score the contract."""
 
 from __future__ import annotations
 
@@ -12,7 +11,6 @@ from types import SimpleNamespace
 sys.path.insert(0, str(Path(__file__).resolve().parent / "evals"))
 
 import quiz_generation_planned as ds  # noqa: E402
-import run_all  # noqa: E402
 
 from agents.quiz_planned import PlannedQuestion, PlannedQuiz  # noqa: E402
 
@@ -38,12 +36,6 @@ def test_every_case_is_the_routes_message_for_its_plan():
         for slot, key in case.metadata["targets"].items():
             assert f"QUESTION {slot}: difficulty " in case.inputs and f"TARGET: {key}" in case.inputs
         assert f"FORMAT: {case.metadata['format']}" in case.inputs
-
-
-def test_it_joins_run_all_only_once_recorded():
-    assert ds.DATASET not in run_all.DATASETS
-    cassettes = Path(__file__).resolve().parent / "evals" / "cassettes" / ds.DATASET
-    assert not cassettes.exists(), "recorded: add it to run_all.DATASETS and drop this pin"
 
 
 def test_the_evaluators_score_the_plans_contract():
@@ -80,10 +72,7 @@ from agents.check_items_solve import Solution, Solutions  # noqa: E402
 from agents.check_items_verify import AlignmentChecks, ConceptCheck  # noqa: E402
 
 
-def test_the_gate_smoke_joins_run_all_only_once_recorded():
-    assert gates_ds.DATASET not in run_all.DATASETS
-    cassettes = Path(__file__).resolve().parent / "evals" / "cassettes" / gates_ds.DATASET
-    assert not cassettes.exists(), "recorded: add it to run_all.DATASETS and drop this pin"
+def test_the_gate_smoke_cases_are_the_routes_messages():
     assert {c.metadata["kind"] for c in gates_ds.CASES} == {"verify", "solve"}
     for case in gates_ds.CASES:
         assert "ITEM q1" in case.inputs

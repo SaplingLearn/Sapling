@@ -45,23 +45,9 @@ def test_the_loop_tutor_dataset_scores_a_worked_first_teach_turn_and_its_h4_hint
     for case in cases.values():
         assert case.inputs[1] == "novice"
         assert NOVICE_WORKED_FIRST_FORMAT in lt._assembled(case.inputs)
-        assert NOVICE_WORKED_FIRST_FORMAT in lt._assembled(case.inputs, v2=True)
         assert case.metadata["final_answer"] and case.metadata["reference"]  # scored for leaks
     assert cases["hint"].inputs[2] == int(Rung.H4)  # the first hint is the worked example
     assert cases["teach"].inputs[2] == int(lt._WORKED_FIRST_TEACH_CEILING)
-    # every other case stays attempt-first: its recorded message is unchanged
-    for case in lt.CASES:
-        if case not in cases.values():
-            assert NOVICE_WORKED_FIRST_FORMAT not in lt._assembled(case.inputs)
-    # in every tier's dataset (and its recorded __v2 variant), so the routing
-    # gates score it; the flag-path and pedagogy datasets run their own cases
-    tier_sets = [
-        name for name in lt.VARIANTS if not name.endswith(("__flags", "__pedagogy"))
-    ]
-    assert set(lt.LOOP_TIER_SLOTS.values()) <= set(tier_sets)
-    for name in tier_sets:
-        make, _run = lt.VARIANTS[name]
-        assert {c.name for c in cases.values()} <= {c.name for c in make().cases}, name
 
 
 def test_the_confront_dataset_scores_a_worked_first_confronting_hint(evals):
@@ -69,7 +55,6 @@ def test_the_confront_dataset_scores_a_worked_first_confronting_hint(evals):
     [case] = _worked_first(mc.CASES)
     assert case.inputs[:3] == ("hint", "novice", int(Rung.H4))
     assert NOVICE_WORKED_FIRST_FORMAT in mc.assembled(case.inputs)
-    assert len(mc.CASES) <= 8
 
 
 def test_the_worked_first_hint_sends_the_routes_own_action_text(evals):

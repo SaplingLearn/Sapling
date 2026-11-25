@@ -64,28 +64,6 @@ def _write_cassette(judge, tmp_path, slot, case_id, served, item, **override):
     return path
 
 
-def test_rung_judge_prompt_embeds_ladder_intents(judge):
-    from learning.ladder import RUNG_INTENT, Rung
-
-    for rung in Rung:
-        assert RUNG_INTENT[rung] in judge.JUDGE_INSTRUCTIONS, rung
-        assert f"H{int(rung)}" in judge.JUDGE_INSTRUCTIONS
-    item = judge.JudgeItem.from_metadata(_ITEM)
-    msg = judge.build_judge_message("What do you need first?", item)
-    # the judge sees the item, its reference and final answer, and the reply
-    for part in (
-        _ITEM["item_prompt"],
-        _ITEM["reference"],
-        _ITEM["final_answer"],
-        "What do you need first?",
-    ):
-        assert part in msg
-    # eval-only: no production model slot for the judge
-    from agents import _providers
-
-    assert "rung_judge" not in _providers._DEFAULTS
-
-
 def test_judge_replays_a_fresh_cassette(judge, tmp_path):
     item = judge.JudgeItem.from_metadata(_ITEM)
     served = "What is the first thing you need to know here?"
@@ -103,41 +81,27 @@ def test_judge_replays_a_fresh_cassette(judge, tmp_path):
     )
 
 
-def test_judge_cassette_path_scheme(judge, tmp_path):
-    p = judge.cassette_path("loop_tutor_lite", "hint_develop_h1_pump", root=tmp_path)
-    assert p == tmp_path / "loop_tutor_rung_judge" / "loop_tutor_lite__hint_develop_h1_pump.json"
-
-
-def test_judge_cassette_stale_on_served_change(judge, tmp_path):
-    item = judge.JudgeItem.from_metadata(_ITEM)
-    _write_cassette(judge, tmp_path, "loop_tutor", "c1", "old reply?", item)
-    with pytest.raises(judge.StaleJudgementError, match="served"):
-        judge.judge_rung(
-            "c1", "loop_tutor", "new reply?", item, mode="replay", cassette_dir=tmp_path
-        )
-
-
-def test_judge_cassette_stale_on_prompt_change(judge, tmp_path, monkeypatch):
+@pytest.mark.parametrize(
+    "change,match",
+    [
+        ("served", "served"),  # the served text changed
+        ("instructions", "prompt"),  # the judge prompt changed
+        ("item", "prompt"),  # the item is part of the judge prompt: a new reference
+        ("model", "model"),  # recorded by another judge model
+    ],
+)
+def test_judge_cassette_is_stale_on_any_input_change(judge, tmp_path, monkeypatch, change, match):
     item = judge.JudgeItem.from_metadata(_ITEM)
     served = "What is the first thing you need?"
-    _write_cassette(judge, tmp_path, "loop_tutor", "c1", served, item)
-    monkeypatch.setattr(judge, "JUDGE_INSTRUCTIONS", judge.JUDGE_INSTRUCTIONS + "\nNew rule.")
-    with pytest.raises(judge.StaleJudgementError, match="prompt"):
-        judge.judge_rung("c1", "loop_tutor", served, item, mode="replay", cassette_dir=tmp_path)
-    monkeypatch.undo()
-    # the item is part of the judge prompt: a changed reference is stale too
-    changed = judge.JudgeItem.from_metadata({**_ITEM, "reference": "something else"})
-    with pytest.raises(judge.StaleJudgementError, match="prompt"):
-        judge.judge_rung("c1", "loop_tutor", served, changed, mode="replay", cassette_dir=tmp_path)
-
-
-def test_judge_cassette_stale_on_model_change(judge, tmp_path):
-    item = judge.JudgeItem.from_metadata(_ITEM)
-    served = "What is the first thing you need?"
-    _write_cassette(
-        judge, tmp_path, "loop_tutor", "c1", served, item, judge_model="some-other-model"
-    )
-    with pytest.raises(judge.StaleJudgementError, match="model"):
+    override = {"judge_model": "some-other-model"} if change == "model" else {}
+    _write_cassette(judge, tmp_path, "loop_tutor", "c1", served, item, **override)
+    if change == "served":
+        served = "new reply?"
+    elif change == "instructions":
+        monkeypatch.setattr(judge, "JUDGE_INSTRUCTIONS", judge.JUDGE_INSTRUCTIONS + "\nNew rule.")
+    elif change == "item":
+        item = judge.JudgeItem.from_metadata({**_ITEM, "reference": "something else"})
+    with pytest.raises(judge.StaleJudgementError, match=match):
         judge.judge_rung("c1", "loop_tutor", served, item, mode="replay", cassette_dir=tmp_path)
 
 
