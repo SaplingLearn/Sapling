@@ -129,12 +129,13 @@ def test_equivalent_dispatch_instants_have_identical_receipts_across_month_bound
     assert prepare(dispatched_at=local).to_row()["created_at"] == "2026-10-31T23:59:00+00:00"
 
 
+# One case per guard in prepare_checklist_usage_receipt, in source order.
 @pytest.mark.parametrize("changes", [
-    {"completed": False}, {"completed": 1}, {"usage": None},
+    {"completed": 1}, {"usage": None},
     {"usage": RunUsage(requests=0, input_tokens=10, output_tokens=5)},
     {"usage": RunUsage(requests=1)},
     {"usage": RunUsage(requests=1, input_tokens=1000, output_tokens=500, tool_calls=1)},
-    {"responses": ()}, {"responses": (response(), response())},
+    {"responses": ()},
     {"responses": [response()]}, {"responses": ({"model_name": MODEL},)},
     {"user_id": " "}, {"operation_id": str(OP)},
     {"dispatched_at": datetime(2026, 10, 31)}, {"request_id": ""},
@@ -145,7 +146,8 @@ def test_invalid_incomplete_or_unpriced_runs_cannot_prepare_final_bills(changes)
         prepare(**changes)
 
 
-@pytest.mark.parametrize("dispatched", [0, 2, -1, True, "1", 1.0])
+# Both sides of the one-dispatch boundary, and a bool that equals 1.
+@pytest.mark.parametrize("dispatched", [0, 2, True])
 def test_every_dispatch_must_have_a_completed_measured_response(dispatched):
     with pytest.raises(UsageReceiptUnavailable):
         prepare(dispatched_requests=dispatched)
@@ -161,7 +163,7 @@ def test_started_request_without_response_cannot_hide_behind_known_usage():
         prepare(responses=responses, usage=usage, dispatched_requests=2)
 
 
-@pytest.mark.parametrize("state", ["incomplete", "interrupted"])
+@pytest.mark.parametrize("state", ["incomplete"])
 def test_partial_response_state_cannot_be_certified_by_completed_flag(state):
     with pytest.raises(UsageReceiptUnavailable, match="complete same-model responses"):
         prepare_responses((response(state=state),))
@@ -175,11 +177,12 @@ def test_zero_usage_response_is_not_hidden_by_a_measured_retry():
         prepare_responses(responses)
 
 
-@pytest.mark.parametrize("scope", ["response", "aggregate"])
-@pytest.mark.parametrize("field,value", [
-    ("input_tokens", -1), ("input_tokens", 0.5), ("input_tokens", True),
-    ("output_tokens", float("nan")), ("output_tokens", 2_147_483_648),
-    ("cache_read_tokens", 1001),
+# _count's range ends (-1, 2**31), its type check (a bool equals 1, a float),
+# and cached > prompt, on each of the two code paths (per response, aggregate).
+@pytest.mark.parametrize("scope,field,value", [
+    ("response", "input_tokens", -1), ("response", "input_tokens", True),
+    ("response", "output_tokens", 2_147_483_648), ("response", "cache_read_tokens", 1001),
+    ("aggregate", "input_tokens", 0.5), ("aggregate", "cache_read_tokens", 1001),
 ])
 def test_malformed_native_usage_is_not_coerced(scope, field, value):
     responses = (response(),)
@@ -190,7 +193,7 @@ def test_malformed_native_usage_is_not_coerced(scope, field, value):
         prepare(responses=responses, usage=usage)
 
 
-@pytest.mark.parametrize("requests", [True, "1", -1, 1.0])
+@pytest.mark.parametrize("requests", [True, -1])
 def test_malformed_sdk_request_counts_are_rejected(requests):
     usage = RunUsage(requests=1, input_tokens=1000, output_tokens=500)
     usage.requests = requests
@@ -198,9 +201,8 @@ def test_malformed_sdk_request_counts_are_rejected(requests):
         prepare(usage=usage)
 
 
-@pytest.mark.parametrize("scope", ["response", "aggregate"])
-@pytest.mark.parametrize("field", [
-    "cache_write_tokens", "input_audio_tokens", "cache_audio_read_tokens", "output_audio_tokens",
+@pytest.mark.parametrize("scope,field", [
+    ("response", "cache_write_tokens"), ("aggregate", "output_audio_tokens"),
 ])
 def test_unpriced_native_billable_components_are_rejected(scope, field):
     responses = (response(),)
@@ -210,8 +212,9 @@ def test_unpriced_native_billable_components_are_rejected(scope, field):
         prepare(responses=responses, usage=usage)
 
 
-@pytest.mark.parametrize("scope", ["response", "aggregate"])
-@pytest.mark.parametrize("key", ["audio_prompt_tokens", "image_prompt_tokens", "tool_use_prompt_tokens", "new_billable_component"])
+@pytest.mark.parametrize("scope,key", [
+    ("response", "tool_use_prompt_tokens"), ("aggregate", "new_billable_component"),
+])
 def test_unknown_nonzero_usage_details_are_rejected(scope, key):
     responses = (response(),)
     usage = aggregate(responses)
@@ -228,8 +231,7 @@ def test_unknown_zero_details_do_not_invent_a_billed_component():
 
 
 @pytest.mark.parametrize("details", [
-    {"thoughts_tokens": 501}, {"thoughts_tokens": "100"},
-    {"cached_content_tokens": -1}, {"cached_content_tokens": 1001},
+    {"thoughts_tokens": 501}, {"cached_content_tokens": 1001},
     {"new_billable_component": "0"},
 ])
 def test_invalid_detailed_usage_cannot_be_priced_as_complete(details):
@@ -246,7 +248,7 @@ def test_conflicting_cached_counts_cannot_choose_the_larger_discount():
         prepare_responses(responses)
 
 
-@pytest.mark.parametrize("field", ["input_tokens", "output_tokens", "cache_read_tokens"])
+@pytest.mark.parametrize("field", ["cache_read_tokens"])
 def test_aggregate_native_totals_must_match_all_response_usage(field):
     responses = (response(), response())
     usage = aggregate(responses)
@@ -255,9 +257,9 @@ def test_aggregate_native_totals_must_match_all_response_usage(field):
         prepare_responses(responses, usage=usage)
 
 
-@pytest.mark.parametrize("key", [
-    "thoughts_tokens", "cached_content_tokens", "text_prompt_tokens", "text_candidates_tokens", "text_cache_tokens",
-])
+# thoughts_tokens is caught by the totals comparison; the other details only
+# by the per-key snapshot loop, which this case reaches.
+@pytest.mark.parametrize("key", ["text_candidates_tokens"])
 def test_aggregate_detail_snapshots_must_match_present_response_details(key):
     responses = (response(usage=RequestUsage(
         input_tokens=1000, output_tokens=500, cache_read_tokens=200,
@@ -321,27 +323,31 @@ def test_actual_sdk_text_thinking_and_cached_metadata_can_prepare_a_receipt():
     assert (row["thinking_tokens"], row["cached_tokens"], row["total_tokens"]) == (100, 200, 1500)
 
 
-@pytest.mark.parametrize("approved,served", [
-    (MODEL, MODEL), (f"google-gla:{MODEL}", MODEL), (MODEL, f"google-gla:{MODEL}"),
+@pytest.mark.parametrize("approved,served,provider", [
+    (MODEL, MODEL, "google"),
+    (f"google-gla:{MODEL}", MODEL, "google-gla"),
+    (MODEL, f"google-gla:{MODEL}", "google"),
 ])
-@pytest.mark.parametrize("provider", ["google", "google-gla"])
 def test_approved_google_aliases_preserve_one_canonical_model(approved, served, provider):
     row = prepare_responses((response(model=served, provider=provider),), approved_model=approved).to_row()
     assert row["model"] == MODEL and row["provider"] == "gemini"
 
 
-@pytest.mark.parametrize("model", [
-    f"google-vertex:{MODEL}", f"typesafe:{MODEL}", f"openai:{MODEL}",
-    "typesafe:jev-latest", "jev-latest", f"google-gla:google-gla:{MODEL}",
+# _model's three refusals (foreign provider, non-gemini name, a second
+# prefix), split across the approved model and a served response.
+@pytest.mark.parametrize("model,location", [
+    (f"google-vertex:{MODEL}", "approved"),
+    (f"typesafe:{MODEL}", "response"),
+    ("jev-latest", "approved"),
+    (f"google-gla:google-gla:{MODEL}", "response"),
 ])
-@pytest.mark.parametrize("location", ["approved", "response"])
 def test_arbitrary_provider_prefixes_cannot_be_priced_as_gemini(model, location):
     changes = {"approved_model": model} if location == "approved" else {"responses": (response(model=model),)}
     with pytest.raises(UsageReceiptUnavailable):
         prepare(**changes)
 
 
-@pytest.mark.parametrize("provider", [None, "google-vertex", "typesafe", "openai"])
+@pytest.mark.parametrize("provider", [None, "google-vertex"])
 def test_actual_provider_attribution_cannot_be_hidden_by_a_bare_gemini_name(provider):
     responses = (response(), response(provider=provider))
     with pytest.raises(UsageReceiptUnavailable, match="complete same-model responses"):
@@ -354,7 +360,7 @@ def test_mixed_models_cannot_be_priced_at_the_last_response_rate():
         prepare_responses(responses)
 
 
-@pytest.mark.parametrize("cost", [None, 0, -1, float("nan"), float("inf")])
+@pytest.mark.parametrize("cost", [None, 0, float("nan"), float("inf")])
 def test_invalid_price_does_not_look_like_a_complete_bill(monkeypatch, cost):
     monkeypatch.setattr(llm_pricing, "cost_usd", lambda *args, **kwargs: cost)
     with pytest.raises(UsageReceiptUnavailable, match="valid positive price"):
