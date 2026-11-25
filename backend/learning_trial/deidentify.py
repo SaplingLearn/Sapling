@@ -18,6 +18,8 @@ PREFIXES = {"student": "s_", "course": "c_", "concept": "k_", "item": "i_"}
 #: hex digits kept per pseudonym (64 bits: collision-free at trial scale)
 DIGEST_HEX = 16
 SALT_BYTES = 32
+#: the shortest salt a caller may supply (128 bits)
+MIN_SALT_BYTES = 16
 
 
 class Pseudonymizer:
@@ -28,8 +30,8 @@ class Pseudonymizer:
 
     def __init__(self, salt: bytes | None = None) -> None:
         salt = secrets.token_bytes(SALT_BYTES) if salt is None else salt
-        if not isinstance(salt, bytes) or len(salt) < 16:
-            raise ValueError("salt must be at least 16 bytes")
+        if not isinstance(salt, bytes) or len(salt) < MIN_SALT_BYTES:
+            raise ValueError(f"salt must be at least {MIN_SALT_BYTES} bytes")
         self._salt = salt
 
     def __call__(self, kind: str, *parts: str) -> str:
