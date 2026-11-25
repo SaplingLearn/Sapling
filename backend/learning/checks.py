@@ -1537,17 +1537,8 @@ def _wrong_list_reasons(draft: CheckItemDraft) -> list[str]:
     return reasons
 
 
-def validate_draft(draft: CheckItemDraft) -> list[str]:
-    """Every reason `draft` is unusable; [] when it may be stored. Each reason
-    names the rule it is about (format, difficulty, prompt, reference, rubric,
-    wrong, leak, answer_kind, canonical, tolerance, stepwise, final_answer; an
-    mc_reason draft's A37 option rules lead with option_count, one_correct,
-    correct_misconception, misconception_key, misconception_text, option_text
-    or letter, and its reference is checked for the model's own working under
-    deliberation). The wrong rules read a free or teachback draft's
-    wrong_keys / wrong_texts; an mc_reason draft's wrong reasons are its
-    distractors' misconceptions (common_wrong), and its own lists are not
-    read. Run repair_draft first to store what it can repair."""
+def _field_reasons(draft: CheckItemDraft) -> list[str]:
+    """`validate_draft`'s format, difficulty, prompt, reference and rubric rules."""
     reasons: list[str] = []
     if draft.format not in CHECK_ITEM_FORMATS:
         reasons.append(f"format {draft.format!r} is not one of {CHECK_ITEM_FORMATS}")
@@ -1560,6 +1551,56 @@ def validate_draft(draft: CheckItemDraft) -> list[str]:
     rubric = [r for r in draft.rubric if r.strip()]
     if len(rubric) < CHECK_ITEM_MIN_RUBRIC:
         reasons.append(f"rubric has {len(rubric)} item(s), needs >= {CHECK_ITEM_MIN_RUBRIC}")
+    return reasons
+
+
+def _mc_reason_reasons(draft: CheckItemDraft) -> list[str]:
+    """An mc_reason draft's A37 option rules, then its deliberation rule."""
+    reasons = list(_option_reasons(draft))
+    working = _working(draft)
+    if working:
+        reasons.append(
+            f"deliberation: the reference_answer is the model's own working "
+            f"({working.group(0).strip(' .!?:;,')!r}), not a model answer"
+        )
+    return reasons
+
+
+def _numeric_reasons(draft: CheckItemDraft) -> list[str]:
+    """A numeric draft's canonical-answer and tolerance rules."""
+    reasons: list[str] = []
+    if _finite_float(draft.canonical_answer) is None:
+        reasons.append(f"canonical_answer {draft.canonical_answer!r} is not a number")
+    if draft.tolerance != "":
+        tol = _finite_float(draft.tolerance)
+        if tol is None or tol < 0:
+            reasons.append(f"tolerance {draft.tolerance!r} is not a number >= 0")
+    return reasons
+
+
+def _stepwise_reasons(draft: CheckItemDraft) -> list[str]:
+    """A stepwise draft's numbered-step rule."""
+    steps = len(_STEP_LINE.findall(draft.reference_answer))
+    if steps < CHECK_ITEM_STEPWISE_MIN_STEPS:
+        return [
+            f"stepwise reference has {steps} numbered step(s), "
+            f"needs >= {CHECK_ITEM_STEPWISE_MIN_STEPS}"
+        ]
+    return []
+
+
+def validate_draft(draft: CheckItemDraft) -> list[str]:
+    """Every reason `draft` is unusable; [] when it may be stored. Each reason
+    names the rule it is about (format, difficulty, prompt, reference, rubric,
+    wrong, leak, answer_kind, canonical, tolerance, stepwise, final_answer; an
+    mc_reason draft's A37 option rules lead with option_count, one_correct,
+    correct_misconception, misconception_key, misconception_text, option_text
+    or letter, and its reference is checked for the model's own working under
+    deliberation). The wrong rules read a free or teachback draft's
+    wrong_keys / wrong_texts; an mc_reason draft's wrong reasons are its
+    distractors' misconceptions (common_wrong), and its own lists are not
+    read. Run repair_draft first to store what it can repair."""
+    reasons = _field_reasons(draft)
     if draft.format != _MC_REASON:  # an mc_reason item's are its distractors' (A37)
         reasons.extend(_wrong_list_reasons(draft))
     if draft.prompt.strip() and leak_in_prompt(draft.prompt, draft.reference_answer):
@@ -1567,27 +1608,11 @@ def validate_draft(draft: CheckItemDraft) -> list[str]:
     if draft.answer_kind not in CHECK_ITEM_ANSWER_KINDS:
         reasons.append(f"answer_kind {draft.answer_kind!r} is not one of {CHECK_ITEM_ANSWER_KINDS}")
     if draft.format == _MC_REASON:
-        reasons.extend(_option_reasons(draft))
-        working = _working(draft)
-        if working:
-            reasons.append(
-                f"deliberation: the reference_answer is the model's own working "
-                f"({working.group(0).strip(' .!?:;,')!r}), not a model answer"
-            )
+        reasons.extend(_mc_reason_reasons(draft))
     if draft.answer_kind == _NUMERIC:
-        if _finite_float(draft.canonical_answer) is None:
-            reasons.append(f"canonical_answer {draft.canonical_answer!r} is not a number")
-        if draft.tolerance != "":
-            tol = _finite_float(draft.tolerance)
-            if tol is None or tol < 0:
-                reasons.append(f"tolerance {draft.tolerance!r} is not a number >= 0")
+        reasons.extend(_numeric_reasons(draft))
     if draft.stepwise:
-        steps = len(_STEP_LINE.findall(draft.reference_answer))
-        if steps < CHECK_ITEM_STEPWISE_MIN_STEPS:
-            reasons.append(
-                f"stepwise reference has {steps} numbered step(s), "
-                f"needs >= {CHECK_ITEM_STEPWISE_MIN_STEPS}"
-            )
+        reasons.extend(_stepwise_reasons(draft))
     reasons.extend(_final_answer_reasons(draft))
     reasons.extend(_wrong_text_answer_reasons(draft))
     return reasons
