@@ -53,6 +53,7 @@ from services.graph_service import _normalize_concept
 from services.prompt_safety import neutralise_control_tags, wrap_untrusted
 from services.request_limits import check_rate_limit
 
+from services.loop.flags import _GRADING_CLAIM, _GRADING_CLAIM_AT
 from services.loop.state import (
     _loop_phase,
     _now_s,
@@ -451,13 +452,17 @@ def _emit_probe_done(saved: dict, user_id: str, request_id: str) -> None:
     )
 
 
+#: The window of the probe/plan read limit: LOOP_PROBE_PLAN_READS_PER_MIN is per minute.
+_PROBE_PLAN_WINDOW_S = 60
+
+
 def _probe_plan_read_limit(user_id: str) -> None:
     """A cheap per-user limit on the two no-model routes that write loop state
     (/probe/next, GET /plan): services/request_limits' in-process sliding
     window, PROBE_PLAN_READS_PER_MIN a minute. Runs after the gate. No model
     runs behind these routes, so this is not the A20 rate limit (llm_usage)."""
     retry = check_rate_limit(
-        f"loop_probe_plan:{user_id}", limit=config.LOOP_PROBE_PLAN_READS_PER_MIN, window_sec=60
+        f"loop_probe_plan:{user_id}", limit=config.LOOP_PROBE_PLAN_READS_PER_MIN, window_sec=_PROBE_PLAN_WINDOW_S
     )
     if retry is not None:
         raise HTTPException(
@@ -479,8 +484,8 @@ def _update_if_changed(session_id: str, doc: dict, mutate: Callable[[dict], None
 def _claim_live(current: dict, now: float) -> bool:
     if grade_checkpoint.KEY in current:
         return True
-    claimed_at = current.get("grading_claim_at")
-    return bool(current.get("grading_claim")) and (
+    claimed_at = current.get(_GRADING_CLAIM_AT)
+    return bool(current.get(_GRADING_CLAIM)) and (
         now - float(claimed_at or 0) <= LOOP_GRADING_CLAIM_STALE_S
     )
 

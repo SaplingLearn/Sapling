@@ -18,7 +18,8 @@ from services.auth_guard import get_session_user_id
 from services.check_item_service import get_check_item
 from services.feature_flags import flag_on
 
-from services.loop.constants import _WITHDRAWN_ITEM
+from services.loop.constants import _SESSION_MISMATCH, _WITHDRAWN_ITEM
+from services.loop.flags import _GRADING_CLAIM, _GRADING_CLAIM_AT
 from services.loop.state import (
     _gate,
     _load_loop_state,
@@ -135,7 +136,7 @@ def _served_review_item(body: LoopReportBody, now: datetime) -> CheckItem:
     try:
         view = review.peek_review_session(body.user_id, body.course_id, now, tz_offset_min=tz)
     except PermissionError:
-        raise HTTPException(status_code=403, detail="Session user mismatch") from None
+        raise HTTPException(status_code=403, detail=_SESSION_MISMATCH) from None
     not_served = HTTPException(status_code=404, detail=_REVIEW_CLAIM_DETAIL["not_served"])
     item = get_check_item(body.item_id)
     if item is None:
@@ -161,8 +162,8 @@ def _clear_reported_current(session_id: str, question_hash: str, now: float) -> 
         if not isinstance(entry, dict):
             return
         entry["reported"] = True
-        claimed = entry.get("grading_claim") and not (
-            now - float(entry.get("grading_claim_at") or 0) > LOOP_GRADING_CLAIM_STALE_S
+        claimed = entry.get(_GRADING_CLAIM) and not (
+            now - float(entry.get(_GRADING_CLAIM_AT) or 0) > LOOP_GRADING_CLAIM_STALE_S
         )
         if (
             state.get("current") == question_hash

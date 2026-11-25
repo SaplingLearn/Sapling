@@ -121,7 +121,7 @@ def _spend_prequestion_item(user_id: str, session_id: str, question_hash: str | 
 def _superseded_prequestion(user_id: str, session_id: str, request_id: str, node: str, rec: dict, *, at: float) -> None:
     """After the write that superseded a posed card: the item spent, the event."""
     _spend_prequestion_item(user_id, session_id, rec.get("question_hash"), at=at)
-    _emit_prequestion(user_id, request_id, session_id, node, "superseded", question_hash=rec.get("question_hash"))
+    _emit_prequestion(user_id, request_id, session_id, node, prequestion_rules.SUPERSEDED, question_hash=rec.get("question_hash"))
 
 
 def _emit_prequestion(user_id: str, request_id: str, session_id: str, node_id: str, status: str, **extra) -> None:
@@ -144,7 +144,7 @@ def _posed_prequestion(user_id: str, session_id: str, request_id: str, pose: _Po
     if pose.node is None:
         return None
     if pose.item is None:
-        _emit_prequestion(user_id, request_id, session_id, pose.node, "skipped", reason=pose.reason)
+        _emit_prequestion(user_id, request_id, session_id, pose.node, prequestion_rules.SKIPPED, reason=pose.reason)
         return None
     # A88/A93: the card's item is a posed item — the served-text scan covers it
     # while the card is open, like a check's (review fix: it was outside it)
@@ -160,7 +160,7 @@ def _posed_prequestion(user_id: str, session_id: str, request_id: str, pose: _Po
         request_id,
         session_id,
         pose.node,
-        "posed",
+        prequestion_rules.POSED,
         question_hash=pose.item.question_hash,
         format=pose.item.format,
         difficulty=int(pose.item.difficulty),

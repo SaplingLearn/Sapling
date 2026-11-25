@@ -27,13 +27,15 @@ from learning.help_ledger import ungraded_posed_window
 from learning.loop_state_store import seen_hashes
 from learning.params import LOOP_SCAN_POSED_MAX
 from services.check_item_service import items_by_hash, items_by_ids
-from services.session_modes import NOT_REVIEW
+from services.session_modes import NOT_REVIEW, REVIEW_MODE
 
 # Log records keep the name they had in routes/learn_loop.py, as every module
 # of the package does: an operator (or a caplog test) filters on it.
 logger = logging.getLogger("routes.learn_loop")
 
 POSES = "posttest_poses"  # spec §13 A87: the post-test commits when it is opened
+_FLASHCARD_KEY_PREFIX = "fc:"  # a review session's flashcard entry key (learning/review.py)
+_OLDEST = datetime.min.replace(tzinfo=timezone.utc)  # the rank of an unknown posed time
 
 
 def _ts(value) -> datetime | None:
@@ -71,69 +73,13 @@ def posed_items(user_id: str, *, now: datetime) -> tuple[list[tuple], datetime |
     try:
         open_ids: dict[str, datetime | None] = {}  # check item id → first posed
         open_hashes: dict[str, datetime | None] = {}  # question hash → first posed
-
-        def keep(store: dict, key, at) -> None:
-            if not key:
-                return
-            if key not in store or (at is not None and (store[key] is None or at < store[key])):
-                store[key] = at
-
-        for row in page_all(
-            table("sessions"),
-            "id,steps:loop_state->steps,probe:loop_state->probe",
-            filters={"user_id": f"eq.{user_id}", **NOT_REVIEW},
-            order="id",
-        ):
-            for entry in (row.get("steps") or {}).values():
-                if isinstance(entry, dict) and entry.get("graded_at") is None:
-                    keep(open_ids, entry.get("check_item_id"), _ts(entry.get("first_shown_at")))
-            cur = (row.get("probe") or {}).get("current") if isinstance(row.get("probe"), dict) else None
-            if isinstance(cur, dict):
-                keep(open_hashes, cur.get("question_hash"), None)
-        for row in page_all(
-            table("sessions"),
-            "id,open:loop_state->open",
-            filters={"user_id": f"eq.{user_id}", "mode": "eq.review", "loop_state->open": "not.is.null"},
-            order="id",
-        ):
-            for key, entry in (row.get("open") or {}).items():
-                if (
-                    isinstance(entry, dict)
-                    and not str(key).startswith("fc:")
-                    and entry.get("graded_at") is None
-                ):
-                    keep(open_ids, entry.get("item_id"), _ts(entry.get("served_at")))
-        pose_course: dict[str, str] = {}  # a pose names its course: matched on load
-        for pose in table(POSES).select(
-            "course_id,question_hash,posed_at",
-            filters={"user_id": f"eq.{user_id}", "answered_at": "is.null"},
-        ) or []:
-            keep(open_hashes, pose.get("question_hash"), _ts(pose.get("posed_at")))
-            if pose.get("question_hash"):
-                pose_course[pose["question_hash"]] = pose.get("course_id")
+        _open_session_items(user_id, open_ids, open_hashes)
+        _open_review_items(user_id, open_ids)
+        pose_course = _open_poses(user_id, open_hashes)
         ledger, edge = ungraded_posed_window(user_id, LOOP_SCAN_POSED_MAX)
         ledger_hashes = {qh for qh, _ in ledger}
-        historical: dict[str, datetime | None] = {}
-        for qh, at in ledger:
-            if qh in open_hashes:
-                keep(open_hashes, qh, at)  # open: always scanned; the earliest pose counts
-            else:
-                keep(historical, qh, at)
-        if historical:  # M1: the seen filter reads the historical rows only
-            seen = seen_hashes(user_id)
-            historical = {qh: at for qh, at in historical.items() if qh not in seen}
-        oldest = datetime.min.replace(tzinfo=timezone.utc)
-        candidates = sorted(
-            [("id", k, at) for k, at in open_ids.items()]
-            + [("hash", k, at) for k, at in open_hashes.items()]
-            + [("ledger", k, at) for k, at in historical.items()],
-            key=lambda c: c[2] or oldest,
-            reverse=True,
-        )
-        kept, left = candidates[:LOOP_SCAN_POSED_MAX], candidates[LOOP_SCAN_POSED_MAX:]
-        overflow = (left[0][2] or now) if left else None
-        if edge is not None:
-            overflow = edge if overflow is None else max(overflow, edge)
+        historical = _unseen_history(user_id, ledger, open_hashes)
+        kept, overflow = _scan_window(open_ids, open_hashes, historical, edge, now)
         found: dict[str, tuple] = {}
         ids = sorted(k for kind, k, _ in kept if kind == "id")
         for item in items_by_ids(ids) if ids else []:
@@ -144,8 +90,100 @@ def posed_items(user_id: str, *, now: datetime) -> tuple[list[tuple], datetime |
             if qh in pose_course and qh not in ledger_hashes and pose_course[qh] != item.course_id:
                 continue  # a pose's hash names an item of ITS course only
             found.setdefault(qh, (item, open_hashes.get(qh, historical.get(qh))))
-        ranked = sorted(found.values(), key=lambda pair: pair[1] or oldest, reverse=True)
+        ranked = sorted(found.values(), key=lambda pair: pair[1] or _OLDEST, reverse=True)
         return ranked, overflow
     except Exception as exc:
         logger.warning("posed items could not be read (%s)", type(exc).__name__)
         return None
+
+
+def _keep(store: dict, key, at) -> None:
+    """Record ``key`` in ``store`` at its earliest known posed time."""
+    if not key:
+        return
+    if key not in store or (at is not None and (store[key] is None or at < store[key])):
+        store[key] = at
+
+
+def _open_session_items(user_id: str, open_ids: dict, open_hashes: dict) -> None:
+    """Every (non-review) session's ungraded steps and its probe's current item."""
+    for row in page_all(
+        table("sessions"),
+        "id,steps:loop_state->steps,probe:loop_state->probe",
+        filters={"user_id": f"eq.{user_id}", **NOT_REVIEW},
+        order="id",
+    ):
+        for entry in (row.get("steps") or {}).values():
+            if isinstance(entry, dict) and entry.get("graded_at") is None:
+                _keep(open_ids, entry.get("check_item_id"), _ts(entry.get("first_shown_at")))
+        cur = (row.get("probe") or {}).get("current") if isinstance(row.get("probe"), dict) else None
+        if isinstance(cur, dict):
+            _keep(open_hashes, cur.get("question_hash"), None)
+
+
+def _open_review_items(user_id: str, open_ids: dict) -> None:
+    """Every review session's open, ungraded check entries (flashcards are not
+    check items, so their entries are skipped)."""
+    for row in page_all(
+        table("sessions"),
+        "id,open:loop_state->open",
+        filters={"user_id": f"eq.{user_id}", "mode": f"eq.{REVIEW_MODE}", "loop_state->open": "not.is.null"},
+        order="id",
+    ):
+        for key, entry in (row.get("open") or {}).items():
+            if (
+                isinstance(entry, dict)
+                and not str(key).startswith(_FLASHCARD_KEY_PREFIX)
+                and entry.get("graded_at") is None
+            ):
+                _keep(open_ids, entry.get("item_id"), _ts(entry.get("served_at")))
+
+
+def _open_poses(user_id: str, open_hashes: dict) -> dict[str, str]:
+    """Every unanswered post-test pose (expired too); returns the course each
+    pose's hash names (a pose's hash is matched against ITS course on load)."""
+    pose_course: dict[str, str] = {}
+    for pose in table(POSES).select(
+        "course_id,question_hash,posed_at",
+        filters={"user_id": f"eq.{user_id}", "answered_at": "is.null"},
+    ) or []:
+        _keep(open_hashes, pose.get("question_hash"), _ts(pose.get("posed_at")))
+        if pose.get("question_hash"):
+            pose_course[pose["question_hash"]] = pose.get("course_id")
+    return pose_course
+
+
+def _unseen_history(user_id: str, ledger, open_hashes: dict) -> dict[str, datetime | None]:
+    """Split the ledger's 'posed' rows: an open hash is always scanned (its
+    earliest pose counts); the rest are historical, and M1's seen filter
+    applies to those only."""
+    historical: dict[str, datetime | None] = {}
+    for qh, at in ledger:
+        if qh in open_hashes:
+            _keep(open_hashes, qh, at)  # open: always scanned; the earliest pose counts
+        else:
+            _keep(historical, qh, at)
+    if historical:  # M1: the seen filter reads the historical rows only
+        seen = seen_hashes(user_id)
+        historical = {qh: at for qh, at in historical.items() if qh not in seen}
+    return historical
+
+
+def _scan_window(
+    open_ids: dict, open_hashes: dict, historical: dict, edge: datetime | None, now: datetime
+) -> tuple[list[tuple], datetime | None]:
+    """M2 (a)/(d): rank every candidate by posed time and keep the newest
+    LOOP_SCAN_POSED_MAX; the overflow edge is the newest one left out, or the
+    ledger read's own edge, whichever is later."""
+    candidates = sorted(
+        [("id", k, at) for k, at in open_ids.items()]
+        + [("hash", k, at) for k, at in open_hashes.items()]
+        + [("ledger", k, at) for k, at in historical.items()],
+        key=lambda c: c[2] or _OLDEST,
+        reverse=True,
+    )
+    kept, left = candidates[:LOOP_SCAN_POSED_MAX], candidates[LOOP_SCAN_POSED_MAX:]
+    overflow = (left[0][2] or now) if left else None
+    if edge is not None:
+        overflow = edge if overflow is None else max(overflow, edge)
+    return kept, overflow

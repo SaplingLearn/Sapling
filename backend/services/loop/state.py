@@ -34,10 +34,13 @@ from services.session_modes import NOT_REVIEW
 from services.loop.constants import (
     _BUDGET_DETAIL,
     _FEEDBACK_PENDING,
+    _MC_REASON,
+    _NEEDS_ANSWER,
+    _NEEDS_SELECTED_OPTION,
     _NOT_ENABLED,
     _STATE_CONFLICT,
 )
-from services.loop.flags import _ANSWER_CLAIM
+from services.loop.flags import _ANSWER_CLAIM, _CLOSE_CLAIM, _GRADING_CLAIM
 
 #: Every module of the package logs as the route always did (the ops-log
 #: mirror and the tests key on this logger name).
@@ -183,6 +186,15 @@ def _item_like(item):
     service hands back decrypted CheckItem models. A dict is validated into
     CheckItem."""
     return CheckItem.model_validate(item) if isinstance(item, dict) else item
+
+
+def _require_answer_fields(fmt: str, *, selected_option, answer) -> None:
+    """422 when an answer lacks the field its item's format requires: an
+    mc_reason answer its selected option, any other format its text."""
+    if fmt == _MC_REASON and not selected_option:
+        raise HTTPException(status_code=422, detail=_NEEDS_SELECTED_OPTION)
+    if fmt != _MC_REASON and not answer:
+        raise HTTPException(status_code=422, detail=_NEEDS_ANSWER)
 
 
 # ── Loop state: PKG-06's JSON document ─────────────────────────────────────
@@ -398,7 +410,7 @@ def _grading_in_flight(doc: dict, now: float) -> bool:
     # spec §13 A138 (review fix): a prequestion guess being saved under its
     # claim — its row is the commit point, so a close now would strand it
     cards = [r for r in prequestion_rules.records(doc).values() if isinstance(r, dict)]
-    return any(grade_checkpoint.KEY in e or _live(e, "grading_claim", now) for e in entries) or any(
+    return any(grade_checkpoint.KEY in e or _live(e, _GRADING_CLAIM, now) for e in entries) or any(
         _live(r, _ANSWER_CLAIM, now) for r in cards
     )
 
@@ -409,13 +421,13 @@ def _refuse_while_closing(doc: dict, now: float) -> None:
     holds it (the close refuses a live grading claim, `_claim_close`)."""
     if _loop_phase(doc) == "close":
         raise HTTPException(status_code=409, detail=_SESSION_CLOSED)
-    if _live(doc, "close_claim", now):
+    if _live(doc, _CLOSE_CLAIM, now):
         raise HTTPException(status_code=409, detail=_CLOSE_IN_PROGRESS)
 
 
 def _closing(doc: dict, now: float) -> bool:
     """`_refuse_while_closing`'s condition, as a predicate."""
-    return _loop_phase(doc) == "close" or _live(doc, "close_claim", now)
+    return _loop_phase(doc) == "close" or _live(doc, _CLOSE_CLAIM, now)
 
 
 def _close_phase(doc: dict | None) -> str:

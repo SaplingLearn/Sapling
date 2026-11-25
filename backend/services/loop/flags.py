@@ -94,6 +94,17 @@ PREQUESTION_SOURCE = "prequestion"
 _ANSWER_CLAIM = "answer_claim"
 
 
+#: C2 / A52: the grading claim's keys on a step or probe item — the claim
+#: token, and when it was taken (`state._live` reads `<key>_at`)
+_GRADING_CLAIM = "grading_claim"
+_GRADING_CLAIM_AT = f"{_GRADING_CLAIM}_at"
+
+
+#: A38 06(q): the session close claim's keys on the loop-state document
+_CLOSE_CLAIM = "close_claim"
+_CLOSE_CLAIM_AT = f"{_CLOSE_CLAIM}_at"
+
+
 #: The three "[ACTION: ...]" texts, copied verbatim from routes/learn.py::_action_turn
 #: (:1406–1411), where they are a local dict.
 _ACTION_PROMPTS = {

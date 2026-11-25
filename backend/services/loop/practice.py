@@ -26,6 +26,7 @@ from learning.params import (
 )
 from services import varied_practice
 
+from services.loop.constants import _MC_REASON
 from services.loop.state import _step_state, _steps
 from services.loop.learner import (
     _BAND_CEILING,
@@ -284,127 +285,178 @@ def _activate_next_item(
     concept = state.get("concept")
     if not concept:
         return None
-    try:
-        excluded = (
-            seen_hashes(user_id)
-            | revealed_hashes(user_id)
-            | reported_hashes(user_id)
-            | set(state.get("steps") or {})
-            # spec §13 A138: an item this session posed as a prequestion (empty
-            # with the flag off) — its answer is shown, or its stem was seen
-            | prequestion_rules.session_hashes(state)
-        )
-    except Exception as exc:
-        if state.get("goal"):
-            raise HTTPException(status_code=503, detail="Practice availability unavailable; retry") from exc
-        raise
+    excluded = _excluded_hashes(user_id, state)
     # spec §13 A140 / A141: the student's two varied-practice dials, read once
     # per activation; both off → every pick below is exactly the plain one
     varied, combos = varied_practice.varied_on(user_id), varied_practice.multi_concept_on(user_id)
     while True:
-        item = None
-        try:
-            items, exclude = _practice_pool(user_id, course_id, concept, excluded)
-        except Exception as exc:
-            if state.get("goal"):
-                raise HTTPException(status_code=503, detail="Practice availability unavailable; retry") from exc
-            raise
-        learner = None
+        item = learner = band = None
+        items, exclude = _concept_pool(user_id, course_id, concept, excluded, state)
         if items:
-            # A140: how familiar each item's surface is to the student on this
-            # concept (met = seen, revealed, reported, posed this session)
-            familiarity = (
-                varied_practice.familiarity_for(course_id, items[0].concept_key, excluded)
-                if varied
-                else None
+            item, learner, band = _pick_item(
+                user_id, course_id, state, concept, items, exclude, excluded,
+                varied=varied, combos=combos, session_id=session_id,
             )
-            item = _isomorph_after_unknown(state, concept, items, exclude, familiarity=familiarity)
-            learner = _learner_state(user_id, concept)
-            band, _ = _band_of(learner)
-            # W1.3: rotation + segment-close generative-core preference
-            formats = policy.practice_formats(int(state.get("concept_checks") or 0))
-            target = _target_difficulty(state, concept, band)
-            if item is None and combos:
-                # A141: the ideas-combined dial — a multi-concept item whose
-                # apex is this concept, when its gate and the session dial allow
-                item = varied_practice.multi_concept_pick(
-                    user_id, course_id, state, concept, items[0].concept_key,
-                    target=target, formats=formats, excluded=excluded,
-                )
-            # W2.4b: low-trust next-probe hint among already-eligible items.
-            # Flag off → None (no decrypt, no-op). Flag on → open the latest
-            # step reasoning_encrypted under the session bind and prefer();
-            # a returned hash wins only if still eligible for this format pass.
-            hint_qh = preferred_next_question_hash(
-                user_id,
-                None,
-                tuple(
-                    (i.question_hash, i.prompt)
-                    for i in items
-                    if i.question_hash not in exclude
-                ),
-                session_id=session_id,
-                state=state,
-            )
-            for fmt in formats if item is None else ():
-                if hint_qh:
-                    hinted = next(
-                        (
-                            i
-                            for i in items
-                            if i.question_hash == hint_qh
-                            and i.format == fmt
-                            and i.question_hash not in exclude
-                        ),
-                        None,
-                    )
-                    if hinted is not None:
-                        item = hinted
-                        break
-                item = select_item(
-                    items,
-                    format=fmt,
-                    difficulty=target,
-                    exclude_hashes=exclude,
-                    familiarity=familiarity,
-                )
-                if item is not None:
-                    break
         if item is not None:
-            qh = item.question_hash
-            state["current"] = qh
-            step = {
-                "rung": int(Rung.H0),
-                "attempts": 0,
-                "wrong": 0,
-                "first_shown_at": now,
-                "check_item_id": item.id,
-                "node_id": concept,
-                "feedback_given": False,
-                # the H6 predicate (spec §3.3, A32): taught earlier in this session
-                "taught": bool(state.get("teach_turns") or state.get("concept_checks")),
-            }
-            if is_multi_concept(item):
-                # A141: counted by the session dial (one per concept a session)
-                step[MULTI_CONCEPT_STEP_KEY] = True
-            # spec §13 A122: a novice without the prerequisite (policy.attempt_first
-            # says no) gets the worked example FIRST on the concept's first item of
-            # the session; the item after it is the near-transfer, attempted
-            view = _learner_view(
-                learner, band=band, prereq_proficient=_prereq_proficient(user_id, concept)
-            )
-            if policy.opens_on_worked_example(
-                view, shown_on_concept=_worked_example_shown(state, concept)
-            ):
-                step["worked_first"] = True
-            if _take_retrieval_mark(state, concept):
-                # A128: this step's teaching ran without its course material
-                step[_RETRIEVAL_KEY] = _RETRIEVAL_FAILED_VALUE
-            _steps(state)[qh] = step
-            return qh
+            return _open_step(user_id, state, concept, item, learner, band, now)
         if not _advance_cursor(state, no_items=True):
             return None
         concept = state["concept"]
+
+
+#: The 503 detail when a goal session's practice pool cannot be read.
+_PRACTICE_UNAVAILABLE = "Practice availability unavailable; retry"
+
+
+def _excluded_hashes(user_id: str, state: dict) -> set:
+    """Everything the student has seen, had revealed or reported (A23, A113),
+    every hash already keyed in this session and (spec §13 A138) every item
+    this session posed as a prequestion (empty with the flag off) — its
+    answer is shown, or its stem was seen. A goal session's failed read is a
+    503 (retry); otherwise it propagates."""
+    try:
+        return (
+            seen_hashes(user_id)
+            | revealed_hashes(user_id)
+            | reported_hashes(user_id)
+            | set(state.get("steps") or {})
+            | prequestion_rules.session_hashes(state)
+        )
+    except Exception as exc:
+        if state.get("goal"):
+            raise HTTPException(status_code=503, detail=_PRACTICE_UNAVAILABLE) from exc
+        raise
+
+
+def _concept_pool(user_id: str, course_id: str, concept: str, excluded: set, state: dict):
+    """`_practice_pool` for the concept; a goal session's failed read is a 503."""
+    try:
+        return _practice_pool(user_id, course_id, concept, excluded)
+    except Exception as exc:
+        if state.get("goal"):
+            raise HTTPException(status_code=503, detail=_PRACTICE_UNAVAILABLE) from exc
+        raise
+
+
+def _pick_item(
+    user_id: str,
+    course_id: str,
+    state: dict,
+    concept: str,
+    items: list,
+    exclude: set,
+    excluded: set,
+    *,
+    varied: bool,
+    combos: bool,
+    session_id: str | None,
+):
+    """(item or None, learner state, band) for a concept with items: the
+    isomorph re-ask after an unknown (PKG-10), else a multi-concept item (A141),
+    else the hinted item (W2.4b) or the band's target difficulty, format by
+    format."""
+    # A140: how familiar each item's surface is to the student on this
+    # concept (met = seen, revealed, reported, posed this session)
+    familiarity = (
+        varied_practice.familiarity_for(course_id, items[0].concept_key, excluded)
+        if varied
+        else None
+    )
+    item = _isomorph_after_unknown(state, concept, items, exclude, familiarity=familiarity)
+    learner = _learner_state(user_id, concept)
+    band, _ = _band_of(learner)
+    # W1.3: rotation + segment-close generative-core preference
+    formats = policy.practice_formats(int(state.get("concept_checks") or 0))
+    target = _target_difficulty(state, concept, band)
+    if item is None and combos:
+        # A141: the ideas-combined dial — a multi-concept item whose
+        # apex is this concept, when its gate and the session dial allow
+        item = varied_practice.multi_concept_pick(
+            user_id, course_id, state, concept, items[0].concept_key,
+            target=target, formats=formats, excluded=excluded,
+        )
+    # W2.4b: low-trust next-probe hint among already-eligible items.
+    # Flag off → None (no decrypt, no-op). Flag on → open the latest
+    # step reasoning_encrypted under the session bind and prefer();
+    # a returned hash wins only if still eligible for this format pass.
+    hint_qh = preferred_next_question_hash(
+        user_id,
+        None,
+        tuple(
+            (i.question_hash, i.prompt)
+            for i in items
+            if i.question_hash not in exclude
+        ),
+        session_id=session_id,
+        state=state,
+    )
+    if item is None:
+        item = _select_by_format(items, formats, hint_qh, target, exclude, familiarity)
+    return item, learner, band
+
+
+def _select_by_format(items: list, formats, hint_qh, target, exclude: set, familiarity):
+    """Format by format: the hinted item when it is eligible in this format,
+    else select_item at the target difficulty; the first hit wins."""
+    for fmt in formats:
+        if hint_qh:
+            hinted = next(
+                (
+                    i
+                    for i in items
+                    if i.question_hash == hint_qh
+                    and i.format == fmt
+                    and i.question_hash not in exclude
+                ),
+                None,
+            )
+            if hinted is not None:
+                return hinted
+        item = select_item(
+            items,
+            format=fmt,
+            difficulty=target,
+            exclude_hashes=exclude,
+            familiarity=familiarity,
+        )
+        if item is not None:
+            return item
+    return None
+
+
+def _open_step(user_id: str, state: dict, concept: str, item, learner, band, now: float) -> str:
+    """Make `item` the document's `current` and key its fresh step."""
+    qh = item.question_hash
+    state["current"] = qh
+    step = {
+        "rung": int(Rung.H0),
+        "attempts": 0,
+        "wrong": 0,
+        "first_shown_at": now,
+        "check_item_id": item.id,
+        "node_id": concept,
+        "feedback_given": False,
+        # the H6 predicate (spec §3.3, A32): taught earlier in this session
+        "taught": bool(state.get("teach_turns") or state.get("concept_checks")),
+    }
+    if is_multi_concept(item):
+        # A141: counted by the session dial (one per concept a session)
+        step[MULTI_CONCEPT_STEP_KEY] = True
+    # spec §13 A122: a novice without the prerequisite (policy.attempt_first
+    # says no) gets the worked example FIRST on the concept's first item of
+    # the session; the item after it is the near-transfer, attempted
+    view = _learner_view(
+        learner, band=band, prereq_proficient=_prereq_proficient(user_id, concept)
+    )
+    if policy.opens_on_worked_example(
+        view, shown_on_concept=_worked_example_shown(state, concept)
+    ):
+        step["worked_first"] = True
+    if _take_retrieval_mark(state, concept):
+        # A128: this step's teaching ran without its course material
+        step[_RETRIEVAL_KEY] = _RETRIEVAL_FAILED_VALUE
+    _steps(state)[qh] = step
+    return qh
 
 
 def _pose_payload(item, *, worked_first: bool = False) -> dict:
@@ -417,7 +469,7 @@ def _pose_payload(item, *, worked_first: bool = False) -> dict:
     is present only when `canonical_verified` (blind-key / audit already
     confirmed the key) — calm chrome only; never invent a second verifier."""
     options = None
-    if item.format == "mc_reason" and item.options:
+    if item.format == _MC_REASON and item.options:
         options = [{"letter": o.letter, "text": o.text} for o in item.options]
     pose = {
         "question_hash": item.question_hash,
