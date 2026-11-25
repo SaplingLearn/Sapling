@@ -4,6 +4,9 @@ import { useConfirm } from "@/lib/useConfirm";
 import type { TutorSessionRow } from "./sessions";
 import styles from "./tutor.module.css";
 
+/** A session name's cap, as the legacy Learn screen's rename field has it. */
+const SESSION_NAME_MAX = 120;
+
 /**
  * One row of every session (wireframe T3) that the student can rename and
  * delete (#866 K31: what the legacy Learn screen's recent sessions offer).
@@ -25,7 +28,8 @@ export function ManagedSessionRow({ row, title, onOpen, onRename, onDelete, chil
   // Enter or Escape ends the edit and unmounts the field, which can fire its
   // blur: an edit is settled once, so that blur neither saves nor saves twice.
   const settled = useRef(true);
-  const del = useConfirm(() => onDelete(row), 3000);
+  // useConfirm's own window: Delete stays armed long enough to read it.
+  const del = useConfirm(() => onDelete(row));
   const finish = (keep: boolean) => {
     if (settled.current) return;
     settled.current = true;
@@ -42,7 +46,7 @@ export function ManagedSessionRow({ row, title, onOpen, onRename, onDelete, chil
           data-testid={`tutor-session-name-${row.id}`}
           className={styles.renameInput}
           value={draft}
-          maxLength={120}
+          maxLength={SESSION_NAME_MAX}
           onChange={(e) => setDraft(e.target.value)}
           onBlur={() => finish(true)}
           onKeyDown={(e) => {

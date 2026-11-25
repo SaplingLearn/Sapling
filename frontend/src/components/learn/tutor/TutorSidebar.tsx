@@ -3,7 +3,7 @@ import React, { useMemo } from "react";
 import type { EnrolledCourse } from "@/lib/api";
 import { Icon } from "../../Icon";
 import { ChevRight, SidebarGlyph } from "./TutorIcons";
-import { WHEN_GROUPS, courseColor, sessionTitle, whenGroup, type TutorSessionRow } from "./sessions";
+import { WHEN_GROUPS, courseColor, dotColor, sessionTitle, whenGroup, type TutorSessionRow } from "./sessions";
 import styles from "./tutor.module.css";
 
 /** How many recents the sidebar shows before "View all sessions". */
@@ -102,7 +102,7 @@ export function TutorSidebar({
                 aria-current={currentCourseView === c.course_id ? "true" : undefined}
                 onClick={() => onCourse(c.course_id)}
               >
-                <span className={styles.cdot} style={{ background: courseColor(c, i) }} aria-hidden />
+                <span className={styles.cdot} style={dotColor(courseColor(c, i))} aria-hidden />
                 {c.course_code && <span className={styles.code}>{c.course_code}</span>}
                 <span className={styles.rowText}>{c.nickname || c.course_name}</span>
               </button>
@@ -114,7 +114,7 @@ export function TutorSidebar({
           <span className="label-micro">Recents</span>
           {/* One list per day group; a list only while it lists something
               (spec §13 A135). */}
-          <div data-testid="loop-session-picker" style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+          <div data-testid="loop-session-picker" className={styles.sideStack}>
             {WHEN_GROUPS.map((g) => {
               const rows = shown.filter((s) => whenGroup(s.startedAt) === g);
               if (rows.length === 0) return null;
@@ -122,7 +122,7 @@ export function TutorSidebar({
               return (
                 <React.Fragment key={g}>
                   <div id={labelId} className={styles.sideWhen}>{g}</div>
-                  <ul aria-labelledby={labelId} style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 1 }}>
+                  <ul aria-labelledby={labelId} className={`${styles.sideStack} ${styles.bare}`}>
                     {rows.map((s) => {
                       const entry = byId.get(s.courseId ?? "");
                       const title = sessionTitle(s, entry?.c);
@@ -151,18 +151,18 @@ export function TutorSidebar({
               );
             })}
             {shown.length === 0 && !onRetryRecent && (
-              <span style={{ fontSize: 12, color: "var(--text-muted)", padding: "4px 8px" }}>
+              <span className={styles.sideNote}>
                 {q ? "No sessions match." : hasOpenHere ? "" : "None yet"}
               </span>
             )}
             {onRetryRecent && (
-              <span role="status" data-testid="tutor-recents-error" style={{ fontSize: 12, color: "var(--text-muted)", padding: "4px 8px" }}>
+              <span role="status" data-testid="tutor-recents-error" className={styles.sideNote}>
                 Couldn&apos;t load your past sessions.{" "}
                 <button type="button" className={styles.textLink} onClick={onRetryRecent}>Try again</button>
               </span>
             )}
           </div>
-          <div style={{ padding: "8px 8px 0" }}>
+          <div className={styles.sideFoot}>
             <button type="button" className={styles.textLink} data-testid="tutor-view-all" onClick={onAll}>
               View all sessions <ChevRight />
             </button>
