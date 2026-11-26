@@ -453,8 +453,9 @@ test("loop user completes probe → plan → check (explicit submission) with a 
   await expect(phase).toHaveAttribute("data-phase", "close");
   await expect(page.getByTestId("loop-close-summary")).toContainText(CLOSE_SUMMARY);
   await expect(page.getByTestId("loop-close-if-then")).toContainText(CLOSE_IF_THEN);
-  // A60: the self-evaluation is a reflection prompt — no input implies it is saved.
-  await expect(page.getByTestId("loop-close-self-eval").locator("textarea, input")).toHaveCount(0);
+  // The Tutor redesign cut A60's reflection prompt and W3.5a's mini-map (nothing saved).
+  await expect(page.getByTestId("loop-close-self-eval")).toHaveCount(0);
+  await expect(page.getByTestId("loop-close-minimap")).toHaveCount(0);
   await expect(page.getByTestId("loop-close-done")).toBeVisible();
   // PR #866 review U9: "How was that session?" is asked on the wrap-up itself,
   // its scale's ends labelled — never later, over the page the student went to.
@@ -2256,15 +2257,15 @@ test("W1.3 close beat: the segment's last check is a generative item over a serv
 
 /** W2.3 (reason-before-submit; docs/learning-loop/w2-reason-before-submit.md).
  *  The seeded concept holds one free item (F) and one mc_reason item (M).
- *  Check 1 (F): "Your reasoning, not graded" is offered, neither required nor
- *  a substitute for the answer; it travels on the wire, lands sealed in
- *  sessions.loop_state (steps[F].reasoning_encrypted, nested AES-GCM bound to
- *  the session) and is never a grader input or evidence — the reasoning carries
- *  the grader's correct token, the answer does not, and the check grades not
- *  yet. Check 2 (M, the close beat with no generative item left): the graded
- *  one-sentence reason is required before Submit, there is no optional box,
- *  and a `reasoning` field a client adds anyway is dropped. */
-test("W2.3 reason-before-submit: free reasoning is optional, sealed and never evidence; mc_reason needs its reason before Submit", async ({ browser }) => {
+ *  Check 1 (F): the Tutor redesign cut the optional "Your reasoning" box, so
+ *  the UI sends the answer alone; the server still takes W2.3's `reasoning`
+ *  from a client that adds it (injected here), seals it in sessions.loop_state
+ *  (steps[F].reasoning_encrypted, nested AES-GCM bound to the session) and
+ *  never grades it — it carries the grader's correct token, the answer does
+ *  not, and the check grades not yet. Check 2 (M, the close beat with no
+ *  generative item left): the graded one-sentence reason is required before
+ *  Submit, and a `reasoning` field a client adds anyway is dropped. */
+test("W2.3 reason-before-submit: a free check is the answer alone, client reasoning is sealed and never evidence; mc_reason needs its reason before Submit", async ({ browser }) => {
   test.skip(loopOffLane, "loop path: default lane only");
   test.setTimeout(LOOP_JOURNEY_TIMEOUT_MS);
   const seeded = (await seedCheckBeats("reason")) as BeatSession & { mc_correct_text: string };
@@ -2275,22 +2276,25 @@ test("W2.3 reason-before-submit: free reasoning is optional, sealed and never ev
   try {
     await resumeBeatSession(page, sessionId);
 
-    // Check 1 (free): the reasoning box is optional and never the answer.
+    // Check 1 (free): no reasoning box; the answer alone is sent.
     const free = await poseCheck(page);
     expect(free.question_hash).toBe(F);
     const submit = page.getByTestId("loop-attempt-submit");
-    const box = page.getByTestId("loop-attempt-reasoning");
-    await expect(box).toBeVisible();
-    await expect(page.getByLabel("Your reasoning, not graded")).toBeVisible();
+    await expect(page.getByTestId("loop-attempt-reasoning")).toHaveCount(0);
     await expect(page.getByTestId("loop-attempt-reason")).toHaveCount(0);
     await expect(submit).toBeDisabled();
-    await box.fill(reasoning);
-    await expect(submit).toBeDisabled(); // reasoning alone is not an answer
     await page.getByTestId("loop-attempt-input").fill(WORKING_ATTEMPT);
     await expect(submit).toBeEnabled();
     const evidenceBefore = await evidenceCount(USER_LOOP);
+    // A client that adds W2.3's reasoning: the server's contract still holds.
+    await page.route("**/api/learn/loop/check/answer/stream", async (route) => {
+      const body = JSON.parse(route.request().postData() ?? "{}");
+      await route.continue({ postData: JSON.stringify({ ...body, reasoning }) });
+    });
     const freeBody = await submitGraded(page);
-    expect(freeBody).toMatchObject({ question_hash: F, answer: WORKING_ATTEMPT, reasoning, idk: false });
+    await page.unroute("**/api/learn/loop/check/answer/stream");
+    expect(freeBody).toMatchObject({ question_hash: F, answer: WORKING_ATTEMPT, idk: false });
+    expect(freeBody).not.toHaveProperty("reasoning"); // what the UI itself sent
 
     // Not evidence: graded on the answer alone — the token in the reasoning credited nothing.
     expect(await evidenceOn(F)).toEqual([{ correct: false }]);

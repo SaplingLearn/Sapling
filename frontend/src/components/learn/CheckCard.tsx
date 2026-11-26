@@ -103,17 +103,11 @@ export function CheckCard({
                 onChange={(reason) => setDraft((d) => ({ ...d, reason }))} />
             </>
           ) : (
-            <>
-              <AnswerField label="Your answer" name="answer" testId="loop-attempt-input" start
-                placeholder={item.format === "teachback" ? "Explain it in your own words" : undefined}
-                value={draft.answer} disabled={busy}
-                onChange={(answer) => setDraft((d) => ({ ...d, answer }))}
-                onSubmit={() => { if (canSubmit) onSubmit(); }} />
-              {/* W2.3: never graded, never mastery: the answer above is what is checked. */}
-              <AnswerField label="Your reasoning, not graded" name="reasoning" testId="loop-attempt-reasoning" describedByPrompt={false}
-                placeholder="Show your thinking…" value={draft.reasoning} disabled={busy}
-                onChange={(reasoning) => setDraft((d) => ({ ...d, reasoning }))} />
-            </>
+            <AnswerField label="Your answer" name="answer" testId="loop-attempt-input" start
+              placeholder={item.format === "teachback" ? "Explain it in your own words" : undefined}
+              value={draft.answer} disabled={busy}
+              onChange={(answer) => setDraft((d) => ({ ...d, answer }))}
+              onSubmit={() => { if (canSubmit) onSubmit(); }} />
           )}
           <ConfidenceControl
             testIdPrefix="loop-check-confidence"

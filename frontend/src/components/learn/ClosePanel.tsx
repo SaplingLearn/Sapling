@@ -15,7 +15,6 @@ import {
 import { getStudyNext } from "@/lib/studyApi";
 import { retentionHref } from "@/context/RetentionDueContext";
 import { CenteredCard } from "./CenteredCard";
-import { LearnerMiniMapStub } from "./LearnerMiniMapStub";
 import { modalOpen } from "./modalOpen";
 import { WrapUpRating } from "./WrapUpRating";
 import tutorStyles from "./tutor/tutor.module.css";
@@ -217,23 +216,8 @@ export function ClosePanel({
             </div>
           </section>
         </motion.div>
-        {/* A60: the self-evaluation is a reflection prompt only — nothing is saved. */}
-        <motion.section variants={item} data-testid="loop-close-self-eval" className={`card ${tutorStyles.cardPad} ${styles.tight}`}>
-          <div className={styles.reflection}>{rec.self_eval}</div>
-          <div className={styles.aside}>Just for you. Nothing is saved.</div>
-        </motion.section>
-        {/* W3.5a: generative mini-map — client edges only; never mastery / graph_edges. */}
-        {/* Never null here (two or more concepts), so the wrapper is never an empty gap. */}
-        {rec.concepts.length >= 2 && (
-          <motion.div variants={item}>
-            <LearnerMiniMapStub
-              concepts={rec.concepts.map((c) => ({
-                id: c.node_id,
-                label: names.get(c.node_id) ?? "A concept",
-              }))}
-            />
-          </motion.div>
-        )}
+        {/* The Tutor redesign cut A60's self-evaluation prompt and W3.5a's
+            concept mini-map here: neither saved anything nor changed a next step. */}
         {rec.if_then && (
           <motion.section variants={item} data-testid="loop-close-if-then" className={`card ${tutorStyles.cardPad} ${styles.tight} ${styles.plan}`}>
             <h3 className={`h-serif ${styles.planTitle}`}>Next time</h3>

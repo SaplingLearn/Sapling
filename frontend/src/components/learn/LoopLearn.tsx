@@ -18,7 +18,6 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import { FullHeightScreen } from "../FullHeightScreen";
 import { DisclaimerModal } from "../DisclaimerModal";
-import { AIDisclaimerChip } from "../chat/AIDisclaimerChip";
 import { ChatPanel, type ChatMsg } from "../chat/ChatPanel";
 import { useToast } from "../ToastProvider";
 import { useUser } from "@/context/UserContext";
@@ -185,18 +184,15 @@ const toChat = (rows: { id: string; role: string; content: string }[] | undefine
   (rows ?? [])
     .filter((m) => m.role === "user" || m.role === "assistant")
     .map((m) => ({ id: m.id, role: m.role as "user" | "assistant", content: m.content }));
-const EMPTY_DRAFT: Draft = { answer: "", option: "", reason: "", reasoning: "", confidence: null };
+const EMPTY_DRAFT: Draft = { answer: "", option: "", reason: "", confidence: null };
 
 /** The answer fields a draft submits: `confidence` only when chosen (A127).
- *  Free/teachback may include optional `reasoning` (W2.3; never evidence). */
+ *  W2.3's optional "show your reasoning" box was cut in the Tutor redesign:
+ *  a free answer is the answer alone. */
 function draftAnswer(draft: Draft, format: string): LoopCheckAnswer {
   const a: LoopCheckAnswer = format === "mc_reason"
     ? { option: draft.option, reason: draft.reason, idk: false }
-    : {
-      answer: draft.answer,
-      idk: false,
-      ...(draft.reasoning.trim() ? { reasoning: draft.reasoning.trim() } : {}),
-    };
+    : { answer: draft.answer, idk: false };
   return draft.confidence ? { ...a, confidence: draft.confidence } : a;
 }
 /** The Tutor's main column: a session (T4–T15), the Tutor home (T1), a course
@@ -1953,7 +1949,6 @@ export function LoopLearn() {
         </button>
       )}
       {isMobile && renderMobileActions()}
-      <AIDisclaimerChip height={32} />
       {/* Show only: while the panel is open its own head carries Hide. */}
       {allOf(inSession, !isMobile, !!sessionId, !readOnly, !layout.panelOpen) && (
         <button type="button" className={tutorStyles.iconBtn} data-testid="tutor-panel-toggle"

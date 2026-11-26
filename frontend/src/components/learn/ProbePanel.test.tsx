@@ -15,7 +15,7 @@ import { type Draft } from "./loopShared";
 
 afterEach(cleanup);
 
-const draft: Draft = { answer: "", option: "", reason: "", reasoning: "", confidence: null };
+const draft: Draft = { answer: "", option: "", reason: "", confidence: null };
 const item = {
   done: false, check_item_id: "i1", question_hash: "qh", node_id: "n1", format: "free", difficulty: 1,
   prompt: "What is a base case?", options: null,

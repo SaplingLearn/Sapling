@@ -1351,7 +1351,7 @@ export interface LoopCloseResponse { close: LoopCloseRecord; model_written: bool
 export type StudentConfidence = 'guessing' | 'fairly_sure' | 'sure';
 /** PKG-07's LoopCheckAnswerBody answer fields (the probe takes the same ones).
  *  `reasoning` is W2.3's optional free/teachback "show your reasoning" — check
- *  submit only; never graded / never evidence. */
+ *  submit only; never graded / never evidence (no Tutor surface sends it). */
 export interface LoopCheckAnswer {
   answer?: string;
   option?: string;

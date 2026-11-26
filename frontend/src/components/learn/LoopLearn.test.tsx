@@ -962,28 +962,14 @@ describe("LoopLearn — teach / check / feedback (A16, A46)", () => {
     expect(screen.getByTestId("loop-attempt-submit")).toBeEnabled();
   });
 
-  it("W2.3: free check shows optional reasoning; submit stays answer-only when empty", async () => {
+  it("a free check is the answer alone: no reasoning box (cut in the Tutor redesign)", async () => {
     api.streamLoopCheckAnswer.mockResolvedValue(turn({ graded: true }));
     await withCheckItem(pose);
-    expect(screen.getByText("Your reasoning, not graded")).toBeTruthy();
-    expect(screen.getByTestId("loop-attempt-reasoning")).toBeTruthy();
+    expect(screen.queryByTestId("loop-attempt-reasoning")).toBeNull();
     fireEvent.change(screen.getByTestId("loop-attempt-input"), { target: { value: "n == 0" } });
     fireEvent.click(screen.getByTestId("loop-attempt-submit"));
     await waitFor(() => expect(api.streamLoopCheckAnswer).toHaveBeenCalledWith(
       "s2", "u1", "qh7", { answer: "n == 0", idk: false }, expect.any(Object),
-    ));
-  });
-
-  it("W2.3: free check posts reasoning when filled; still not required", async () => {
-    api.streamLoopCheckAnswer.mockResolvedValue(turn({ graded: true }));
-    await withCheckItem(pose);
-    fireEvent.change(screen.getByTestId("loop-attempt-input"), { target: { value: "n == 0" } });
-    fireEvent.change(screen.getByTestId("loop-attempt-reasoning"), { target: { value: "base case stops it" } });
-    fireEvent.click(screen.getByTestId("loop-attempt-submit"));
-    await waitFor(() => expect(api.streamLoopCheckAnswer).toHaveBeenCalledWith(
-      "s2", "u1", "qh7",
-      { answer: "n == 0", idk: false, reasoning: "base case stops it" },
-      expect.any(Object),
     ));
   });
 
@@ -1208,14 +1194,15 @@ describe("LoopLearn — close (A60)", () => {
     model_written: true,
   };
 
-  it("renders the summary, the self-evaluation as a reflection prompt (no input), and the plan", async () => {
+  it("renders the summary and the plan; the self-evaluation prompt and mini-map are cut", async () => {
     api.closeLoopSession.mockResolvedValue({ close, model_written: true, close_phase: "teach" });
     await resumedTeach();
     fireEvent.click(screen.getByTestId("loop-close-button"));
     expect((await screen.findByTestId("loop-close-summary")).textContent).toContain("You worked on recursion.");
-    const selfEval = screen.getByTestId("loop-close-self-eval");
-    expect(selfEval.textContent).toContain("What would you explain differently next time?");
-    expect(selfEval.querySelector("input, textarea")).toBeNull(); // nothing is saved (A60)
+    // The Tutor redesign cut A60's reflection prompt (it saved nothing) and W3.5a's mini-map.
+    expect(screen.queryByTestId("loop-close-self-eval")).toBeNull();
+    expect(screen.queryByText("What would you explain differently next time?")).toBeNull();
+    expect(screen.queryByTestId("loop-close-minimap")).toBeNull();
     expect(screen.getByTestId("loop-close-if-then").textContent).toContain("If I get stuck");
     expect(screen.getByTestId("loop-close-done")).toBeTruthy();
     expect(screen.getByTestId("loop-phase").getAttribute("data-phase")).toBe("close");

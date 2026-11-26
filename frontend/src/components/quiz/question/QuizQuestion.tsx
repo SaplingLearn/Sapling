@@ -505,7 +505,6 @@ function QuestionConfidence({
         value={item?.confidence ?? null}
         onChange={level => actions.setConfidence?.(level)}
         disabled={!selectable || item?.verdict != null}
-        variant="default"
       />
     </div>
   );

@@ -27,13 +27,6 @@ export const CONFIDENCE_LEVELS: readonly { level: StudentConfidence; label: stri
   { level: "sure", label: "Sure" },
 ];
 
-/** W7 kit wager copy — same A132 store; no XP stakes (W7.D1 / W7.4). */
-export const WAGER_LEVELS: readonly { level: StudentConfidence; label: string }[] = [
-  { level: "guessing", label: "Unsure" },
-  { level: "fairly_sure", label: "Fairly sure" },
-  { level: "sure", label: "Certain" },
-];
-
 const LEVELS = CONFIDENCE_LEVELS.map((o) => o.level);
 
 export function ConfidenceControl({
@@ -41,37 +34,29 @@ export function ConfidenceControl({
   value,
   onChange,
   disabled = false,
-  variant = "default",
 }: {
   testIdPrefix: string;
   /** The chosen level; null = none (skipped). */
   value: StudentConfidence | null;
   onChange: (value: StudentConfidence | null) => void;
   disabled?: boolean;
-  /** `wager` = kit Certain/Unsure chrome; still writes guessing/fairly_sure/sure. */
-  variant?: "default" | "wager";
 }) {
   const labelId = React.useId();
   const group = useRadioGroup(LEVELS, value, onChange);
-  const levels = variant === "wager" ? WAGER_LEVELS : CONFIDENCE_LEVELS;
-  const prompt = variant === "wager" ? "Wager" : "How sure?";
 
   return (
-    <div
-      className={`${styles.row}${variant === "wager" ? ` ${styles.wager}` : ""}`}
-      data-variant={variant}
-    >
+    <div className={styles.row}>
       <span id={labelId} className={styles.label}>
-        {prompt}
+        How sure?
       </span>
       <div role="radiogroup" aria-labelledby={labelId} data-testid={testIdPrefix} className={styles.group}>
-        {levels.map((o, i) => (
+        {CONFIDENCE_LEVELS.map((o, i) => (
           <button
             key={o.level}
             {...group.optionProps(i)}
             type="button"
             data-testid={`${testIdPrefix}-${o.level}`}
-            className={`${styles.option}${value === o.level && variant === "wager" ? ` ${styles.optionOn}` : ""}`}
+            className={styles.option}
             disabled={disabled}
             onClick={() => onChange(o.level)}
           >

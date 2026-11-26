@@ -74,19 +74,6 @@
   gap: var(--sp-3);
 }
 
-/* The reflection and the next-time plan were 15px, between --fs-base and
-   --fs-lg: rounded up a px to --fs-lg. */
-.reflection {
-  font-family: var(--font-serif);
-  font-size: var(--fs-lg);
-  font-style: italic;
-}
-
-.aside {
-  font-size: var(--fs-sm);
-  color: var(--text-muted);
-}
-
 .plan.plan {
   background: var(--accent-soft);
   border-color: var(--accent-border);

@@ -20,7 +20,6 @@ const emptyDraft: Draft = {
   answer: "",
   option: "",
   reason: "",
-  reasoning: "",
   confidence: null,
 };
 

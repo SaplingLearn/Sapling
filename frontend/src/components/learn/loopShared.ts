@@ -13,13 +13,11 @@ export const FIELD_CLASS = fieldStyles.field;
 
 /** An answer being written. `confidence` (spec §13 A127) is the student's stated
  *  confidence — null until chosen, and a skip sends none. */
-/** `reason` is mc_reason's required one-sentence why; `reasoning` is the
- *  optional free/teachback "show your reasoning" field (W2.3; never graded). */
+/** `reason` is mc_reason's required one-sentence why. */
 export type Draft = {
   answer: string;
   option: string;
   reason: string;
-  reasoning: string;
   confidence: StudentConfidence | null;
 };
 export type HintView = { denied: string } | { reply: string } | null;

@@ -1197,7 +1197,6 @@ inside `loop-messages` is `ChatPanel`, whose own `tutor-*` ids
 | `loop-materials-grounded` | W4.3: calm "Grounded in your materials" status under a teach/opener assistant turn when the server sent `materials_grounded: true` (passages in the prompt); `title` / `aria-label` explain course-material grounding (never a cite list) |
 | `loop-figure-withheld` | W4.1a: honest empty figure slot when pose carries `figure.status === "withheld"` (visual surface, no drawable asset yet); never invents SVG client-side |
 | `loop-attempt-input` | free/teachback attempt textarea |
-| `loop-attempt-reasoning` | W2.3: optional "Your reasoning" textarea on free/teachback checks only (never graded / never mastery; sealed as `sessions.loop_state` `reasoning_encrypted`); absent on `mc_reason` |
 | `loop-attempt-options` | the attempt box's options radio group, as `loop-probe-options` |
 | `loop-attempt-option-{letter}` | one served `mc_reason` option in the attempt box |
 | `loop-attempt-reason` | the one-sentence reason input in the attempt box (`mc_reason`) |
@@ -1235,11 +1234,6 @@ inside `loop-messages` is `ChatPanel`, whose own `tutor-*` ids
 | `loop-close-button` | end the session (`/close`; teach/check/feedback only) |
 | `loop-close-summary` | the close summary text |
 | `loop-close-concept-{nodeId}` | one checked concept on the wrap-up (spec §13 A117): `data-baseline` = `pre_session` / `check_in` / `teaching` (where its change starts; a close stored before A117 reads `pre_session`), `data-direction` = `up` / `down` / `same` — a first measurement with no move after it is `same` with a "first measured" label, never an arrow |
-| `loop-close-self-eval` | the self-evaluation question — a reflection prompt, no input (A60: nothing stores an answer) |
-| `loop-close-minimap` | W3.5a learner mini-map on wrap-up (2+ concepts); client edges only — never mastery / graph writes |
-| `loop-close-minimap-chips` | chip tray; each chip is `loop-close-minimap-chip-{nodeId}` (`aria-pressed` while selected) |
-| `loop-close-minimap-edges` | local edge list; a row is `loop-close-minimap-edge-{idA\|idB}` (sorted ids); remove is `loop-close-minimap-remove-{idA\|idB}` |
-| `loop-close-minimap-clear` | clears every local edge |
 | `loop-close-if-then` | the stored if-then plan (rendered only when non-empty) |
 | `loop-close-rating` | the wrap-up's "How was that session?" card (paced: once per session, `lib/feedbackPacing.ts`); the 1–4 scale's buttons are `loop-close-rating-{1..4}` |
 | `loop-close-rating-details` | the follow-ups a rating reveals on the same card (U9): `loop-close-rating-helpful-{i}` / `loop-close-rating-friction-{i}` chips (`aria-pressed`), `loop-close-rating-comment` |
