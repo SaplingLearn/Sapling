@@ -36,7 +36,7 @@ Several flags change a prompt or an output schema, so their eval datasets must b
 
 ## Recommended order
 
-1. **Read-only, no eval needed:** `quiz_concept_plan`, `quiz_results_routing`, `item_reports`, `skill_ladder`, `hint_ladder`, `verdict_v2`, `wrapup_v2`, `plan_v2`, `new_session_v2`, `session_v2`.
+1. **Read-only, no eval needed:** `quiz_concept_plan`, `quiz_results_routing`, `item_reports`, `skill_ladder`, `hint_ladder`, `verdict_v2`, `wrapup_v2`, `plan_v2`, `new_session_v2`, `session_v2`, `course_page_v2`.
 2. **Safety, after copy review:** `crisis_support`.
 3. **Prompt changes, after their evals:** `loop_tutor_v2`, `segment_prequestion`, `self_explanation_prompts`, `quiz_planned_questions`, `quiz_item_gates`, then `quiz_misconceptions`.
 4. **Drafting changes, after their evals:** `varied_isomorphs`, `multi_concept_items`, `upload_prereq_edges`.
@@ -96,6 +96,12 @@ Several flags change a prompt or an output schema, so their eval datasets must b
 - **Before:** nothing.
 - **Watch:** Tree visits from the session; Review clicks from the sidebar against the old due box.
 - **Roll back:** off restores the panel as before.
+
+### course_page_v2 (Tutor redesign phase 4) — client-visible
+- **Changes:** the Tutor's course page shows "Ready to learn" (up to five concepts below Proficient whose direct prerequisites are all Proficient, strongest first, each with its level and Learn, which starts a session on it), "Sessions" (the four latest, Open or their date), "Coming up" (the course's upcoming assignments from the calendar, soonest first, "Dec 2, in 6 days") and "Materials" (with Upload). One note on top: a retention check due in this course, else the reviews due (left to the sidebar's Review when `session_v2` is on). The "Your progress" meters and the file-count heading are gone. Frontend only; the board's readiness bar per assignment, review minutes and Library column are not built.
+- **Before:** nothing; the calendar's upcoming read is already exempt from `hide_calendar` (the Dashboard calls it).
+- **Watch:** sessions started from Learn; Coming-up rows against assignments students have.
+- **Roll back:** off restores the course page as before.
 
 ### item_reports (A113, A123) — client-visible
 - **Changes:** students can report a check question. Two reports hold it from the whole course until staff approve or retire it in the admin check-items queue.

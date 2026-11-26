@@ -577,7 +577,7 @@ test("learning loop: check-in, plan, teaching, a check with hints, feedback, a m
 
 // Tutor redesign phase 4: the rebuilt surfaces are student surfaces too (spec
 // §13 A135), scanned in their own states with their flags on for this student.
-test("learning loop: the rebuilt New session, plan, session panel, hint ladder, verdict and wrap-up (new_session_v2, plan_v2, session_v2, hint_ladder, verdict_v2, wrapup_v2 on)", async ({ browser }) => {
+test("learning loop: the rebuilt New session, plan, session panel, hint ladder, verdict, wrap-up and course page (new_session_v2, plan_v2, session_v2, hint_ladder, verdict_v2, wrapup_v2, course_page_v2 on)", async ({ browser }) => {
   test.skip(loopOffLane, "loop path: default lane only");
   test.setTimeout(LOOP_TIMEOUT_MS);
   await setUserFlag("hint_ladder", USER_LOOP, "on");
@@ -586,6 +586,7 @@ test("learning loop: the rebuilt New session, plan, session panel, hint ladder, 
   await setUserFlag("plan_v2", USER_LOOP, "on");
   await setUserFlag("new_session_v2", USER_LOOP, "on");
   await setUserFlag("session_v2", USER_LOOP, "on");
+  await setUserFlag("course_page_v2", USER_LOOP, "on");
   const P = await learningParams(["PROBE_SESSION_CAP"]);
   const { context, page } = await signIn(browser, USER_LOOP, "Lou Loop");
   try {
@@ -636,6 +637,12 @@ test("learning loop: the rebuilt New session, plan, session panel, hint ladder, 
     await expect(page.getByTestId("loop-wrapup-v2")).toBeVisible();
     await expect(page.getByTestId("loop-close-headline")).toBeFocused();
     await expectAccessible(page, "learn loop: the rebuilt wrap-up");
+
+    // the course page, from the tutor sidebar
+    await page.locator('[data-testid^="tutor-course-"]').first().click();
+    await expect(page.getByTestId("tutor-course-v2")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Ready to learn" })).toBeFocused();
+    await expectAccessible(page, "learn loop: the rebuilt course page");
   } finally {
     await context.close();
   }

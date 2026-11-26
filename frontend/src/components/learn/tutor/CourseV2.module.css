@@ -1,0 +1,189 @@
+/* The rebuilt Tutor course page (CourseV2.tsx), after the Claude Design
+   board: an optional note on top, then two columns of headed sections, each
+   list in one bordered box. */
+
+.page {
+  padding: var(--sp-16) var(--sp-11);
+}
+
+.col {
+  max-width: 1040px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-12);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+  gap: var(--sp-12);
+  align-items: start;
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-12);
+  min-width: 0;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-5);
+}
+
+.head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--sp-5);
+}
+
+.h2:focus {
+  outline: none;
+}
+
+.h2 {
+  margin: 0;
+  font-size: var(--fs-2xl);
+  font-weight: 600;
+}
+
+.sub {
+  margin: 0;
+  font-size: var(--fs-md);
+  color: var(--text-dim);
+}
+
+.note {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-6);
+  padding: var(--sp-7) var(--sp-9);
+  border-radius: var(--r-md);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent);
+}
+
+.noteText {
+  flex: 1;
+  font-size: var(--fs-base);
+}
+
+.noteLink {
+  font-size: var(--fs-md);
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.box {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-radius: var(--r-lg);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+}
+
+.box > li {
+  border-bottom: 1px solid var(--border);
+}
+
+.box > li:last-child {
+  border-bottom: 0;
+}
+
+.readyRow {
+  /* The bar's, the level's and the action's columns: layout sizes, not scale steps. */
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 120px 110px auto;
+  align-items: center;
+  gap: var(--sp-7);
+  padding: var(--sp-6) var(--sp-9);
+}
+
+.dueRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--sp-6);
+  padding: var(--sp-6) var(--sp-9);
+  font-size: var(--fs-base);
+}
+
+.sessionRow {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-5);
+  width: 100%;
+  padding: var(--sp-6) var(--sp-9);
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: var(--fs-base);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.sessionRow:hover {
+  background: var(--bg-soft);
+}
+
+.name {
+  flex: 1;
+  min-width: 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.dim {
+  font-size: var(--fs-md);
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.open {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.rowLink {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: var(--fs-md);
+  font-weight: 600;
+  color: var(--accent);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+@media (max-width: 880px) {
+  .grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .page {
+    padding: var(--sp-10) var(--sp-6);
+  }
+
+  .readyRow {
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    row-gap: var(--sp-2);
+  }
+
+  .readyRow > [role="meter"] {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+}

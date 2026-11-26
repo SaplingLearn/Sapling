@@ -92,7 +92,8 @@ import { SelfExplainCard } from "./SelfExplainCard";
 import { useRetentionDue } from "@/context/RetentionDueContext";
 import { Icon } from "../Icon";
 import { TutorSidebar } from "./tutor/TutorSidebar";
-import { LoadFailed, TutorAllSessions, TutorCourse, TutorHome, type SessionFilter } from "./tutor/TutorPages";
+import { LoadFailed, TutorAllSessions, TutorHome, type SessionFilter } from "./tutor/TutorPages";
+import { CourseSlot } from "./tutor/CourseV2";
 import { SessionPanel, type PanelConcept } from "./tutor/SessionPanel";
 import { SessionMap } from "./tutor/SessionMap";
 import { PhaseStepper, stepOf } from "./tutor/PhaseStepper";
@@ -2344,8 +2345,8 @@ export function LoopLearn() {
   };
   const renderCourse = (c: EnrolledCourse) => (
     <div className={tutorStyles.scroll}>
-      <TutorCourse
-        course={c}
+      <CourseSlot
+        course={c} edges={railGraph.edges} retentionDue={dueCourseIds.includes(c.course_id)} dueCount={lists.dueReviews}
         sessions={sessionRows.filter((r) => r.courseId === c.course_id)}
         concepts={railGraph.nodes.filter((n) => !n.is_subject_root)}
         materials={lists.materials && lists.materials.filter((m) => m.course_id === c.course_id)}
@@ -2354,7 +2355,7 @@ export function LoopLearn() {
         onRetrySessions={lists.retryRecent}
         onRetryMaterials={lists.retryMaterials} onRetryConcepts={graphError ? () => void refreshGraph() : null}
         onOpen={openRow}
-        onAll={showAll}
+        onAll={showAll} onLearn={(k) => void startGuided({ topic: k.name, goal: conceptGoal(k.id) })}
       />
     </div>
   );

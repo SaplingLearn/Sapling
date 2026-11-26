@@ -355,6 +355,16 @@ REGISTRY: dict[str, FlagDef] = _registry(
             "link to the map, and Review with the queue's count at the foot of "
             "the Tutor sidebar. Off: the panel's plan, skill meters, due box and "
             "map as before.", True),
+    # Tutor redesign phase 4 (the course page): Ready to learn (the concepts
+    # whose prerequisites are strong, each with its level and Learn), Sessions,
+    # Coming up (the course's upcoming assignments) and Materials. Frontend
+    # only (it reads the calendar's upcoming list, as the Dashboard does). A loop flag.
+    FlagDef("course_page_v2", ("off", "on"),
+            "The rebuilt Tutor course page: Ready to learn (concepts whose "
+            "prerequisites are Proficient, with each one's level and Learn), "
+            "Sessions, Coming up (the course's upcoming assignments) and "
+            "Materials, with one note on top when a retention check or reviews "
+            "are due. Off: the course page as before.", True),
     FlagDef("skill_ladder", ("off", "on"),
             "One skill measure on the graph: each concept's score, tier and words "
             "come from the learner model's decayed skill (Not started / Getting "

@@ -1,0 +1,260 @@
+"use client";
+// The Tutor's course page, rebuilt (Tutor redesign phase 4, behind
+// `course_page_v2`; design: learn/__fixtures__/course.design.html, the Claude
+// Design board). One note on top when something is due, then two columns:
+// "Ready to learn" (the concepts whose prerequisites are already strong, each
+// with its level and Learn) and "Sessions" on the left; "Coming up" (the
+// course's upcoming assignments) and "Materials" on the right.
+//
+// "Ready to learn" mirrors the planner's outer fringe (`learning/planner.py`),
+// more strictly: a concept is listed only while every direct prerequisite is
+// Proficient, so a prerequisite cycle hides a concept rather than vouching for
+// it. The board's readiness bar on each Coming-up row, its review minutes and
+// its Library column (study guides, flashcards, practice exams) have nothing
+// behind them on this page yet and are not built.
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import Link from "next/link";
+import { HandoffLink } from "@/components/ui/HandoffLink";
+import { useUser } from "@/context/UserContext";
+import { retentionHref } from "@/context/RetentionDueContext";
+import { getUpcomingAssignments, type Assignment, type EnrolledCourse } from "@/lib/api";
+import type { GraphEdge, GraphNode } from "@/lib/data";
+import { LEARNING_COPY } from "@/lib/learningCopy";
+import { carriesSkill, tierWord } from "@/lib/levels";
+import { Icon } from "../../Icon";
+import { useFlag } from "@/context/FlagsContext";
+import { LoadFailed, TutorCourse, masteryTone, meterTier } from "./TutorPages";
+import { sessionTitle, shortWhen, type TutorSessionRow } from "./sessions";
+import tutorStyles from "./tutor.module.css";
+import styles from "./CourseV2.module.css";
+
+export const COURSE_COPY = {
+  ready: "Ready to learn",
+  readyLine: "You know what these build on.",
+  readyNone: "Concepts appear here as you learn.",
+  sessions: "Sessions",
+  allSessions: "All sessions",
+  noSessions: "No sessions yet.",
+  comingUp: "Coming up",
+  nothingUp: "Nothing coming up.",
+  materials: "Materials",
+  upload: "Upload",
+  noMaterials: "No material yet. Upload notes or slides so the tutor can teach from them.",
+  retention: "A retention check is ready for this course.",
+  startCheck: "Start check",
+  open: "Open",
+  learn: "Learn",
+} as const;
+
+const READY_MAX = 5;
+
+const score = (n: GraphNode): number | null => (n.mastery_tier === "unexplored" ? null : n.mastery_score);
+
+export type ReadyConcept = { id: string; name: string; score: number | null; hasPrereqs: boolean };
+
+/** The course's ready concepts, strongest first (the planner's order): below
+ *  Proficient, with every direct prerequisite (a `prerequisite` edge's source)
+ *  Proficient. */
+export function readyConcepts(nodes: readonly GraphNode[], edges: readonly GraphEdge[], max = READY_MAX): ReadyConcept[] {
+  const ladder = nodes.some(carriesSkill);
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  const proficient = (n: GraphNode | undefined) => !!n && meterTier(score(n), ladder) === "mastered";
+  const prereqs = new Map<string, string[]>();
+  for (const e of edges) {
+    if (e.relationship_type !== "prerequisite" || e.source === e.target) continue;
+    prereqs.set(e.target, [...(prereqs.get(e.target) ?? []), e.source]);
+  }
+  return nodes
+    .filter((n) => !n.is_subject_root && !proficient(n))
+    .filter((n) => (prereqs.get(n.id) ?? []).every((p) => proficient(byId.get(p))))
+    .sort((a, b) => (score(b) ?? -1) - (score(a) ?? -1))
+    .slice(0, max)
+    .map((n) => ({ id: n.id, name: n.name, score: score(n), hasPrereqs: (prereqs.get(n.id) ?? []).length > 0 }));
+}
+
+/** A due date's calendar day, local: a bare `YYYY-MM-DD` is that day, not UTC midnight. */
+function dueDay(iso: string): Date | null {
+  const bare = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+  const d = bare ? new Date(Number(bare[1]), Number(bare[2]) - 1, Number(bare[3])) : new Date(iso);
+  return Number.isNaN(d.getTime()) ? null : new Date(d.getFullYear(), d.getMonth(), d.getDate());
+}
+
+/** "Dec 2, in 6 days" / "Dec 2, tomorrow" / "Dec 2, today"; null when past or unreadable. */
+export function dueWhen(iso: string | null, now: Date = new Date()): string | null {
+  const day = iso ? dueDay(iso) : null;
+  if (!day) return null;
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const days = Math.round((day.getTime() - today.getTime()) / 86_400_000);
+  if (days < 0) return null;
+  const date = day.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  return `${date}, ${days === 0 ? "today" : days === 1 ? "tomorrow" : `in ${days} days`}`;
+}
+
+/** The course's upcoming assignments, soonest first (the Dashboard's read). */
+export function useCourseUpcoming(courseId: string) {
+  const { userId } = useUser();
+  const [state, setState] = useState<{ items: Assignment[] | null; failed: boolean }>({ items: null, failed: false });
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => {
+    if (!userId) return;
+    let live = true;
+    getUpcomingAssignments(userId)
+      .then((r) => { if (live) setState({ items: r.assignments ?? [], failed: false }); })
+      .catch(() => { if (live) setState({ items: null, failed: true }); });
+    return () => { live = false; };
+  }, [userId, attempt]);
+  const retry = useCallback(() => { setState({ items: null, failed: false }); setAttempt((a) => a + 1); }, []);
+  const items = (state.items ?? [])
+    .filter((a) => a.course_id === courseId && dueWhen(a.due_date) !== null)
+    .sort((a, b) => (dueDay(a.due_date ?? "")?.getTime() ?? 0) - (dueDay(b.due_date ?? "")?.getTime() ?? 0))
+    .slice(0, 4);
+  return { items: state.items === null ? null : items, failed: state.failed, retry };
+}
+
+type Material = { id: string; file_name: string; category?: string | null };
+
+export function CourseV2({
+  course, sessions, concepts, edges, materials, retentionDue, dueCount, dueHref, reviewInSidebar, libraryHref,
+  onRetrySessions, onRetryMaterials, onRetryConcepts, onOpen, onAll, onLearn,
+}: {
+  course: EnrolledCourse;
+  sessions: TutorSessionRow[];
+  concepts: GraphNode[];
+  edges: GraphEdge[];
+  materials: Material[] | null;
+  /** A retention check is due in this course (RetentionDueContext). */
+  retentionDue: boolean;
+  /** Reviews due in every course; null unknown. */
+  dueCount: number | null;
+  dueHref: string | null;
+  /** `session_v2`: the sidebar's Review already says the count (CourseSlot reads it). */
+  reviewInSidebar?: boolean;
+  libraryHref: string | null;
+  onRetrySessions?: (() => void) | null;
+  onRetryMaterials?: (() => void) | null;
+  onRetryConcepts?: (() => void) | null;
+  onOpen: (row: TutorSessionRow) => void;
+  onAll: () => void;
+  onLearn: (concept: { id: string; name: string }) => void;
+}) {
+  // spec §13 A135: the page replaces what was on screen, so its first heading takes focus.
+  const heading = useRef<HTMLHeadingElement>(null);
+  useLayoutEffect(() => {
+    if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
+    heading.current?.focus({ preventScroll: true });
+  }, []);
+  const ladder = concepts.some(carriesSkill);
+  const ready = readyConcepts(concepts, edges);
+  const upcoming = useCourseUpcoming(course.course_id);
+  const recent = sessions.slice(0, 4);
+  const showReview = !reviewInSidebar && !!dueHref && (dueCount ?? 0) > 0; // each fact once
+  return (
+    <div className={styles.page} data-testid="tutor-course-page" data-course-id={course.course_id}>
+      <div className={styles.col} data-testid="tutor-course-v2">
+        {retentionDue ? (
+          <div className={styles.note} data-testid="tutor-course-retention">
+            <span className={styles.noteText}>{COURSE_COPY.retention}</span>
+            <HandoffLink variant="plain" href={retentionHref([course.course_id])} className={styles.noteLink}>{COURSE_COPY.startCheck}</HandoffLink>
+          </div>
+        ) : showReview && (
+          <div className={styles.note} data-testid="tutor-course-review">
+            <span className={styles.noteText}>{LEARNING_COPY.reviewsDue(dueCount ?? 0)}</span>
+            <HandoffLink variant="plain" href={dueHref!} className={styles.noteLink}>{LEARNING_COPY.review}</HandoffLink>
+          </div>
+        )}
+        <div className={styles.grid}>
+          <div className={styles.stack}>
+            <section aria-labelledby="tutor-course-ready" className={styles.section}>
+              <h2 id="tutor-course-ready" ref={heading} tabIndex={-1} className={`h-serif ${styles.h2}`}>{COURSE_COPY.ready}</h2>
+              {ready.length > 0 && ready.every((c) => c.hasPrereqs) && <p className={styles.sub}>{COURSE_COPY.readyLine}</p>}
+              {onRetryConcepts ? <LoadFailed testId="tutor-course-concepts-error" what="your concepts" onRetry={onRetryConcepts} /> : ready.length > 0 ? (
+                <ul className={styles.box}>
+                  {ready.map((c) => {
+                    const tier = meterTier(c.score, ladder);
+                    const word = tierWord(tier, ladder);
+                    const pct = c.score == null ? 0 : Math.round(Math.max(0, Math.min(1, c.score)) * 100);
+                    return (
+                      <li key={c.id} className={styles.readyRow} data-testid={`tutor-course-ready-${c.id}`} data-tier={tier}>
+                        <span className={styles.name}>{c.name}</span>
+                        <span className={tutorStyles.bar} role="meter" aria-label={`${c.name} skill`} aria-valuetext={word}
+                          aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct}>
+                          {c.score != null && <i style={{ "--fill": `${pct}%`, "--tone": masteryTone(c.score, ladder) } as React.CSSProperties} />}
+                        </span>
+                        <span className={styles.dim}>{word}</span>
+                        <button type="button" className={styles.rowLink} data-testid={`tutor-course-learn-${c.id}`}
+                          aria-label={`${COURSE_COPY.learn} ${c.name}`} onClick={() => onLearn({ id: c.id, name: c.name })}>
+                          {COURSE_COPY.learn}
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              ) : <p className={styles.sub}>{COURSE_COPY.readyNone}</p>}
+            </section>
+            <section aria-labelledby="tutor-course-sessions" className={styles.section}>
+              <div className={styles.head}>
+                <h2 id="tutor-course-sessions" className={`h-serif ${styles.h2}`}>{COURSE_COPY.sessions}</h2>
+                <button type="button" className={styles.rowLink} onClick={onAll}>{COURSE_COPY.allSessions}</button>
+              </div>
+              {onRetrySessions ? <LoadFailed testId="tutor-course-sessions-error" what="your past sessions" onRetry={onRetrySessions} /> : recent.length > 0 ? (
+                <ul className={styles.box}>
+                  {recent.map((s) => (
+                    <li key={s.id}>
+                      <button type="button" className={styles.sessionRow} onClick={() => onOpen(s)} data-testid={`tutor-course-session-${s.id}`}>
+                        <span className={`${tutorStyles.sdot} ${s.open ? tutorStyles.sdotOn : ""}`} aria-hidden />
+                        <span className={styles.name}>{sessionTitle(s, course)}</span>
+                        {s.open ? <span className={styles.open}>{COURSE_COPY.open}</span> : <span className={styles.dim}>{shortWhen(s.startedAt)}</span>}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              ) : <p className={styles.sub}>{COURSE_COPY.noSessions}</p>}
+            </section>
+          </div>
+          <div className={styles.stack}>
+            <section aria-labelledby="tutor-course-coming" className={styles.section}>
+              <h2 id="tutor-course-coming" className={`h-serif ${styles.h2}`}>{COURSE_COPY.comingUp}</h2>
+              {upcoming.failed ? <LoadFailed testId="tutor-course-upcoming-error" what="what's coming up" onRetry={upcoming.retry} />
+                : upcoming.items === null ? null : upcoming.items.length > 0 ? (
+                  <ul className={styles.box}>
+                    {upcoming.items.map((a) => (
+                      <li key={a.id} className={styles.dueRow} data-testid={`tutor-course-due-${a.id}`}>
+                        <span className={styles.name}>{a.title}</span>
+                        <span className={styles.dim}>{dueWhen(a.due_date)}</span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : <p className={styles.sub}>{COURSE_COPY.nothingUp}</p>}
+            </section>
+            <section aria-labelledby="tutor-course-materials" className={styles.section}>
+              <div className={styles.head}>
+                <h2 id="tutor-course-materials" className={`h-serif ${styles.h2}`}>{COURSE_COPY.materials}</h2>
+                {libraryHref && <Link href={libraryHref} className={styles.rowLink}><Icon name="up" size={13} /> {COURSE_COPY.upload}</Link>}
+              </div>
+              {onRetryMaterials ? <LoadFailed testId="tutor-course-materials-error" what="this course's material" onRetry={onRetryMaterials} />
+                : materials === null ? null : materials.length > 0 ? (
+                  <ul className={styles.box}>
+                    {materials.slice(0, 6).map((m) => (
+                      <li key={m.id} className={styles.dueRow}>
+                        <span className={styles.name}>{m.file_name}</span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : <p className={styles.sub}>{libraryHref ? COURSE_COPY.noMaterials : "No material yet."}</p>}
+            </section>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** The course view: the rebuilt page with `course_page_v2` on, else the page
+ *  as before (the flag reads live here, out of LoopLearn). */
+export function CourseSlot(props: React.ComponentProps<typeof CourseV2>) {
+  const v2 = useFlag("course_page_v2") === "on";
+  const reviewInSidebar = useFlag("session_v2") === "on";
+  if (v2) return <CourseV2 {...props} reviewInSidebar={reviewInSidebar} />;
+  const { edges: _e, retentionDue: _r, dueCount: _d, reviewInSidebar: _s, onLearn: _l, ...old } = props;
+  return <TutorCourse {...old} />;
+}
