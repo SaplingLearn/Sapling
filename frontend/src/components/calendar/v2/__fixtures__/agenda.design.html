@@ -139,9 +139,9 @@ class Component extends DCLogic {
       swatch: c.all ? 'display: none;' : sw(c.label, 10),
     }));
     const TYPE = {
-      Exam: 'padding: 2px 8px; border-radius: 6px; background: #1a1814; color: #ffffff; font-weight: 600;',
-      Quiz: 'padding: 2px 8px; border-radius: 6px; border: 1px solid #1a1814; color: #1a1814; font-weight: 600;',
-      Homework: 'color: #4a4538;',
+      Exam: 'display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; border-radius: 6px; background: #f7e6d8; color: #7a4220; font-weight: 600;',
+      Quiz: 'display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; border-radius: 6px; background: #dfe9ef; color: #3a6984; font-weight: 600;',
+      Homework: 'display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; border-radius: 6px; background: #efebe1; color: #1a1814; font-weight: 600;',
     };
     const item = (dow, day, title, course, type, when, soon, ready, total) => {
       const exam = type === 'Exam';
@@ -152,7 +152,7 @@ class Component extends DCLogic {
         readyText: exam ? `${ready} of ${total} concepts ready` : '',
         fill: exam ? `display: block; height: 100%; width: ${Math.round((ready / total) * 100)}%; background: #445D22;` : '',
         whenStyle: 'font-size: 14px; font-weight: 600; min-width: 84px; text-align: right;' + (soon ? ' color: #8a3b12;' : ' color: #4a4538;'),
-        rowStyle: 'display: flex; align-items: center; gap: 18px; padding: 12px 16px; border-radius: 14px; border: 1px solid ' + (exam ? '#c5d7b2; background: #f6f9f2;' : 'rgba(42,39,31,0.10); background: #fdfcf9;'),
+        rowStyle: 'display: flex; align-items: center; gap: 18px; padding: 12px 16px; border-radius: 14px; border: 1px solid ' + 'rgba(42,39,31,0.10); background: #fdfcf9;',
       };
     };
     const groups = [

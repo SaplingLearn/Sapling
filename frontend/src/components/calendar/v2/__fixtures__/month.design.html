@@ -44,9 +44,9 @@ a{color:#445D22;text-decoration:none}a:hover{color:#2f4115}
         </sc-for>
       </div>
       <div style="display: flex; gap: 14px; align-items: center; font-size: 13px; color: #4a4538; margin-left: auto;">
-        <span style="padding: 1px 6px; border-radius: 5px; background: #1a1814; color: #ffffff; font-weight: 600; font-size: 12px;">Exam</span>
-        <span style="padding: 0 6px; border-radius: 5px; border: 1px solid #1a1814; color: #1a1814; font-weight: 600; font-size: 12px;">Quiz</span>
-        <span>Homework</span>
+        <span style="display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; border-radius: 6px; background: #f7e6d8; color: #7a4220; font-weight: 600; font-size: 12px;"><span aria-hidden="true" style="width: 7px; height: 7px; background: #a34c26; transform: rotate(45deg); display: inline-block;"></span>Exam</span>
+        <span style="display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; border-radius: 6px; background: #dfe9ef; color: #3a6984; font-weight: 600; font-size: 12px;"><span aria-hidden="true" style="width: 9px; height: 9px; box-sizing: border-box; border: 2px solid #3a6984; border-radius: 999px; display: inline-block;"></span>Quiz</span>
+        <span style="display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; border-radius: 6px; background: #efebe1; color: #1a1814; font-weight: 600; font-size: 12px;"><span aria-hidden="true" style="width: 7px; height: 7px; border-radius: 999px; background: #4a4538; display: inline-block;"></span>Homework</span>
       </div>
     </div>
 
@@ -102,11 +102,11 @@ class Component extends DCLogic {
     };
     const pill = ([label, course, type, past]) => {
       let style = 'display: flex; align-items: center; gap: 6px; min-height: 26px; padding: 0 8px; border-radius: 7px; font-size: 13px; color: #1a1814; min-width: 0;';
-      if (type === 'Exam') style += ' background: #1a1814; color: #ffffff; font-weight: 600;';
-      else if (type === 'Quiz') style += ' border: 1px solid #1a1814; font-weight: 600;';
+      if (type === 'Exam') style += ' background: #f7e6d8; color: #7a4220; font-weight: 600;';
+      else if (type === 'Quiz') style += ' background: #dfe9ef; color: #3a6984; font-weight: 600;';
       else style += ' background: #f1eee6;';
       if (past) style += ' opacity: 0.55;';
-      return { label: type === 'Exam' ? `${label} · ${course}` : label, swatch: sw(course), style };
+      return { label, swatch: sw(course), style };
     };
     const cells = [];
     for (let i = 0; i < 42; i++) {

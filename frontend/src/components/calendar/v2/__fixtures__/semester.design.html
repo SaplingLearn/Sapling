@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Calendar: semester timeline</title>
+<title>Calendar: semester grid</title>
 <script src="./support.js"></script>
 </head>
 <body>
@@ -31,54 +31,54 @@ a{color:#445D22;text-decoration:none}a:hover{color:#2f4115}
       <button type="button" style="height: 44px; padding: 0 18px; border-radius: 10px; border: 0; background: #445D22; color: #ffffff; font: inherit; font-size: 15px; font-weight: 600;">Import syllabus</button>
     </header>
 
-    <section aria-label="Timeline" style="border-radius: 16px; border: 1px solid rgba(42,39,31,0.10); background: #fdfcf9; padding: 20px 24px 24px; display: flex; flex-direction: column; gap: 6px;">
-      <div style="display: flex;">
-        <div style="width: 120px; flex-shrink: 0; font-size: 13px; font-weight: 600; color: #4a4538; align-self: flex-end; padding-bottom: 8px;">Week of</div>
-        <div style="flex: 1; display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 4px;">
-          <sc-for list="{{weeks}}" as="w" hint-placeholder-count="8">
-            <div style="display: flex; flex-direction: column; gap: 6px; padding: 0 2px 8px;">
+    <div role="table" aria-label="Week by week" style="border-radius: 16px; border: 1px solid rgba(42,39,31,0.10); background: #fdfcf9; overflow: hidden; display: flex; flex-direction: column;">
+      <div role="row" style="display: grid; grid-template-columns: 120px repeat(8, minmax(0, 1fr));">
+        <span role="columnheader" style="padding: 14px 16px; display: flex; align-items: flex-end; font-size: 13px; font-weight: 600; color: #4a4538;">Course</span>
+        <sc-for list="{{weeks}}" as="w" hint-placeholder-count="8">
+          <div role="columnheader" style="{{w.cell}}">
+            <span style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-height: 22px;">
               <span style="font-size: 13px; font-weight: 600;">{{w.label}}</span>
-              <span style="{{w.load}}" title="{{w.text}}"></span>
-              <span style="{{w.textStyle}}">{{w.text}}</span>
+              <sc-if value="{{w.tag}}" hint-placeholder-val="{{ false }}"><span style="{{w.tagStyle}}">{{w.tag}}</span></sc-if>
+            </span>
+            <span aria-hidden="true" style="{{w.bar}}"></span>
+            <span style="{{w.textStyle}}">{{w.text}}</span>
+          </div>
+        </sc-for>
+      </div>
+      <sc-for list="{{lanes}}" as="l" hint-placeholder-count="4">
+        <div role="row" style="display: grid; grid-template-columns: 120px repeat(8, minmax(0, 1fr)); border-top: 1px solid rgba(42,39,31,0.10);">
+          <span role="rowheader" style="padding: 12px 16px; display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600;"><span aria-hidden="true" style="{{l.swatch}}"></span>{{l.code}}</span>
+          <sc-for list="{{l.cells}}" as="c" hint-placeholder-count="8">
+            <div role="cell" style="{{c.style}}">
+              <sc-for list="{{c.items}}" as="it" hint-placeholder-count="1">
+                <a href="#" style="{{it.style}}">
+                  <span aria-hidden="true" style="{{it.mark}}"></span>
+                  <span style="min-width: 0; display: flex; flex-direction: column; gap: 2px;">
+                    <span style="font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{it.title}}</span>
+                    <span style="font-size: 12px;">{{it.date}}</span>
+                  </span>
+                </a>
+              </sc-for>
             </div>
           </sc-for>
         </div>
-      </div>
-
-      <div style="position: relative; display: flex; flex-direction: column;">
-        <sc-for list="{{lanes}}" as="l" hint-placeholder-count="4">
-          <div style="display: flex; align-items: stretch; border-top: 1px solid rgba(42,39,31,0.08);">
-            <div style="width: 120px; flex-shrink: 0; display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 600;"><span aria-hidden="true" style="{{l.swatch}}"></span>{{l.code}}</div>
-            <ul style="{{l.track}}">
-              <sc-for list="{{l.items}}" as="it" hint-placeholder-count="3">
-                <li style="{{it.pos}}">
-                  <span aria-hidden="true" style="{{it.mark}}"></span>
-                  <a href="#" style="{{it.labelStyle}}">{{it.label}}</a>
-                  <span style="font-size: 12px; color: #4a4538;">{{it.date}}</span>
-                </li>
-              </sc-for>
-            </ul>
-          </div>
-        </sc-for>
-        <div aria-hidden="true" style="{{todayLine}}"></div>
-        <div style="{{todayTag}}">Today</div>
-      </div>
-    </section>
+      </sc-for>
+    </div>
 
     <div style="display: flex; gap: 20px; align-items: stretch;">
-      <section aria-labelledby="crunch-h" style="flex: 1; padding: 18px 20px; border-radius: 16px; background: #fbf3e9; border: 1px solid #ecd6bd; display: flex; flex-direction: column; gap: 8px;">
+      <section aria-labelledby="crunch-h" style="flex: 1; padding: 18px 20px; border-radius: 16px; background: #f7e6d8; border: 1px solid #a34c26; display: flex; flex-direction: column; gap: 8px;">
         <h2 id="crunch-h" style="margin: 0; font-family: 'Aleo', Georgia, serif; font-size: 18px; font-weight: 600;">Busiest week: Mar 30 – Apr 5</h2>
         <p style="margin: 0; font-size: 14px; line-height: 1.5; color: #4a4538;">3 due, 2 of them exams. Starting early leaves room for the rest.</p>
         <a href="#" style="font-size: 14px; font-weight: 600;">Prepare for MA 123 Midterm</a>
       </section>
-      <section aria-labelledby="legend-h" style="width: 360px; padding: 18px 20px; border-radius: 16px; border: 1px solid rgba(42,39,31,0.10); background: #fdfcf9; display: flex; flex-direction: column; gap: 10px;">
-        <h2 id="legend-h" style="margin: 0; font-size: 15px; font-weight: 600;">Key</h2>
-        <div style="display: flex; gap: 18px; font-size: 14px; color: #1a1814; flex-wrap: wrap;">
-          <span style="display: inline-flex; align-items: center; gap: 8px;"><span aria-hidden="true" style="width: 14px; height: 14px; background: #1a1814; transform: rotate(45deg); display: inline-block;"></span>Exam</span>
-          <span style="display: inline-flex; align-items: center; gap: 8px;"><span aria-hidden="true" style="width: 12px; height: 12px; border-radius: 999px; border: 2px solid #1a1814; box-sizing: border-box; display: inline-block;"></span>Quiz</span>
-          <span style="display: inline-flex; align-items: center; gap: 8px;"><span aria-hidden="true" style="width: 10px; height: 10px; border-radius: 999px; background: #6e675a; display: inline-block;"></span>Homework</span>
+      <section aria-labelledby="legend-h" style="flex: 1; padding: 18px 20px; border-radius: 16px; border: 1px solid rgba(42,39,31,0.10); background: #fdfcf9; display: flex; flex-direction: column; gap: 10px;">
+        <h2 id="legend-h" style="margin: 0; font-family: 'Aleo', Georgia, serif; font-size: 18px; font-weight: 600;">Key</h2>
+        <div style="display: flex; gap: 12px; flex-wrap: wrap; font-size: 12px;">
+          <span style="display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; border-radius: 6px; background: #f7e6d8; color: #7a4220; font-weight: 600;"><span aria-hidden="true" style="width: 7px; height: 7px; background: #a34c26; transform: rotate(45deg); display: inline-block;"></span>Exam</span>
+          <span style="display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; border-radius: 6px; background: #dfe9ef; color: #3a6984; font-weight: 600;"><span aria-hidden="true" style="width: 9px; height: 9px; box-sizing: border-box; border: 2px solid #3a6984; border-radius: 999px; display: inline-block;"></span>Quiz</span>
+          <span style="display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; border-radius: 6px; background: #efebe1; color: #1a1814; font-weight: 600;"><span aria-hidden="true" style="width: 7px; height: 7px; border-radius: 999px; background: #4a4538; display: inline-block;"></span>Homework</span>
         </div>
-        <p style="margin: 0; font-size: 13px; color: #4a4538;">The bar under each week: how much is due that week.</p>
+        <p style="margin: 0; font-size: 14px; color: #4a4538;">The bar under each week: how much is due that week.</p>
       </section>
     </div>
   </main>
@@ -88,52 +88,51 @@ a{color:#445D22;text-decoration:none}a:hover{color:#2f4115}
 class Component extends DCLogic {
   renderVals() {
     const COURSES = { 'CS 112': '#3a6ea5', 'MA 123': '#b5602a', 'BI 108': '#2e7a6f', 'WR 120': '#7b4f93' };
+    const KIND = {
+      Exam: { bg: '#f7e6d8', fg: '#7a4220', mark: 'width: 7px; height: 7px; margin-top: 5px; flex-shrink: 0; background: #a34c26; transform: rotate(45deg); display: inline-block;' },
+      Quiz: { bg: '#dfe9ef', fg: '#3a6984', mark: 'width: 9px; height: 9px; margin-top: 4px; flex-shrink: 0; box-sizing: border-box; border: 2px solid #3a6984; border-radius: 999px; display: inline-block;' },
+      Homework: { bg: '#efebe1', fg: '#1a1814', mark: 'width: 7px; height: 7px; margin-top: 5px; flex-shrink: 0; border-radius: 999px; background: #4a4538; display: inline-block;' },
+    };
     const segBase = 'height: 36px; padding: 0 16px; border-radius: 9px; border: 0; font: inherit; font-size: 14px; font-weight: 600;';
     const views = ['Agenda', 'Month', 'Week', 'Semester'].map((label, i) => ({
       label, on: i === 3 ? 'true' : 'false',
       style: segBase + (i === 3 ? ' background: #ffffff; color: #1a1814; box-shadow: 0 1px 2px rgba(42,39,31,0.18);' : ' background: transparent; color: #4a4538;'),
     }));
-    const counts = [1, 2, 3, 2, 3, 0, 0, 0];
+    const NOW = 1, HEAVY = 4;
+    const colBg = (i) => (i === NOW ? ' background: #f2f6ee;' : i === HEAVY ? ' background: #fbf1e9;' : '');
+    const counts = [[1, 1], [2, 0], [3, 1], [2, 0], [3, 2], [0, 0], [0, 0], [0, 0]];
     const wlabels = ['Mar 2', 'Mar 9', 'Mar 16', 'Mar 23', 'Mar 30', 'Apr 6', 'Apr 13', 'Apr 20'];
     const weeks = wlabels.map((label, i) => {
-      const n = counts[i];
-      const heavy = i === 4;
+      const [n, ex] = counts[i];
+      const heavy = i === HEAVY;
       return {
         label,
-        text: n === 0 ? 'Nothing due' : heavy ? `${n} due, 2 exams` : `${n} due`,
-        textStyle: 'font-size: 12px;' + (heavy ? ' color: #8a3b12; font-weight: 600;' : ' color: #4a4538;'),
-        load: `display: block; height: 8px; border-radius: 999px; background: ${n === 0 ? '#eeeae0' : heavy ? '#c4692f' : '#9db37f'}; width: ${n === 0 ? 100 : 34 + n * 22}%;`,
+        tag: i === NOW ? 'This week' : heavy ? 'Busiest' : '',
+        tagStyle: 'padding: 0 6px; border-radius: 5px; font-size: 11px; font-weight: 700; color: #ffffff; background: ' + (heavy ? '#a34c26;' : '#445D22;'),
+        text: n === 0 ? 'Nothing due' : `${n} due` + (ex ? `, ${ex} exam${ex === 1 ? '' : 's'}` : ''),
+        textStyle: 'font-size: 12px;' + (heavy ? ' color: #a34c26; font-weight: 600;' : i === 0 ? ' color: #6e675a;' : ' color: #4a4538;'),
+        bar: `display: block; height: 6px; border-radius: 999px; width: ${n === 0 ? 100 : 25 + Math.round((n / 3) * 75)}%; background: ${n === 0 ? '#eeeae0' : heavy ? '#a34c26' : '#c5d7b2'};`,
+        cell: 'padding: 14px 10px; display: flex; flex-direction: column; gap: 6px; border-left: 1px solid rgba(42,39,31,0.10);' + colBg(i),
       };
     });
-    const SPAN = 56; // days shown, from Mar 2
-    const lanesData = {
-      'CS 112': [[0, 'Midterm Exam', 'Exam', 'Mar 2'], [10, 'HW 7', 'Homework', 'Mar 12'], [18, 'Midterm 2', 'Exam', 'Mar 20'], [22, 'HW 8', 'Homework', 'Mar 24'], [29, 'Proposal', 'Homework', 'Mar 31']],
-      'MA 123': [[11, 'Quiz 4', 'Quiz', 'Mar 13'], [24, 'PS 6', 'Homework', 'Mar 26'], [28, 'Midterm', 'Exam', 'Mar 30']],
-      'BI 108': [[14, 'Lab report 3', 'Homework', 'Mar 16'], [30, 'Lab practical', 'Exam', 'Apr 1']],
-      'WR 120': [[16, 'Essay draft', 'Homework', 'Mar 18']],
+    const due = {
+      'CS 112': [[0, 'Midterm Exam', 'Exam', 'Mon 2'], [1, 'HW 7: Hash tables', 'Homework', 'Thu 12'], [2, 'Midterm 2', 'Exam', 'Fri 20'], [3, 'HW 8: Trees', 'Homework', 'Tue 24'], [4, 'Project proposal', 'Homework', 'Tue 31']],
+      'MA 123': [[1, 'Quiz 4', 'Quiz', 'Fri 13'], [3, 'Problem set 6', 'Homework', 'Thu 26'], [4, 'Midterm', 'Exam', 'Mon 30']],
+      'BI 108': [[2, 'Lab report 3', 'Homework', 'Mon 16'], [4, 'Lab practical', 'Exam', 'Wed 1']],
+      'WR 120': [[2, 'Essay draft', 'Homework', 'Wed 18']],
     };
-    const mark = (type, color) => type === 'Exam'
-      ? `width: 16px; height: 16px; background: ${color}; transform: rotate(45deg); display: block; box-shadow: 0 0 0 3px #fdfcf9;`
-      : type === 'Quiz'
-        ? `width: 14px; height: 14px; border-radius: 999px; border: 3px solid ${color}; background: #fdfcf9; box-sizing: border-box; display: block;`
-        : `width: 11px; height: 11px; border-radius: 999px; background: ${color}; display: block;`;
-    const lanes = Object.keys(lanesData).map((code) => ({
+    const lanes = Object.keys(due).map((code) => ({
       code,
-      swatch: `width: 12px; height: 12px; border-radius: 3px; background: ${COURSES[code]}; display: inline-block;`,
-      track: 'flex: 1; position: relative; height: 104px; margin: 0; padding: 0; list-style: none; background: linear-gradient(#e6e1d4, #e6e1d4) 0 34px / 100% 2px no-repeat;',
-      items: lanesData[code].map(([d, label, type, date]) => ({
-        label, date,
-        pos: `position: absolute; top: 26px; left: calc(${(d / SPAN) * 100}% - 8px); display: flex; flex-direction: column; align-items: flex-start; gap: 6px; width: 120px;`,
-        mark: mark(type, COURSES[code]),
-        labelStyle: 'font-size: 13px; color: #1a1814;' + (type === 'Exam' ? ' font-weight: 700;' : ' font-weight: 600;'),
+      swatch: `width: 10px; height: 10px; border-radius: 3px; background: ${COURSES[code]}; display: inline-block;`,
+      cells: wlabels.map((_, w) => ({
+        style: 'min-width: 0; min-height: 72px; padding: 8px; display: flex; flex-direction: column; gap: 6px; border-left: 1px solid rgba(42,39,31,0.10);' + colBg(w),
+        items: due[code].filter(([wk]) => wk === w).map(([, title, kind, date]) => ({
+          title, date, mark: KIND[kind].mark,
+          style: `display: flex; align-items: flex-start; gap: 6px; padding: 6px 8px; border-radius: 6px; background: ${KIND[kind].bg}; color: ${KIND[kind].fg}; min-width: 0;` + (w === 0 ? ' filter: saturate(0.35);' : ''),
+        })),
       })),
     }));
-    const todayPct = (9 / SPAN) * 100;
-    return {
-      views, weeks, lanes,
-      todayLine: `position: absolute; top: 0; bottom: 0; left: calc(120px + (100% - 120px) * ${todayPct / 100}); width: 2px; background: #445D22;`,
-      todayTag: `position: absolute; top: -26px; left: calc(120px + (100% - 120px) * ${todayPct / 100} - 22px); padding: 2px 8px; border-radius: 6px; background: #445D22; color: #ffffff; font-size: 12px; font-weight: 700;`,
-    };
+    return { views, weeks, lanes };
   }
 }
 </script>

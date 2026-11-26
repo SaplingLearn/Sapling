@@ -81,7 +81,7 @@ class Component extends DCLogic {
       swatch: `width: 8px; height: 8px; border-radius: 2px; background: ${C[course]}; display: inline-block;`,
       whenStyle: 'font-size: 13px; font-weight: 600; text-align: right;' + (soon ? ' color: #8a3b12;' : ' color: #4a4538;'),
       rowStyle: 'display: flex; align-items: center; gap: 12px; min-height: 64px; padding: 10px 12px; border-radius: 14px; color: #1a1814;' +
-        (type === 'Exam' ? ' background: #f6f9f2; border: 1px solid #c5d7b2;' : ' background: #fdfcf9; border: 1px solid rgba(42,39,31,0.10);'),
+        ' background: #fdfcf9; border: 1px solid rgba(42,39,31,0.10);',
     });
     const groups = [
       { name: 'This week', range: 'Mar 9 – 15', items: [

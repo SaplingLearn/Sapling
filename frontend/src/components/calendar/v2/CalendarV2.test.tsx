@@ -97,7 +97,7 @@ describe("the boards", () => {
       "Wednesday, March 11 · ", "2 due this week", "the next one tomorrow", CALENDAR_COPY.importSyllabus, CALENDAR_COPY.googleOff,
       CALENDAR_COPY.busiestText(3, 2), CALENDAR_COPY.prepareFor("MA 123 Midterm"), ...Object.values(CALENDAR_COPY.views)]],
     ["month", ["10 due in March, 2 of them exams · 11 in all", CALENDAR_COPY.today, CALENDAR_COPY.prev.month, CALENDAR_COPY.next.month]],
-    ["semester", [CALENDAR_COPY.semesterTitle, CALENDAR_COPY.semesterSub, CALENDAR_COPY.busiest("Mar 30 – Apr 5"), VIEWS_COPY.keyNote, "due, 2 exams", "Nothing due"]],
+    ["semester", [CALENDAR_COPY.semesterTitle, CALENDAR_COPY.semesterSub, CALENDAR_COPY.busiest("Mar 30 – Apr 5"), VIEWS_COPY.keyNote, VIEWS_COPY.thisWeek, VIEWS_COPY.busiest, VIEWS_COPY.course, "Nothing due"]],
     ["detail", [PANEL_COPY.fromOutline, PANEL_COPY.prepare, PANEL_COPY.studyGuide, PANEL_COPY.details, PANEL_COPY.edit, PANEL_COPY.google, PANEL_COPY.delete, "5 of 8 concepts ready"]],
     ["empty", [CALENDAR_COPY.emptyTitle, CALENDAR_COPY.emptyText, CALENDAR_COPY.emptyImport, CALENDAR_COPY.emptyAdd, CALENDAR_COPY.emptyGoogle, ...CALENDAR_COPY.emptySteps.flat()]],
     ["phone", ["Tomorrow", "In 2 days", "This week", "Next week"]],
