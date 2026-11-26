@@ -4,8 +4,8 @@
  * against its design board, `../__fixtures__/plan.design.html`, kept verbatim:
  * the words the rebuild says are pulled from it, so a drift from the design
  * fails here (words and structure, not pixels: jsdom has no layout). The kind
- * words are planLabels.ts's (shared with the session panel and the
- * transcript); the board's "Quick review" / "Practice" wait for the sidebar.
+ * words are the board's, planLabels.ts::planKindLabel (the session panel and
+ * the transcript ask it with the same switch).
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -51,7 +51,7 @@ function renderPlan(props: Partial<React.ComponentProps<typeof PlanV2>> = {}) {
 
 describe("what the plan says", () => {
   it("each planned concept has one label; a prerequisite earlier in the plan reads in it", () => {
-    expect(PLAN.map((_, i) => planRowLabel(PLAN, i, EDGES))).toEqual(["Due for review", "New", "New, after Hash tables", "Related practice"]);
+    expect(PLAN.map((_, i) => planRowLabel(PLAN, i, EDGES))).toEqual(["Quick review", "New", "New, after Hash tables", "Practice"]);
     // a prerequisite later in the plan, or not in it, says nothing
     expect(planRowLabel(PLAN, 1, [{ prerequisite: "cr", dependent: "ht" }, { prerequisite: "x", dependent: "ht" }])).toBe("New");
     expect(planRowLabel([concept("x", "mystery")], 0, [])).toBeNull();
@@ -86,7 +86,7 @@ describe("what the plan says", () => {
 describe("parity with the design board", () => {
   it.each([
     PLAN_V2_COPY.starting, PLAN_V2_COPY.today, PLAN_V2_COPY.suggest, PLAN_V2_COPY.changeGoal,
-    "Start this plan", "Developing", "Getting started", "Not started", "New", "Check-in", "Plan", "Learn", "Wrap up",
+    "Start this plan", "Developing", "Getting started", "Not started", "New", "Quick review", "Practice", "Check-in", "Plan", "Learn", "Wrap up",
   ])("the board says %j", (text) => {
     expect(DESIGN).toContain(text);
   });

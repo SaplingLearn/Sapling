@@ -1845,7 +1845,7 @@ export function LoopLearn() {
   // adds no node, so nothing is announced twice.
   const logMessages = useMemo(() => {
     // U2: the opener's row shows the approved plan, never steps already done
-    const history = withPlanHistory(messages, panelPlanOf(state.phase, plan, approvedPlan));
+    const history = withPlanHistory(messages, panelPlanOf(state.phase, plan, approvedPlan), planV2);
     const inCard = new Set<string>();
     if (item?.prompt) inCard.add(item.prompt);
     if (item && hint && "reply" in hint) inCard.add(hint.reply);
@@ -1854,7 +1854,7 @@ export function LoopLearn() {
     return inCard.size === 0
       ? history
       : history.map((m) => (m.role === "assistant" && inCard.has(m.content) ? { ...m, visuallyHidden: true } : m));
-  }, [messages, state.phase, plan, approvedPlan, item, hint, prequestion]);
+  }, [messages, state.phase, plan, approvedPlan, item, hint, prequestion, planV2]);
 
   // spec §13 A135: apply `focusAfter` once the screen has settled — no reply
   // streaming, the target rendered and enabled. Only a lost focus (left on the

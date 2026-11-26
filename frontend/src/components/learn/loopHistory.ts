@@ -1,6 +1,6 @@
 import type { ChatMsg } from "../chat/ChatPanel";
 import type { LoopPanelConcept } from "@/lib/api";
-import { planGoalReason, planKind } from "./planLabels";
+import { planGoalReason, planKindLabel } from "./planLabels";
 
 /**
  * The session opener's two template texts (spec §13 A121): the tutor says one
@@ -16,6 +16,8 @@ export const PROBE_PHASE_OPENERS: readonly string[] = [
 
 /** The plan's own intro (PlanPanel says it over the plan card). */
 export const PLAN_INTRO_COPY = "Here's today's plan. Due reviews come first, then what's new, then related practice.";
+/** `plan_v2`: the same, in the board's words. */
+export const PLAN_INTRO_COPY_BOARD = "Here's today's plan. Quick reviews come first, then what's new, then practice.";
 /** An empty plan: the session went straight to teaching (PlanPanel's empty line). */
 export const EMPTY_PLAN_COPY = "Nothing to plan right now — ask the tutor anything.";
 
@@ -25,13 +27,13 @@ const escapeMarkdown = (text: string) => text.replace(/[\\`*_{}[\]()#+\-.!|~<>]/
 
 /** The approved plan as the tutor's turn in the conversation: the intro, then
  *  each concept in order with why it is there (the session panel's words). */
-export function planTurnText(plan: LoopPanelConcept[]): string {
+export function planTurnText(plan: LoopPanelConcept[], boardWords = false): string {
   if (plan.length === 0) return EMPTY_PLAN_COPY;
   const rows = plan.map((c, i) => {
-    const why = planGoalReason(c.reason) ?? planKind(c.kind)?.label ?? "";
+    const why = planGoalReason(c.reason) ?? planKindLabel(c.kind, boardWords) ?? "";
     return `${i + 1}. ${escapeMarkdown(c.concept_name || "Concept")}${why ? ` — ${why}` : ""}`;
   });
-  return `${PLAN_INTRO_COPY}\n\n${rows.join("\n")}`;
+  return `${boardWords ? PLAN_INTRO_COPY_BOARD : PLAN_INTRO_COPY}\n\n${rows.join("\n")}`;
 }
 
 /**
@@ -43,9 +45,9 @@ export function planTurnText(plan: LoopPanelConcept[]): string {
  * unknown (its read failed) — is left out rather than describe finished steps.
  * Any other first row (a quiz-ask session's own opener) is kept as it is.
  */
-export function withPlanHistory(messages: ChatMsg[], plan: LoopPanelConcept[] | null): ChatMsg[] {
+export function withPlanHistory(messages: ChatMsg[], plan: LoopPanelConcept[] | null, boardWords = false): ChatMsg[] {
   const first = messages[0];
   if (!first || first.role !== "assistant" || !PROBE_PHASE_OPENERS.includes(first.content.trim())) return messages;
   if (plan === null) return messages.slice(1);
-  return [{ ...first, content: planTurnText(plan) }, ...messages.slice(1)];
+  return [{ ...first, content: planTurnText(plan, boardWords) }, ...messages.slice(1)];
 }

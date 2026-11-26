@@ -7,9 +7,9 @@
 // goal. Folded in from the old card: the diagnosis details (into the rows),
 // the goal reasons and the separate "How these connect" list (a planned
 // prerequisite now reads in its dependent's label: "New, after Hash tables").
-// The kind words stay planLabels.ts's, which the session panel and the
-// transcript share, so the plan never names a concept differently from them;
-// the board's "Quick review" / "Practice" land with the sidebar rebuild.
+// The kind words are the board's ("Quick review", "New", "Practice"),
+// planLabels.ts::planKindLabel, which the session panel and the transcript
+// ask with the same `plan_v2` switch, so the three never disagree.
 import React, { useLayoutEffect, useRef } from "react";
 import { motion } from "framer-motion";
 import type { LoopDiagnosis, LoopPlanConcept, LoopPlanPrereqEdge, LoopPlanStarting } from "@/lib/api";
@@ -19,7 +19,7 @@ import { useFlag } from "@/context/FlagsContext";
 import { useMotionPresets } from "@/lib/motion";
 import { modalOpen } from "../modalOpen";
 import { PlanPanel } from "../PlanPanel";
-import { planKind } from "../planLabels";
+import { planKindLabel } from "../planLabels";
 import { masteryTone } from "../tutor/TutorPages";
 import tutorStyles from "../tutor/tutor.module.css";
 import styles from "./PlanV2.module.css";
@@ -48,7 +48,7 @@ export function nameList(names: readonly string[]): string {
  *  a kind this client does not know has no label. */
 export function planRowLabel(plan: readonly LoopPlanConcept[], index: number, edges: readonly LoopPlanPrereqEdge[]): string | null {
   const c = plan[index];
-  const base = planKind(c.kind)?.label ?? null;
+  const base = planKindLabel(c.kind, true);
   if (c.kind !== "new") return base;
   const before = new Map(plan.slice(0, index).map((p, i) => [p.node_id, i]));
   const prereqs = edges

@@ -13,9 +13,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const flags: Record<string, string> = {};
 const upcoming = vi.fn();
+const cards = vi.fn();
+const guides = vi.fn();
 vi.mock("@/context/FlagsContext", () => ({ useFlag: (k: string) => flags[k] ?? "off" }));
 vi.mock("@/context/UserContext", () => ({ useUser: () => ({ userId: "u1", userReady: true }) }));
-vi.mock("@/lib/api", async (orig) => ({ ...(await orig<typeof import("@/lib/api")>()), getUpcomingAssignments: (...a: unknown[]) => upcoming(...a) }));
+vi.mock("@/lib/api", async (orig) => ({ ...(await orig<typeof import("@/lib/api")>()),
+  getUpcomingAssignments: (...a: unknown[]) => upcoming(...a), getFlashcards: (...a: unknown[]) => cards(...a) }));
+vi.mock("@/lib/studyGuide/api", () => ({ listGuides: (...a: unknown[]) => guides(...a) }));
 vi.mock("next/link", () => ({
   default: React.forwardRef<HTMLAnchorElement, React.AnchorHTMLAttributes<HTMLAnchorElement>>(function LinkStub(props, ref) {
     return <a ref={ref} {...props} />;
@@ -38,6 +42,8 @@ const COURSE = { course_id: "c1", course_name: "Introduction to Computer Science
 const NOW = new Date(2026, 10, 26, 12);
 
 beforeEach(() => {
+  cards.mockResolvedValue({ flashcards: [] });
+  guides.mockResolvedValue({ guides: [] });
   upcoming.mockReset();
   upcoming.mockResolvedValue({ assignments: [
     { id: "a2", user_id: "u1", title: "Midterm 2", due_date: "2026-12-09", course_id: "c1" },
@@ -124,5 +130,31 @@ describe("parity with the design board", () => {
     expect(screen.getByTestId("tutor-course-page")).toBeTruthy();
     expect(screen.queryByTestId("tutor-course-v2")).toBeNull();
     expect(upcoming).not.toHaveBeenCalled();
+  });
+
+  it("the Library: the course's study guides and how many flashcards it has, from Study's reads", async () => {
+    flags.course_page_v2 = "on";
+    guides.mockResolvedValue({ guides: [
+      { id: "g1", title: "Midterm 2 guide", course_id: "c1" }, { id: "g9", title: "Other course", course_id: "c2" },
+    ] });
+    cards.mockResolvedValue({ flashcards: [{ id: "f1", course_id: "c1" }, { id: "f2", course_id: "c1" }, { id: "f3", course_id: "c2" }] });
+    renderCourse();
+    const lib = await screen.findByTestId("tutor-course-library");
+    expect(within(lib).getByTestId("tutor-course-guide-g1").getAttribute("href")).toBe("/study/guide/g1");
+    expect(within(lib).queryByText("Other course")).toBeNull();
+    expect(within(lib).getByTestId("tutor-course-flashcards").getAttribute("href")).toBe("/flashcards?course=c1");
+    expect(lib.textContent).toContain("2 cards");
+  });
+
+  it("an empty Library, or Study hidden: no Library", async () => {
+    flags.course_page_v2 = "on";
+    renderCourse();
+    await waitFor(() => expect(guides).toHaveBeenCalled());
+    expect(screen.queryByTestId("tutor-course-library")).toBeNull();
+    cleanup();
+    guides.mockClear();
+    flags.hide_study = "on";
+    renderCourse();
+    expect(guides).not.toHaveBeenCalled();
   });
 });

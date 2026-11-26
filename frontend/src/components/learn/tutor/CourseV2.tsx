@@ -17,9 +17,13 @@ import Link from "next/link";
 import { HandoffLink } from "@/components/ui/HandoffLink";
 import { useUser } from "@/context/UserContext";
 import { retentionHref } from "@/context/RetentionDueContext";
-import { getUpcomingAssignments, type Assignment, type EnrolledCourse, type LoopGoal } from "@/lib/api";
+import { getFlashcards, getUpcomingAssignments, type Assignment, type EnrolledCourse, type LoopGoal } from "@/lib/api";
+import { listGuides } from "@/lib/studyGuide/api";
+import type { GuideCard } from "@/lib/studyGuide/types";
+import { flashcardsHref } from "@/lib/toolHrefs";
+import { cardsOfCourse, type FlashcardRow } from "../../study/hubModel";
 import type { GraphEdge, GraphNode } from "@/lib/data";
-import { LEARNING_COPY } from "@/lib/learningCopy";
+import { LEARNING_COPY, plural } from "@/lib/learningCopy";
 import { carriesSkill, tierWord } from "@/lib/levels";
 import { Icon } from "../../Icon";
 import { useFlag } from "@/context/FlagsContext";
@@ -46,6 +50,9 @@ export const COURSE_COPY = {
   startCheck: "Start check",
   open: "Open",
   learn: "Learn",
+  library: "Library",
+  studyGuide: "Study guide",
+  flashcards: "Flashcards",
 } as const;
 
 const READY_MAX = 5;
@@ -113,6 +120,26 @@ export function useCourseUpcoming(courseId: string) {
   return { items: state.items === null ? null : items, failed: state.failed, retry };
 }
 
+/** The course's Library (the board's column): its study guides and how many
+ *  flashcards it has, read as the Study hub reads them; nothing while Study
+ *  is hidden (both reads are Study's). */
+export function useCourseLibrary(courseId: string, enabled: boolean) {
+  const { userId } = useUser();
+  const [lib, setLib] = useState<{ courseId: string; guides: GuideCard[]; cards: number } | null>(null);
+  useEffect(() => {
+    if (!enabled || !userId) return;
+    let live = true;
+    Promise.all([
+      listGuides(userId).then((r) => r.guides ?? []).catch(() => [] as GuideCard[]),
+      getFlashcards(userId).then((r) => (r.flashcards ?? []) as FlashcardRow[]).catch(() => [] as FlashcardRow[]),
+    ]).then(([guides, cards]) => {
+      if (live) setLib({ courseId, guides: guides.filter((g) => g.course_id === courseId), cards: cardsOfCourse(cards, courseId).length });
+    });
+    return () => { live = false; };
+  }, [userId, courseId, enabled]);
+  return lib && lib.courseId === courseId ? lib : null;
+}
+
 type Material = { id: string; file_name: string; category?: string | null };
 
 export function CourseV2({
@@ -152,6 +179,8 @@ export function CourseV2({
   const ladder = concepts.some(carriesSkill);
   const ready = readyConcepts(concepts, edges);
   const upcoming = useCourseUpcoming(course.course_id);
+  const studyShown = useFlag("hide_study") !== "on";
+  const library = useCourseLibrary(course.course_id, studyShown);
   const recent = sessions.slice(0, 4);
   const showReview = !reviewInSidebar && !!dueHref && (dueCount ?? 0) > 0; // each fact once
   return (
@@ -259,6 +288,25 @@ export function CourseV2({
                   </ul>
                 ) : <p className={styles.sub}>{libraryHref ? COURSE_COPY.noMaterials : "No material yet."}</p>}
             </section>
+            {library && (library.guides.length > 0 || library.cards > 0) && (
+              <section aria-labelledby="tutor-course-library" className={styles.section} data-testid="tutor-course-library">
+                <h2 id="tutor-course-library" className={`h-serif ${styles.h2}`}>{COURSE_COPY.library}</h2>
+                <ul className={styles.box}>
+                  {library.guides.slice(0, 3).map((g) => (
+                    <li key={g.id} className={styles.dueRow}>
+                      <Link href={`/study/guide/${g.id}`} className={styles.name} data-testid={`tutor-course-guide-${g.id}`}>{g.title}</Link>
+                      <span className={styles.dim}>{COURSE_COPY.studyGuide}</span>
+                    </li>
+                  ))}
+                  {library.cards > 0 && (
+                    <li className={styles.dueRow}>
+                      <Link href={flashcardsHref(course.course_id)} className={styles.name} data-testid="tutor-course-flashcards">{COURSE_COPY.flashcards}</Link>
+                      <span className={styles.dim}>{plural(library.cards, "card")}</span>
+                    </li>
+                  )}
+                </ul>
+              </section>
+            )}
           </div>
         </div>
       </div>

@@ -23,6 +23,24 @@ export function planKind(kind: string): { label: string; chip: string } | null {
   return own(PLAN_KIND, kind) ? PLAN_KIND[kind] : null;
 }
 
+/** The design board's words for the same kinds (Tutor redesign, `plan_v2`):
+ *  started and related practice are both just practice. */
+export const PLAN_KIND_BOARD: Record<string, string> = {
+  review: "Quick review",
+  new: "New",
+  started: "Practice",
+  sibling: "Practice",
+};
+
+/** One label per kind, the board's while `plan_v2` is on, else the badge's.
+ *  Every place that names a plan concept's kind asks here with the same
+ *  switch (the plan card, the transcript's plan, the session panel), so no two
+ *  of them can say different things. */
+export function planKindLabel(kind: string, boardWords = false): string | null {
+  if (boardWords) return own(PLAN_KIND_BOARD, kind) ? PLAN_KIND_BOARD[kind] : null;
+  return planKind(kind)?.label ?? null;
+}
+
 const GOAL_REASON: Record<string, string> = {
   goal: "Your selected goal",
   prerequisite: "Prerequisite for your goal",

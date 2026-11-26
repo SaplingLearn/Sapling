@@ -6,7 +6,7 @@ import type { LoopPanelConcept, LoopPlanPrereqEdge } from "@/lib/api";
 import { LEARNING_COPY } from "@/lib/learningCopy";
 import { MASTERY_PALETTE, type MasteryTier } from "@/lib/graph/nodeStyle";
 import { PlanDeps } from "../PlanDeps";
-import { planKind } from "../planLabels";
+import { planKindLabel } from "../planLabels";
 import { SidebarGlyph } from "./TutorIcons";
 import { Meter } from "./TutorPages";
 import styles from "./tutor.module.css";
@@ -68,6 +68,7 @@ export function SessionPanel({
   showTreeLink: boolean;
   onHide: () => void;
 }) {
+  const boardWords = useFlag("plan_v2") === "on"; // the plan card's words (planKindLabel)
   if (useFlag("session_v2") === "on") { // Tutor redesign phase 4: one list, levels in it
     return <SessionPanelV2 plan={plan} currentNodeId={currentNodeId} skills={skills} skillWords={skillWords}
       treeHref={treeHref} showTreeLink={showTreeLink} onHide={onHide} />;
@@ -96,7 +97,7 @@ export function SessionPanel({
                     <span className={styles.planBox} aria-hidden>{i + 1}</span>
                     <span className={styles.grow}>
                       <div className={styles.pn}>{c.concept_name || "Concept"}</div>
-                      <div className={styles.ps}>{planKind(c.kind)?.label ?? ""}</div>
+                      <div className={styles.ps}>{planKindLabel(c.kind, boardWords) ?? ""}</div>
                     </span>
                   </li>
                 );

@@ -35,3 +35,21 @@ describe("planGoalReason", () => {
     expect(planGoalReason("toString")).toBeNull();
   });
 });
+
+describe("planKindLabel: one label per kind, the board's under plan_v2", () => {
+  it("the badge's words off, the board's on; an unknown kind has none either way", async () => {
+    const { planKindLabel } = await import("./planLabels");
+    expect(["review", "new", "started", "sibling"].map((k) => planKindLabel(k))).toEqual(["Due for review", "New", "Keep practicing", "Related practice"]);
+    expect(["review", "new", "started", "sibling"].map((k) => planKindLabel(k, true))).toEqual(["Quick review", "New", "Practice", "Practice"]);
+    expect(planKindLabel("mystery", true)).toBeNull();
+    expect(planKindLabel("toString", true)).toBeNull();
+  });
+
+  it("the transcript's plan says the same words as the plan card", async () => {
+    const { planTurnText } = await import("./loopHistory");
+    const plan = [{ node_id: "a", concept_name: "Stacks", kind: "review" }, { node_id: "b", concept_name: "Queues", kind: "sibling" }];
+    expect(planTurnText(plan, true)).toBe("Here's today's plan. Quick reviews come first, then what's new, then practice.\n\n1. Stacks — Quick review\n2. Queues — Practice");
+    expect(planTurnText(plan)).toContain("1. Stacks — Due for review");
+  });
+});
+
