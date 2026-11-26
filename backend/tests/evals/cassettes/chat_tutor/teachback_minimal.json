@@ -1,30 +1,12 @@
 {
-  "text": "That's correct, and it's the core idea. A recursive function calls itself.\n\nYour definition is missing two things that your course handout (recursion-lab.pdf) treats as essential:\n\n- **A smaller subproblem.** Each call should work on a simpler version of the problem. If it doesn't, it never gets closer to finishing.\n- **A base case.** This is a non-recursive branch that stops the process. Without it, the calls never end and the call stack overflows.\n\nFor example, a factorial function has a recursive step, `n * factorial(n-1)`. It also needs a stopping rule so the calls can end.\n\nSuppose you wrote `factorial(n)` with only the recursive step and no base case. What would happen when you called `factorial(3)`, and why?",
-  "tool_calls": [
-    {
-      "args": {
-        "query": "recursion base case recursive call"
-      },
-      "tool_name": "search_course_materials"
-    },
-    {
-      "args": {
-        "updates": [
-          {
-            "concept_name": "Recursion",
-            "event_type": "interaction",
-            "mastery_delta": 0.05,
-            "reason": "correct but incomplete definition"
-          },
-          {
-            "concept_name": "Base Case",
-            "event_type": "interaction",
-            "mastery_delta": -0.05,
-            "reason": "omitted base case from explanation"
-          }
-        ]
-      },
-      "tool_name": "update_mastery_tool"
-    }
-  ]
+  "output": {
+    "text": "You're right that a recursive function calls itself. That's the core idea, and it's a good place to start.\n\n**What's missing:**\n- **A base case.** If a function only calls itself, it never stops. Recursion needs a condition where the function returns a result directly, without another call. Your graph shows Base Case as one of your weaker spots, so it's worth practicing.\n- **Progress toward the base case.** Each call has to work on a smaller or simpler version of the problem. Otherwise it never reaches the stopping point.\n\nHere's a small example:\n\n```python\ndef countdown(n):\n    if n == 0:        # base case\n        return\n    print(n)\n    countdown(n - 1)  # smaller problem\n```\n\nWithout the `if n == 0` check, this would run until the program crashed with a stack overflow.\n\nYour definition is accurate but incomplete, and nothing in it is wrong. Try adding the missing pieces in your own words.\n\nSuppose a recursive function has no base case, or its recursive call doesn't move toward the base case. What do you think happens when you run it?",
+    "tool_calls": []
+  },
+  "recorded_under": {
+    "input_sha256": "003da74bfe182dd55f849d48aeaf3588ae0ba98a1eefc9ffb0e66ffbd426f3ba",
+    "model": "claude-sonnet-5-5",
+    "prompt_hash": "17f9783cb987",
+    "schema_hash": "38a346cadbd3"
+  }
 }

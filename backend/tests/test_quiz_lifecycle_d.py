@@ -143,6 +143,10 @@ class TestMasterySnapshotPersisted:
                     "concept_name": "Loops",
                     "course_id": "course1",
                 }]
+            elif name == "quiz_evidence_claims":
+                # spec §13 A100: every hash is fresh — the claim's insert takes it
+                mock.insert_ignore_duplicates.side_effect = lambda rows, on_conflict=None: list(rows)
+                mock.update.return_value = []
             else:
                 mock.select.return_value = []
                 mock.update.return_value = []
@@ -217,6 +221,25 @@ class TestAttemptResume:
             r = client.get("/api/quiz/attempts/quiz1")
         assert r.status_code == 409
         assert r.json()["error"]["code"] == "QUIZ_ATTEMPT_NOT_RESUMABLE"
+        assert "Av = lambda v" not in r.text
+
+    @pytest.mark.parametrize("closed", [
+        {"completed_at": "2026-08-12T01:00:00+00:00", "score": 1, "total": 1},
+        {"abandoned_at": "2026-08-12T01:00:00+00:00"},
+    ])
+    def test_closed_legacy_attempt_answers_not_resumable(self, closed):
+        """K41 (#866 audit): the documented contract is that a closed attempt
+        answers 200 resumable:false. A legacy-shaped row that is completed or
+        abandoned ships no questions anyway, so its shape is no reason for a
+        409 (the rich seed's legacy attempt 409'd on every quiz-home load)."""
+        legacy = _attempt_row(
+            questions_json=[{"q": "What defines an eigenvalue?", "a": "Av = lambda v"}], **closed,
+        )
+        with patch_quiz("table", side_effect=with_async_twins(self._factory(legacy))):
+            r = client.get("/api/quiz/attempts/quiz1")
+        assert r.status_code == 200
+        data = r.json()
+        assert data["resumable"] is False and data["questions"] == []
         assert "Av = lambda v" not in r.text
 
     def test_abandoned_attempt_is_not_resumable(self):
@@ -486,11 +509,15 @@ class TestAttemptHistory:
         assert first["score"] == 2
         assert first["total"] == 3
         assert first["difficulty"] == "medium"
-        assert first["mastery_delta"] == 0.05
+        # PKG-14b: renamed p_delta (= mastery_after − mastery_before).
+        assert first["p_delta"] == 0.05
+        from test_learning_loop_invariants import LEGACY_MASTERY_SYMBOLS
+
+        assert LEGACY_MASTERY_SYMBOLS[0] not in first  # the retired key (inv_21)
         assert first["created_at"] == attempts[0]["created_at"]
         second = data["attempts"][1]
         assert second["status"] == "abandoned"
-        assert second["mastery_delta"] is None
+        assert second["p_delta"] is None
         # No question payloads (and therefore no keys) on the history list.
         # Asserted against the SELECTED COLUMNS, not the mocked rows: the
         # rows above happen to carry questions_json, so `"questions" not in

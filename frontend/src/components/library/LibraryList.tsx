@@ -36,7 +36,7 @@ export function RenameInput({
       onBlur={onCommit}
       onClick={e => e.stopPropagation()}
       aria-label="Name"
-      className="w-full box-border h-7.5 py-0 px-2 border-[1.5px] border-brand-forest-bright rounded-[7px] bg-accent-fg [font-family:inherit] [font-size:inherit] [font-style:inherit] [font-variant:inherit] [font-stretch:inherit] [line-height:inherit] font-semibold text-ink-800 outline-none" style={{ fontSize }}
+      className="w-full box-border h-7.5 py-0 px-2 border-[1.5px] border-brand-forest-bright rounded-[7px] bg-sidenav-fg [font-family:inherit] [font-size:inherit] [font-style:inherit] [font-variant:inherit] [font-stretch:inherit] [line-height:inherit] font-semibold text-ink-800 outline-none" style={{ fontSize }}
     />
   );
 }
@@ -48,16 +48,32 @@ export interface ListHeaderProps {
   onToggleAll: () => void;
 }
 
+/**
+ * A grid cell around a control that is itself the column's grid item:
+ * `display: contents` keeps the control as the grid child (no layout change)
+ * while the accessibility tree gets the cell a `row` requires (axe
+ * aria-required-children; the list is `role="grid"`, LibraryBody).
+ */
+function Cell({ header = false, children }: { header?: boolean; children: React.ReactNode }) {
+  return (
+    <span role={header ? "columnheader" : "gridcell"} className="contents">
+      {children}
+    </span>
+  );
+}
+
 export function ListHeader({ columns, showCourse, allChecked, onToggleAll }: ListHeaderProps) {
   return (
-    <div role="row" className="grid gap-3 min-w-0 items-center pt-3 px-3.5 pb-2 text-md font-semibold text-text-muted" style={{ gridTemplateColumns: columns }}>
-      <CheckBox checked={allChecked} onClick={onToggleAll} label="Select all" />
-      <span>Name</span>
-      {showCourse && <span>Course</span>}
-      <span>Type</span>
-      <span className="text-right">Pages</span>
-      <span className="text-right">Added</span>
-      <span />
+    <div role="row" className="grid gap-3 min-w-0 items-center pt-3 px-3.5 pb-2 text-md font-semibold text-[#6F6857]" style={{ gridTemplateColumns: columns }}>
+      <Cell header>
+        <CheckBox checked={allChecked} onClick={onToggleAll} label="Select all" />
+      </Cell>
+      <span role="columnheader">Name</span>
+      {showCourse && <span role="columnheader">Course</span>}
+      <span role="columnheader">Type</span>
+      <span role="columnheader" className="text-right">Pages</span>
+      <span role="columnheader" className="text-right">Added</span>
+      <span role="columnheader" aria-label="Actions" />
     </div>
   );
 }
@@ -103,26 +119,26 @@ export function FolderRow(props: FolderRowProps) {
       onDrop={onDrop}
       style={{ animationDelay: delay, gridTemplateColumns: columns, background: dragOver ? "#DCE8CE" : selected ? "#EDE9E0" : "transparent" }}
     >
-      <span />
-      <div className="flex items-center gap-3.5 min-w-0">
+      <span role="gridcell" />
+      <div role="gridcell" className="flex items-center gap-3.5 min-w-0">
         <span className="w-7.5 h-9.5 grid place-items-center shrink-0"><FolderIcon size={30} strokeWidth={1.6} /></span>
         <div className="min-w-0 flex-1">
           {editing && (
             <RenameInput value={draft} onChange={onDraft} onCommit={onCommit} onCancel={onCancel} />
           )}
           <div className={cn("text-lg font-semibold whitespace-nowrap overflow-hidden text-ellipsis", editing ? "hidden" : "block")}>{folder.name}</div>
-          <div className="text-base text-text-muted">
+          <div className="text-base text-[#6F6857]">
             {count} {count === 1 ? "document" : "documents"}
           </div>
         </div>
       </div>
-      {showCourse && <span />}
-      <span className="text-base text-ink-600">Folder</span>
-      <span className="text-base text-ink-400 text-right">—</span>
-      <span className="flex justify-end text-text-muted">
+      {showCourse && <span role="gridcell" />}
+      <span role="gridcell" className="text-base text-ink-600">Folder</span>
+      <span role="gridcell" className="text-base text-ink-400 text-right">—</span>
+      <span role="gridcell" className="flex justify-end text-[#6F6857]">
         <ChevronRight size={12} />
       </span>
-      <span />
+      <span role="gridcell" />
     </div>
   );
 }
@@ -174,17 +190,19 @@ export function DocRow(props: DocRowProps) {
       onKeyDown={e => { if (e.key === "Enter") onOpen(); }}
       style={{ animation: view.anim, animationDelay: view.delay, gridTemplateColumns: columns }}
     >
-      <CheckBox
-        checked={checked}
-        onClick={onCheck}
-        label={checked ? `Deselect ${view.name.a}${view.name.m}${view.name.b}`
-                       : `Select ${view.name.a}${view.name.m}${view.name.b}`}
-      />
+      <Cell>
+        <CheckBox
+          checked={checked}
+          onClick={onCheck}
+          label={checked ? `Deselect ${view.name.a}${view.name.m}${view.name.b}`
+                         : `Select ${view.name.a}${view.name.m}${view.name.b}`}
+        />
+      </Cell>
 
-      <div className="flex items-center gap-3.5 min-w-0">
+      <div role="gridcell" className="flex items-center gap-3.5 min-w-0">
         <span
           title={`${view.typeLabel} · ${view.fmt}`}
-          className="w-7.5 h-9.5 rounded-[5px] text-accent-fg grid place-items-center box-border font-sans text-[8px] font-semibold leading-none tracking-[0] text-center shrink-0" style={{ background: view.fmtColor }}
+          className="w-7.5 h-9.5 rounded-[5px] text-sidenav-fg grid place-items-center box-border font-sans text-[8px] font-semibold leading-none tracking-[0] text-center shrink-0" style={{ background: view.fmtColor }}
         >{view.fmt}</span>
         <div className="min-w-0">
           {editing && (
@@ -200,8 +218,8 @@ export function DocRow(props: DocRowProps) {
       </div>
 
       {showCourse && (
-        <span className="flex items-center min-w-0 text-base">
-          <span className={cn("inline-flex items-center gap-2 min-w-0 max-w-full h-5 leading-[20px]", view.courseColor ? "text-ink-800" : "text-text-muted")}>
+        <span role="gridcell" className="flex items-center min-w-0 text-base">
+          <span className={cn("inline-flex items-center gap-2 min-w-0 max-w-full h-5 leading-[20px]", view.courseColor ? "text-ink-800" : "text-[#6F6857]")}>
             <span className={cn("w-2 h-2 rounded-[50%] box-border shrink-0", view.courseColor ? "border-0" : "border-[1.5px] border-dashed border-ink-400")} style={{ background: view.courseColor || "transparent" }} />
             <span className="whitespace-nowrap overflow-hidden text-ellipsis">
               {view.courseLabel}
@@ -210,18 +228,19 @@ export function DocRow(props: DocRowProps) {
         </span>
       )}
 
-      <span className="text-base text-ink-600">{view.typeLabel}</span>
-      <span className={cn("text-base text-right tabular-nums", view.pages ? "text-ink-600" : "text-ink-400")}>{view.pages || "—"}</span>
-      <span className="text-base text-text-muted text-right">{view.added}</span>
+      <span role="gridcell" className="text-base text-ink-600">{view.typeLabel}</span>
+      <span role="gridcell" className={cn("text-base text-right tabular-nums", view.pages ? "text-ink-600" : "text-ink-400")}>{view.pages || "—"}</span>
+      <span role="gridcell" className="text-base text-[#6F6857] text-right">{view.added}</span>
 
       {isTrash ? (
-        <span className="[justify-self:end]">
+        <span role="gridcell" className="[justify-self:end]">
           <button
             className="sapHoverChip h-8 py-0 px-3 border-0 rounded-[8px] [background:#DCE8CE] text-leaf-800 [font-family:inherit] [font-style:inherit] [font-variant:inherit] [font-stretch:inherit] [line-height:inherit] text-md font-bold whitespace-nowrap cursor-pointer"
             onClick={onRestore}
           >Restore</button>
         </span>
       ) : (
+        <Cell>
         <button
           className={cn("sapHoverStone", "[justify-self:end] w-9 h-9 grid place-items-center border-0 rounded-[9px] text-ink-600 cursor-pointer", menuOpen ? "[background:#E4DFD3]" : "[background:transparent]")}
           onClick={onMenu}
@@ -231,6 +250,7 @@ export function DocRow(props: DocRowProps) {
         >
           <DotsIcon size={18} />
         </button>
+        </Cell>
       )}
     </div>
   );

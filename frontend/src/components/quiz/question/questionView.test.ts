@@ -5,6 +5,10 @@ import {
   askSeedFor,
   canGoTo,
   canNavigate,
+  hintSlotState,
+  hintLadder,
+  scaffoldHint,
+  skipSlotState,
   conceptLabel,
   correctOption,
   difficultyLabel,
@@ -55,6 +59,7 @@ function session(over: Partial<QuizSession> = {}): QuizSession {
     deliveredShort: false,
     sourceAttemptId: null,
     reserved: null,
+    prereq: null,
     ...over,
   };
 }
@@ -85,6 +90,159 @@ describe("itemView", () => {
     expect(numeric("  ")).toMatchObject({ written: true, format: "numeric", hasAnswer: false });
     expect(numeric(undefined).hasAnswer).toBe(false);
     expect(numeric(" 4 ").hasAnswer).toBe(true);
+  });
+
+  it("W7.2 Sort: hasAnswer only when every item is placed", () => {
+    const interaction = {
+      kind: "sort" as const,
+      buckets: ["A", "B"],
+      items: [
+        { id: "one", label: "One" },
+        { id: "two", label: "Two" },
+      ],
+    };
+    const sortQ = question({ type: "short_answer", options: [], interaction });
+    expect(itemView(item({ question: sortQ, answerText: "A=one;B=" })).hasAnswer).toBe(false);
+    expect(itemView(item({ question: sortQ, answerText: "A=one;B=two" })).hasAnswer).toBe(true);
+  });
+
+  it("W7.2 Label: hasAnswer only when every label is placed", () => {
+    const interaction = {
+      kind: "label" as const,
+      spots: [
+        { id: "1", label: "1" },
+        { id: "2", label: "2" },
+      ],
+      labels: [
+        { id: "aorta", label: "Aorta" },
+        { id: "pa", label: "Pulmonary artery" },
+      ],
+    };
+    const labelQ = question({ type: "short_answer", options: [], interaction });
+    expect(itemView(item({ question: labelQ, answerText: "1=aorta;2=" })).hasAnswer).toBe(false);
+    expect(itemView(item({ question: labelQ, answerText: "1=aorta;2=pa" })).hasAnswer).toBe(true);
+  });
+
+  it("W7.2 Build: hasAnswer only when every slot is filled", () => {
+    const interaction = {
+      kind: "build" as const,
+      slots: [
+        { id: "head", label: "Head" },
+        { id: "base", label: "Base" },
+      ],
+      parts: [
+        { id: "phosphate", label: "Phosphate" },
+        { id: "adenine", label: "Adenine" },
+        { id: "amino", label: "Amino acid" },
+      ],
+    };
+    const buildQ = question({ type: "short_answer", options: [], interaction });
+    expect(itemView(item({ question: buildQ, answerText: "head=phosphate;base=" })).hasAnswer).toBe(false);
+    expect(itemView(item({ question: buildQ, answerText: "head=phosphate;base=adenine" })).hasAnswer).toBe(true);
+  });
+
+  it("W7.2 Compare: hasAnswer only when a relation option is chosen", () => {
+    const interaction = {
+      kind: "compare" as const,
+      left: { id: "mitosis", label: "Mitosis" },
+      right: { id: "meiosis", label: "Meiosis" },
+      options: [
+        { id: "left_only", label: "Only the left" },
+        { id: "both", label: "Both" },
+      ],
+    };
+    const compareQ = question({ type: "short_answer", options: [], interaction });
+    expect(itemView(item({ question: compareQ, answerText: "" })).hasAnswer).toBe(false);
+    expect(itemView(item({ question: compareQ, answerText: "both" })).hasAnswer).toBe(true);
+  });
+
+  it("W7.2 Dialogue: hasAnswer only after minReplies", () => {
+    const interaction = {
+      kind: "dialogue" as const,
+      role: "Confused Classmate",
+      open: "Heavier objects fall faster?",
+      follow: "Doesn't a bigger force mean faster?",
+      minReplies: 2,
+    };
+    const dialogueQ = question({ type: "short_answer", options: [], interaction });
+    expect(itemView(item({ question: dialogueQ, answerText: "Only one" })).hasAnswer).toBe(false);
+    expect(
+      itemView(item({ question: dialogueQ, answerText: "First\u001eSecond" })).hasAnswer,
+    ).toBe(true);
+  });
+
+  it("W7.2 Explain: hasAnswer when prose is non-empty", () => {
+    const interaction = { kind: "explain" as const, placeholder: "Type your explanation" };
+    const explainQ = question({ type: "short_answer", options: [], interaction });
+    expect(itemView(item({ question: explainQ, answerText: "" })).hasAnswer).toBe(false);
+    expect(itemView(item({ question: explainQ, answerText: "  Because free fall.  " })).hasAnswer).toBe(true);
+  });
+
+  it("W7.2 Highlight: hasAnswer once a passage is selected", () => {
+    const interaction = {
+      kind: "highlight" as const,
+      passages: [
+        { id: "l0", label: "Line zero" },
+        { id: "l5", label: "Line five" },
+      ],
+    };
+    const highlightQ = question({ type: "short_answer", options: [], interaction });
+    expect(itemView(item({ question: highlightQ, answerText: "" })).hasAnswer).toBe(false);
+    expect(itemView(item({ question: highlightQ, answerText: "l5" })).hasAnswer).toBe(true);
+  });
+
+  it("W7.2 Calculate: hasAnswer when value and unit are both set", () => {
+    const interaction = { kind: "calculate" as const };
+    const calculateQ = question({ type: "short_answer", options: [], interaction });
+    expect(itemView(item({ question: calculateQ, answerText: "12|" })).hasAnswer).toBe(false);
+    expect(itemView(item({ question: calculateQ, answerText: "12|m/s" })).hasAnswer).toBe(true);
+  });
+
+  it("W7.2 Position: hasAnswer when every marker is placed", () => {
+    const interaction = {
+      kind: "position" as const,
+      markers: [
+        { id: "lemon", label: "Lemon" },
+        { id: "water", label: "Water" },
+      ],
+      stops: [
+        { id: "2", label: "2" },
+        { id: "7", label: "7" },
+      ],
+    };
+    const positionQ = question({ type: "short_answer", options: [], interaction });
+    expect(itemView(item({ question: positionQ, answerText: "lemon=2;water=" })).hasAnswer).toBe(false);
+    expect(itemView(item({ question: positionQ, answerText: "lemon=2;water=7" })).hasAnswer).toBe(true);
+  });
+
+  it("W7.2 Rank: hasAnswer when order is full and why is set", () => {
+    const interaction = {
+      kind: "rank" as const,
+      items: [
+        { id: "mi", label: "MI" },
+        { id: "gerd", label: "GERD" },
+      ],
+    };
+    const rankQ = question({ type: "short_answer", options: [], interaction });
+    expect(itemView(item({ question: rankQ, answerText: "mi;gerd" })).hasAnswer).toBe(false);
+    expect(itemView(item({ question: rankQ, answerText: "mi;gerd\u001eBecause" })).hasAnswer).toBe(true);
+  });
+
+  it("W7.2 Connect: hasAnswer when every left item is paired", () => {
+    const interaction = {
+      kind: "connect" as const,
+      left: [
+        { id: "aspirin", label: "Aspirin" },
+        { id: "penicillin", label: "Penicillin" },
+      ],
+      right: [
+        { id: "cox", label: "COX" },
+        { id: "wall", label: "Wall" },
+      ],
+    };
+    const connectQ = question({ type: "short_answer", options: [], interaction });
+    expect(itemView(item({ question: connectQ, answerText: "aspirin=cox;penicillin=" })).hasAnswer).toBe(false);
+    expect(itemView(item({ question: connectQ, answerText: "aspirin=cox;penicillin=wall" })).hasAnswer).toBe(true);
   });
 
   it("survives no item at all", () => {
@@ -159,11 +317,82 @@ describe("the pager", () => {
   });
 });
 
+describe("W7.5 hint / skip slots", () => {
+  it("builds scaffolding from concept + rubric already on the question", () => {
+    const mc = scaffoldHint({ conceptName: "Recursion", conceptTested: "Base cases", format: "multiple_choice" });
+    expect(mc.focus).toBe("Base cases");
+    expect(mc.rubric).toBeNull();
+    expect(mc.note).toMatch(/never the answer/i);
+
+    const written = scaffoldHint({ conceptName: "Recursion", format: "numeric" });
+    expect(written.focus).toBe("Recursion");
+    expect(written.rubric).toMatch(/^Enter only the number/);
+
+    const sort = scaffoldHint({ conceptName: "Recursion", format: "short_answer", sort: true });
+    expect(sort.rubric).toMatch(/^Select an item/);
+
+    const sequence = scaffoldHint({ conceptName: "Mitosis", format: "short_answer", sequence: true });
+    expect(sequence.rubric).toMatch(/^Select a step/);
+
+    const label = scaffoldHint({ conceptName: "Anatomy", format: "short_answer", label: true });
+    expect(label.rubric).toMatch(/^Select a label/);
+
+    const build = scaffoldHint({ conceptName: "Nucleotides", format: "short_answer", build: true });
+    expect(build.rubric).toMatch(/^Select a part/);
+    const compare = scaffoldHint({ conceptName: "Cell division", format: "short_answer", compare: true });
+    expect(compare.rubric).toMatch(/^Read both sides/);
+    const dialogue = scaffoldHint({ conceptName: "Free fall", format: "short_answer", dialogue: true });
+    expect(dialogue.rubric).toMatch(/^Reply to your partner/);
+    const explain = scaffoldHint({ conceptName: "Orbits", format: "short_answer", explain: true });
+    expect(explain.rubric).toMatch(/^Write a short explanation/);
+    const highlight = scaffoldHint({ conceptName: "Sonnets", format: "short_answer", highlight: true });
+    expect(highlight.rubric).toMatch(/^Tap passages/);
+    const calculate = scaffoldHint({ conceptName: "Kinematics", format: "short_answer", calculate: true });
+    expect(calculate.rubric).toMatch(/^Enter the number/);
+  });
+
+  it("builds a Bastani-lite H0–H2 ladder from the scaffold", () => {
+    const mc = scaffoldHint({ conceptName: "Recursion", format: "multiple_choice" });
+    expect(hintLadder(mc).map((r) => r.id)).toEqual(["H0", "H2"]);
+    const written = scaffoldHint({ conceptName: "Recursion", format: "numeric" });
+    expect(hintLadder(written).map((r) => r.id)).toEqual(["H0", "H1", "H2"]);
+    expect(hintLadder(written)[1].body).toMatch(/^Enter only the number/);
+  });
+
+  it("enables Hint in Practice and refuses it in Exam Twin", () => {
+    expect(hintSlotState({ phase: "active", busy: false, sessionMode: "practice", hasItem: true }).enabled).toBe(true);
+    expect(hintSlotState({ phase: "active", busy: false, sessionMode: "exam_twin", hasItem: true })).toEqual({
+      enabled: false,
+      title: expect.stringMatching(/Exam Twin/i),
+    });
+    expect(hintSlotState({ phase: "generating", busy: false, sessionMode: "practice", hasItem: true }).enabled).toBe(false);
+    expect(hintSlotState({ phase: "active", busy: true, sessionMode: "practice", hasItem: true }).enabled).toBe(false);
+    expect(hintSlotState({ phase: "active", busy: false, sessionMode: "practice", hasItem: false }).enabled).toBe(false);
+  });
+
+  it("enables Skip to the next unanswered index without mastery", () => {
+    expect(skipSlotState({ phase: "active", busy: false, cursor: 0, total: 3, hasVerdict: false })).toEqual({
+      enabled: true,
+      title: expect.stringMatching(/no mastery/i),
+      targetIndex: 1,
+    });
+  });
+
+  it("disables Skip on the last question, after a verdict, or when locked", () => {
+    expect(skipSlotState({ phase: "active", busy: false, cursor: 2, total: 3, hasVerdict: false }).enabled).toBe(false);
+    expect(skipSlotState({ phase: "active", busy: false, cursor: 2, total: 3, hasVerdict: false }).title).toMatch(/last question/i);
+    expect(skipSlotState({ phase: "active", busy: false, cursor: 0, total: 3, hasVerdict: true }).enabled).toBe(false);
+    expect(skipSlotState({ phase: "active", busy: false, cursor: 0, total: 3, hasVerdict: true }).title).toMatch(/Already answered/i);
+    expect(skipSlotState({ phase: "active", busy: true, cursor: 0, total: 3, hasVerdict: false }).enabled).toBe(false);
+    expect(skipSlotState({ phase: "submitting", busy: false, cursor: 0, total: 3, hasVerdict: false }).enabled).toBe(false);
+  });
+});
+
 describe("primaryButton", () => {
   const base = { phase: "active" as const, showVerdict: false, allAnswered: false, busy: false, hasAnswer: true };
 
   it("submits a chosen answer while active", () => {
-    expect(primaryButton(base)).toEqual({ label: "Submit", testid: "quiz-submit-answer", enabled: true, action: "submit" });
+    expect(primaryButton(base)).toEqual({ label: "Check", testid: "quiz-submit-answer", enabled: true, action: "submit" });
     expect(primaryButton({ ...base, hasAnswer: false }).enabled).toBe(false);
     expect(primaryButton({ ...base, busy: true }).enabled).toBe(false);
     expect(primaryButton({ ...base, phase: "confirm-leave" }).enabled).toBe(false);
@@ -229,6 +458,15 @@ describe("the verdict's words", () => {
     expect(formatHint("numeric")).toMatch(/^Enter only the number, without units/);
     expect(formatHint("short_answer")).toBe("Write a brief answer. Capitalization and extra spacing do not affect your score.");
     expect(formatHint(undefined)).toBe(formatHint("short_answer"));
+    expect(formatHint("short_answer", { sort: true })).toMatch(/^Select an item/);
+    expect(formatHint("short_answer", { sequence: true })).toMatch(/^Select a step/);
+    expect(formatHint("short_answer", { label: true })).toMatch(/^Select a label/);
+    expect(formatHint("short_answer", { build: true })).toMatch(/^Select a part/);
+    expect(formatHint("short_answer", { compare: true })).toMatch(/^Read both sides/);
+    expect(formatHint("short_answer", { dialogue: true })).toMatch(/^Reply to your partner/);
+    expect(formatHint("short_answer", { explain: true })).toMatch(/^Write a short explanation/);
+    expect(formatHint("short_answer", { highlight: true })).toMatch(/^Tap passages/);
+    expect(formatHint("short_answer", { calculate: true })).toMatch(/^Enter the number/);
   });
 
   it("ends the key with exactly one full stop", () => {

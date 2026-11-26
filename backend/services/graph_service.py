@@ -2,23 +2,32 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import uuid
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from functools import partial
 
-import httpx
 from starlette.concurrency import run_in_threadpool
 
-from config import (
-    MASTERY_LEARNING_MIN,
-    MASTERY_MASTERED_MIN,
-    MASTERY_STRUGGLING_MIN,
-    get_mastery_tier,
-)
 from db.async_connection import apage_all
 from db.connection import page_all, rpc, table
 from db.scope import runs_as_service
+from learning import bkt, evidence_replay
+from learning.evidence import (
+    EVIDENCE_EVENT_TYPE,
+    PREREQ_RELATIONSHIP_TYPE,
+    Evidence,
+    evidence_weight,
+    planning_observation,
+)
+from learning.learner_state import LearnerState, read_states, state_row, unmeasured_state
+from learning.params import (
+    EDGE_PREREQ_SOURCE_IS_PREREQ,
+    FSRS_RETENTION_DEFAULT,
+)
+from learning.void_store import voided_event_ids
 from services.streak_service import effective_streak, touch_streak_safe
 # Module imports, not names: tests patch these on their home modules, and a
 # call-time attribute lookup keeps those patches effective (#118 removed the
@@ -30,11 +39,15 @@ from services.graph_update_model import (  # noqa: F401  (_coerce_unit: re-expor
     GraphUpdate,
     NewEdge,
     NewNode,
-    UpdatedNode,
     _coerce_unit,
 )
 
 logger = logging.getLogger(__name__)
+
+_SCORE_DECIMALS = 4  # decimals a mastery score, delta or velocity is reported to
+_VELOCITY_WINDOW_DAYS = 14  # the learning velocity's look-back window
+_SUBJECT_EDGE_STRENGTH = 0.7  # display weight of a subject root's edge to its concepts
+_ANCHOR_EDGE_STRENGTH = 0.5  # display weight of a new concept's edge to its anchor
 
 
 def _reshape_enrollment(r: dict) -> dict:
@@ -171,7 +184,7 @@ def _compute_velocity(events: list) -> float:
     """
     if not events:
         return 0.0
-    cutoff = datetime.now(timezone.utc) - timedelta(days=14)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=_VELOCITY_WINDOW_DAYS)
     recent = []
     for e in events:
         try:
@@ -189,7 +202,7 @@ def _compute_velocity(events: list) -> float:
         days = max(1, (datetime.now(timezone.utc) - first_ts).days)
     except Exception:
         days = 1
-    return round(positive_gain / days, 4)
+    return round(positive_gain / days, _SCORE_DECIMALS)
 
 
 def _semester_course_ids(user_id: str, semester: str | None) -> set[str] | None:
@@ -216,7 +229,10 @@ def _scope_nodes(nodes_raw: list | None, allowed_course_ids: set[str] | None) ->
 #: node id: an unpaged oldest-first read would cut off the NEWEST events, which
 #: are exactly the ones mastery_events (the last five), learning velocity (the
 #: last 14 days) and week_delta (the last 7) are computed from.
-_NODE_EVENTS_SELECT = "node_id,delta,reason,created_at"
+#: `id` names a row for the spec §13 A123 void rule (a void row is no part of
+#: the velocity or the week); it is not part of the API shape (`_assemble_graph`
+#: drops it).
+_NODE_EVENTS_SELECT = "id,node_id,delta,reason,created_at"
 #: Offset paging needs a total order: `id` breaks created_at ties.
 _NODE_EVENTS_ORDER = "created_at.asc,id.asc"
 
@@ -224,6 +240,12 @@ _NODE_EVENTS_ORDER = "created_at.asc,id.asc"
 def _node_events_filters(nodes: list) -> dict | None:
     node_ids = {n["id"] for n in nodes}
     return {"node_id": f"in.({','.join(node_ids)})"} if node_ids else None
+
+
+def _not_void(event_rows: list, voided: set) -> list:
+    """spec §13 A123: a void row (graded against an item staff retired) moved
+    no mastery that stands — it is no part of the velocity or the week."""
+    return [ev for ev in event_rows if ev.get("id") not in voided]
 
 
 def _node_events_failed(exc: Exception) -> None:
@@ -234,35 +256,40 @@ def _node_events_failed(exc: Exception) -> None:
     )
 
 
-def _node_events(nodes: list) -> list | None:
-    """Every event of ``nodes``, oldest first. ``None`` when the read fails,
-    so the caller can tell "no events" from "events unknown"."""
+def _node_events(nodes: list, user_id: str) -> list | None:
+    """Every non-void event of ``nodes``, oldest first. ``None`` when the read
+    fails, so the caller can tell "no events" from "events unknown"."""
     filters = _node_events_filters(nodes)
     if filters is None:
         return []
     try:
-        return list(page_all(
+        rows = list(page_all(
             table("node_mastery_events"), _NODE_EVENTS_SELECT,
             filters=filters, order=_NODE_EVENTS_ORDER,
         ))
+        voided = voided_event_ids(user_id=user_id) if rows else set()
     except Exception as exc:
         _node_events_failed(exc)
         return None
+    return _not_void(rows, voided)
 
 
-async def _anode_events(nodes: list) -> list | None:
+async def _anode_events(nodes: list, user_id: str) -> list | None:
     """Async twin of :func:`_node_events` (#117)."""
     filters = _node_events_filters(nodes)
     if filters is None:
         return []
     try:
-        return [row async for row in apage_all(
+        rows = [row async for row in apage_all(
             table("node_mastery_events"), _NODE_EVENTS_SELECT,
             filters=filters, order=_NODE_EVENTS_ORDER,
         )]
+        # the void read is sync (learning/void_store.py): off the event loop
+        voided = await run_in_threadpool(voided_event_ids, user_id=user_id) if rows else set()
     except Exception as exc:
         _node_events_failed(exc)
         return None
+    return _not_void(rows, voided)
 
 
 #: `week_delta` (the Study hub's "+N% this week") covers a ROLLING window: the
@@ -306,7 +333,44 @@ def _week_deltas(event_rows: list | None, cutoff: datetime) -> dict[str, float] 
 _STREAK_SELECT = "streak_count,last_active_date"
 
 
-def get_graph(user_id: str, semester: str | None = None) -> dict:
+#: Digits of a skill on the wire: the quiz plan's and study-next's rounding
+#: (`services/quiz_learning.py::P_KNOWN_WIRE_DIGITS`), so one concept reads
+#: the same number on every surface.
+SKILL_WIRE_DIGITS = 4
+
+
+def _attach_skill(nodes: list[dict], states: dict[str, LearnerState]) -> None:
+    """The learner model's skill on each concept (Tutor redesign phase 2: one
+    measure, `frontend/src/lib/levels.ts`), beside the map's stored score.
+
+    `skill` is the decayed belief (`learner_state.read_states` decays it to
+    now) once the concept has a graded answer of its own (`opps > 0`, the
+    loop's `_measured`); a concept with no row, or one moved only by a
+    neighbour's propagation, is `None`: Not started, never the prior.
+    `skill_mastered` is `bkt.is_mastered` on that decayed belief (≥ 98% and
+    three strong unassisted answers): the Mastered badge, never a level.
+    Subject roots carry neither."""
+    for node in nodes:
+        if node.get("is_subject_root"):
+            continue
+        node_id = node.get("id")
+        state = states.get(node_id) if isinstance(node_id, str) else None
+        if state is None or state.opps <= 0:
+            node["skill"] = None
+            node["skill_mastered"] = False
+            continue
+        node["skill"] = round(state.p_known, SKILL_WIRE_DIGITS)
+        node["skill_mastered"] = bkt.is_mastered(state.p_known, state.n_strong_unassisted)
+
+
+def _skill_node_ids(graph: dict) -> list[str]:
+    return [n["id"] for n in graph["nodes"] if not n.get("is_subject_root") and n.get("id")]
+
+
+def get_graph(user_id: str, semester: str | None = None, *, skill: bool = False) -> dict:
+    """The student's graph. `skill` (the route's learning-loop gate, resolved
+    once at entry; owner decision 00) adds each concept's skill; off, the
+    response is the pre-loop one, byte for byte."""
     ensure_user_exists(user_id)
     enrolled_courses = _user_enrolled_courses(user_id)
     allowed_course_ids = _semester_course_ids(user_id, semester)
@@ -315,14 +379,17 @@ def get_graph(user_id: str, semester: str | None = None) -> dict:
         allowed_course_ids,
     )
     edges_raw = table("graph_edges").select("*", filters={"user_id": f"eq.{user_id}"})
-    event_rows = _node_events(nodes)
+    event_rows = _node_events(nodes, user_id)
     week_deltas = _week_deltas(event_rows, _week_cutoff())
     user_rows = table("users").select(_STREAK_SELECT, filters={"id": f"eq.{user_id}"})
-    return _assemble_graph(
+    graph = _assemble_graph(
         user_id, enrolled_courses, allowed_course_ids, nodes, edges_raw, event_rows or [],
         user_rows,
         week_deltas=week_deltas,
     )
+    if skill:
+        _attach_skill(graph["nodes"], read_states(user_id, _skill_node_ids(graph)))
+    return graph
 
 
 async def _none() -> None:
@@ -330,7 +397,7 @@ async def _none() -> None:
     return None
 
 
-async def aget_graph(user_id: str, semester: str | None = None) -> dict:
+async def aget_graph(user_id: str, semester: str | None = None, *, skill: bool = False) -> dict:
     """Async twin of :func:`get_graph` (#117): the same reads through the
     ``a*`` seam, the academics term lookup hopped off the loop. The user row
     is ensured first (the streak read depends on it); the five independent
@@ -345,13 +412,18 @@ async def aget_graph(user_id: str, semester: str | None = None) -> dict:
         table("users").aselect(_STREAK_SELECT, filters={"id": f"eq.{user_id}"}),
     )
     nodes = _scope_nodes(nodes_raw, allowed_course_ids)
-    event_rows = await _anode_events(nodes)
+    event_rows = await _anode_events(nodes, user_id)
     week_deltas = _week_deltas(event_rows, _week_cutoff())
-    return _assemble_graph(
+    graph = _assemble_graph(
         user_id, enrolled_courses, allowed_course_ids, nodes, edges_raw, event_rows or [],
         user_rows,
         week_deltas=week_deltas,
     )
+    if skill:
+        # read_states is sync (service-only learner_state): off the event loop.
+        states = await run_in_threadpool(read_states, user_id, _skill_node_ids(graph))
+        _attach_skill(graph["nodes"], states)
+    return graph
 
 
 def _assemble_graph(
@@ -398,10 +470,12 @@ def _assemble_graph(
     for n in nodes:
         events = events_by_node.get(n["id"], [])
         n["learning_velocity"] = _compute_velocity(events)
-        n["mastery_events"] = events[-5:]  # keep last 5 for UI; full history lives in DB
+        # keep last 5 for UI (the read's row id is not part of the API shape);
+        # full history lives in DB
+        n["mastery_events"] = [{k: v for k, v in e.items() if k != "id"} for e in events[-5:]]
         if week_deltas is not None:
             # Summed over the whole week, not the five kept above.
-            n["week_delta"] = round(week_deltas.get(n["id"], 0.0), 4) + 0.0  # never -0.0
+            n["week_delta"] = round(week_deltas.get(n["id"], 0.0), _SCORE_DECIMALS) + 0.0  # never -0.0
 
     mastered   = sum(1 for n in nodes if n["mastery_tier"] == "mastered")
     learning   = sum(1 for n in nodes if n["mastery_tier"] == "learning")
@@ -409,7 +483,7 @@ def _assemble_graph(
     unexplored = sum(1 for n in nodes if n["mastery_tier"] == "unexplored")
 
     velocities = [n["learning_velocity"] for n in nodes if n["learning_velocity"] > 0]
-    avg_velocity = round(sum(velocities) / len(velocities), 4) if velocities else 0.0
+    avg_velocity = round(sum(velocities) / len(velocities), _SCORE_DECIMALS) if velocities else 0.0
 
     streak = effective_streak(user_rows[0] if user_rows else None)
 
@@ -477,7 +551,7 @@ def _assemble_graph(
             "id": root_id,
             "user_id": user_id,
             "concept_name": subject_label,
-            "mastery_score": round(avg_mastery, 4),
+            "mastery_score": round(avg_mastery, _SCORE_DECIMALS),
             "mastery_tier": "subject_root",
             "course_id": course_id,
             "subject": course_name,
@@ -492,7 +566,7 @@ def _assemble_graph(
                 "id": f"subject_edge__{root_id}__{n['id']}",
                 "source": root_id,
                 "target": n["id"],
-                "strength": 0.7,
+                "strength": _SUBJECT_EDGE_STRENGTH,
                 "relationship_type": "related",
             })
 
@@ -617,6 +691,27 @@ def _course_entry(group: tuple[str, dict, list[str], list[str]], node_count: int
     }
 
 
+def _refresh_course_context(offering_id: str, user_id: str) -> None:
+    """Refresh one offering's class aggregates after a write that touched them.
+
+    A post-commit side effect: the write it follows stands, so a failure never
+    reaches the caller, but it is logged with its traceback, never swallowed.
+    The import sits outside the try, as in `_refresh_touched_course_contexts`:
+    a broken import is a bug and propagates.
+    """
+    from services import course_context_service
+
+    try:
+        # inline, or a queued job when `jobs_queue` is on for the student (#116)
+        course_context_service.refresh_course_context(offering_id, user_id=user_id)
+    except Exception:
+        logger.warning(
+            "graph: course-context refresh failed offering=%s user=%s "
+            "(the write it follows stands)",
+            offering_id, user_id, exc_info=True,
+        )
+
+
 def add_course(
     user_id: str,
     course_id: str,
@@ -682,13 +777,7 @@ def add_course(
         "color": color,
         "nickname": nickname,
     })
-    try:
-        from services.course_context_service import refresh_course_context
-        refresh_course_context(offering_id, user_id=user_id)
-    except Exception:
-        # Best-effort: the course is added either way, but a refresh that
-        # keeps failing leaves the tutor on stale context, so say so.
-        logger.warning("course context refresh failed (offering=%s)", offering_id, exc_info=True)
+    _refresh_course_context(offering_id, user_id)
     return {"course_id": course_id, "already_existed": False}
 
 
@@ -718,10 +807,37 @@ def update_course_nickname(user_id: str, course_id: str, nickname: str) -> dict:
     return {"updated": True}
 
 
-def delete_node(user_id: str, node_id: str) -> dict:
-    """Delete a single graph node and its edges. Owner-scoped.
+#: 20261118195124_learning_session_node_erase.sql: deletes one node's rows
+#: from the loop's append-only teach-prompt records (service_role may not
+#: delete from them directly).
+_NODE_ERASE = "learning_node_erase"
 
-    Returns 404 if the node doesn't belong to the user.
+#: Loop tables keyed by (user_id, node_id) with no foreign key to the node, so
+#: no cascade removes their rows with it (learner_state, misconceptions and
+#: the evidence journal DO cascade from graph_nodes).
+_NODE_KEYED_LOOP_TABLES = ("posttest_poses", "posttest_skips")
+
+
+@runs_as_service  # the learning loop's tables are service-only (A148)
+def _erase_node_loop_rows(user_id: str, node_id: str) -> None:
+    """PR #866 C9: the student's loop rows that name a deleted node and have
+    no FK to it — its post-test poses and skips, and (through _NODE_ERASE)
+    its prequestion and self-explanation records. Owner-scoped and
+    idempotent. learning_reveals is not node-keyed: a reveal names a course
+    ITEM (its question_hash), which outlives the student's node and must stay
+    revealed if the concept is added again. Raises on a failed call."""
+    for name in _NODE_KEYED_LOOP_TABLES:
+        table(name).delete(filters={"user_id": f"eq.{user_id}", "node_id": f"eq.{node_id}"})
+    rpc(_NODE_ERASE, {"p_user_id": user_id, "p_node_id": node_id})
+
+
+def delete_node(user_id: str, node_id: str) -> dict:
+    """Delete a single graph node and its edges, then its loop rows that no
+    FK cascades (`_erase_node_loop_rows`). Owner-scoped.
+
+    Returns 404 if the node doesn't belong to the user — after clearing any
+    loop rows still naming it, so a retry after a failed clean-up (the node
+    already gone) finishes the job.
     """
     rows = table("graph_nodes").select(
         "id,course_id",
@@ -729,23 +845,27 @@ def delete_node(user_id: str, node_id: str) -> dict:
         limit=1,
     ) or []
     if not rows:
+        _erase_node_loop_rows(user_id, node_id)
         return {"error": "Node not found", "deleted": False}
     course_id = rows[0].get("course_id")
 
     table("graph_edges").delete(filters={"user_id": f"eq.{user_id}", "source_node_id": f"eq.{node_id}"})
     table("graph_edges").delete(filters={"user_id": f"eq.{user_id}", "target_node_id": f"eq.{node_id}"})
     table("graph_nodes").delete(filters={"id": f"eq.{node_id}", "user_id": f"eq.{user_id}"})
-
-    if course_id:
-        # course_id from graph_nodes is the abstract course; refresh each of the
-        # user's offerings of that course (analytics is offering-scoped).
-        from services.course_context_service import refresh_course_context
-        from services.academics import user_offering_ids_for_course
-        for offering_id in user_offering_ids_for_course(user_id, course_id):
-            try:
-                refresh_course_context(offering_id, user_id=user_id)
-            except Exception:
-                logger.warning("course context refresh failed (offering=%s)", offering_id, exc_info=True)
+    try:
+        # After the node, never before: a failed node delete must not lose a live
+        # node's release records (A76) or its open post-test.
+        _erase_node_loop_rows(user_id, node_id)
+    finally:
+        # The node is gone either way, so its course context is refreshed even
+        # when the clean-up raises (#866 review, C9): the retry takes the 404
+        # path above, which finishes the erase but has no course to refresh.
+        if course_id:
+            # course_id from graph_nodes is the abstract course; refresh each of the
+            # user's offerings of that course (analytics is offering-scoped).
+            from services.academics import user_offering_ids_for_course
+            for offering_id in user_offering_ids_for_course(user_id, course_id):
+                _refresh_course_context(offering_id, user_id)
     return {"deleted": True}
 
 
@@ -811,69 +931,17 @@ def delete_course(user_id: str, course_id: str, term: str | None = None) -> dict
                          "pass the term to drop",
             }
         return {"deleted": False}
-    from services.course_context_service import refresh_course_context
     for offering_id in offering_ids:
         table("enrollments").delete(
             {"user_id": f"eq.{user_id}", "offering_id": f"eq.{offering_id}"}
         )
-        try:
-            refresh_course_context(offering_id, user_id=user_id)
-        except Exception:
-            logger.warning("course context refresh failed (offering=%s)", offering_id, exc_info=True)
+        _refresh_course_context(offering_id, user_id)
     return {"deleted": True}
 
 
 def _normalize_concept(name: str) -> str:
     """Case-fold + collapse whitespace so dedup is tolerant of LLM casing/spacing drift."""
     return " ".join((name or "").split()).casefold()
-
-
-def _apply_mastery_delta(user_id: str, row: dict, delta: float) -> tuple[float, float] | None:
-    """Apply ``delta`` to one node's mastery ATOMICALLY; return (before, after).
-
-    The ``apply_mastery_delta`` SQL function (migration
-    20261106055333_state_machines_audit.sql) locks the row, clamps the
-    new score, recomputes the tier from the thresholds passed here (config.py
-    stays their one home) and increments ``times_studied`` in one statement,
-    so concurrent quiz submits / tutor turns compose instead of the later
-    write erasing the earlier (#766). Returns None when the node is gone.
-
-    A backend that lands before the migration (PostgREST 404s an unknown
-    function) degrades to the old blind read-modify-write with a warning,
-    rather than failing every mastery update until the migration lands.
-    """
-    try:
-        rows = rpc("apply_mastery_delta", {
-            "p_node_id": row["id"],
-            "p_user_id": user_id,
-            "p_delta": delta,
-            "p_mastered_min": MASTERY_MASTERED_MIN,
-            "p_learning_min": MASTERY_LEARNING_MIN,
-            "p_struggling_min": MASTERY_STRUGGLING_MIN,
-        })
-    except httpx.HTTPStatusError as exc:
-        if exc.response.status_code != 404:
-            raise
-        logger.warning(
-            "apply_mastery_delta is missing (migration 20261106055333_state_machines_audit not "
-            "applied?); falling back to a NON-atomic mastery update node=%s",
-            row["id"],
-        )
-        before = float(row.get("mastery_score") or 0.0)
-        after = max(0.0, min(1.0, before + delta))
-        table("graph_nodes").update(
-            {
-                "mastery_score": after,
-                "mastery_tier": get_mastery_tier(after),
-                "times_studied": (row.get("times_studied") or 0) + 1,
-                "last_studied_at": datetime.now(timezone.utc).isoformat(),
-            },
-            filters={"id": f"eq.{row['id']}", "user_id": f"eq.{user_id}"},
-        )
-        return before, after
-    if not rows:
-        return None
-    return float(rows[0]["before_score"]), float(rows[0]["after_score"])
 
 
 def add_node(
@@ -935,7 +1003,7 @@ def add_node(
         anchor_name = (anchor_rows[0].get("concept_name") if anchor_rows else "") or ""
         if anchor_name and _normalize_concept(anchor_name) != norm:
             update["new_edges"] = [
-                {"source": anchor_name, "target": name, "relationship_type": "related", "strength": 0.5},
+                {"source": anchor_name, "target": name, "relationship_type": "related", "strength": _ANCHOR_EDGE_STRENGTH},
             ]
 
     apply_graph_update(user_id, update, course_id=course_id)
@@ -952,72 +1020,462 @@ def add_node(
     return {"node": node, "already_existed": already_existed}
 
 
-def _insert_mastery_event(event_row: dict) -> None:
-    """Append one node_mastery_events row without ever taking the caller down.
+# ── PKG-03: the evidence path (spec §5) ──────────────────────────────────────
+# Everything in this section runs only when a graph update carries a non-empty
+# "evidence" list (or, for the §13 A123 void, a "void_evidence" alone); the
+# topology keys (new_nodes / new_edges) never reach it.
 
-    The scalar mastery on graph_nodes is already written by the time this
-    runs; this table is the JOURNAL, and nothing replays it. Losing a journal
-    row is a small, observable loss. Letting the insert raise is not: quiz
-    submit calls apply_graph_update AFTER its atomic completed_at claim and
-    BEFORE it writes score/answers_json, and does not wrap the call — so an
-    exception here permanently loses the student's graded attempt, and the
-    retry 409s because the claim already landed.
 
-    The one-shot retry without `event_type` targets the specific ordering
-    hazard E7 introduces: a deploy that takes this code before migration
-    20260814051517 is applied gets a PostgREST 400 for the unknown column.
-    Retrying without it degrades to the pre-E7 row rather than costing a
-    quiz. Both failures are logged loudly — a silently-dropped write is the
-    bug class this whole batch exists to end, so this must never be quiet.
+def _prerequisite_edges(user_id: str, node_id: str) -> list[tuple[str, str]]:
+    """(source_node_id, target_node_id) prerequisite pairs touching node_id.
+    Two reads: the filter dict has no OR across columns (graph_read.py)."""
+    pairs: set[tuple[str, str]] = set()
+    for col in ("source_node_id", "target_node_id"):
+        rows = table("graph_edges").select(
+            "source_node_id,target_node_id",
+            filters={
+                "user_id": f"eq.{user_id}",
+                "relationship_type": f"eq.{PREREQ_RELATIONSHIP_TYPE}",
+                col: f"eq.{node_id}",
+            },
+        ) or []
+        for r in rows:
+            src, tgt = r.get("source_node_id"), r.get("target_node_id")
+            if src and tgt:
+                pairs.add((src, tgt))
+    return sorted(pairs)
+
+
+def _propagation_targets(user_id: str, ev: Evidence) -> list[bkt.Propagation]:
+    """ADAPTER — the one place bkt.propagate_prereq's signature is assumed
+    (HANDOFF-01: `propagate_prereq(evidence_correct, parents, children) ->
+    [(node_id, channel, correct, weight)]`). Resolves the evidence node's
+    prerequisite parents and dependent children from graph_edges, honoring
+    EDGE_PREREQ_SOURCE_IS_PREREQ; bkt picks which side moves."""
+    edges = _prerequisite_edges(user_id, ev.node_id)
+    if not edges:
+        return []
+    parents: list[str] = []
+    children: list[str] = []
+    for src, tgt in edges:
+        prereq, dependent = (src, tgt) if EDGE_PREREQ_SOURCE_IS_PREREQ else (tgt, src)
+        if dependent == ev.node_id and prereq != ev.node_id:
+            parents.append(prereq)
+        elif prereq == ev.node_id and dependent != ev.node_id:
+            children.append(dependent)
+    # idk evidence is never correct (Evidence validates it), so it walks the
+    # incorrect side like any miss.
+    return bkt.propagate_prereq(ev.correct, parents, children)
+
+
+def _fsrs_after(
+    st: LearnerState, ev: Evidence, now: datetime, retention: float | None = None
+) -> None:
+    """learning.evidence_replay.fsrs_after over an Evidence (the FSRS adapter
+    lives there since spec §13 A123, shared with the journal replay)."""
+    evidence_replay.fsrs_after(
+        st, channel=ev.channel, correct=ev.correct, max_rung=ev.max_rung, idk=ev.idk,
+        now=now, retention=retention,
+    )
+
+
+#: The propagation decay-anchor adapter (learning.evidence_replay since A123).
+_keep_decay_anchor = evidence_replay.keep_decay_anchor
+
+
+def _apply_evidence(
+    user_id: str,
+    evidences: list[Evidence],
+    by_id: dict[str, dict],
+    touched_courses: set,
+    now: datetime,
+    retention: float | None = None,
+    *,
+    _course_id: str | None = None,
+) -> tuple[list[dict], bool]:
+    """All graded evidence commits through one transactional RPC, or none does.
+
+    Untagged quiz/review/posttest provenance remains NULL. Only the graph
+    entry point reaches this transport; no unsafe table-write fallback exists.
     """
-    try:
-        table("node_mastery_events").insert(event_row)
-        return
-    except Exception:
-        if "event_type" not in event_row:
-            logger.exception(
-                "graph: mastery-event insert failed node=%s; the scalar "
-                "mastery is written but the journal row is lost",
-                event_row.get("node_id"),
+    from learning.evidence_transaction import commit_evidence_transaction
+
+    def compute(prepared):
+        return _calculate_evidence(user_id, evidences, prepared, retention)
+
+    changes, _receipt, newly_committed = commit_evidence_transaction(
+        user_id, _course_id, evidences, retention, compute
+    )
+    for ev in evidences:
+        row = by_id.get(ev.node_id)
+        if row and row.get("course_id"):
+            touched_courses.add(row["course_id"])
+    return changes, newly_committed
+
+
+def _start_unmeasured(user_id: str, node_id: str, row: dict, states: dict, seeds: dict) -> LearnerState:
+    """The state the writer starts from for a node with no learner_state row,
+    put in `states`.
+
+    #866 audit K03, spec §13 A150 (owner decision 2026-11-19): a concept the
+    student already has mastery on — from before the learning loop, or from
+    the pre-loop quiz — starts BKT from that stored score, not the 0.35 prior,
+    so one graded answer moves it from what the screens showed (82% → a step,
+    not 82% → 21%). A concept never studied (score 0, the map's "unexplored")
+    keeps the model's prior. learner_state.unmeasured_state is the one rule.
+
+    The stored score it started from goes into `seeds` (node id → score, 0 for
+    a never-studied concept): the first journal row that reaches the node
+    carries it (`node_mastery_events.seeds`), so the A123 void replay starts
+    the node from exactly the belief this write did."""
+    score = bkt.stored_score(row.get("mastery_score"))
+    st = states[node_id] = unmeasured_state(user_id, node_id, score)
+    seeds[node_id] = score
+    return st
+
+
+def _calculate_evidence(user_id: str, evidences: list[Evidence], prepared, retention) -> list[dict]:
+    """The existing Python BKT/FSRS math, preparing rows without database I/O.
+
+    Per evidence, in order: ownership → same-session recheck → weight →
+    decayed read → bkt.update → counters → FSRS → learner_state → graph_nodes
+    mirror → ONE journal row → one-hop propagation (learner_state + mirror
+    only; the mirror of a never-studied neighbour stays 0, #866 K22). Propagated updates are derived from the journaled evidence, so
+    they are not journaled themselves. `by_id` is the user- and
+    course-scoped existing_rows; a node outside it is never read or written.
+
+    The journal rows of one call share `created_at` and have random ids, so
+    each carries `evidence_seq` = 0..n−1 in apply order (§13 A36): a replay
+    orders by (created_at, evidence_seq). A skipped evidence takes no number.
+
+    §13 A123: the state transition is learning.evidence_replay's `observe` /
+    `propagate` — the same code the journal replay runs — and each row also
+    journals what its replay needs beyond the observation: the FSRS
+    `retention` it was scheduled at, its final `same_session_recheck` flag and
+    the nodes its propagation moved (`propagated_to`). §13 A150: the first row
+    to reach a node with no learner_state row journals the stored score it
+    started from (`seeds`).
+    """
+    by_id, now = prepared.nodes, prepared.now
+    changes: list[dict] = []
+    now_iso = now.isoformat()
+    target_retention = FSRS_RETENTION_DEFAULT if retention is None else retention
+    owned = [ev.node_id for ev in evidences if ev.node_id in by_id]
+    # One batched read; nodes with no row start from their stored score
+    # (A150, else the prior). The cache means
+    # a later evidence on the same node sees the earlier posterior (elapsed
+    # time between the two is zero: they share `now`).
+    states = prepared.states
+    # §13 A150: node id → the stored score a node with no learner_state row
+    # started from, until a journal row carries it (`seeds`).
+    seeds: dict[str, float] = {}
+    for node_id in owned:
+        if node_id not in states:
+            _start_unmeasured(user_id, node_id, by_id[node_id], states, seeds)
+    seen_checks: set[tuple[str, str]] = set()
+    exposed_hashes: set[str] = set()
+    seq = 0  # next evidence_seq: counts journaled rows only
+
+    for ev in evidences:
+        row = by_id.get(ev.node_id)
+        if row is None:
+            logger.warning(
+                "graph: evidence skipped node=%s user=%s (not owned or outside course)",
+                ev.node_id, user_id,
             )
-            return
-        logger.warning(
-            "graph: mastery-event insert failed with event_type=%r node=%s; "
-            "retrying without it (is migration "
-            "20260814051517_node_mastery_events_event_type.sql applied?)",
-            event_row.get("event_type"), event_row.get("node_id"),
+            continue
+        ev = _marked_repeat(ev, prepared, seen_checks, exposed_hashes)
+        w = evidence_weight(ev)
+
+        st = states[ev.node_id]
+        # weight 0.0 (correct after H4..H6) returns p_before unchanged; a
+        # correct re-check of a question already asked this session is not a
+        # first attempt (spec §3.3): an opportunity only, it neither extends
+        # nor breaks the streak †.
+        p_before, p_after = evidence_replay.observe(
+            st, channel=ev.channel, correct=ev.correct, idk=ev.idk, assisted=ev.assisted,
+            max_rung=ev.max_rung, weight=w, recheck=ev.same_session_recheck, now=now,
+            retention=retention,
         )
-    fallback = {k: v for k, v in event_row.items() if k != "event_type"}
-    try:
-        table("node_mastery_events").insert(fallback)
-    except Exception:
-        logger.exception(
-            "graph: mastery-event insert failed node=%s even without "
-            "event_type; the scalar mastery is written but the journal row "
-            "is lost", event_row.get("node_id"),
+        prepared.state_rows[st.node_id] = state_row(st, now)
+        st.exists = True
+        # The propagated observation carries the evidence's own weight too
+        # (spec §5: weight = product of the applicable §3.1 weights) †, and
+        # w == 0.0 (correct after H4..H6, §3.3 "no upward BKT evidence")
+        # moves no neighbour.
+        targets = evidence_replay.propagation_targets(
+            ev.node_id, ev.correct, w, prepared.snapshot["edges"], by_id
         )
+        for target_id, *_ in targets:
+            if target_id not in states:
+                _start_unmeasured(user_id, target_id, by_id[target_id], states, seeds)
+        # §13 A150: the starting scores of the nodes this row is the first to reach
+        row_seeds = {n: seeds.pop(n) for n in (ev.node_id, *(t for t, *_ in targets)) if n in seeds}
+
+        # A tagged grade needs durable readiness provenance before any scalar
+        # or mirrored BKT mutation. A failed append cannot silently lose it.
+        reason = f"evidence:{ev.channel}:idk" if ev.idk else f"evidence:{ev.channel}"
+        # #866 K19: `delta` (summed into week_delta and the mastery events) is
+        # the change the mastery mirror makes — from the score the screens
+        # showed, never from p_before (the prior of an unmeasured concept, or a
+        # decayed estimate no screen showed). p_before/p_after keep the BKT step.
+        shown_before = bkt.stored_score(row.get("mastery_score"))
+        event_row = {
+            "id": prepared.event_id(seq), "node_id": row["id"], "delta": p_after - shown_before,
+            "reason": reason, "created_at": now_iso, "event_type": EVIDENCE_EVENT_TYPE,
+            "channel": ev.channel, "correct": ev.correct, "weight": w,
+            "assisted": ev.assisted, "max_rung": ev.max_rung,
+            "p_before": p_before, "p_after": p_after, "session_id": ev.session_id,
+            "check_item_id": ev.check_item_id, "question_hash": ev.question_hash,
+            "confidence": ev.confidence, "grader_backend": ev.grader_backend,
+            "evidence_seq": seq,
+            # §13 A123: what a replay of this row needs beyond the observation
+            "retention": target_retention,
+            "same_session_recheck": ev.same_session_recheck,
+            "propagated_to": [target_id for target_id, *_ in targets],
+        }
+        _add_optional_journal_fields(event_row, ev, row_seeds)
+
+        times = (row.get("times_studied") or 0) + 1
+        mirror = {
+                "mastery_score": p_after,
+                "mastery_tier": bkt.tier_for(p_after),
+                "times_studied": times,
+                "last_studied_at": now_iso,
+            }
+        prepared.mirrors[row["id"]] = {**prepared.mirrors.get(row["id"], {}), "id": row["id"], **mirror}
+        row["times_studied"] = times
+        row["mastery_score"] = p_after
+
+        prepared.events.append(event_row)
+        seq += 1
+        changes.append({"concept": row["concept_name"], "before": p_before, "after": p_after})
+
+        _propagate_to(targets, prepared, states, w, now)
+    return changes
 
 
-def _existing_nodes_by_name(user_id: str, course_id: str | None) -> dict[str, dict]:
-    """Normalized name → the user's existing node row (scoped to the course when given).
+def _marked_repeat(ev: Evidence, prepared, seen_checks: set, exposed_hashes: set[str]) -> Evidence:
+    """The evidence marked a same-session recheck when its check was already
+    seen this session, and its planning provenance `previously_seen` when the
+    question was already exposed; the seen sets are updated."""
+    if ev.session_id and ev.question_hash:
+        key = (ev.session_id, ev.question_hash)
+        if (key in seen_checks or prepared.prior_check(ev)) and not ev.same_session_recheck:
+            ev = Evidence.model_validate({**ev.model_dump(), "same_session_recheck": True})
+        seen_checks.add(key)
+    if ev.question_hash:
+        already_exposed = ev.question_hash in exposed_hashes or prepared.prior_exposure(ev)
+        if (already_exposed and ev.planning_provenance is not None
+                and not ev.planning_provenance.previously_seen):
+            ev = Evidence.model_validate({
+                **ev.model_dump(),
+                "planning_provenance": {
+                    **ev.planning_provenance.model_dump(), "previously_seen": True,
+                },
+            })
+        exposed_hashes.add(ev.question_hash)
+    return ev
 
-    The UNIQUE (user_id, course_id, concept_name) constraint from 0023 prevents
-    duplicates; this map resolves updated_nodes / new_edges against
-    pre-existing rows.
-    """
+
+def _add_optional_journal_fields(event_row: dict, ev: Evidence, row_seeds: dict) -> None:
+    """The journal row's fields that are present only when they say something."""
+    if row_seeds:
+        # Spec §13 A150: what the replay starts these nodes from. Absent on
+        # a row that starts no node, so its plan is the row it was before.
+        event_row["seeds"] = row_seeds
+    if ev.student_confidence is not None:
+        # Spec §13 A127: the student's stated confidence, beside the
+        # grader's `confidence` (never the same column). Absent when none
+        # was stated, so an evidence row without one is the row it was
+        # before A127 — its plan, and its operation's fingerprint, unchanged.
+        event_row["student_confidence"] = ev.student_confidence
+    if ev.multi_concept:
+        # Spec §13 A141: the row a multi-concept item graded says so in the
+        # journal itself — the item's own row may later be withdrawn (A23)
+        # or retired (A123), and the item statistics must still tell it
+        # from the apex's own items. Absent on every other row, so its
+        # plan, and its operation's fingerprint, are unchanged.
+        event_row["multi_concept"] = True
+    provenance = planning_observation(ev)
+    if provenance is not None:
+        event_row["planning_observation"] = provenance
+
+
+def _propagate_to(targets, prepared, states: dict, w: float, now) -> None:
+    """One-hop propagation of one evidence: learner_state and the mirror only."""
+    by_id = prepared.nodes
+    for target_id, channel, target_correct, weight in targets:
+        trow = by_id[target_id]
+        tst = states[target_id]
+        # tst.p_known stays the belief AT now (a later evidence in this
+        # call reads it); the row is stored against the kept anchor.
+        p_stored = evidence_replay.propagate(
+            tst, channel=channel, correct=target_correct, weight=weight,
+            source_weight=w, now=now,
+        )
+        prepared.state_rows[tst.node_id] = state_row(replace(tst, p_known=p_stored), now)
+        tst.exists = True
+        # #866 K22: a never-studied neighbour keeps its unexplored map score
+        shown = evidence_replay.propagated_mirror(
+            bkt.stored_score(trow.get("mastery_score")), tst.p_known
+        )
+        mirror = {"mastery_score": shown, "mastery_tier": bkt.tier_for(shown)}
+        prepared.mirrors[target_id] = {**prepared.mirrors.get(target_id, {}), "id": target_id, **mirror}
+        trow["mastery_score"] = shown
+
+
+# ── §13 A123: void + recompute (a branch of the same single writer) ─────────
+
+
+def _apply_void(user_id: str, course_id: str, question_hash: str) -> tuple[list[dict], dict]:
+    """Void every evidence row this student has graded against the retired
+    course item and write their recomputed state, in ONE transaction
+    (learning.evidence_transaction.commit_void_transaction). Returns (the
+    recomputed nodes' {concept, before, after}, the commit's counts)."""
+    from learning.evidence_transaction import commit_void_transaction
+
+    def compute(snapshot):
+        return _calculate_void(user_id, course_id, question_hash, snapshot)
+
+    return commit_void_transaction(user_id, course_id, question_hash, compute)
+
+
+def _calculate_void(user_id: str, course_id: str, question_hash: str, snapshot: dict):
+    """The void plan, from a void snapshot, without database I/O.
+
+    Voids: every one of the student's evidence rows graded against the item
+    (a check_item_id and the item's question_hash; rows already void are named
+    too, so the commit can check the set is whole). Recomputed: every node such
+    a row moved — its own concept and the nodes its propagation moved
+    (learning.evidence_replay.moved_by) — at the state a replay of the course's
+    NON-void journal (this item's rows and every earlier void left out) gives:
+    the learner_state row the writer would have stored and the mirror it would
+    hold. Every node starts from the stored score the writer journaled for it
+    (§13 A150, `seeds`, read from void rows too), else the BKT prior. A node no
+    non-void row reaches any more is back where it started: its starting state
+    (learner_state.unmeasured_state of that score, else the prior), its mirror
+    that state's belief — 0 for a journaled never-studied concept (#866 K22,
+    evidence_replay.propagated_mirror); its row is stamped with the latest voided row that
+    touched it, so the plan is a pure function of the journal and a re-run
+    writes nothing. Misconceptions: the open rows
+    every supporting attempt of which was graded against a retired item of
+    the course (learning.evidence_void.closable_misconceptions)."""
+    from learning.evidence_transaction import EvidenceVoidRefused, VoidPlan
+    from learning.evidence_void import closable_misconceptions
+
+    if snapshot.get("retired") is not True:
+        raise EvidenceVoidRefused("The check item is not retired")
+    nodes = {n["id"]: n for n in snapshot["nodes"]}
+    owned = frozenset(nodes)
+    edges = snapshot["edges"]
+    journal = snapshot["journal"]
+    item_rows = [
+        r for r in journal if r.get("question_hash") == question_hash and r.get("check_item_id")
+    ]
+    void_ids = {r["id"] for r in journal if r.get("void")} | {r["id"] for r in item_rows}
+    seeds = evidence_replay.journaled_seeds(journal)
+    replayed = evidence_replay.replay(
+        [evidence_replay.observation(r) for r in journal if r["id"] not in void_ids],
+        user_id=user_id, edges=edges, owned=owned, seeds=seeds,
+    )
+    touched_by_void: dict[str, datetime] = {}
+    for row in item_rows:
+        ob = evidence_replay.observation(row)
+        for node_id in evidence_replay.moved_by(ob, edges=edges, owned=owned):
+            if node_id in owned:
+                touched_by_void[node_id] = max(touched_by_void.get(node_id, ob.at), ob.at)
+    stored = {s["node_id"]: s for s in snapshot["states"]}
+    state_rows, mirrors, changes = [], [], []
+    for node_id in sorted(touched_by_void):
+        if node_id in replayed.state_rows:
+            row, belief = replayed.state_rows[node_id], replayed.mirrors[node_id]
+        else:
+            start = unmeasured_state(user_id, node_id, seeds.get(node_id, 0.0))
+            row = state_row(start, touched_by_void[node_id])
+            # K22: a never-studied concept (score 0) is back off the map
+            belief = (
+                evidence_replay.propagated_mirror(seeds[node_id], row["p_known"])
+                if node_id in seeds else row["p_known"]
+            )
+        state_rows.append(row)
+        mirrors.append({"id": node_id, "mastery_score": belief, "mastery_tier": bkt.tier_for(belief)})
+        changes.append({
+            "concept": nodes[node_id].get("concept_name"),
+            "before": nodes[node_id].get("mastery_score"),
+            "after": belief,
+        })
+    retired = set(snapshot.get("retired_hashes") or []) | {question_hash}
+    misconceptions = closable_misconceptions(
+        snapshot.get("misconceptions") or [],
+        course_id=course_id,
+        retired_hashes=retired,
+        retired_check_ids={
+            r["check_item_id"] for r in journal
+            if r.get("check_item_id") and r.get("question_hash") in retired
+        },
+    )
+    return VoidPlan(
+        payload={
+            "voids": sorted(r["id"] for r in item_rows),
+            "nodes": [{"id": n, "version": nodes[n]["evidence_version"]} for n in sorted(touched_by_void)],
+            "states_expected": [
+                {"node_id": n, "version": stored[n]["evidence_version"] if n in stored else None}
+                for n in sorted(touched_by_void)
+            ],
+            "edges": edges,
+            "state_rows": state_rows,
+            "mirrors": mirrors,
+            "misconceptions": misconceptions,
+        },
+        changes=changes,
+    )
+
+
+def _existing_node_rows(user_id: str, course_id: str | None) -> list[dict]:
+    """The user's existing node rows (scoped to the course when given): the
+    update's one read of graph_nodes. The evidence branch keys them by id (a
+    node outside them is never read or written), the topology by name."""
     fetch_filters = {"user_id": f"eq.{user_id}"}
     if course_id:
         fetch_filters["course_id"] = f"eq.{course_id}"
-    existing_rows = table("graph_nodes").select(
+    return table("graph_nodes").select(
         "id,concept_name,mastery_score,times_studied,course_id",
         filters=fetch_filters,
     ) or []
+
+
+def _existing_nodes_by_name(existing_rows: list[dict]) -> dict[str, dict]:
+    """Normalized name → the user's existing node row.
+
+    The UNIQUE (user_id, course_id, concept_name) constraint from 0023 prevents
+    duplicates; this map resolves evidence / new_edges against pre-existing
+    rows.
+    """
     by_name: dict[str, dict] = {}
     for row in existing_rows:
         norm = _normalize_concept(row.get("concept_name") or "")
         if norm:
             by_name[norm] = row
     return by_name
+
+
+def _without_excluded(user_id: str, course_id: str | None, new_nodes: list[NewNode]) -> list[NewNode]:
+    """The batch less the concepts the student removed from that course in the
+    Tutor's course setup (services/course_setup.py), so an upload never brings
+    one back. Flag `course_setup` off for the student (or their loop): the
+    batch as it came, and no exclusion read.
+    An edge naming a dropped concept then has no endpoint and is skipped."""
+    if not new_nodes:
+        return new_nodes
+    from services import course_setup
+
+    if not course_setup.course_setup_on(user_id):
+        return new_nodes
+    excluded = course_setup.excluded_keys(user_id, (course_id or n.course_id for n in new_nodes))
+    if not excluded:
+        return new_nodes
+    return [n for n in new_nodes if ((course_id or n.course_id), _normalize_concept(n.concept_name)) not in excluded]
 
 
 def _upsert_new_nodes(
@@ -1055,7 +1513,7 @@ def _upsert_new_nodes(
                 "user_id": user_id,
                 "concept_name": name,
                 "mastery_score": init_m,
-                "mastery_tier": get_mastery_tier(init_m),
+                "mastery_tier": bkt.tier_for(init_m),
                 "course_id": node_course_id,
             },
             on_conflict="user_id,course_id,concept_name",
@@ -1063,7 +1521,7 @@ def _upsert_new_nodes(
         canonical_id = new_id
         if returned and isinstance(returned, list) and isinstance(returned[0], dict):
             canonical_id = returned[0].get("id", new_id)
-        # Track in-batch inserts so subsequent updated_nodes / new_edges in the
+        # Track in-batch inserts so subsequent new_edges in the
         # same call resolve against just-created nodes.
         inserted_in_batch[norm] = {
             "id": canonical_id,
@@ -1075,92 +1533,6 @@ def _upsert_new_nodes(
         if node_course_id:
             touched_courses.add(node_course_id)
     return inserted_in_batch
-
-
-def _mastery_event_row(row: dict, upd: UpdatedNode) -> dict:
-    """The node_mastery_events row for one applied mastery move."""
-    # Append-only mastery event (fixes the non-atomic read-modify-write, #247).
-    event_row = {
-        "id": str(uuid.uuid4()),
-        "node_id": row["id"],
-        "delta": upd.mastery_delta,
-        "reason": upd.reason,
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    }
-    # E7: the caller's categorical read of WHY mastery moved. It was
-    # computed and then dropped here for months, so the event log
-    # recorded how much mastery moved but never what kind of evidence
-    # moved it.
-    #
-    # TWO producers supply one, and both namespace their values by
-    # producer because the column has no CHECK and their vocabularies
-    # are otherwise disjoint-but-confusable:
-    #   * routes/quiz.py::submit_quiz — quiz_correct / quiz_partial /
-    #     quiz_confusion, from the score ratio;
-    #   * agents/tools/graph.py::update_mastery_tool (the chat tutor) —
-    #     tutor_interaction / tutor_correction / tutor_quiz, and only
-    #     when the model actually classified the turn (the tool's field
-    #     is nullable and the key is omitted when it is None).
-    # Callers that classify nothing at all (the document pipeline, notes
-    # extraction, manual adds via add_node) supply no key, and NULL is
-    # the honest value for "this writer doesn't classify".
-    #
-    # Omitted rather than written as an explicit null when absent because
-    # naming a column PostgREST's schema cache doesn't have is a hard
-    # 400 — so omitting keeps the non-classifying paths working on an
-    # environment that took this code before the migration.
-    #
-    # It does NOT make the two classifying paths safe there, and the
-    # blast radius is not cosmetic:
-    #   * the TUTOR is the highest-volume writer here (a mastery update
-    #     can land on every conversational turn), and it takes the
-    #     `_insert_mastery_event` retry — one wasted 400 plus a warning
-    #     per classified turn until the migration lands;
-    #   * submit_quiz always supplies one, and a code-before-migration
-    #     deploy 400s that insert. The retry is what keeps it from
-    #     propagating out of apply_graph_update (submit does not wrap the
-    #     call), which would land a 500 AFTER the atomic completed_at
-    #     claim but BEFORE score/answers are written — losing the graded
-    #     attempt, not just its mastery event.
-    # The migration
-    # (20260814051517_node_mastery_events_event_type.sql) must be
-    # applied strictly before this code ships to any environment.
-    # (GraphUpdate has already stripped it; blank/non-string is None.)
-    if upd.event_type is not None:
-        event_row["event_type"] = upd.event_type
-    return event_row
-
-
-def _apply_mastery_updates(
-    user_id: str,
-    updated_nodes: list[UpdatedNode],
-    lookup,
-    touched_courses: set,
-) -> list:
-    """Move mastery on each named concept, journal it, and return the changes."""
-    mastery_changes: list = []
-    for upd in updated_nodes:
-        if not upd.concept_name:
-            continue
-        row = lookup(upd.concept_name)
-        if not row:
-            continue
-
-        applied = _apply_mastery_delta(user_id, row, upd.mastery_delta)
-        if applied is None:
-            continue  # node deleted under us: nothing to log against
-        before, after = applied
-        # A second update of the same concept in this batch must see this one.
-        row["mastery_score"] = after
-        row["times_studied"] = (row.get("times_studied") or 0) + 1
-
-        _insert_mastery_event(_mastery_event_row(row, upd))
-        mastery_changes.append({"concept": row["concept_name"], "before": before, "after": after})
-
-        cid = row.get("course_id")
-        if cid:
-            touched_courses.add(cid)
-    return mastery_changes
 
 
 def _upsert_new_edges(user_id: str, new_edges: list[NewEdge], lookup) -> None:
@@ -1239,16 +1611,79 @@ def _dispatch_graph_achievements(user_id: str) -> None:
         logger.exception("achievement dispatch failed after graph update user=%s", user_id)
 
 
+def _refuse_flat_deltas(graph_update: GraphUpdate | dict) -> None:
+    """PKG-14b (spec §11.2): the flat-delta path is gone — the legacy tutor's
+    mastery tool and the quiz deltas were its only producers. Loud, and before
+    any read or write, so a stale caller can never half-apply."""
+    if isinstance(graph_update, dict) and "updated_nodes" in graph_update:
+        raise ValueError("updated_nodes is no longer accepted (PKG-14b): pass evidence")
+
+
+def _void_question_hash(graph_update: dict, course_id: str | None) -> str:
+    """§13 A123: the retired item's question_hash a `void_evidence` update
+    names — applied alone (never mixed with evidence or topology), in the
+    item's course; a malformed one raises before any read or write."""
+    void = graph_update["void_evidence"]
+    question_hash = void.get("question_hash") if isinstance(void, dict) else None
+    if set(graph_update) != {"void_evidence"} or not course_id:
+        raise ValueError("void_evidence is applied alone, in the item's course")
+    if not isinstance(question_hash, str) or not question_hash:
+        raise ValueError("void_evidence names the retired item's question_hash")
+    return question_hash
+
+
+def _after_void(user_id: str, course_id: str, counts: dict) -> None:
+    """§13 A123: after a void commit (`_apply_void`, called by
+    apply_graph_update itself: the single writer's private branch), log what it
+    did; the offering aggregates read the mirrors it moved, so they are
+    refreshed after the commit."""
+    logger.info(
+        "graph: evidence void user=%s course=%s voided=%d states=%d mirrors=%d "
+        "misconceptions_closed=%d",
+        user_id, course_id, counts["voided"], counts["states"], counts["mirrors"],
+        counts["misconceptions"],
+    )
+    if counts["states"] or counts["mirrors"]:
+        _refresh_touched_course_contexts(user_id, {course_id})
+
+
+def _validated_evidence(update: GraphUpdate) -> list[Evidence]:
+    """PKG-03: every evidence validated BEFORE any read or write; an invalid
+    item raises pydantic.ValidationError (the caller maps it to a 4xx). An
+    Evidence instance is re-validated from its dump too: the model is mutable,
+    and an attribute set after construction skips the validators. Tagged
+    evidence (planning provenance) never rides with topology mutations."""
+    evidences = [
+        Evidence.model_validate(e.model_dump() if isinstance(e, Evidence) else e)
+        for e in update.evidence
+    ]
+    if any(ev.planning_provenance is not None for ev in evidences) and (
+        update.new_nodes or update.new_edges
+    ):
+        raise ValueError("Tagged evidence cannot be mixed with graph topology mutations")
+    return evidences
+
+
 def apply_graph_update(
     user_id: str,
     graph_update: GraphUpdate | dict,
     course_id: str | None = None,
     *,
+    retention: float | None = None,
     defer: Callable[[Callable[[], None]], object] | None = None,
 ) -> list:
     """
     Apply a graph update to the DB. Returns mastery_changes list.
     If course_id is provided, all new/updated nodes will be associated with that course.
+
+    Graded evidence (``evidence``, learning-loop PKG-03) is the ONLY thing that
+    moves a belief (PKG-14b, spec §11.2): an ``updated_nodes`` flat delta is
+    refused before any read or write. ``void_evidence`` (spec §13 A123) is the
+    staff-retire branch of the same single writer, applied alone.
+
+    `retention` (PKG-12, a PKG-03 reopen) is the FSRS retention target the
+    evidence branch schedules `fsrs_due_at` at; None keeps
+    FSRS_RETENTION_DEFAULT. Only the evidence branch reads it.
 
     `defer`: where to run the class-aggregate refresh this update triggers
     (`refresh_course_context` for each touched offering). That refresh can make
@@ -1258,32 +1693,55 @@ def apply_graph_update(
     refresh runs inline, as it always has.
 
     ``graph_update`` is a :class:`services.graph_update_model.GraphUpdate` or the
-    legacy dict of that shape (``new_nodes`` / ``updated_nodes`` / ``new_edges``);
-    a dict is validated into the model first, as leniently as this function
-    always read it (see that module).
+    dict of that shape (``new_nodes`` / ``new_edges`` / ``evidence``); a dict is
+    validated into the model first, as leniently as this function always read
+    its topology (see that module).
 
     Concept dedup is case- and whitespace-insensitive: "Linear Regression",
     "linear regression", and " Linear  Regression " all resolve to the same node.
     """
+    _refuse_flat_deltas(graph_update)
+    if isinstance(graph_update, dict) and "void_evidence" in graph_update:
+        # §13 A123: a staff retire voids this student's evidence graded against
+        # the course item and writes the state a replay of the non-void journal
+        # gives — alone, in the item's course, before any other read or write.
+        changes, counts = _apply_void(user_id, course_id, _void_question_hash(graph_update, course_id))
+        _after_void(user_id, course_id, counts)
+        return changes
     update = GraphUpdate.coerce(graph_update)
+    evidences = _validated_evidence(update)
     touched_courses: set = set()
 
-    by_name = _existing_nodes_by_name(user_id, course_id)
+    existing_rows = _existing_node_rows(user_id, course_id)
+    by_name = _existing_nodes_by_name(existing_rows)
     inserted_in_batch = _upsert_new_nodes(
-        user_id, update.new_nodes, course_id, by_name, touched_courses,
+        user_id, _without_excluded(user_id, course_id, update.new_nodes), course_id, by_name, touched_courses,
     )
 
     def _lookup(name: str) -> dict | None:
         norm = _normalize_concept(name)
         return by_name.get(norm) or inserted_in_batch.get(norm)
 
-    mastery_changes = _apply_mastery_updates(
-        user_id, update.updated_nodes, _lookup, touched_courses,
-    )
-    if mastery_changes:
+    mastery_changes: list = []
+    newly_committed = False
+    if evidences:
+        # PKG-03: graded evidence is the only thing that moves p_known (spec
+        # §1). This block is skipped entirely when the payload carries none.
+        by_id = {r["id"]: r for r in existing_rows if r.get("id")}
+        mastery_changes, newly_committed = _apply_evidence(
+            user_id,
+            evidences,
+            by_id,
+            touched_courses,
+            datetime.now(timezone.utc),
+            retention,
+            _course_id=course_id,
+        )
+    if mastery_changes and newly_committed:
         # services/streak_service.py::touch_streak is the sole writer of
         # streak_count/longest_streak (UTC calendar days); mastery activity
-        # legitimately counts as a study day, so this stays a call site, but
+        # legitimately counts as a study day. Receipt replay is recovery of
+        # earlier activity, never a new study day. This stays a call site, but
         # the maths lives in exactly one place — not duplicated here.
         touch_streak_safe(user_id)
 
@@ -1319,7 +1777,9 @@ _RECOMMENDATION_READ = {
     "order": "mastery_score.asc",
     "limit": 5,
 }
-_RECOMMENDATION_COLUMNS = "concept_name,mastery_score,mastery_tier,course_id"
+#: `id` and `course_id` name the concept (#866 K05): the Dashboard's Learn next
+#: starts the learning loop's session on it, as the map's Learn link does.
+_RECOMMENDATION_COLUMNS = "id,concept_name,mastery_score,mastery_tier,course_id"
 
 
 def get_recommendations(user_id: str, semester: str | None = None) -> list:
@@ -1346,6 +1806,12 @@ async def aget_recommendations(user_id: str, semester: str | None = None) -> lis
     return _recommendations_from(rows)
 
 
+def _whole_percent(score) -> int:
+    """A mastery score in whole percent, rounded half-up as every frontend
+    surface rounds it (Math.round) — never truncated (K50)."""
+    return math.floor(float(score) * 100 + 0.5)
+
+
 def _recommendations_from(rows: list) -> list:
     recs = []
     for r in rows:
@@ -1353,8 +1819,11 @@ def _recommendations_from(rows: list) -> list:
         if tier == "unexplored":
             reason = "You haven't studied this yet — a great place to start."
         elif tier == "struggling":
-            reason = f"You're struggling here ({int(r['mastery_score']*100)}%) — focus here to improve."
+            reason = f"You're struggling here ({_whole_percent(r['mastery_score'])}%) — focus here to improve."
         else:
-            reason = f"You're making progress ({int(r['mastery_score']*100)}%) — keep going!"
-        recs.append({"concept_name": r["concept_name"], "reason": reason})
+            reason = f"You're making progress ({_whole_percent(r['mastery_score'])}%) — keep going!"
+        recs.append({
+            "concept_name": r["concept_name"], "reason": reason,
+            "node_id": r.get("id"), "course_id": r.get("course_id"),
+        })
     return recs

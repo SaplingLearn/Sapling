@@ -1,24 +1,12 @@
 {
-  "text": "You've got the first half right. Objects in motion do stay in motion, and you've correctly connected that to the law. The second half has a problem, though.\n\n**What's correct:** An object keeps its motion unless something acts on it. That is inertia.\n\n**The misconception:** \"Force makes things keep moving\" is backwards. Your course notes say an object stays at rest or in uniform motion unless acted on by a *net external force*. So:\n- Constant velocity needs no force. A puck sliding on frictionless ice keeps going forever.\n- A force changes the motion. It speeds the object up, slows it down, or turns it.\n\n**What's missing:** The word *net*. Forces can cancel. A book sliding at constant speed has zero net force, because your push balances friction.\n\nThis idea feels wrong because in daily life friction stops things, so we have to keep pushing. That push is only cancelling friction.\n\nSuppose a hockey puck glides at constant velocity on ice with negligible friction. What is the net force on it, and what would happen to its motion if you gave it one sideways push?",
-  "tool_calls": [
-    {
-      "args": {
-        "query": "Newton's First Law inertia net force"
-      },
-      "tool_name": "search_course_materials"
-    },
-    {
-      "args": {
-        "updates": [
-          {
-            "concept_name": "Newton's First Law",
-            "event_type": "correction",
-            "mastery_delta": -0.05,
-            "reason": "believes force is needed to keep motion going"
-          }
-        ]
-      },
-      "tool_name": "update_mastery_tool"
-    }
-  ]
+  "output": {
+    "text": "You've got the core of it: an object in motion stays in motion unless something acts on it. Two things need fixing, though.\n\n**What's correct:**\n- Objects keep their motion unless acted on. That is the heart of inertia.\n\n**What needs refining:**\n1. **It's not only about objects in motion.** The law also says an object *at rest* stays at rest. Both cases are the same idea: velocity doesn't change by itself.\n2. **\"Unless you push them\" is incomplete.** The precise condition is that the *net* (total) force is zero. If several forces act and they cancel, the object still keeps its velocity.\n3. **Your last sentence contradicts the law.** \"Force makes things keep moving\" is the classic misconception, and it's the opposite of what the law says. Motion at constant velocity needs *no* force. Force is what *changes* velocity, meaning it speeds the object up, slows it down, or turns it. That is the idea behind $\\vec{F}_{net} = m\\vec{a}$ in the second law.\n\n**An example:** a hockey puck slides across ice and slowly stops. It's tempting to think it ran out of \"push.\" In fact friction is a force acting on it. In deep space with no friction, the puck would glide forever with no force at all.\n\nWould you try this one: a book slides at constant velocity across a table, so what can you say about the net force on it, and what does that tell you about friction and whatever is pushing it?",
+    "tool_calls": []
+  },
+  "recorded_under": {
+    "input_sha256": "f600fec864bdfd48b9eaa5329d3f023c0d6f8fc34953fbb3a94afba3ed156331",
+    "model": "claude-sonnet-5-5",
+    "prompt_hash": "17f9783cb987",
+    "schema_hash": "38a346cadbd3"
+  }
 }

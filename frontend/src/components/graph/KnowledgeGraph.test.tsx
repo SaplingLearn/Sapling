@@ -55,6 +55,14 @@ describe("KnowledgeGraph", () => {
     expect(queryByTestId("graph-mode-toggle")).toBeNull();
   });
 
+  it("on a skill graph (the loop on) the legend names the ladder's levels", () => {
+    const node = { id: "a", name: "Loops", subject: "CS", color: "#123456", mastery_tier: "mastered" as const,
+      mastery_score: 0.85, course_id: "c1", skill: 0.85, skill_mastered: false };
+    const { getByTestId } = render(<KnowledgeGraph nodes={[node]} edges={[]} />);
+    fireEvent.click(getByTestId("graph-color-toggle"));
+    expect(getByTestId("graph-color-legend").textContent).toBe("ProficientDevelopingGetting startedNot started");
+  });
+
   it("defaults to course colours with the toggle off and no legend", () => {
     const { getByTestId, queryByTestId } = render(<KnowledgeGraph nodes={[]} edges={[]} />);
     expect(getByTestId("mock-2d").getAttribute("data-color-mode")).toBe("course");
@@ -101,6 +109,31 @@ describe("KnowledgeGraph", () => {
     for (const g of getAllByTestId("mock-2d")) {
       expect(g.getAttribute("data-color-mode")).toBe("mastery");
     }
+  });
+
+  it("a host that fixes the mode gets it whatever is stored, with no toggle and no in-graph key", () => {
+    // The Tutor's session panel draws its own key under the map (PR #866 U4).
+    window.localStorage.setItem(GRAPH_COLOR_STORAGE_KEY, "course");
+    const { getAllByTestId, queryByTestId } = render(
+      <>
+        <KnowledgeGraph nodes={[]} edges={[]} colorMode="mastery" />
+        <KnowledgeGraph nodes={[]} edges={[]} />
+      </>,
+    );
+    const [fixed, shared] = getAllByTestId("mock-2d");
+    expect(fixed.getAttribute("data-color-mode")).toBe("mastery");
+    expect(shared.getAttribute("data-color-mode")).toBe("course");
+    // only the shared graph has the toggle; flipping it leaves the fixed one alone
+    const toggles = getAllByTestId("graph-color-toggle");
+    expect(toggles).toHaveLength(1);
+    fireEvent.click(toggles[0]);
+    expect(fixed.getAttribute("data-color-mode")).toBe("mastery");
+    expect(getAllByTestId("mock-2d")[1].getAttribute("data-color-mode")).toBe("mastery");
+    // the shared graph's key is its own; the fixed graph draws none
+    expect(getAllByTestId("graph-color-legend")).toHaveLength(1);
+    fireEvent.click(toggles[0]);
+    expect(queryByTestId("graph-color-legend")).toBeNull();
+    expect(fixed.getAttribute("data-color-mode")).toBe("mastery");
   });
 
   it("contains a renderer crash behind a placeholder with a working retry", async () => {

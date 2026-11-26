@@ -286,7 +286,6 @@ def save_onboarding_profile(
             "year": body.year,
             "majors": body.majors,
             "minors": body.minors,
-            "learning_style": body.learning_style,
         },
         on_conflict="user_id",
     )

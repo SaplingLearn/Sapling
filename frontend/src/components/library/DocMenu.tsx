@@ -24,6 +24,7 @@ import React from "react";
 
 import type { DocFolder, Document as Doc } from "@/lib/types";
 import type { EnrolledCourse } from "@/lib/api";
+import { LibraryDocNext } from "./LibraryDocNext";
 import { TYPE_ORDER, TYPES, courseLabel } from "./libraryModel";
 import { FolderIcon, Glyph, MENU_IN, MENU_OUT, MenuDivider, MenuScrim } from "./primitives";
 import { cn } from "@/lib/cn";
@@ -106,13 +107,13 @@ function DocumentFacts({ doc }: { doc: Doc }) {
       <MenuDivider />
       {doc.summary && (
         <>
-          <span className="pt-1.5 px-2.5 pb-1 font-sans text-md text-text-muted">Summary</span>
+          <span className="pt-1.5 px-2.5 pb-1 font-sans text-md text-[#6F6857]">Summary</span>
           <p className="m-0 pt-0 px-2.5 pb-1.5 text-md leading-[1.5] text-ink-600 text-pretty">{doc.summary}</p>
         </>
       )}
       {concepts.length > 0 && (
         <>
-          <span className="pt-1.5 px-2.5 pb-1 font-sans text-md text-text-muted">Key Concepts ({concepts.length})</span>
+          <span className="pt-1.5 px-2.5 pb-1 font-sans text-md text-[#6F6857]">Key Concepts ({concepts.length})</span>
           <div className="flex flex-wrap gap-1 pt-0 px-2.5 pb-2">
             {concepts.map((c, i) => (
               <span
@@ -173,7 +174,7 @@ export function DocMenu(props: DocMenuProps) {
   );
 
   const subList = (children: React.ReactNode) => (
-    <div className="flex flex-col gap-px pl-2.5">
+    <div role="group" className="flex flex-col gap-px pl-2.5">
       {children}
     </div>
   );
@@ -188,6 +189,10 @@ export function DocMenu(props: DocMenuProps) {
         className="absolute z-31 w-60 bg-bg-panel border border-[rgba(42,39,31,0.14)] rounded-[12px] [box-shadow:0_14px_36px_rgba(25,37,11,0.16)] flex flex-col overflow-y-auto" style={{ transformOrigin: position.origin, animation: anim, right: position.right, top: position.top, bottom: position.bottom, maxHeight: position.maxHeight }}
       >
         <div className="p-1.5 flex flex-col gap-px">
+          {/* The actions are menus inside the dialog (its facts and next steps
+              between them are not menu items), so every menuitem has the
+              parent ARIA requires. `display: contents` keeps the layout. */}
+          <div role="menu" aria-label="Document actions" className="contents">
           <button role="menuitem" className="sapHoverMenu flex items-center gap-2.5 py-[9px] px-2.5 border-0 rounded-[8px] [background:transparent] text-ink-800 [font-family:inherit] [font-style:inherit] [font-variant:inherit] [font-stretch:inherit] [line-height:inherit] text-base font-semibold text-left cursor-pointer" onClick={onRename}>
             Rename
           </button>
@@ -256,11 +261,14 @@ export function DocMenu(props: DocMenuProps) {
                 : scanState === "done" ? "Scanned ✓" : "Scan to Knowledge Graph"}
             </span>
           </button>
+          </div>
 
           <DocumentFacts doc={doc} />
+          <LibraryDocNext doc={doc} />
 
           <MenuDivider />
 
+          <div role="menu" aria-label="Remove" className="contents">
           <button
             role="menuitem"
             data-testid="library-detail-delete"
@@ -269,6 +277,7 @@ export function DocMenu(props: DocMenuProps) {
           >
             Move to Trash
           </button>
+          </div>
         </div>
       </div>
     </>

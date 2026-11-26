@@ -52,7 +52,24 @@ async def _load_message_history(session_id: str, *, exclude_id: str | None = Non
         filters={"session_id": f"eq.{session_id}"},
         order="created_at.asc",
     )
+    return _history_from_rows(rows, session_id, exclude_id)
 
+
+def _load_message_history_sync(session_id: str, *, exclude_id: str | None = None) -> list:
+    """`_load_message_history` for sync callers: the learning loop's turn
+    assembly (routes/learn_loop.py), which builds its history in sync code.
+    The same read and the same conversion (`_history_from_rows`)."""
+    rows = table("messages").select(
+        "id,role,content",
+        filters={"session_id": f"eq.{session_id}"},
+        order="created_at.asc",
+    )
+    return _history_from_rows(rows, session_id, exclude_id)
+
+
+def _history_from_rows(rows: list | None, session_id: str, exclude_id: str | None) -> list:
+    """The `messages` rows of `_load_message_history` as Pydantic AI messages
+    (its docstring has the mapping)."""
     history: list = []
     for r in rows or []:
         if exclude_id and r.get("id") == exclude_id:
@@ -109,10 +126,19 @@ async def save_message(
         await table("messages").ainsert(row)
 
 
-def save_message_sync(session_id: str, role: str, content: str, graph_update: dict = None) -> None:
-    """`save_message` for `_consume_pending`, which runs in the threadpool."""
+def save_message_sync(
+    session_id: str, role: str, content: str, graph_update: dict = None,
+    *, message_id: str | None = None,
+) -> None:
+    """`save_message` for sync callers (`_consume_pending`, which runs in the
+    threadpool, and the learning loop's turn). ``message_id``: as
+    `save_message`'s — a turn-derived id makes the write idempotent (#866 B4)."""
     raise_if_discarded(session_id)
-    table("messages").insert(_message_row(session_id, role, content, graph_update, None))
+    row = _message_row(session_id, role, content, graph_update, message_id)
+    if message_id:
+        table("messages").upsert(row, on_conflict="id", ignore_duplicates=True)
+    else:
+        table("messages").insert(row)
 
 
 #: Namespace for turn-derived message ids (#761). Any fixed UUID works; it

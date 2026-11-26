@@ -1,0 +1,62 @@
+@layer components {
+/* The legacy right panel's Learn next card (LearnNextCard.tsx). */
+
+.card {
+  padding: var(--pad-lg);
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--sp-6);
+}
+
+.empty {
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+
+.item {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-5);
+  width: 100%;
+  padding: var(--sp-5) var(--sp-6);
+  border-radius: var(--r-md);
+  background: var(--bg-subtle);
+  margin-bottom: var(--sp-3);
+  text-align: left;
+  transition: background-color var(--dur-fast) var(--ease);
+}
+
+.item:hover {
+  background: var(--bg-soft);
+}
+
+.itemText {
+  flex: 1;
+  min-width: 0;
+}
+
+.itemTitle {
+  font-size: var(--fs-md);
+  font-weight: 600;
+}
+
+.itemReason {
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+}
+
+.footer {
+  display: flex;
+  gap: var(--sp-3);
+  margin-top: var(--sp-5);
+}
+
+.footerBtn {
+  flex: 1;
+}
+
+}

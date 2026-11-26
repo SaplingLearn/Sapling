@@ -1,0 +1,10 @@
+{
+  "judge_model": "claude-opus-5-5",
+  "judge_prompt_hash": "04965e06502fce54287461706513430c3dcacd1ff4e9f575514434a4a837b08a",
+  "output": {
+    "evidence": "what is the one case where countdown(n) should stop and not call itself, and what should it do for every other n before calling itself on a smaller number?",
+    "reveals_final_answer": false,
+    "rung": 3
+  },
+  "served_sha256": "44d44fc99397972eb50e8b608aa1206bd2ba7209c3a40ef4e8520dd56a27898c"
+}

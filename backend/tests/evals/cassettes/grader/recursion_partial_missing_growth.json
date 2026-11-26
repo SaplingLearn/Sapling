@@ -1,0 +1,59 @@
+{
+  "context_checks": [
+    {
+      "withdrawn": [
+        "89638:no"
+      ]
+    }
+  ],
+  "context_keys": [
+    {
+      "input_sha256": "387054e9f0302f0e04648550f7889227f6166611e49060d027618f640b5c9b67",
+      "model": "claude-sonnet-5-5",
+      "prompt_hash": "d215edc372d3",
+      "schema_hash": "c322bdba6718"
+    }
+  ],
+  "run_keys": [
+    {
+      "input_sha256": "a842cd0d1c8746024c90017ec26b7369172fda14da8919058912c20a68e370fb",
+      "model": "claude-haiku-5-5",
+      "prompt_hash": "d215edc372d3",
+      "schema_hash": "e42cc97704ca"
+    }
+  ],
+  "runs": [
+    {
+      "addresses_grader": false,
+      "confidence": 0.9,
+      "contradicts_reference": false,
+      "feedback_hint": "You have identified what the base case does; now think about what would happen during the recursion if that case were missing. What would the function keep doing?",
+      "item_results": [
+        "89638:yes",
+        "46868:no"
+      ],
+      "matched_wrong_key": "",
+      "support": [
+        "89638: It's the case where the function stops recursing."
+      ]
+    }
+  ],
+  "span_checks": [
+    {
+      "asserted": [
+        "89638:yes"
+      ],
+      "item_results": [
+        "89638:yes"
+      ]
+    }
+  ],
+  "span_keys": [
+    {
+      "input_sha256": "100e8f2e90c97ebf4981954bbe9848e150772534f4a4e11d29ef2b14105940da",
+      "model": "claude-sonnet-5-5",
+      "prompt_hash": "d215edc372d3",
+      "schema_hash": "f72e918aa5ce"
+    }
+  ]
+}

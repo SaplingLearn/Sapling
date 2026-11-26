@@ -23,6 +23,7 @@ from services.quiz.attempts import (
     _sweep_abandoned,
 )
 from services.quiz.wire import _is_wire_question, _strip_answer_key, _written_response_text
+from learning import quiz_evidence
 
 # Log records keep the name they had in routes/quiz.py before the #118 split:
 # the move must not change what an operator (or a caplog test) filters on.
@@ -108,7 +109,8 @@ async def list_attempts(
             "difficulty": r.get("difficulty"),
             "mastery_before": before,
             "mastery_after": after,
-            "mastery_delta": delta,
+            # PKG-14b: p_after − p_before (the legacy per-quiz delta key is gone).
+            "p_delta": delta,
             "created_at": r.get("created_at"),
             "completed_at": r.get("completed_at"),
         })
@@ -129,7 +131,14 @@ async def get_attempt(attempt_id: str, request: Request):
         order="question_index.asc",
     ) or []
     responses = [
-        {**r, "answer_text": _written_response_text(r) if r.get("answer_text") else None}
+        {
+            **r,
+            "answer_text": _written_response_text(r) if r.get("answer_text") else None,
+            # Learning-loop spec §13 A132: the stated confidence as the label
+            # the answer body takes (the stored number is the §3.3 rule's
+            # scale), so a resumed question shows the level that was stated.
+            "confidence": quiz_evidence.stored_label(r.get("confidence")),
+        }
         for r in responses
     ]
     last_activity = max(
@@ -146,7 +155,13 @@ async def get_attempt(attempt_id: str, request: Request):
     questions = decrypt_json_column(
         attempt["questions_json"], bind=bind("quiz_attempts", "questions_json", attempt_id),
     ) or []
-    if questions and not all(_is_wire_question(q) for q in questions):
+    # Only an in-progress attempt hands back questions: a completed or
+    # abandoned one would otherwise let a client keep answering (the write
+    # paths refuse it, but there's no reason to ship the payload at all).
+    resumable = status == "in_progress"
+    # A closed attempt ships no questions, so its stored shape is no reason to
+    # refuse it: it answers 200 resumable:false like any closed attempt (K41).
+    if resumable and questions and not all(_is_wire_question(q) for q in questions):
         # A stored shape this code doesn't recognise has no safe keyless
         # projection — passing it through would ship whatever key it holds
         # (legacy rows store the answer under `a`). Refuse the resume.
@@ -159,15 +174,15 @@ async def get_attempt(attempt_id: str, request: Request):
             code=QuizErrorCode.QUIZ_ATTEMPT_NOT_RESUMABLE,
             message="This quiz can't be resumed. Start a new one.",
         )
-    # Only an in-progress attempt hands back questions: a completed or
-    # abandoned one would otherwise let a client keep answering (the write
-    # paths refuse it, but there's no reason to ship the payload at all).
-    resumable = status == "in_progress"
+    from learning import quiz_session_mode
+
     return {
         "quiz_id": attempt["id"],
         "status": status,
         "resumable": resumable,
         "difficulty": attempt.get("difficulty"),
+        # W7.8: resume keeps Practice / Exam Twin framing (Ask hide, results).
+        "session_mode": quiz_session_mode.parse(attempt.get("session_mode")),
         "concept_node_id": attempt.get("concept_node_id"),
         "questions": _strip_answer_key(questions) if resumable else [],
         "responses": responses,

@@ -11,7 +11,10 @@
  *                 blend between their endpoints; a small legend explains it.
  * The choice persists in localStorage and is synced across mounted graphs
  * (the `storage` event for other tabs plus a same-tab custom event), so
- * flipping it on one graph flips every graph.
+ * flipping it on one graph flips every graph. A host that fixes the mode
+ * (`colorMode`: the Tutor's session panel, which draws its own key under the
+ * map) gets neither the toggle nor the in-graph key, and the stored choice
+ * does not apply to it.
  *
  * (A 3D WebGL/three.js mode used to live behind a 2D⇄3D toggle in this same
  * corner; it was dropped. A stale `sapling.kg.mode` value is simply ignored.)
@@ -21,11 +24,12 @@
  * root error page.
  */
 
+import { graphUsesSkill, tierWord } from "@/lib/levels";
 import React from "react";
 import type { GraphEdge, GraphNode } from "@/lib/data";
+import styles from "./graph.module.css";
 import {
   MASTERY_PALETTE,
-  TIER_LABEL,
   TIER_OPACITY,
   type GraphColorMode,
   type MasteryTier,
@@ -85,6 +89,8 @@ type Props = {
   width?: number;
   height?: number;
   highlightId?: string;
+  /** W3.2: solid practiced outline by node id (forwarded to KnowledgeGraph2D). */
+  practicedIds?: ReadonlySet<string> | readonly string[];
   onNodeClick?: (n: GraphNode) => void;
   /** 2D only: top offset of the zoom stack, for a host that puts its own
    *  control (the Tree's Fullscreen icon) in the corner above it. */
@@ -96,6 +102,15 @@ type Props = {
   focusCourseId?: string | null;
   onHoverCourse?: (courseId: string | null) => void;
   zoomRequest?: { courseId: string | null; seq: number } | null;
+  /** Fix the colour mode: no toggle and no in-graph key (the host shows the
+   *  key), and the stored choice does not apply. Omitted: the shared toggle. */
+  colorMode?: GraphColorMode;
+  /** Keep every node and its caption in the window (see KnowledgeGraph2D). */
+  fit?: boolean;
+  /** Draw the zoom stack (default). */
+  zoomControls?: boolean;
+  /** `pinch`: only a pinch zooms, a plain wheel scrolls the host (see KnowledgeGraph2D). */
+  wheelZoom?: "always" | "pinch";
 };
 
 const TIERS: MasteryTier[] = ["mastered", "learning", "struggling", "unexplored"];
@@ -103,7 +118,7 @@ const TIERS: MasteryTier[] = ["mastered", "learning", "struggling", "unexplored"
 /** Four overlapping tier dots — the toggle's glyph. */
 function PaletteGlyph() {
   return (
-    <svg width={22} height={12} viewBox="0 0 22 12" aria-hidden="true" className="block">
+    <svg width={22} height={12} viewBox="0 0 22 12" aria-hidden="true" className={styles.glyph}>
       {TIERS.map((t, i) => (
         <circle key={t} cx={5 + i * 4} cy={6} r={4.5} fill={MASTERY_PALETTE[t]} />
       ))}
@@ -130,7 +145,7 @@ function GraphCrashFallback({ error, reset }: { error: Error; reset: () => void 
     <div
       role="status"
       data-testid="graph-crash-fallback"
-      className="flex flex-col gap-2.5 items-center justify-center h-full text-text-dim text-md"
+      className={styles.crash}
     >
       <span>The graph couldn&apos;t render here.</span>
       <button
@@ -147,45 +162,59 @@ function GraphCrashFallback({ error, reset }: { error: Error; reset: () => void 
 
 export function KnowledgeGraph(props: Props) {
   const { width = 800, height = 480 } = props;
-  const [colorMode, setColorMode] = useGraphColorMode();
+  const [storedMode, setColorMode] = useGraphColorMode();
+  const fixed = props.colorMode !== undefined;
+  const colorMode = props.colorMode ?? storedMode;
   const mastery = colorMode === "mastery";
+  // On a skill graph (the loop on) the tiers are the ladder's (lib/levels.ts).
+  const skillWords = graphUsesSkill(props.nodes);
+  // The key fades in when the student flips the colours, not on first paint.
+  const [switched, setSwitched] = React.useState(false);
   return (
-    <div data-testid="graph-container" className="relative" style={{ width, height }}>
+    <div data-testid="graph-container" className={styles.container} style={{ width, height }}>
       <ErrorBoundary fallback={(error, reset) => <GraphCrashFallback error={error} reset={reset} />}>
         <KnowledgeGraph2D {...props} colorMode={colorMode} />
       </ErrorBoundary>
-      <button
-        type="button"
-        data-testid="graph-color-toggle"
-        className="btn btn--ghost btn--sm absolute left-3 bg-bg-panel border border-border rounded-sm shadow-sm z-5 top-3 flex items-center gap-1.5 py-[3px] px-2 text-xs"
-        // Constant name + aria-pressed: the label says what the switch
-        // turns on, the pressed state says whether it is on.
-        aria-pressed={mastery}
-        title={mastery ? "Back to course colors" : "Color nodes by mastery"}
-        onClick={() => setColorMode(mastery ? "course" : "mastery")}
-        style={{ ...(mastery
-            ? { borderColor: MASTERY_PALETTE.hub, color: MASTERY_PALETTE.hub, fontWeight: 600 }
-            : null) }}
-      >
-        <PaletteGlyph />
-        <span>Mastery colors</span>
-      </button>
-      {(mastery || props.legible) && (
+      {!fixed && (
+        <button
+          type="button"
+          data-testid="graph-color-toggle"
+          className={`btn btn--ghost btn--sm ${styles.toggle}${mastery ? ` ${styles.toggleOn}` : ""}`}
+          // Constant name + aria-pressed: the label says what the switch
+          // turns on, the pressed state says whether it is on.
+          aria-pressed={mastery}
+          title={mastery ? "Back to course colors" : "Color nodes by mastery"}
+          onClick={() => {
+            setSwitched(true);
+            setColorMode(mastery ? "course" : "mastery");
+          }}
+          style={{ "--toggle-on": MASTERY_PALETTE.hub } as React.CSSProperties}
+        >
+          <PaletteGlyph />
+          <span>Mastery colors</span>
+        </button>
+      )}
+      {!fixed && (mastery || props.legible) && (
         // Mastery colors: one colour per tier. Course colors (legible graphs
         // only): the course's colour, with the tier carried by how solid the
         // node is, so the key shows the same dot at each tier's opacity.
         <ul
           data-testid={mastery ? "graph-color-legend" : "graph-tier-legend"}
           aria-label={mastery ? "Mastery colors" : "Mastery shown as how solid a node is"}
-          className="absolute left-3 bg-bg-panel border border-border rounded-sm shadow-sm z-5 bottom-3 list-none m-0 py-1.5 px-2.5 flex flex-wrap gap-y-1 gap-x-3 text-xs text-text-dim" style={{ maxWidth: width - 24 }}
+          key={mastery ? "mastery" : "tiers"}
+          className={`${styles.panel} ${styles.legend}${switched ? ` ${styles.legendEnter}` : ""}`}
         >
           {TIERS.map((t) => (
-            <li key={t} className="flex items-center gap-[5px]">
+            <li key={t} className={styles.legendItem}>
               <span
                 aria-hidden="true"
-                className="w-[9px] h-[9px] rounded-[50%]" style={{ background: mastery ? MASTERY_PALETTE[t] : "var(--text)", opacity: mastery ? 1 : TIER_OPACITY[t] }}
+                className={styles.legendDot}
+                style={{
+                  background: mastery ? MASTERY_PALETTE[t] : "var(--text)",
+                  opacity: mastery ? 1 : TIER_OPACITY[t],
+                }}
               />
-              {TIER_LABEL[t]}
+              {tierWord(t, skillWords)}
             </li>
           ))}
         </ul>

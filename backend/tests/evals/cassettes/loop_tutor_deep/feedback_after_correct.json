@@ -1,0 +1,19 @@
+{
+  "attempts": [
+    "{\"key_idea\": \"Naming your base case was a clear first move.\", \"body\": \"The verdict on your answer is correct.\", \"question\": \"How could you check for yourself that your base case holds up the next time you write a recursive definition?\"}"
+  ],
+  "input_sha256": "99a20e5d11427337630e1c3fcdd955e9a3603ed430ab1a9f235846db54bde553",
+  "model": "claude-sonnet-5-5",
+  "output": {
+    "body": "The verdict on your answer is correct.",
+    "key_idea": "Naming your base case was a clear first move.",
+    "question": "How could you check for yourself that your base case holds up the next time you write a recursive definition?"
+  },
+  "prompt_hash": "7d2b25572445",
+  "requests": 1,
+  "rescued": false,
+  "retries": 0,
+  "schema_hash": "ab89f4f429db",
+  "slot": "loop_tutor_deep",
+  "tool_calls": []
+}

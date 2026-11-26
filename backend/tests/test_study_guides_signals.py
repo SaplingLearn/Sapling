@@ -9,7 +9,7 @@ import logging
 
 import pytest
 
-import config
+from learning import params
 from services.encryption import encrypt_json
 from services.study_guides import signals
 from services.tool_signals import Expect
@@ -96,6 +96,18 @@ def test_mastery_is_the_students_score_per_concept_in_the_course(db):
     assert run(signals.amastery(ME, COURSE)) == {"Pointers": 0.2, "Recursion": 0.82, "Unscored": 0.0}
 
 
+def test_the_concept_node_is_the_students_own_as_the_tree_spells_it(db):
+    """What a guide check answer writes its evidence on (answers.py)."""
+    db.node("n1", "Recursion", 0.82)
+    db.node("n-root", "CS 111", 0.0, tier="subject_root")
+    db.node("n-bio", "Mitosis", 0.9, course_id=OTHER_COURSE)
+    db.node("n-theirs", "Pointers", 0.1, user_id=OTHER)
+    node = run(signals.aconcept_node(ME, COURSE, "  recursion "))
+    assert (node["id"], node["concept_name"], node["mastery_score"]) == ("n1", "Recursion", 0.82)
+    for missing in ("Pointers", "Mitosis", "CS 111"):
+        assert run(signals.aconcept_node(ME, COURSE, missing)) is None
+
+
 def test_the_mastery_read_reports_through_the_silent_empty_seam(db):
     db.node("n1", "Recursion", 0.82)
     run(signals.amastery(ME, COURSE))
@@ -125,11 +137,12 @@ def test_a_course_with_only_its_root_node_is_not_a_missing_graph(db):
     assert [r for r in db.rows["graph_nodes"] if _matches(r, probe)] == []
 
 
-def test_tiers_follow_the_configured_thresholds():
+def test_tiers_follow_the_one_tier_map():
+    """PKG-14b: the loop's spec §3.1 cuts (learning.bkt.tier_for), not a copy."""
     assert signals.tiers({
-        "a": config.MASTERY_MASTERED_MIN,
-        "b": config.MASTERY_MASTERED_MIN - 0.01,
-        "c": config.MASTERY_LEARNING_MIN - 0.01,
+        "a": params.BKT_PROFICIENT,
+        "b": params.BKT_PROFICIENT - 0.01,
+        "c": params.BAND_NOVICE_MAX - 0.01,
         "d": 0.0,
     }) == {"a": "mastered", "b": "learning", "c": "struggling", "d": "unexplored"}
     assert signals.tiers({}) == {}
@@ -242,3 +255,10 @@ def test_concepts_the_tree_does_not_have_read_no_digests(db):
     assert run(signals.amistakes(ME, COURSE, [])) == []
     assert "quiz_context" not in db.reads
     assert db.reports == []
+
+
+def test_the_read_surfaces_classify_a_drifted_score():
+    from services.study_guides import plan, signals
+
+    assert signals.tiers({"Heaps": 1.4, "Graphs": -0.2}) == {"Heaps": "mastered", "Graphs": "unexplored"}
+    assert plan._tier(7.0) == "mastered"

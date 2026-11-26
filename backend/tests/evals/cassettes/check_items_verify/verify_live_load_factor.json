@@ -1,0 +1,31 @@
+{
+  "output": {
+    "concepts": [
+      {
+        "asks": "Pick the load factor of a table and justify it",
+        "concept": "Load Factor",
+        "item": "1"
+      }
+    ],
+    "criteria": [
+      {
+        "asked": true,
+        "criterion": "c1",
+        "item": "1",
+        "why": "Asks for the reason for the pick; entries over buckets is that reason"
+      },
+      {
+        "asked": false,
+        "criterion": "c2",
+        "item": "1",
+        "why": "Question asks no comparison with a 0.5 threshold; only the pick and its reason"
+      }
+    ]
+  },
+  "recorded_under": {
+    "input_sha256": "980264c150ad093822dbc3a7744ae346d4f7ae52b24d6b187ba7d2fbafe70b1e",
+    "model": "claude-haiku-5-5",
+    "prompt_hash": "d9233c2230b2",
+    "schema_hash": "647aab01084a"
+  }
+}

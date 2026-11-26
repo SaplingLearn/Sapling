@@ -1,24 +1,50 @@
 "use client";
 import React from "react";
 import Link from "next/link";
+import { AnimatePresence, motion } from "framer-motion";
 
 import { Icon } from "@/components/Icon";
 import { tierFill, tierLabel, tierText } from "@/components/studyGuide/shared/tiers";
+import { useFlag } from "@/context/FlagsContext";
+import { useMotionPresets } from "@/lib/motion";
+import { LEARNING_COPY } from "@/lib/learningCopy";
+import { buildQuizHref } from "@/lib/quiz/source";
 import type { ConceptMapBlock } from "@/lib/studyGuide/types";
+import { studyGuideReaderHref } from "@/lib/toolHrefs";
 
 import { useReader } from "../ReaderContext";
 import { conceptTier } from "../readerModel";
 import { BlockFrame } from "./BlockFrame";
 import s from "./blocks.module.css";
 
-/** What a tile offers to ask, and the message the tutor gets for it. */
+/** Tutor Ask prompts only — Quiz is a tool deep link (W7.D2 / W7.9). */
 const PROMPTS: { label: string; message: (concept: string) => string }[] = [
   { label: "Explain it a simpler way", message: concept => `Explain ${concept} a simpler way.` },
   { label: "Give me another example", message: concept => `Give me another example of ${concept}.` },
-  { label: "Quiz me on this", message: concept => `Quiz me on ${concept}.` },
 ];
 
-function TutorPrompts({ blockId, concept, onClose }: { blockId: string; concept: string; onClose: () => void }) {
+/** Guide concept-map → Quiz Practice with `start=1`. Concept maps carry names,
+ *  so the href uses `topic` (fuzzy resolve); return lands back on this guide. */
+export function guideConceptQuizHref(guideId: string, conceptName: string): string {
+  return buildQuizHref(
+    { topic: conceptName },
+    { kind: "link", returnTo: studyGuideReaderHref(guideId) },
+    { start: true },
+  );
+}
+
+function TutorPrompts({
+  blockId,
+  concept,
+  quizHref,
+  onClose,
+}: {
+  blockId: string;
+  concept: string;
+  /** Null while `hide_quiz` is on. */
+  quizHref: string | null;
+  onClose: () => void;
+}) {
   const { askTutor, tutorBusy } = useReader();
   return (
     <div className={s.prompts}>
@@ -38,6 +64,15 @@ function TutorPrompts({ blockId, concept, onClose }: { blockId: string; concept:
         </button>
       </div>
       <div className={s.promptList}>
+        {quizHref && (
+          <Link
+            href={quizHref}
+            className={s.option}
+            data-testid={`guide-concept-quiz-${blockId}`}
+          >
+            {LEARNING_COPY.quizConcept}
+          </Link>
+        )}
         {PROMPTS.map((prompt, i) => (
           <button
             key={prompt.label}
@@ -63,9 +98,13 @@ function TutorPrompts({ blockId, concept, onClose }: { blockId: string; concept:
 /** What the section builds on, in learning order, with mastery as it is now. */
 export function ConceptMapBlockView({ block }: { block: ConceptMapBlock }) {
   const { guide } = useReader();
+  const quizShown = useFlag("hide_quiz") !== "on";
+  const m = useMotionPresets();
   const [picked, setPicked] = React.useState<number | null>(null);
   const selected = picked === null ? undefined : block.nodes[picked];
   const treeHref = selected ? `/tree?suggest=${encodeURIComponent(selected.concept)}` : "/tree";
+  const quizHref =
+    selected && quizShown ? guideConceptQuizHref(guide.id, selected.concept) : null;
 
   return (
     <BlockFrame
@@ -79,7 +118,11 @@ export function ConceptMapBlockView({ block }: { block: ConceptMapBlock }) {
           Open in Tree
         </Link>
       }
-      footer="Left to right is the order to learn them in. Select a concept to ask the tutor about it."
+      footer={
+        quizShown
+          ? "Left to right is the order to learn them in. Select a concept to quiz it or ask the tutor."
+          : "Left to right is the order to learn them in. Select a concept to ask the tutor about it."
+      }
     >
       <div className={s.concepts}>
         {block.nodes.map((node, i) => {
@@ -103,7 +146,27 @@ export function ConceptMapBlockView({ block }: { block: ConceptMapBlock }) {
           );
         })}
       </div>
-      {selected && <TutorPrompts blockId={block.id} concept={selected.concept} onClose={() => setPicked(null)} />}
+      {/* The prompts open under the map and close back into it; picking
+          another concept keeps the panel and swaps its text. */}
+      <AnimatePresence initial={false}>
+        {selected && (
+          <motion.div
+            key="prompts"
+            variants={{ closed: m.collapse.initial, open: m.collapse.animate, gone: m.collapse.exit }}
+            initial="closed"
+            animate="open"
+            exit="gone"
+            transition={m.collapse.transition}
+          >
+            <TutorPrompts
+              blockId={block.id}
+              concept={selected.concept}
+              quizHref={quizHref}
+              onClose={() => setPicked(null)}
+            />
+          </motion.div>
+        )}
+      </AnimatePresence>
     </BlockFrame>
   );
 }

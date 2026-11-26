@@ -1,0 +1,267 @@
+@layer components {
+/* The upload modal (DocumentUploadModal.tsx). The card enters with the
+   global `.slide-up`; everything here animates a CHANGE (a file added, a
+   stage reached, a status flipped). The global reduced-motion reset
+   collapses all of it. */
+
+.backdrop {
+  position: fixed;
+  inset: 0;
+  background: var(--scrim);
+  z-index: var(--z-modal);
+  display: grid;
+  place-items: center;
+  padding: var(--sp-10);
+  animation: upload-fade-in var(--dur) var(--ease-out) both;
+}
+
+.card {
+  /* The modal's width: room for a file row's two selects side by side. */
+  --upload-modal-w: 720px;
+
+  width: min(var(--upload-modal-w), 100%);
+  max-height: 88vh;
+  overflow: hidden;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--sp-8) var(--sp-10);
+  border-bottom: 1px solid var(--border);
+}
+
+/* 20px sits between --fs-xl (18) and --fs-2xl (22). */
+.title {
+  --upload-title-size: 20px;
+  font-size: var(--upload-title-size);
+}
+
+.body {
+  padding: var(--sp-10);
+  overflow-y: auto;
+}
+
+.dropzone {
+  border: 2px dashed var(--border-strong);
+  border-radius: var(--r-md);
+  padding: var(--sp-14);
+  text-align: center;
+  background: var(--bg-subtle);
+  transition:
+    border-color var(--dur-fast) var(--ease),
+    background var(--dur-fast) var(--ease),
+    transform var(--dur-fast) var(--ease-out);
+}
+
+.dropzone[data-dragging="true"] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  transform: scale(1.01);
+}
+
+.dropTitle {
+  font-size: var(--fs-lg);
+  margin-bottom: var(--sp-3);
+}
+
+.dropHint {
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+  margin-bottom: var(--sp-6);
+}
+
+.addCourse {
+  margin-top: var(--sp-8);
+}
+
+.addCourseLabel {
+  margin-bottom: var(--sp-3);
+}
+
+.search {
+  width: 100%;
+  padding: var(--sp-4) var(--sp-6);
+  font-size: var(--fs-md);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--bg-input);
+}
+
+.results {
+  /* About four results before the list scrolls. */
+  --upload-results-max-h: 140px;
+
+  margin-top: var(--sp-3);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  max-height: var(--upload-results-max-h);
+  overflow-y: auto;
+  animation: upload-fade-in var(--dur-fast) var(--ease-out) both;
+}
+
+.result {
+  width: 100%;
+  padding: var(--sp-4) var(--sp-6);
+  font-size: var(--fs-sm);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  transition: background var(--dur-fast) var(--ease);
+}
+
+.result:hover:not(:disabled) {
+  background: var(--bg-subtle);
+}
+
+.files {
+  margin-top: var(--sp-10);
+}
+
+.empty {
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+
+.row {
+  padding: var(--sp-7);
+  margin-bottom: var(--sp-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-5);
+  animation: upload-rise-in var(--dur) var(--ease-out) both;
+}
+
+.rowHead {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-5);
+}
+
+.docIcon {
+  /* A page-shaped tile: a document's proportions, not spacing steps. */
+  --upload-doc-w: 28px;
+  --upload-doc-h: 36px;
+
+  width: var(--upload-doc-w);
+  height: var(--upload-doc-h);
+  border-radius: var(--r-xs);
+  background: var(--accent-soft);
+  color: var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.fileText {
+  flex: 1;
+  min-width: 0;
+}
+
+.fileName {
+  font-size: var(--fs-md);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.small {
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+}
+
+.fields {
+  display: flex;
+  gap: var(--sp-4);
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+/* Re-keyed per stage message, so each new stage settles in. */
+.progress {
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+  font-style: italic;
+  line-height: 1.4;
+  animation: upload-fade-in var(--dur) var(--ease-out) both;
+}
+
+.summary {
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+  line-height: 1.5;
+  animation: upload-fade-in var(--dur-slow) var(--ease-out) both;
+}
+
+.concepts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+}
+
+.error {
+  font-size: var(--fs-xs);
+  color: var(--err);
+  animation: upload-fade-in var(--dur) var(--ease-out) both;
+}
+
+.reference {
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+  display: flex;
+  gap: var(--sp-3);
+  align-items: center;
+}
+
+.copy {
+  padding: 0 var(--sp-3);
+  font-size: var(--fs-2xs);
+}
+
+.footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--sp-6) var(--sp-10);
+  border-top: 1px solid var(--border);
+}
+
+.footerNote {
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+
+.footerActions {
+  display: flex;
+  gap: var(--sp-4);
+}
+
+/* Re-keyed per status, so a flip (queued → processing → done) pops once. */
+.status {
+  font-size: var(--fs-2xs);
+  animation: upload-status-in var(--dur) var(--ease-emphasized) both;
+}
+
+@keyframes upload-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes upload-rise-in {
+  from { opacity: 0; transform: translateY(var(--sp-4)); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes upload-status-in {
+  from { opacity: 0; transform: scale(0.85); }
+  to { opacity: 1; transform: none; }
+}
+
+}

@@ -6,6 +6,7 @@ import {
   fetchQuizConfig,
   generateQuiz,
   getAttempt,
+  getQuizPlan,
   listAttempts,
   submitQuiz,
 } from "./api";
@@ -130,11 +131,40 @@ describe("answerQuestion", () => {
     });
   });
 
-  it("omits time_ms and confidence — nothing reads them back (G10)", async () => {
+  it("omits time_ms — nothing reads it back (G10)", async () => {
     await answerQuestion("a-1", { questionIndex: 0, selectedIndex: 1, questionId: 1 });
     const body = JSON.parse(lastCall()[1].body as string) as Record<string, unknown>;
     expect("time_ms" in body).toBe(false);
+  });
+
+  // Learning-loop spec §13 A132: the stated confidence is A127's label, sent
+  // only when one was chosen — a skip is absent, never a default level.
+  it.each(["guessing", "fairly_sure", "sure"] as const)("sends a chosen confidence as its label (%s)", async level => {
+    await answerQuestion("a-1", { questionIndex: 0, selectedIndex: 1, questionId: 1, confidence: level });
+    expect(JSON.parse(lastCall()[1].body as string)).toEqual({
+      question_index: 0,
+      selected_index: 1,
+      question_id: 1,
+      confidence: level,
+    });
+  });
+
+  it.each([undefined, null])("sends no confidence key at all for a skip (%s)", async confidence => {
+    await answerQuestion("a-1", { questionIndex: 0, selectedIndex: 1, questionId: 1, confidence });
+    const body = JSON.parse(lastCall()[1].body as string) as Record<string, unknown>;
     expect("confidence" in body).toBe(false);
+  });
+
+  it("carries the confidence beside a written answer too", async () => {
+    await answerQuestion("a-1", {
+      questionIndex: 0, selectedIndex: null, questionId: 1, answerText: "base case", confidence: "sure",
+    });
+    expect(JSON.parse(lastCall()[1].body as string)).toEqual({
+      question_index: 0,
+      answer_text: "base case",
+      question_id: 1,
+      confidence: "sure",
+    });
   });
 
   it("url-encodes the attempt id", async () => {
@@ -151,7 +181,18 @@ describe("submitQuiz", () => {
     expect(JSON.parse(init.body as string)).toEqual({
       quiz_id: "a-1",
       answers: [{ question_id: 1, selected_label: "B" }],
+      tz_offset_min: new Date().getTimezoneOffset(),
     });
+  });
+
+  it("sends the student's time-zone offset, so the due count reads their local day's review (#866 K17)", async () => {
+    const spy = vi.spyOn(Date.prototype, "getTimezoneOffset").mockReturnValue(300);
+    try {
+      await submitQuiz("a-1", []);
+      expect(JSON.parse(lastCall()[1].body as string).tz_offset_min).toBe(300);
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it("accepts an empty answers list (recorded rows win at reconciliation)", async () => {
@@ -169,6 +210,18 @@ describe("listAttempts", () => {
   it("passes limit and offset through", async () => {
     await listAttempts("u 1", { limit: 20, offset: 40 });
     expect(lastCall()[0]).toBe("/api/quiz/attempts?user_id=u+1&limit=20&offset=40");
+  });
+});
+
+describe("getQuizPlan", () => {
+  it("asks for every course when no course is named", async () => {
+    await getQuizPlan("u1");
+    expect(lastCall()[0]).toBe("/api/quiz/plan?user_id=u1");
+  });
+
+  it("sends the course a queue is for", async () => {
+    await getQuizPlan("u 1", "c 1");
+    expect(lastCall()[0]).toBe("/api/quiz/plan?user_id=u+1&course_id=c+1");
   });
 });
 

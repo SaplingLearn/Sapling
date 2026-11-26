@@ -14,6 +14,7 @@ import React from "react";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AnswerResult, GenerateResult, SubmitResult } from "@/lib/quiz/types";
+import { __resetLoopStatusMemoForTests } from "../learn/useLoopStatus";
 
 // ── next/navigation ────────────────────────────────────────────────────────
 let searchParams = new URLSearchParams();
@@ -46,6 +47,7 @@ const coreApi = vi.hoisted(() => ({
   getCourses: vi.fn(),
   getGraph: vi.fn(),
   fetchGamificationMe: vi.fn(),
+  getLoopStatus: vi.fn(),
 }));
 vi.mock("@/lib/api", async importActual => {
   const actual = await importActual<typeof import("@/lib/api")>();
@@ -118,6 +120,8 @@ const realReplaceState = window.history.replaceState.bind(window.history);
 const realPushState = window.history.pushState.bind(window.history);
 
 beforeEach(() => {
+  // A probe answer from an earlier test would be reused (#866 K46).
+  __resetLoopStatusMemoForTests();
   // Put jsdom where the student actually is. `exit` reads
   // `window.location.pathname` to tell "same route" from "real navigation", so a
   // test left on jsdom's default "/" would exercise the wrong branch. Done
@@ -178,6 +182,7 @@ beforeEach(() => {
   coreApi.getCourses.mockResolvedValue({ courses: COURSES });
   coreApi.getGraph.mockResolvedValue({ nodes: NODES, edges: [], stats: {} });
   coreApi.fetchGamificationMe.mockRejectedValue(new Error("not under test"));
+  coreApi.getLoopStatus.mockResolvedValue({ active: false });
 });
 
 afterEach(() => {
@@ -310,5 +315,67 @@ describe("QuizScreen — Done drops the deep link (#537)", () => {
     expect(navigations).toEqual([{ via: "push", url: "/tree?node=c1" }]);
     // …and the History API is NOT used to fake a cross-route move.
     expect(location.pathname).toBe("/quiz");
+  });
+});
+
+describe("QuizScreen — the stated confidence follows the learning loop (#866 K46)", () => {
+  /** Home → start: the first question on screen. */
+  async function openFirstQuestion(): Promise<void> {
+    render(
+      <ToastProvider>
+        <QuizScreen />
+      </ToastProvider>,
+    );
+    const start = await screen.findByTestId("quiz-start", undefined, { timeout: 3000 });
+    await act(async () => {
+      start.click();
+    });
+    await screen.findByTestId("quiz-answer-option-A", undefined, { timeout: 3000 });
+  }
+
+  it("asks nothing while the loop is off for the student: the pre-loop question screen", async () => {
+    await openFirstQuestion();
+    await waitFor(() => expect(coreApi.getLoopStatus).toHaveBeenCalledWith("u1"));
+    expect(screen.queryByTestId("quiz-confidence")).toBeNull();
+  });
+
+  it("asks 'How sure are you?' while the loop is on", async () => {
+    coreApi.getLoopStatus.mockResolvedValue({ active: true });
+    await openFirstQuestion();
+    expect(await screen.findByTestId("quiz-confidence")).toBeTruthy();
+  });
+
+  it("W7.4: SessionTop and A132 confidence coexist when the loop is on", async () => {
+    coreApi.getLoopStatus.mockResolvedValue({ active: true });
+    await openFirstQuestion();
+    const top = await screen.findByTestId("quiz-session-top");
+    const confidence = await screen.findByTestId("quiz-confidence");
+    expect(document.querySelector("[data-quiz-session]")).not.toBeNull();
+    expect(top.contains(confidence)).toBe(false);
+    expect(screen.getByTestId("quiz-panel")).toContainElement(confidence);
+  });
+});
+
+describe("QuizScreen — W7.1 focus session chrome", () => {
+  it("marks the live attempt for nav hide and mounts session top, not the page TopBar", async () => {
+    render(
+      <ToastProvider>
+        <QuizScreen />
+      </ToastProvider>,
+    );
+    // Home keeps the ordinary page chrome.
+    expect(await screen.findByTestId("quiz-home", undefined, { timeout: 3000 })).toBeTruthy();
+    expect(document.querySelector("[data-quiz-session]")).toBeNull();
+    expect(screen.getByRole("heading", { name: "Quiz" })).toBeInTheDocument();
+
+    await act(async () => {
+      screen.getByTestId("quiz-start").click();
+    });
+    await screen.findByTestId("quiz-answer-option-A", undefined, { timeout: 3000 });
+
+    expect(document.querySelector("[data-quiz-session]")).not.toBeNull();
+    expect(screen.getByTestId("quiz-session-top")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Quiz" })).toBeNull();
+    expect(screen.getByTestId("quiz-leave")).toHaveAttribute("aria-label", "Leave session");
   });
 });

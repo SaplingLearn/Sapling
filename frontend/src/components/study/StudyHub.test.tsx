@@ -26,11 +26,19 @@ vi.mock("@/lib/api", () => ({
 }));
 vi.mock("@/lib/studyGuide/api", () => ({ listGuides: vi.fn() }));
 vi.mock("@/lib/quiz/api", () => ({ listAttempts: vi.fn() }));
-vi.mock("@/lib/studyApi", () => ({ getStudyDaily: vi.fn(), setStudyDailyGoal: vi.fn(async (_u: string, m: number) => ({ goal_minutes: m })) }));
+vi.mock("@/lib/studyApi", () => ({
+  getStudyDaily: vi.fn(),
+  setStudyDailyGoal: vi.fn(async (_u: string, m: number) => ({ goal_minutes: m })),
+  getStudyNext: vi.fn(),
+}));
 vi.mock("@/lib/topicChecklistApi", () => ({ getTopicChecklist: vi.fn(), refreshTopicChecklist: vi.fn() }));
-const flagState = vi.hoisted(() => ({ hideQuiz: false }));
+const flagState = vi.hoisted(() => ({ hideQuiz: false, flags: {} as Record<string, string> }));
 vi.mock("@/context/FlagsContext", () => ({
-  useFlagMap: () => ({ flags: flagState.hideQuiz ? { hide_quiz: "on" } : {}, ready: true }),
+  useFlagMap: () => ({
+    flags: flagState.hideQuiz ? { ...flagState.flags, hide_quiz: "on" } : flagState.flags,
+    ready: true,
+  }),
+  useFlag: (key: string) => flagState.flags[key] ?? "off",
 }));
 
 import { StudyHub } from "./StudyHub";
@@ -38,11 +46,12 @@ import { HUB_IN, HUB_IN_LATE, HUB_OUT, HUB_SWITCH_MS, HUB_WHOLE } from "./hubMot
 import { ToastProvider } from "../ToastProvider";
 import * as api from "@/lib/api";
 import { listAttempts } from "@/lib/quiz/api";
-import { getStudyDaily, setStudyDailyGoal } from "@/lib/studyApi";
+import { getStudyDaily, getStudyNext, setStudyDailyGoal } from "@/lib/studyApi";
 import { listGuides } from "@/lib/studyGuide/api";
 import type { GuideCard } from "@/lib/studyGuide/types";
 import { getTopicChecklist, refreshTopicChecklist } from "@/lib/topicChecklistApi";
 import type { EnrolledCourse } from "@/lib/api";
+import { twStyle } from "@/test-utils/twStyle";
 
 const TODAY = new Date(2026, 10, 8, 12);
 const iso = (d: number) => `2026-11-${String(d).padStart(2, "0")}`;
@@ -73,11 +82,14 @@ const unlinkedNote = () => screen.queryByTestId("readiness-unlinked-note");
 beforeEach(() => {
   vi.clearAllMocks(); // call history only; each test's implementations are set below
   push.mockReset();
+  flagState.hideQuiz = false;
+  flagState.flags = {};
   // No outline by default, and none to generate: the roadmap keeps its
   // prerequisite-layer fallback, which is what these assertions were written
   // against, and no exam has concepts of its own.
   vi.mocked(getTopicChecklist).mockResolvedValue({ topics: [], needs_refresh: false } as never);
   vi.mocked(refreshTopicChecklist).mockResolvedValue({ topics: [], needs_refresh: false } as never);
+  vi.mocked(getStudyNext).mockResolvedValue({ due: [], misconceptions: [], ready: [] });
   vi.mocked(api.getGraph).mockResolvedValue({
     nodes: [
       node("var", "Variables", "mastered", 0.96),
@@ -105,7 +117,7 @@ beforeEach(() => {
     total: 1, limit: 100, offset: 0,
     attempts: [{
       quiz_id: "a1", status: "completed", concept_node_id: "rec", concept_name: "Recursion", course_id: "c1",
-      score: 6, total: 10, difficulty: "medium", mastery_before: 0.25, mastery_after: 0.3, mastery_delta: 0.05,
+      score: 6, total: 10, difficulty: "medium", mastery_before: 0.25, mastery_after: 0.3, p_delta: 0.05,
       created_at: new Date(2026, 10, 7, 10).toISOString(), completed_at: new Date(2026, 10, 7, 10, 10).toISOString(),
     }],
   });
@@ -144,6 +156,8 @@ describe("StudyHub", () => {
     expect(within(card).getByText("Loops")).toBeTruthy();
     // The block names the concept and how to start on it; no quiz history.
     expect(within(card).getByRole("link", { name: "Start quiz" })).toBeTruthy();
+    expect(within(card).getByTestId("focus-learn").getAttribute("href")).toContain("concept=rec");
+    expect(within(card).getByTestId("focus-learn").textContent).toMatch(/Learn/);
     expect(within(card).queryByText(/Last Quiz/i)).toBeNull();
     // Legend counts.
     expect(screen.getByRole("button", { name: /1\s*Struggling/ })).toBeTruthy();
@@ -154,6 +168,23 @@ describe("StudyHub", () => {
     expect(screen.getAllByText("Recursion Quiz")).toHaveLength(1); // recent activity only
     expect(screen.getByTitle("Mastery change from this quiz").textContent).toBe("Recursion+5%");
     expect(screen.getByText("1 card")).toBeTruthy();
+  });
+
+  it("draws the loop's reviews (the reviews slot) under the page header, before the exam tabs (U10)", async () => {
+    renderHub({ reviews: <div data-testid="reviews-slot">due</div> });
+    await waitFor(() => expect(screen.getByTestId("readiness-pct").textContent).toBe("47%"));
+    const slot = screen.getByTestId("reviews-slot");
+    const title = screen.getByRole("heading", { name: "Study" });
+    const firstTab = screen.getAllByRole("tab")[0];
+    expect(title.compareDocumentPosition(slot) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(slot.compareDocumentPosition(firstTab) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(slot.parentElement?.className).toContain("areaReviews");
+  });
+
+  it("keeps the reviews for a student with no course this term", async () => {
+    renderHub({ courses: [], reviews: <div data-testid="reviews-slot">due</div> });
+    expect(await screen.findByTestId("reviews-slot")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Study" })).toBeTruthy();
   });
 
   it("offers Quiz in the Study tools unless hide_quiz hides it (#620)", async () => {
@@ -263,7 +294,7 @@ describe("StudyHub", () => {
     await hubLoaded();
     fireEvent.click(screen.getByLabelText("Upcoming deadlines, 1 this week"));
     const panel = screen.getByRole("dialog", { name: "Upcoming deadlines" });
-    expect(within(panel).getByText("in 2 days").getAttribute("style")).toContain("var(--err)");
+    expect(twStyle(within(panel).getByText("in 2 days")).cssText).toContain("var(--err)");
     expect(within(panel).getByText("in 10 days")).toBeTruthy();
     // A dated exam or quiz in the list selects its tab.
     const selected = () => screen.getAllByRole("tab").filter(t => t.getAttribute("aria-selected") === "true").map(t => t.textContent);
@@ -293,8 +324,11 @@ describe("StudyHub", () => {
     renderHub();
     await hubLoaded();
     fireEvent.click(screen.getByRole("button", { name: /1\s*Mastered/ }));
-    expect(screen.getByTestId("tile-var")).toHaveTwStyle({ opacity: "1" });
-    expect(screen.getByTestId("tile-rec")).toHaveTwStyle({ opacity: "0.3" });
+    // Dimmed, the tile recedes but its words stay AA: nothing on it fades but its ring.
+    expect(screen.getByTestId("tile-var").dataset.dim).toBeUndefined();
+    expect(screen.getByTestId("tile-rec").dataset.dim).toBe("true");
+    expect(twStyle(screen.getByTestId("tile-rec")).opacity).toBe("");
+    expect(twStyle(within(screen.getByTestId("tile-rec")).getByText("Recursion")).color).toBe("var(--text-muted)");
     // The tile itself only selects; the menu is behind its "..." button.
     fireEvent.click(screen.getByTestId("tile-loop"));
     expect(screen.queryByRole("menu")).toBeNull();
@@ -310,6 +344,31 @@ describe("StudyHub", () => {
       .toBe("/flashcards?course=c1&concepts=Loops&start=1");
   });
 
+  it("a tile holds its two controls side by side, never one inside the other (spec §13 A135)", async () => {
+    renderHub();
+    await hubLoaded();
+    const tile = screen.getByTestId("tile-loop");
+    // The tile is no control itself; its select button and its "..." are.
+    expect(tile.getAttribute("role")).toBeNull();
+    expect(tile.tabIndex).toBe(-1);
+    const select = screen.getByTestId("study-tile-select-loop");
+    expect(tile.contains(select)).toBe(true);
+    expect(select.getAttribute("aria-pressed")).toBe("false");
+    expect(select.textContent).toContain("Loops");
+    expect(select.querySelector("button, a, [tabindex]")).toBeNull();
+    expect(select.contains(screen.getByTestId("tile-actions-loop"))).toBe(false);
+    // Its own press selects (Enter and Space are a button's click) ...
+    fireEvent.click(select);
+    expect(select.getAttribute("aria-pressed")).toBe("true");
+    expect(within(screen.getByTestId("focus-card")).getByText("Loops")).toBeTruthy();
+    // ... and so does a press anywhere else on the tile, once: the second unselects.
+    fireEvent.click(tile);
+    expect(select.getAttribute("aria-pressed")).toBe("false");
+    // The squares beside the figure are a group of toggles, one per concept.
+    const squares = within(screen.getByRole("group", { name: "Concepts" })).getAllByRole("button");
+    expect(squares.map(sq => sq.getAttribute("aria-pressed"))).toEqual(squares.map(() => "false"));
+  });
+
   it("only one tile menu is open; Esc and an outside press close it", async () => {
     renderHub();
     await hubLoaded();
@@ -320,8 +379,8 @@ describe("StudyHub", () => {
     expect(loopMore.getAttribute("aria-expanded")).toBe("true");
     // The open menu's tile (and its column) are lifted over the later tiles,
     // or the next tile paints over the menu.
-    expect(loop).toHaveTwStyle({ zIndex: "2" });
-    expect(screen.getByTestId("tile-rec").style.zIndex).toBe("");
+    expect(loop.className).toContain("lifted");
+    expect(screen.getByTestId("tile-rec").className).not.toContain("lifted");
 
     // Esc closes it and hands focus back to the "..." that opened it.
     fireEvent.keyDown(document, { key: "Escape" });
@@ -435,7 +494,7 @@ describe("StudyHub", () => {
       total: 6, limit: 100, offset: 0,
       attempts: [1, 2, 3, 4, 5, 6].map(n => ({
         quiz_id: `a${n}`, status: "completed", concept_node_id: "rec", concept_name: `Topic ${n}`, course_id: "c1",
-        score: 6, total: 10, difficulty: "medium", mastery_before: null, mastery_after: null, mastery_delta: null,
+        score: 6, total: 10, difficulty: "medium", mastery_before: null, mastery_after: null, p_delta: null,
         // All later than the fixture's flashcard review (Nov 8, 09:00), so the
         // four newest rows are quizzes.
         created_at: new Date(2026, 10, 8, 10, n).toISOString(), completed_at: new Date(2026, 10, 8, 10, 10 + n).toISOString(),
@@ -686,7 +745,7 @@ describe("StudyHub generates the course's topic outline", () => {
 });
 
 describe("StudyHub readiness follows the selected exam", () => {
-  const squares = () => within(screen.getByLabelText("Readiness")).getByRole("img").querySelectorAll("button");
+  const squares = () => within(within(screen.getByLabelText("Readiness")).getByRole("group", { name: "Concepts" })).getAllByRole("button");
   const legend = () => ["Mastered", "Learning", "Struggling", "Not Started"]
     .map(l => screen.getByRole("button", { name: new RegExp(`^\\d+\\s*${l}$`) }).textContent);
 
@@ -735,8 +794,8 @@ describe("StudyHub readiness follows the selected exam", () => {
     for (const id of ["var", "arr"]) expect(screen.queryByTestId(`tile-${id}`)).toBeNull();
     expect(within(screen.getByTestId("focus-card")).getByText("Recursion")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /^1\s*Learning$/ }));
-    expect(screen.getByTestId("tile-loop")).toHaveTwStyle({ opacity: "1" });
-    expect(screen.getByTestId("tile-rec")).toHaveTwStyle({ opacity: "0.3" });
+    expect(screen.getByTestId("tile-loop").dataset.dim).toBeUndefined();
+    expect(screen.getByTestId("tile-rec").dataset.dim).toBe("true");
 
     // Quiz 3 has nothing linked: the course's number, under QUIZ 3's name.
     expect(unlinkedNote()).toBeNull();
@@ -797,6 +856,9 @@ describe("StudyHub's roadmap and Up Next follow the selected exam", () => {
   /** The concepts on the roadmap, in reading order. */
   const tiles = () =>
     within(screen.getByLabelText("Roadmap")).queryAllByTestId(/^tile-(?!actions-)/).map(t => t.getAttribute("data-testid")!.slice(5));
+  /** Whether a tile's concept is selected: its select button's pressed state
+   *  (the tile itself is not a control; it also holds the "..." button). */
+  const pressed = (id: string) => screen.getByTestId(`study-tile-select-${id}`).getAttribute("aria-pressed");
   /** Each column's name and "mastered/total". */
   const columns = () =>
     [...screen.getByLabelText("Roadmap").querySelectorAll('[data-flip^="col:"]')].map(col => col.firstElementChild!.firstElementChild!.textContent);
@@ -804,8 +866,8 @@ describe("StudyHub's roadmap and Up Next follow the selected exam", () => {
   const settled = () => {
     const roadmap = screen.getByLabelText("Roadmap");
     expect(roadmap.querySelectorAll("[inert], [aria-hidden='true'][style*='absolute']")).toHaveLength(0);
-    for (const el of roadmap.querySelectorAll<HTMLElement>("[data-flip]")) expect(el.style.transform).toBe("");
-    expect(roadmap.querySelector<HTMLElement>("[data-flip]")!.parentElement!.style.height).toBe("");
+    for (const el of roadmap.querySelectorAll<HTMLElement>("[data-flip]")) expect(twStyle(el).transform).toBe("");
+    expect(twStyle(roadmap.querySelector<HTMLElement>("[data-flip]")!.parentElement!).height).toBe("");
   };
   /** An outline that puts `onExam2` on Exam 2 and nothing on Quiz 3. */
   const linkExam2 = (...onExam2: string[]) =>
@@ -867,14 +929,14 @@ describe("StudyHub's roadmap and Up Next follow the selected exam", () => {
     await screen.findByText("Ready for Exam 2");
     fireEvent.click(screen.getByRole("tab", { name: /Quiz 3/ }));
     fireEvent.click(screen.getByTestId("tile-var"));
-    expect(screen.getByTestId("tile-var").getAttribute("aria-pressed")).toBe("true");
+    expect(pressed("var")).toBe("true");
     expect(within(screen.getByTestId("focus-card")).getByText("Variables")).toBeTruthy();
     fireEvent.click(screen.getByRole("tab", { name: /Exam 2/ }));
     expect(screen.queryByTestId("tile-var")).toBeNull();
     // Up Next is the exam's queue again, not the concept that is no longer shown.
     expect(within(screen.getByTestId("focus-card")).getByText("Up Next")).toBeTruthy();
     expect(within(screen.getByTestId("focus-card")).getByText("Recursion")).toBeTruthy();
-    expect(tiles().map(id => screen.getByTestId(`tile-${id}`).getAttribute("aria-pressed"))).toEqual(["false", "false"]);
+    expect(tiles().map(pressed)).toEqual(["false", "false"]);
   });
 
   it("an exam already sat scopes the page like one ahead, and is worded as coverage", async () => {
@@ -1007,7 +1069,7 @@ describe("StudyHub's roadmap and Up Next follow the selected exam", () => {
       expect(legendCounts()).toEqual(["1 Mastered", "1 Learning", "1 Struggling", "1 Not Started"]);
       // Nothing of the switch is left in the band or the block either.
       expect(section.querySelectorAll("[inert]")).toHaveLength(0);
-      expect(section.style.height).toBe("");
+      expect(twStyle(section).height).toBe("");
     });
 
     it("clicking through the tabs quickly ends on the last one's values", async () => {
@@ -1058,12 +1120,12 @@ describe("StudyHub's roadmap and Up Next follow the selected exam", () => {
     renderHub();
     await screen.findByText("Ready for Exam 2");
     const names = () => {
-      const row = screen.getByRole("button", { name: /2 Quick Reviews/ });
-      fireEvent.focus(row);
-      const list = screen.getByRole("dialog", { name: "Quick reviews" });
+      const row = screen.getByRole("button", { name: /2 quick reviews/ });
+      fireEvent.click(row);
+      const list = screen.getByRole("region", { name: "Quick reviews" });
       const found = ["Variables", "Loops", "Recursion", "Arrays"].filter(n => within(list).queryByText(n));
       expect(within(list).getByText("~ 4 min · CS101")).toBeTruthy();
-      fireEvent.blur(row);
+      fireEvent.click(row); // the row closes what it opened
       return found;
     };
     // Recursion is not on Exam 2, and is still in the list there.
@@ -1221,14 +1283,85 @@ describe("StudyHub shows only what its data backs", () => {
     vi.mocked(getTopicChecklist).mockResolvedValue({ topics: [topic("t-loop", "Loops", null, "loop", ["e2"])], needs_refresh: false } as never);
     renderHub();
     await screen.findByText("Ready for Exam 2");
-    const row = screen.getByRole("button", { name: /2 Quick Reviews/ });
+    const row = screen.getByRole("button", { name: /2 quick reviews/ });
     expect(within(row).getByText("~ 4 min")).toBeTruthy();
-    fireEvent.focus(row); // the list opens on focus as well as hover
-    const list = screen.getByRole("dialog", { name: "Quick reviews" });
+    expect(row.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(row); // a disclosure: a click (or Enter) opens it, never a hover
+    expect(row.getAttribute("aria-expanded")).toBe("true");
+    const list = screen.getByRole("region", { name: "Quick reviews" });
     expect(within(list).getByText("~ 4 min · CS101")).toBeTruthy();
     expect(within(list).queryByText(/on Exam 2/)).toBeNull();
     expect(within(list).getByText("Loops")).toBeTruthy();
     expect(within(list).getByText("Recursion")).toBeTruthy();
+  });
+
+  it("with learning_loop + quiz_concept_plan, Focus and Due Reviews follow learner-next due[]", async () => {
+    flagState.flags = { learning_loop: "on", quiz_concept_plan: "on" };
+    const planned = (node_id: string, concept_name: string, reason: "due" | "ready") => ({
+      node_id, concept_name, course_id: "c1", reason, p_known: 0.5, band: "develop" as const,
+      due_at: reason === "due" ? "2026-11-07T12:00:00Z" : null, open_misconceptions: 0,
+    });
+    // Due: Arrays (unexplored in the graph fixture); ready: Loops — Focus
+    // should prefer Arrays as Up Next, and the rail should say "Due Reviews".
+    vi.mocked(getStudyNext).mockResolvedValue({
+      due: [planned("arr", "Arrays", "due")],
+      misconceptions: [],
+      ready: [planned("loop", "Loops", "ready")],
+    });
+    renderHub();
+    await hubLoaded();
+    await waitFor(() => expect(getStudyNext).toHaveBeenCalledWith("u1", "c1"));
+    await waitFor(() => expect(screen.getByRole("button", { name: /1 review due/ })).toBeTruthy());
+    const focus = screen.getByTestId("focus-card");
+    expect(within(focus).getByText("Arrays")).toBeTruthy();
+    expect(within(focus).getByText("Up Next")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /1 review due/ }));
+    const dueDlg = screen.getByRole("region", { name: "Due reviews" });
+    expect(within(dueDlg).getByText("Due for review")).toBeTruthy();
+    // W8.3b / W3.3b: Due Reviews offer Practice what's due beside Flashcards.
+    expect(within(dueDlg).getByTestId("due-reviews-flashcards").textContent).toBe("Review");
+    expect(within(dueDlg).getByTestId("due-reviews-quiz").textContent).toBe("Practice what's due");
+    fireEvent.click(within(dueDlg).getByTestId("due-reviews-quiz"));
+    expect(push).toHaveBeenLastCalledWith(
+      "/quiz?scope=due&queue=arr&from=link&return=%2Fstudy%3Fcourse%3Dc1&start=1",
+    );
+  });
+
+  it("Due Reviews keep Flashcards-only while hide_quiz is on", async () => {
+    flagState.flags = { learning_loop: "on", quiz_concept_plan: "on" };
+    flagState.hideQuiz = true;
+    vi.mocked(getStudyNext).mockResolvedValue({
+      due: [{
+        node_id: "arr", concept_name: "Arrays", course_id: "c1", reason: "due",
+        p_known: 0.5, band: "develop", due_at: "2026-11-07T12:00:00Z", open_misconceptions: 0,
+      }],
+      misconceptions: [],
+      ready: [],
+    });
+    renderHub();
+    await hubLoaded();
+    await waitFor(() => expect(screen.getByRole("button", { name: /1 review due/ })).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: /1 review due/ }));
+    const dueDlg = screen.getByRole("region", { name: "Due reviews" });
+    expect(within(dueDlg).getByRole("link", { name: "Review" })).toBeTruthy();
+    expect(within(dueDlg).queryByTestId("due-reviews-quiz")).toBeNull();
+  });
+
+  it("never asks for study next while learning_loop or quiz_concept_plan is off", async () => {
+    flagState.flags = { learning_loop: "on" }; // plan sibling still off
+    renderHub();
+    await hubLoaded();
+    expect(getStudyNext).not.toHaveBeenCalled();
+  });
+
+  it("flag-off Quick Reviews stay Flashcards-only (no Quiz secondary)", async () => {
+    renderHub();
+    await hubLoaded();
+    const row = screen.getByRole("button", { name: /quick reviews?/ });
+    fireEvent.click(row);
+    const list = screen.getByRole("region", { name: "Quick reviews" });
+    expect(within(list).getByRole("link", { name: "Review" })).toBeTruthy();
+    expect(within(list).queryByTestId("due-reviews-quiz")).toBeNull();
   });
 
   it("a tile's ... tooltip names what its menu offers", async () => {

@@ -1,0 +1,19 @@
+{
+  "attempts": [
+    "{\"key_idea\": \"Recursion is defining a problem in terms of a smaller copy of itself, plus a base case where the smallest copy is answered directly without any further copying.\", \"body\": \"Here is a worked example on a different problem: the sum of 1 to n, called sum(n). Two facts define it: sum(1) = 1 (the base case, which stops the copying), and for n > 1, sum(n) = n + sum(n-1) (the recursive step, which shrinks the problem). So sum(3) = 3 + sum(2) = 3 + (2 + sum(1)) = 3 + 2 + 1, and without the base case that chain would never stop.\", \"question\": \"Following the same two-fact pattern, what would sum(4) turn into after one application of the recursive step, before you expand anything else?\"}"
+  ],
+  "input_sha256": "c6901490b678c7d5ecdfc89dd1368872eee4c16d56ce60e6fdc0272dfd7cd5f9",
+  "model": "claude-sonnet-5-5",
+  "output": {
+    "body": "Here is a worked example on a different problem: the sum of 1 to n, called sum(n). Two facts define it: sum(1) = 1 (the base case, which stops the copying), and for n > 1, sum(n) = n + sum(n-1) (the recursive step, which shrinks the problem). So sum(3) = 3 + sum(2) = 3 + (2 + sum(1)) = 3 + 2 + 1, and without the base case that chain would never stop.",
+    "key_idea": "Recursion is defining a problem in terms of a smaller copy of itself, plus a base case where the smallest copy is answered directly without any further copying.",
+    "question": "Following the same two-fact pattern, what would sum(4) turn into after one application of the recursive step, before you expand anything else?"
+  },
+  "prompt_hash": "7d2b25572445",
+  "requests": 1,
+  "rescued": false,
+  "retries": 0,
+  "schema_hash": "ab89f4f429db",
+  "slot": "loop_tutor_deep",
+  "tool_calls": []
+}

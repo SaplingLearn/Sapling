@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Session: teaching and a question</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Aleo:ital,wght@0,400;0,600;0,700;1,400&amp;family=SUSE:wght@400;500;600;700&amp;display=swap">
+<style>
+body{margin:0}
+a{color:#445D22;text-decoration:none}a:hover{color:#384E19}
+</style>
+</helmet>
+<div style="min-height: 1060px; display: flex; flex-wrap: wrap; background: #faf8f3; font-family: 'SUSE', system-ui, sans-serif; color: #1a1814;">
+  <dc-import name="Sidebar" active="session" hint-size="264px,1060px"></dc-import>
+  <main style="flex: 999 1 560px; min-width: 0; display: flex; flex-direction: column;">
+    <header style="display: flex; align-items: center; gap: 24px; padding: 16px 32px; border-bottom: 1px solid rgba(42,39,31,0.10); flex-wrap: wrap;">
+      <h1 style="margin: 0; font-family: 'Aleo', Georgia, serif; font-size: 22px; font-weight: 600;">Prepare for Midterm 2</h1>
+      <ol aria-label="Session steps" style="margin: 0; padding: 0; list-style: none; display: flex; align-items: center; gap: 10px; font-size: 14px; color: #3f3b31; flex: 1;">
+        <li style="display: flex; align-items: center; gap: 6px;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#445D22" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5L20 7"></path></svg>Check-in</li>
+        <li aria-hidden="true" style="width: 20px; height: 1px; background: #b9b1a0;"></li>
+        <li style="display: flex; align-items: center; gap: 6px;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#445D22" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5L20 7"></path></svg>Plan</li>
+        <li aria-hidden="true" style="width: 20px; height: 1px; background: #b9b1a0;"></li>
+        <li aria-current="step" style="font-weight: 600; color: #1a1814;">Learn 2 of 4</li>
+        <li aria-hidden="true" style="width: 20px; height: 1px; background: #ddd6c6;"></li>
+        <li>Wrap up</li>
+      </ol>
+      <a href="Wrapup.dc.html" style="height: 38px; padding: 0 16px; border-radius: 10px; border: 1px solid rgba(42,39,31,0.18); background: #fdfcf9; color: #1a1814; font-size: 14px; font-weight: 500; display: inline-flex; align-items: center;">Wrap up</a>
+    </header>
+
+    <div style="flex: 1; display: flex; flex-wrap: wrap; min-height: 0;">
+      <section aria-label="Conversation" style="flex: 999 1 520px; min-width: 0; display: flex; flex-direction: column;">
+        <div style="flex: 1; padding: 32px 40px; display: flex; flex-direction: column; gap: 22px; max-width: 760px; width: 100%; box-sizing: border-box; margin: 0 auto;">
+          <div style="font-family: 'Aleo', Georgia, serif; font-size: 17px; line-height: 1.65; display: flex; flex-direction: column; gap: 12px;">
+            <p style="margin: 0;">A hash table turns a key into a bucket number with a hash function. With eight buckets:</p>
+            <p style="margin: 0; text-align: center; font-size: 19px;"><i>h</i>(<i>k</i>) = <i>k</i> mod 8</p>
+            <p style="margin: 0;">So 10 and 18 both land in bucket 2. That's a collision. What should the table do with the second key?</p>
+          </div>
+          <div style="align-self: flex-end; max-width: 70%; padding: 12px 16px; border-radius: 16px 16px 4px 16px; background: #e1ecd7; font-size: 15px;">Put it in the next empty bucket?</div>
+          <div style="font-family: 'Aleo', Georgia, serif; font-size: 17px; line-height: 1.65; display: flex; flex-direction: column; gap: 12px;">
+            <p style="margin: 0;">Yes, that's <b>linear probing</b>. It works, but colliding keys bunch into runs of full buckets, and every new key that hashes into a run has to walk past all of it.</p>
+          </div>
+          <a href="Session.dc.html" style="display: flex; align-items: center; gap: 14px; padding: 14px 16px; border-radius: 12px; background: #fdfcf9; border: 1px solid rgba(42,39,31,0.14); color: #1a1814; max-width: 420px;">
+            <span style="width: 40px; height: 40px; border-radius: 10px; background: #f2f6ee; display: inline-flex; align-items: center; justify-content: center;"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#445D22" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="3" y="10" width="4" height="10" rx="1"></rect><rect x="10" y="6" width="4" height="14" rx="1"></rect><rect x="17" y="3" width="4" height="17" rx="1"></rect></svg></span>
+            <span style="display: flex; flex-direction: column; gap: 2px;"><span style="font-size: 15px; font-weight: 600;">How a cluster grows</span><span style="font-size: 13px; color: #3f3b31;">Diagram. Opens beside the chat.</span></span>
+          </a>
+
+          <section aria-labelledby="q-h" style="display: flex; flex-direction: column; gap: 16px; padding: 24px; border-radius: 16px; background: #fdfcf9; border: 2px solid #445D22;">
+            <p style="margin: 0; font-size: 13px; color: #3f3b31;">Hash tables, question 1 of 2</p>
+            <h2 id="q-h" style="margin: 0; font-family: 'Aleo', Georgia, serif; font-size: 19px; font-weight: 600; line-height: 1.45;">Why does linear probing create clusters, and what does that do to lookup time as the table fills?</h2>
+            <div style="display: flex; flex-direction: column; gap: 6px;">
+              <label for="ans" style="font-size: 14px; font-weight: 600;">Your answer</label>
+              <textarea id="ans" rows="3" style="padding: 12px; border-radius: 10px; border: 1px solid rgba(42,39,31,0.18); background: #ffffff; font: inherit; font-size: 15px; color: #1a1814; resize: vertical;">Keys that collide fill neighbouring buckets</textarea>
+            </div>
+            <fieldset style="margin: 0; padding: 0; border: 0; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+              <legend style="float: left; margin-right: 6px; font-size: 14px; color: #3f3b31;">How sure?</legend>
+              <label style="display: inline-flex; align-items: center; height: 34px; padding: 0 14px; border-radius: 999px; border: 1px solid rgba(42,39,31,0.18); font-size: 14px;"><input type="radio" name="sure" style="position: absolute; opacity: 0;">Guessing</label>
+              <label style="display: inline-flex; align-items: center; height: 34px; padding: 0 14px; border-radius: 999px; border: 2px solid #445D22; background: #f2f6ee; font-size: 14px; font-weight: 600;"><input type="radio" name="sure" checked="{{ true }}" style="position: absolute; opacity: 0;">Fairly sure</label>
+              <label style="display: inline-flex; align-items: center; height: 34px; padding: 0 14px; border-radius: 999px; border: 1px solid rgba(42,39,31,0.18); font-size: 14px;"><input type="radio" name="sure" style="position: absolute; opacity: 0;">Sure</label>
+            </fieldset>
+            <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+              <button type="button" style="height: 44px; padding: 0 22px; border-radius: 10px; border: 0; background: #445D22; color: #ffffff; font: inherit; font-size: 15px; font-weight: 600;">Check answer</button>
+              <button type="button" style="height: 44px; padding: 0 16px; border-radius: 10px; border: 1px solid rgba(42,39,31,0.18); background: #fdfcf9; font: inherit; font-size: 15px; color: #1a1814;">Hint <span style="color: #3f3b31;">(half credit)</span></button>
+              <button type="button" style="height: 44px; padding: 0 12px; border: 0; background: transparent; font: inherit; font-size: 15px; color: #3f3b31;">I don't know</button>
+            </div>
+          </section>
+        </div>
+        <div style="padding: 16px 40px 24px;">
+          <div style="max-width: 680px; margin: 0 auto; display: flex; align-items: center; gap: 10px; padding: 8px 8px 8px 16px; border-radius: 14px; background: #f4f1ea; border: 1px solid rgba(42,39,31,0.10);">
+            <label for="chat" style="position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0);">Message your tutor</label>
+            <input id="chat" type="text" disabled="{{ true }}" placeholder="Chat opens after you check your answer" style="flex: 1; min-width: 0; height: 36px; border: 0; background: transparent; font: inherit; font-size: 15px;">
+            <button type="button" disabled="{{ true }}" aria-label="Send" style="width: 38px; height: 38px; border-radius: 10px; border: 0; background: #c5d7b2; color: #ffffff; display: inline-flex; align-items: center; justify-content: center;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"></path></svg></button>
+          </div>
+        </div>
+      </section>
+
+      <aside aria-label="Session panel" style="flex: 1 1 300px; max-width: 340px; min-width: 260px; border-left: 1px solid rgba(42,39,31,0.10); background: #fdfcf9; padding: 24px; box-sizing: border-box; display: flex; flex-direction: column; gap: 20px;">
+        <div role="tablist" aria-label="Panel" style="display: flex; gap: 4px; padding: 4px; border-radius: 10px; background: #f4f1ea;">
+          <button type="button" role="tab" aria-selected="true" style="flex: 1; height: 32px; border: 0; border-radius: 8px; background: #fdfcf9; font: inherit; font-size: 14px; font-weight: 600; box-shadow: 0 1px 2px rgba(25,37,11,0.06);">Plan</button>
+          <button type="button" role="tab" aria-selected="false" style="flex: 1; height: 32px; border: 0; border-radius: 8px; background: transparent; font: inherit; font-size: 14px; color: #3f3b31;">Saved (2)</button>
+        </div>
+        <ol style="margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px;">
+          <sc-for list="{{plan}}" as="p" hint-placeholder-count="4">
+            <li style="{{p.rowStyle}}">
+              <span style="display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 15px;"><span style="{{p.nameStyle}}">{{p.name}}</span><span style="font-size: 13px; color: #3f3b31;">{{p.level}}</span></span>
+              <span style="height: 5px; border-radius: 3px; background: #ebe6dc;"><span style="{{p.barStyle}}"></span></span>
+            </li>
+          </sc-for>
+        </ol>
+        <a href="Milestone.dc.html" style="margin-top: auto; font-size: 14px; font-weight: 600;">See Midterm 2 progress</a>
+      </aside>
+    </div>
+  </main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1060}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const color = { 'Proficient': '#445D22', 'Developing': '#60842c', 'Getting started': '#a1bc83', 'Not started': '#ddd6c6' };
+    const rows = [
+      { name: 'Stacks', level: 'Developing', pct: 58, state: 'done' },
+      { name: 'Hash tables', level: 'Getting started', pct: 22, state: 'now' },
+      { name: 'Collision resolution', level: 'Not started', pct: 0, state: 'next' },
+      { name: 'Queues', level: 'Developing', pct: 31, state: 'next' }
+    ];
+    return {
+      plan: rows.map((r) => ({
+        ...r,
+        rowStyle: 'display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border-radius: 10px; ' + (r.state === 'now' ? 'background: #f2f6ee; border: 1px solid #c5d7b2;' : 'border: 1px solid transparent;'),
+        nameStyle: (r.state === 'now' ? 'font-weight: 600;' : '') + (r.state === 'done' ? 'color: #3f3b31;' : ''),
+        barStyle: 'display: block; height: 5px; border-radius: 3px; width: ' + r.pct + '%; background: ' + color[r.level] + ';'
+      }))
+    };
+  }
+}
+</script>
+</body>
+</html>

@@ -15,7 +15,12 @@ Safe to run against a live app:
 * Compare-and-swap. Each rewrite goes through the `encryption_aad_swap` SQL
   function (migration 20261116162200), which writes only if the cell still
   holds the value this run read (md5), so a concurrent write by the app is
-  never overwritten; that row is retried on the next run.
+  never overwritten; that row is retried on the next run. A cell of an
+  append-only table, where the backend holds no UPDATE (`APPEND_ONLY_SWAPS`:
+  learning_prequestions.guess_json), goes through a SECURITY DEFINER
+  compare-and-swap of its own that only re-seals (PR #866 Z15). A swap that
+  is refused or fails is counted for its cell (`swap_failed`) and the run
+  goes on.
 * Idempotent and resumable. A v2 value under the active kid is skipped, rows
   are paged by primary key (keyset, never offsets), so an interrupted run is
   re-run as is (``--start-after`` skips ahead in a single column).
@@ -26,6 +31,18 @@ The order (docs/security/encryption-aad-plan.md, "Rollout"): every instance of
 the environment must already run the v2-capable readers and write v2
 (``ENCRYPTION_WRITE_V2=on``) BEFORE ``--apply``; v2 values are unreadable to
 older code.
+
+Nested ciphertexts too (PR #866 C6). `encryption.NESTED_CIPHERTEXTS` names
+values sealed INSIDE a plaintext JSONB column — the learning loop's goal text
+and grade checkpoints in ``loop_state`` — bound with `encryption.nested_bind`
+to their session. Each is scanned wherever its path sits in the document, in
+every table that holds one (`NESTED_HOLDERS`: the materialised
+``sessions.loop_state`` and a lazy session's ``tutor_pending_sessions.loop_state``),
+and re-sealed in place through `encryption_aad_swap_nested` (migration
+20261118195701): a compare-and-swap on that one value, which leaves the rest of
+the document as it stands and bumps ``loop_state_rev`` so a turn that read
+the old document re-applies to the new one. Select one with
+``--column loop_state`` (both paths) or ``--column 'loop_state#grade_checkpoint'``.
 
 Values that do not open as v1 are reported, not touched: legacy plaintext (run
 ``python -m db.backfill_encryption --apply`` first, which seals it), or
@@ -66,6 +83,17 @@ from services import encryption
 from services.encryption import ACTIVE_KID, V2_PREFIX, ColumnSpec
 
 SWAP_FN = "encryption_aad_swap"
+#: Migration 20261118195701: the in-document twin of SWAP_FN.
+SWAP_NESTED_FN = "encryption_aad_swap_nested"
+#: 🔒 cells in append-only tables, where service_role holds no UPDATE (spec
+#: §13 A138), so SWAP_FN (SECURITY INVOKER) is refused: each is re-sealed
+#: through a SECURITY DEFINER compare-and-swap of its own, which takes
+#: (p_id, p_old_md5, p_new) and only ever replaces a stored value with a v2
+#: ciphertext (PR #866 Z15). A new one is added here with its migration.
+APPEND_ONLY_SWAPS: dict[tuple[str, str], str] = {
+    # 20261120055827_learning_prequestion_guess_reseal.sql
+    ("learning_prequestions", "guess_json"): "learning_prequestion_guess_reseal",
+}
 DEFAULT_BATCH = 200
 #: Primary keys listed per column and category before the list is truncated.
 MAX_LISTED = 25
@@ -81,10 +109,12 @@ class ColumnReport:
     counts: Counter = field(default_factory=Counter)
     listed: dict[str, list[str]] = field(default_factory=dict)
     last_pk: str | None = None
+    #: the error class of the first swap that raised (e.g. HTTPStatusError)
+    failure: str | None = None
 
     def note(self, kind: str, pk: str) -> None:
         self.counts[kind] += 1
-        if kind in ("v2_bad", "undecryptable", "non_string", "no_key", "conflict"):
+        if kind in ("v2_bad", "undecryptable", "non_string", "no_key", "conflict", "swap_failed"):
             ids = self.listed.setdefault(kind, [])
             if len(ids) < MAX_LISTED:
                 ids.append(pk)
@@ -97,8 +127,61 @@ class ColumnReport:
             c["undecryptable"] + c["non_string"] + c["no_key"]
 
 
-def _targets(tables: Iterable[str] | None, columns: Iterable[str] | None) -> list[ColumnSpec]:
-    specs = [s for s in encryption.ENCRYPTED_COLUMNS if s.backfill]
+#: Where each `encryption.NESTED_CIPHERTEXTS` (table, column) is stored, as
+#: (holder table, its primary key — also the value's row key). A lazy loop
+#: session's document waits in tutor_pending_sessions under the same session
+#: id until materialize_tutor_session copies it into sessions by SQL; its
+#: values are bound to the session, so both copies open in place.
+NESTED_HOLDERS: dict[tuple[str, str], tuple[tuple[str, str], ...]] = {
+    ("sessions", "loop_state"): (("sessions", "id"), ("tutor_pending_sessions", "session_id")),
+}
+
+
+@dataclass(frozen=True)
+class NestedSpec:
+    """One `encryption.NESTED_CIPHERTEXTS` path in one holder table: the
+    attributes `_print_report` and the CLI filters read, like a ColumnSpec."""
+
+    table: str  # the holder scanned
+    column: str  # its JSONB column
+    path: str  # the registry path, e.g. "goal.text_encrypted"
+    pk: tuple[str, ...]
+    bound_table: str  # the (table, column) the binding names
+    bound_column: str
+    kind: str = encryption.TEXT
+
+    @property
+    def key(self) -> tuple[str, ...]:
+        return self.pk
+
+    @property
+    def aad_table(self) -> str:
+        return self.bound_table
+
+    @property
+    def aad_column(self) -> str:
+        return f"{self.bound_column}#{self.path}"
+
+    @property
+    def name(self) -> str:
+        return f"{self.column}#{self.path}"
+
+
+def nested_specs() -> list[NestedSpec]:
+    """Every nested path in every holder, in a stable order."""
+    out = []
+    for bound_table, bound_column, path in sorted(encryption.NESTED_CIPHERTEXTS):
+        for holder, pk in NESTED_HOLDERS[(bound_table, bound_column)]:
+            out.append(NestedSpec(holder, bound_column, path, (pk,), bound_table, bound_column))
+    return out
+
+
+Target = ColumnSpec | NestedSpec
+
+
+def _targets(tables: Iterable[str] | None, columns: Iterable[str] | None) -> list[Target]:
+    specs: list[Target] = [s for s in encryption.ENCRYPTED_COLUMNS if s.backfill]
+    specs += nested_specs()
     if tables:
         wanted = set(tables)
         unknown = wanted - {s.table for s in specs}
@@ -107,19 +190,23 @@ def _targets(tables: Iterable[str] | None, columns: Iterable[str] | None) -> lis
         specs = [s for s in specs if s.table in wanted]
     if columns:
         wanted_c = set(columns)
-        specs = [s for s in specs if s.column in wanted_c]
+        specs = [s for s in specs
+                 if s.column in wanted_c or (isinstance(s, NestedSpec) and s.name in wanted_c)]
         if not specs:
             raise Abort("no 🔒 column matches --column")
     return specs
 
 
-def _pages(spec: ColumnSpec, batch: int, start_after: str | None) -> Iterator[list[dict]]:
-    """Keyset pages of (pk, key columns, value) for non-null cells."""
+def _pages(
+    spec: Target, batch: int, start_after: str | None, *, filter_: str = "not.is.null",
+) -> Iterator[list[dict]]:
+    """Keyset pages of (pk, key columns, value) for non-null cells (a nested
+    path's holder: non-empty documents)."""
     (pk,) = spec.pk
     cols = ",".join(dict.fromkeys([pk, *spec.key, spec.column]))
     last = start_after
     while True:
-        filters = {spec.column: "not.is.null"}
+        filters = {spec.column: filter_}
         if last is not None:
             filters[pk] = f"gt.{last}"
         rows = table(spec.table).select(cols, filters=filters, order=f"{pk}.asc", limit=batch)
@@ -131,7 +218,7 @@ def _pages(spec: ColumnSpec, batch: int, start_after: str | None) -> Iterator[li
         last = str(rows[-1][pk])
 
 
-def _open_v1(spec: ColumnSpec, value: str) -> bytes:
+def _open_v1(spec: Target, value: str) -> bytes:
     """The plaintext bytes of a v1 value (raises when it is not one)."""
     if spec.kind == encryption.BYTES:
         return encryption.decrypt_bytes(value)
@@ -144,6 +231,12 @@ def _classify(spec: ColumnSpec, row: dict) -> tuple[str, bytes | None, encryptio
         binding = encryption.bind(spec.table, spec.column, row)
     except encryption.MissingRowKey:
         return "no_key", None, None
+    return _classify_value(spec, value, binding)
+
+
+def _classify_value(
+    spec: Target, value, binding: encryption.Binding,
+) -> tuple[str, bytes | None, encryption.Binding | None]:
     if not isinstance(value, str):
         return "non_string", None, binding
     if value.startswith(V2_PREFIX):
@@ -166,10 +259,14 @@ def _md5(value: str) -> str:
 
 def _swap(spec: ColumnSpec, pk_value: str, old: str, new: str) -> bool:
     (pk,) = spec.pk
-    out = rpc(SWAP_FN, {
-        "p_table": spec.table, "p_column": spec.column, "p_pk_column": pk,
-        "p_pk": pk_value, "p_old_md5": _md5(old), "p_new": new,
-    })
+    fn = APPEND_ONLY_SWAPS.get((spec.table, spec.column))
+    if fn is not None:
+        out = rpc(fn, {"p_id": pk_value, "p_old_md5": _md5(old), "p_new": new})
+    else:
+        out = rpc(SWAP_FN, {
+            "p_table": spec.table, "p_column": spec.column, "p_pk_column": pk,
+            "p_pk": pk_value, "p_old_md5": _md5(old), "p_new": new,
+        })
     if isinstance(out, list):
         out = out[0] if out else False
     return bool(out)
@@ -193,12 +290,92 @@ def backfill_column(
             if max_rows is not None and report.counts["rewritten"] >= max_rows:
                 continue
             new = encryption._seal_v2(plain, binding)
-            if swap(spec, pk_value, row[spec.column], new):
+            try:
+                swapped = swap(spec, pk_value, row[spec.column], new)
+            except httpx.HTTPError as exc:
+                # One refused or failed write is that cell's (Z15: a missing
+                # grant once crashed the whole run here): counted, listed and
+                # left v1 for the next run; the rest of the column still runs.
+                report.note("swap_failed", pk_value)
+                report.failure = report.failure or type(exc).__name__
+                continue
+            if swapped:
                 report.counts["rewritten"] += 1
             else:
                 report.note("conflict", pk_value)
         report.last_pk = str(rows[-1][pk])
         log(f"  {spec.table}.{spec.column}: through {pk}={report.last_pk} "
+            f"({sum(v for k, v in report.counts.items() if k not in ('rewritten', 'conflict'))} scanned)")
+    return report
+
+
+def _nested_values(doc, segments: tuple[str, ...], at: tuple[str, ...] = ()):
+    """(JSON path, value) of every value at a key path ending in `segments`,
+    wherever it sits in `doc` (a step's checkpoint is under steps.<hash>, the
+    probe's under probe.current) — the walk account_bundle's NESTED_ENCRYPTED
+    makes. Lists are not descended: no loop document keeps one of these
+    values in a list, and a list index is no stable path to swap at."""
+    if not isinstance(doc, dict):
+        return
+    for key, value in doc.items():
+        here = (*at, str(key))
+        if here[-len(segments):] == segments and value is not None:
+            yield here, value
+        else:
+            yield from _nested_values(value, segments, here)
+
+
+def _swap_nested(spec: NestedSpec, pk_value: str, path: tuple[str, ...], old: str, new: str) -> bool:
+    out = rpc(SWAP_NESTED_FN, {
+        "p_table": spec.table, "p_pk": pk_value, "p_path": list(path),
+        "p_old_md5": _md5(old), "p_new": new,
+    })
+    if isinstance(out, list):
+        out = out[0] if out else False
+    return bool(out)
+
+
+def backfill_nested(
+    spec: NestedSpec, *, apply: bool, batch: int = DEFAULT_BATCH,
+    start_after: str | None = None, max_rows: int | None = None,
+    swap: Callable[[NestedSpec, str, tuple[str, ...], str, str], bool] = _swap_nested,
+    log: Callable[[str], None] = print,
+) -> ColumnReport:
+    """`backfill_column` for one nested path: every value at it, in every
+    row's document, classified under its `nested_bind` binding and (with
+    `apply`) re-sealed in place. Counts are per value, not per row."""
+    report = ColumnReport(spec)  # type: ignore[arg-type]  # NestedSpec reads as a ColumnSpec
+    (pk,) = spec.pk
+    segments = tuple(spec.path.split("."))
+    for rows in _pages(spec, batch, start_after, filter_="neq.{}"):
+        for row in rows:
+            pk_value = str(row[pk])
+            for path, value in _nested_values(row.get(spec.column), segments):
+                try:
+                    binding = encryption.nested_bind(
+                        spec.bound_table, spec.bound_column, spec.path, row.get(pk))
+                except encryption.MissingRowKey:
+                    report.note("no_key", pk_value)
+                    continue
+                kind, plain, opened_with = _classify_value(spec, value, binding)
+                report.note(kind, pk_value)
+                if kind != "v1" or plain is None or opened_with is None or not apply:
+                    continue
+                if max_rows is not None and report.counts["rewritten"] >= max_rows:
+                    continue
+                new = encryption._seal_v2(plain, opened_with)
+                try:
+                    swapped = swap(spec, pk_value, path, value, new)
+                except httpx.HTTPError as exc:
+                    report.note("swap_failed", pk_value)
+                    report.failure = report.failure or type(exc).__name__
+                    continue
+                if swapped:
+                    report.counts["rewritten"] += 1
+                else:
+                    report.note("conflict", pk_value)
+        report.last_pk = str(rows[-1][pk])
+        log(f"  {spec.table}.{spec.name}: through {pk}={report.last_pk} "
             f"({sum(v for k, v in report.counts.items() if k not in ('rewritten', 'conflict'))} scanned)")
     return report
 
@@ -219,8 +396,17 @@ def _key_guard() -> None:
         )
 
 
-def _probe_swap() -> None:
-    """Fail before scanning when the swap function is not deployed."""
+def _probe_swap(*, nested: bool = False, append_only: Iterable[str] = ()) -> None:
+    """Fail before scanning when a swap function the run needs is not
+    deployed (each probe names a row that does not exist: nothing changes)."""
+    for fn in sorted(set(append_only)):
+        try:
+            rpc(fn, {"p_id": "", "p_old_md5": "", "p_new": "enc2:probe"})
+        except httpx.HTTPError as e:
+            raise Abort(
+                f"{fn} is not callable ({type(e).__name__}); apply migrations first "
+                "(python -m db.migrate) — see APPEND_ONLY_SWAPS"
+            ) from e
     try:
         rpc(SWAP_FN, {
             "p_table": "encryption_key_check", "p_column": "canary", "p_pk_column": "id",
@@ -231,20 +417,36 @@ def _probe_swap() -> None:
             f"{SWAP_FN} is not callable ({type(e).__name__}); apply migrations first "
             "(python -m db.migrate) — migration 20261116162200_encryption_aad_swap.sql"
         ) from e
+    if not nested:
+        return
+    try:
+        rpc(SWAP_NESTED_FN, {
+            "p_table": "sessions", "p_pk": "", "p_path": ["goal", "text_encrypted"],
+            "p_old_md5": "", "p_new": "",
+        })
+    except httpx.HTTPError as e:
+        raise Abort(
+            f"{SWAP_NESTED_FN} is not callable ({type(e).__name__}); apply migrations first "
+            "(python -m db.migrate) — migration 20261118195701_encryption_aad_swap_nested.sql"
+        ) from e
 
 
 def _print_report(report: ColumnReport, apply: bool) -> None:
     s = report.spec
     c = report.counts
-    print(f"── {s.table}.{s.column} (bound as "
+    print(f"── {s.table}.{getattr(s, 'name', s.column)} (bound as "
           f"{s.aad_table or s.table}.{s.aad_column or s.column} by {'|'.join(s.key)})")
     print(f"  v2 ok: {c['v2']}   v1: {c['v1']}   "
           f"{'rewritten' if apply else 'would rewrite'}: {c['rewritten'] if apply else c['v1']}")
-    for kind in ("conflict", "v2_bad", "v2_other_kid", "undecryptable", "non_string", "no_key"):
+    for kind in ("conflict", "swap_failed", "v2_bad", "v2_other_kid", "undecryptable",
+                 "non_string", "no_key"):
         if c[kind]:
             ids = report.listed.get(kind, [])
             more = "" if len(ids) >= c[kind] else f" (+{c[kind] - len(ids)} more)"
             print(f"  {kind}: {c[kind]}  {s.pk[0]}={', '.join(ids)}{more}")
+    if report.failure:
+        print(f"  swap_failed: the write was refused or failed ({report.failure}); "
+              "those cells stay v1 for the next run")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -266,7 +468,11 @@ def main(argv: list[str] | None = None) -> int:
             raise Abort("--start-after needs exactly one column (--table and --column)")
         _key_guard()
         if args.apply:
-            _probe_swap()
+            _probe_swap(
+                nested=any(isinstance(s, NestedSpec) for s in specs),
+                append_only=[APPEND_ONLY_SWAPS[(s.table, s.column)] for s in specs
+                             if (s.table, s.column) in APPEND_ONLY_SWAPS],
+            )
             if not encryption.write_v2_enabled():
                 print("WARNING: ENCRYPTION_WRITE_V2 is not on in THIS environment. Every "
                       "deployed instance must run the v2 readers and write v2 before --apply.")
@@ -278,8 +484,9 @@ def main(argv: list[str] | None = None) -> int:
           f"{len(specs)} column(s)\n")
     remaining = 0
     for spec in specs:
-        report = backfill_column(spec, apply=args.apply, batch=args.batch,
-                                 start_after=args.start_after, max_rows=args.max_rows)
+        run = backfill_nested if isinstance(spec, NestedSpec) else backfill_column
+        report = run(spec, apply=args.apply, batch=args.batch,  # type: ignore[arg-type]
+                     start_after=args.start_after, max_rows=args.max_rows)
         _print_report(report, args.apply)
         remaining += report.remaining
         print()

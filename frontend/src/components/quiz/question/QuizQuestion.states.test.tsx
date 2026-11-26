@@ -8,6 +8,8 @@
  */
 
 import React from "react";
+import fs from "node:fs";
+import path from "node:path";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, cleanup, fireEvent } from "@testing-library/react";
 import type { QuizActions } from "@/lib/quiz/useQuizSession";
@@ -30,6 +32,9 @@ vi.mock("./AskPanel", () => ({
     askProps.last = props;
     return props.open ? <div data-testid="ask-stub" /> : null;
   },
+}));
+vi.mock("./StudyGuideDrawer", () => ({
+  StudyGuideDrawer: () => null,
 }));
 
 const CONCEPT: QuizConceptSummary = {
@@ -83,6 +88,7 @@ function makeSession(over: Partial<QuizSession> = {}): QuizSession {
     deliveredShort: false,
     sourceAttemptId: null,
     reserved: null,
+    prereq: null,
     ...over,
   };
 }
@@ -166,9 +172,43 @@ describe("QuizQuestion — header and grounding", () => {
       }),
       { concept: { ...CONCEPT, courseCode: "", color: "" } },
     );
-    expect(screen.getByText("Recursion")).toHaveClass("quiz-question__concept");
+    expect(screen.getByTestId("quiz-question-meta").querySelector(".quiz-question__concept"))
+      .toHaveTextContent("Recursion");
     expect(document.querySelector(".quiz-question__header .badge")).toBeNull();
-    expect(screen.queryByText("MEDIUM")).toBeNull();
+    expect(screen.queryByText("Medium")).toBeNull();
+    // No course code → session top omits the muted course span.
+    expect(screen.getByTestId("quiz-session-top").querySelector(".quiz-session-top__course")).toBeNull();
+  });
+
+  it("shows the session top progress and the mastery tier chip from the concept summary", () => {
+    renderScreen(makeSession({ cursor: 1 }));
+    expect(screen.getByTestId("quiz-session-top")).toBeInTheDocument();
+    expect(screen.getByTestId("quiz-session-progress")).toHaveTextContent("Question 2 of 3");
+    expect(screen.getByTestId("quiz-tier-chip")).toHaveTextContent("Struggling");
+    expect(screen.getByTestId("quiz-action-bar")).toBeInTheDocument();
+  });
+
+  it("keeps W7.D1 forest chrome: Check is primary, progress fill present, no XP, open stem", () => {
+    renderScreen(makeSession({ cursor: 1 }));
+    const top = screen.getByTestId("quiz-session-top");
+    expect(top.textContent ?? "").not.toMatch(/XP|streak/i);
+    expect(top.querySelector(".quiz-session-top__fill")).not.toBeNull();
+    // Check stays `.btn--primary` (globals → `--brand-forest`); class name is the chrome contract.
+    expect(screen.getByTestId("quiz-submit-answer")).toHaveClass("btn", "btn--primary");
+    expect(screen.getByTestId("quiz-question-meta").querySelector(".quiz-question__concept-pill")).not.toBeNull();
+    // Open body: stem lives outside a `.card` (cards are for verdict / drawers only).
+    const prompt = screen.getByTestId("quiz-panel").querySelector(".quiz-question__prompt");
+    expect(prompt).not.toBeNull();
+    expect(prompt!.closest(".card")).toBeNull();
+  });
+
+  it("W7.4: confidence row CSS stays visible under the answer (not collapsed by session chrome)", () => {
+    const css = fs.readFileSync(path.resolve(__dirname, "question.css"), "utf8");
+    const rule = css.match(/\.quiz-question__confidence\s*\{([^}]*)\}/);
+    expect(rule).not.toBeNull();
+    expect(rule![1]).toMatch(/flex-shrink:\s*0/);
+    expect(rule![1]).toMatch(/margin-top:\s*var\(--quiz-q-confidence-mt\)/);
+    expect(rule![1]).not.toMatch(/display:\s*none|visibility:\s*hidden|height:\s*0|opacity:\s*0\b/);
   });
 
   it("shows the question's own difficulty over the quiz's", () => {
@@ -195,6 +235,7 @@ describe("QuizQuestion — generating", () => {
     expect(screen.queryByTestId("quiz-format-tag")).toBeNull();
     expect(screen.queryByTestId("quiz-panel")).toBeNull();
     expect(screen.getByTestId("quiz-progress")).toHaveAttribute("aria-label", "Question 1 of 3");
+    expect(screen.getByRole("progressbar", { name: "Question 1 of 3" })).toBeInTheDocument();
     expect(screen.getByTestId("quiz-prev-question")).toBeDisabled();
     expect(screen.getByTestId("quiz-next-question")).toBeDisabled();
   });

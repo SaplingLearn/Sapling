@@ -15,8 +15,11 @@ from tests.agent_run_fakes import run_result, textless_run_result
 from tests.db_fakes import add_async_twins, fake_table, with_async_twins
 from tests.split_patches import patch_tutor
 
-#: #117 wave 3: a sync PostgREST call on the event loop raises here.
-pytestmark = pytest.mark.usefixtures("no_sync_db_on_loop")
+#: #117 wave 3: a sync PostgREST call on the event loop raises here. Spec §11.5
+#: (PKG-14b): this module drives the legacy /api/learn/* path, so it runs as an
+#: explicit kill-switch test too.
+pytestmark = [pytest.mark.kill_switch, pytest.mark.usefixtures("no_sync_db_on_loop")]
+
 
 
 client = TestClient(app)
@@ -176,6 +179,41 @@ class TestListSessions:
 
         assert r.json()["sessions"][0]["is_active"] is False
         assert r.json()["sessions"][0]["message_count"] == 0
+
+    def test_loop_open_marks_only_resumable_loop_sessions(self):
+        """The Tutor's recents mark a loop session "in progress" only while it
+        can be resumed: a loop close writes close_json and never ended_at, so
+        is_active alone would read a wrapped-up session as open."""
+        sessions = [
+            {"id": "open", "topic": "A", "mode": "socratic", "started_at": "2026-01-03T00:00:00",
+             "ended_at": None, "close_json": None, "loop_phase": "teach"},
+            {"id": "closed", "topic": "B", "mode": "socratic", "started_at": "2026-01-02T00:00:00",
+             "ended_at": None, "close_json": "ciphertext", "loop_phase": "close"},
+            {"id": "legacy", "topic": "C", "mode": "socratic", "started_at": "2026-01-01T00:00:00",
+             "ended_at": None, "close_json": None, "loop_phase": None},
+        ]
+        seen = {}
+
+        def factory(name):
+            mock = MagicMock()
+
+            def select(cols, filters=None, order=None, limit=None, **_k):
+                if name == "sessions":
+                    seen["cols"] = cols
+                    return sessions
+                return []
+            mock.select.side_effect = select
+            mock.select_with_count.return_value = ([], 0)
+            return mock
+
+        with patch_tutor("table", side_effect=with_async_twins(factory)):
+            r = client.get("/api/learn/sessions/user_andres")
+        assert r.status_code == 200
+        rows = {s["id"]: s for s in r.json()["sessions"]}
+        assert [rows[k]["loop_open"] for k in ("open", "closed", "legacy")] == [True, False, False]
+        assert all(rows[k]["is_active"] for k in rows)  # legacy semantics unchanged
+        assert "close_json" not in rows["closed"]  # the ciphertext is never returned
+        assert "loop_phase:loop_state->>phase" in seen["cols"]
 
     def test_message_counts_are_head_counts_with_bounded_concurrency(self):
         """One count=exact read per session with a one-row body (never every
@@ -558,7 +596,12 @@ class TestChatViaAgent:
         ):
             r = self._post()
         assert r.status_code == 413
-        assert "budget" in r.json()["detail"]
+        detail = r.json()["detail"]
+        assert "budget" in detail
+        # K48 (#866 audit): the frontend shows a server detail only up to 160
+        # characters (lib/errorMessage.ts MAX_DETAIL_LENGTH); a longer one
+        # reads "The tutor is unavailable." and its remedy never reaches the student
+        assert len(detail) <= 160 and "try again" not in detail.lower()
         save.assert_not_called()
 
     def test_unexpected_exception_returns_502(self):

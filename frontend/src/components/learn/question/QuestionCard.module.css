@@ -1,0 +1,67 @@
+@layer components {
+/* The one question card (QuestionCard.tsx). A full card is the Tutor's
+   `.qcard` (tutor.module.css); these are the parts every variant shares. */
+
+.head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-5);
+}
+
+/* A label sits on its field: the card's gap would otherwise open between them. */
+.field {
+  display: flex;
+  flex-direction: column;
+}
+
+.actions {
+  display: flex;
+  gap: var(--sp-4);
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+/* A press sinks the button a touch (the global .btn transition carries it). */
+.press {
+  --press-scale: 0.98;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .press:active:not(:disabled):not([aria-disabled="true"]) {
+    transform: scale(var(--press-scale));
+  }
+}
+
+/* Not graded: the card's shape says so (the accent border), beside its meta
+   line. `:global(.card)` outranks the card's own border. */
+:global(.card).ungraded {
+  border-color: var(--accent-border);
+}
+
+/* Not graded, inside another card (the check card's "why" prompt). */
+.nested {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  padding: var(--sp-5) var(--sp-6);
+  border-radius: var(--r-md);
+  border: 1px dashed var(--border);
+  background: var(--bg-soft);
+}
+
+.nestedPrompt {
+  margin: 0;
+  font-size: var(--fs-lg);
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+/* No frame: the question of a panel that is already a card. */
+.bare {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-5);
+  min-width: 0;
+}
+
+}

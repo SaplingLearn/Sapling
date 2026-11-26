@@ -5,15 +5,17 @@
  * own), every resource with a tappable way to reach it, and — in its dialog
  * form — a way back to studying.
  */
+import fs from "node:fs";
+import path from "node:path";
 import React from "react";
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { act, cleanup, render, renderHook, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import fixture from "@/test-utils/crisisSupport.json";
 import { crisisSupportOf, type CrisisSupport } from "@/lib/crisisSupport";
+import { __resetFeedbackPacingForTests, feedbackHeld, whenFeedbackFree } from "@/lib/feedbackPacing";
 import { CrisisSupportCard, CrisisSupportDialog, useCrisisSupport } from "./CrisisSupportCard";
-import { twStyle } from "@/test-utils/twStyle";
 
 const support = crisisSupportOf(fixture) as CrisisSupport;
 
@@ -57,8 +59,11 @@ describe("CrisisSupportCard", () => {
     render(<CrisisSupportCard support={support} />);
     const card = screen.getByTestId("crisis-support-card");
     expect(screen.queryByRole("alert")).toBeNull();
-    expect(twStyle(card).cssText).toContain("var(--info-soft)");
     expect(card.outerHTML).not.toMatch(/--err|--warn|crimson/);
+    // Its colours live in its stylesheet: the info hue, never an error one.
+    const css = fs.readFileSync(path.join(__dirname, "CrisisSupportCard.module.css"), "utf8");
+    expect(css).toMatch(/background: var\(--info-soft\)/);
+    expect(css).not.toMatch(/--err|--warn|crimson/);
   });
 
   it("shows the dismiss button only when it has somewhere to go back to", async () => {
@@ -86,6 +91,30 @@ describe("CrisisSupportDialog", () => {
     expect(within(dialog).getByTestId("crisis-support-card")).toBeTruthy();
     await userEvent.click(within(dialog).getByTestId("crisis-support-dismiss"));
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});
+
+// lib/feedbackPacing.ts: no feedback survey opens over a crisis card, on any
+// surface, in either form.
+describe("the card holds the shell's feedback prompts", () => {
+  beforeEach(() => __resetFeedbackPacingForTests());
+
+  it("while it is on screen, and releases them when it goes", () => {
+    const open = vi.fn();
+    const view = render(<CrisisSupportCard support={support} />);
+    expect(feedbackHeld()).toBe(true);
+    whenFeedbackFree(open);
+    expect(open).not.toHaveBeenCalled();
+    view.unmount();
+    expect(feedbackHeld()).toBe(false);
+    expect(open).toHaveBeenCalledTimes(1);
+  });
+
+  it("in its dialog form, until the dialog closes", () => {
+    const { rerender } = render(<CrisisSupportDialog support={support} onClose={() => {}} />);
+    expect(feedbackHeld()).toBe(true);
+    rerender(<CrisisSupportDialog support={null} onClose={() => {}} />);
+    expect(feedbackHeld()).toBe(false);
   });
 });
 

@@ -133,9 +133,10 @@ export const cardsFor = (counts: Map<string, number>, name: string): number =>
 /** The mastery arc's colour on the dark Up Next block. */
 export const FOCUS_ARC: Record<Status, string> = {
   mastered: "var(--sap-300)",
-  progress: "#F0C75E",
-  review: "#F08A80",
-  new: "rgba(255,255,255,0.4)",
+  // The state colours, lifted toward the block's white so they read on the olive.
+  progress: "color-mix(in srgb, var(--state-progress) 70%, var(--sidenav-fg))",
+  review: "color-mix(in srgb, var(--alert-err) 70%, var(--sidenav-fg))",
+  new: "color-mix(in srgb, var(--sidenav-fg) 40%, transparent)",
 };
 
 /** Room on the block's one prerequisite line, and what a chip takes of it. */
@@ -337,13 +338,13 @@ function quizRows(attempts: AttemptSummary[], courseId: string, conceptIds: Set<
   return here.map(a => {
     const ts = a.completed_at || a.created_at;
     const pct = Math.round((a.score! / a.total!) * 100);
-    const moved = a.mastery_delta != null && !!a.concept_name;
+    const moved = a.p_delta != null && !!a.concept_name;
     return {
       key: `q${a.quiz_id}`, at: Date.parse(ts), kind: "quiz" as const,
       title: `${a.concept_name || "Concept"} Quiz`,
       meta: `Quiz · ${fmtWhen(ts, today)}`,
       result: `${pct}%`, resultColor: scoreColor(pct),
-      chips: moved ? [{ id: a.concept_node_id, name: a.concept_name, delta: Math.round(a.mastery_delta! * 100) }] : [],
+      chips: moved ? [{ id: a.concept_node_id, name: a.concept_name, delta: Math.round(a.p_delta! * 100) }] : [],
     };
   });
 }

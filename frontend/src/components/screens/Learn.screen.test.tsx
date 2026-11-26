@@ -32,6 +32,11 @@ vi.mock("@/lib/useActiveSemester", () => ({
   courseInTerm: () => true,
 }));
 vi.mock("../DisclaimerModal", () => ({ DisclaimerModal: () => null }));
+// The kill-switch path: the loop status probe says "legacy", so Learn renders
+// LearnInner (the loop screen has its own suite, learn/LoopLearn.test.tsx).
+vi.mock("../learn/useLoopStatus", () => ({
+  useLoopStatus: () => ({ status: false, retry: () => {} }),
+}));
 vi.mock("../graph/KnowledgeGraph", () => ({
   KnowledgeGraph: ({ nodes, highlightId, onNodeClick }: { nodes: { id: string; name: string }[]; highlightId?: string; onNodeClick?: (n: unknown) => void }) => (
     <div data-testid="kg" data-highlight={highlightId ?? ""}>
@@ -67,6 +72,7 @@ const api = vi.hoisted(() => ({
   addGraphNode: vi.fn(),
   deleteGraphNode: vi.fn(),
   describeConcept: vi.fn(),
+  getLoopPlan: vi.fn(),
 }));
 vi.mock("@/lib/api", async importOriginal => ({
   ...(await importOriginal<typeof import("@/lib/api")>()),
@@ -75,7 +81,7 @@ vi.mock("@/lib/api", async importOriginal => ({
 
 import { Learn } from "./Learn";
 import { ToastProvider } from "../ToastProvider";
-import { twStyle } from "@/test-utils/twStyle";
+import styles from "./Learn.module.css";
 
 class StubResizeObserver {
   constructor(private cb: (entries: { contentRect: { width: number } }[]) => void) {}
@@ -149,6 +155,8 @@ function renderLearn() {
 const log = () => screen.getByTestId("tutor-messages");
 const rail = () => document.querySelector(".learn-map-rail") as HTMLElement;
 const aside = () => document.querySelector("aside") as HTMLElement;
+// The rail's live width, handed to Learn.module.css as a custom property.
+const railWidth = () => aside().style.getPropertyValue("--rail-w");
 const tab = () => screen.getByRole("button", { name: "Toggle knowledge map" });
 
 async function openSession(id: string, text: string) {
@@ -346,8 +354,8 @@ describe("active session header", () => {
   it("the active mode pill is highlighted", async () => {
     renderLearn();
     await openSession("sess-a", "A function calling itself.");
-    expect(screen.getByRole("button", { name: "Socratic" })).toHaveTwStyle({ background: "var(--accent)", color: "var(--accent-fg)" });
-    expect(screen.getByRole("button", { name: "Expository" })).toHaveTwStyle({ background: "var(--bg-subtle)", color: "var(--text-dim)" });
+    expect(screen.getByRole("button", { name: "Socratic" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "Expository" })).toHaveAttribute("aria-pressed", "false");
   });
 
   it("Back to Learn leaves the session and rewrites the URL to the mode only", async () => {
@@ -396,27 +404,41 @@ describe("session summary", () => {
     await openSession("sess-a", "A function calling itself.");
     fireEvent.click(screen.getByRole("button", { name: "End session" }));
     fireEvent.click(screen.getByRole("button", { name: "Confirm end" }));
-    await screen.findByText("Recommended next");
+    await screen.findByText("Session summary");
   }
 
   it("Done closes the summary and returns to an empty picker", async () => {
     await endWithSummary();
     fireEvent.click(screen.getByRole("button", { name: "Done" }));
     expect(await screen.findByTestId("tutor-start")).toBeDisabled();
-    expect(screen.queryByText("Recommended next")).toBeNull();
+    expect(screen.queryByText("Session summary")).toBeNull();
   });
 
-  it("a recommended concept pre-fills the picker and the URL", async () => {
+  // PKG-14b (spec §11.2): the summary shows only what the backend fills. The
+  // always-empty lists, "Recommended next" among them, are gone, so a stale
+  // `recommended_next` renders nothing.
+  it("shows the concepts covered and no recommended-next list", async () => {
     await endWithSummary();
-    nav.replace.mockClear();
-    fireEvent.click(within(screen.getByText("Recommended next").parentElement!).getByRole("button", { name: /Trees/ }));
-    expect(await screen.findByTestId("tutor-start")).not.toBeDisabled();
-    expect(screen.getByTestId("tutor-topic-picker")).toHaveTextContent("Trees");
-    expect(nav.replace).toHaveBeenCalledWith("/learn?topic=Trees&mode=socratic", { scroll: false });
+    expect(screen.getByText("Concepts covered")).toBeInTheDocument();
+    expect(screen.queryByText("Recommended next")).toBeNull();
   });
 });
 
 // ───────────────────────────────── knowledge-map rail ─────────────────────────────────
+
+// W3.1: the plan dependency block is a loop-only surface. With the loop off
+// (the kill switch / every loop flag at its default) the legacy tutor renders
+// exactly as before: no plan read, no dependency block on screen or rail.
+describe("loop off", () => {
+  it("never reads the loop plan and shows no plan dependency block", async () => {
+    renderLearn();
+    await openSession("sess-a", "A function calling itself.");
+    expect(api.getLoopPlan).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("loop-plan-deps")).toBeNull();
+    expect(screen.queryByTestId("session-plan-deps")).toBeNull();
+    expect(screen.queryByText("How these connect")).toBeNull();
+  });
+});
 
 describe("knowledge-map rail", () => {
   it("header, legend, and the focus card for the session's own concept", async () => {
@@ -433,7 +455,7 @@ describe("knowledge-map rail", () => {
     expect(screen.getByTestId("kg")).toHaveAttribute("data-highlight", "n-rec");
     // Already chatting about it: no switch button; Remove takes the row.
     expect(r.queryByRole("button", { name: /Start session|Resume session/ })).toBeNull();
-    expect(r.getByTitle("Remove concept")).toHaveTwStyle({ flex: "1" });
+    expect(r.getByTitle("Remove concept")).toHaveClass(styles.focusActionFill);
   });
 
   it("'In this branch' lists the focused concept's neighbours and 'Elsewhere' the rest of the course", async () => {
@@ -446,8 +468,7 @@ describe("knowledge-map rail", () => {
 
     fireEvent.click(elsewhere.getByRole("button", { name: "Vectors" }));
     expect(screen.getByTestId("kg")).toHaveAttribute("data-highlight", "n-vec");
-    // The status pill (padded), not the legend's label of the same name.
-    expect(within(rail()).getAllByText("Mastered").some(el => el.tagName === "SPAN" && twStyle(el).paddingLeft !== "")).toBe(true);
+    expect(within(rail()).getByText("Mastered", { selector: `span.${styles.tierBadge}` })).toBeInTheDocument();
   });
 
   it("clicking another node focuses it without touching the chat; its switch button resumes or starts", async () => {
@@ -456,7 +477,7 @@ describe("knowledge-map rail", () => {
     fireEvent.click(screen.getByTestId("kg-node-n-trees"));
     expect(screen.getByTestId("tutor-focus-concept-description")).toHaveTextContent("Hierarchies.");
     expect(within(rail()).getByRole("button", { name: /Start session/ })).toBeInTheDocument();
-    expect(within(rail()).getByTitle("Remove concept")).not.toHaveTwStyle({ flex: "1" });
+    expect(within(rail()).getByTitle("Remove concept")).not.toHaveClass(styles.focusActionFill);
 
     fireEvent.click(screen.getByTestId("kg-node-n-vec"));
     fireEvent.click(within(rail()).getByRole("button", { name: /Resume session/ }));
@@ -535,7 +556,6 @@ describe("knowledge-map rail", () => {
     fireEvent.click(screen.getByRole("button", { name: /Add concept/ }));
     const add = screen.getByRole("button", { name: "Add" });
     expect(add).toBeDisabled();
-    expect(add).toHaveTwStyle({ cursor: "not-allowed" });
     const input = screen.getByPlaceholderText("New concept name…");
     fireEvent.change(input, { target: { value: "Heaps" } });
     expect(add).not.toBeDisabled();
@@ -571,13 +591,13 @@ describe("rail collapse tab", () => {
     await openSession("sess-a", "A function calling itself.");
     expect(tab()).toHaveAttribute("aria-expanded", "true");
     expect(tab()).toHaveAttribute("title", "Collapse knowledge map");
-    expect(aside()).toHaveTwStyle({ width: "400px" });
+    expect(railWidth()).toBe("400px");
     await waitFor(() => expect(localStorage.getItem("sapling_learn_rail_open")).toBe("1"));
 
     fireEvent.keyDown(tab(), { key: "Enter" });
     expect(tab()).toHaveAttribute("aria-expanded", "false");
     expect(tab()).toHaveAttribute("title", "Show knowledge map");
-    expect(aside()).toHaveTwStyle({ width: "0px" });
+    expect(railWidth()).toBe("0px");
     await waitFor(() => expect(localStorage.getItem("sapling_learn_rail_open")).toBe("0"));
     fireEvent.keyDown(tab(), { key: " " });
     expect(tab()).toHaveAttribute("aria-expanded", "true");
@@ -604,21 +624,23 @@ describe("rail collapse tab", () => {
 
     fireEvent.pointerDown(tab(), { pointerId: 2, clientX: 100 });
     fireEvent.pointerMove(tab(), { pointerId: 2, clientX: 350 });
-    expect(aside()).toHaveTwStyle({ width: "150px", transition: "none" });
-    expect(tab()).toHaveTwStyle({ right: "150px", cursor: "grabbing" });
+    expect(railWidth()).toBe("150px");
+    expect(aside()).toHaveClass(styles.mapRailStill);
+    expect(tab().style.getPropertyValue("--rail-w")).toBe("150px");
+    expect(tab()).toHaveClass(styles.railTabDragging);
     // A stray pointer is ignored.
     fireEvent.pointerMove(tab(), { pointerId: 9, clientX: 100 });
-    expect(aside()).toHaveTwStyle({ width: "150px" });
+    expect(railWidth()).toBe("150px");
     fireEvent.pointerUp(tab(), { pointerId: 2, clientX: 350 });
     expect(tab()).toHaveAttribute("aria-expanded", "false");
-    expect(aside()).toHaveTwStyle({ width: "0px" });
+    expect(railWidth()).toBe("0px");
 
     fireEvent.pointerDown(tab(), { pointerId: 3, clientX: 300 });
     fireEvent.pointerMove(tab(), { pointerId: 3, clientX: 100 });
-    expect(aside()).toHaveTwStyle({ width: "200px" });
+    expect(railWidth()).toBe("200px");
     fireEvent.pointerCancel(tab(), { pointerId: 3, clientX: 100 });
     expect(tab()).toHaveAttribute("aria-expanded", "false");
-    expect(aside()).toHaveTwStyle({ width: "0px" });
+    expect(railWidth()).toBe("0px");
 
     fireEvent.pointerDown(tab(), { pointerId: 4, clientX: 300 });
     fireEvent.pointerMove(tab(), { pointerId: 4, clientX: 50 });
@@ -637,13 +659,13 @@ describe("mobile", () => {
     expect(screen.queryByRole("button", { name: "Toggle knowledge map" })).toBeNull();
     expect(rail()).toBeNull();
     const chatTab = screen.getByRole("button", { name: "chat" });
-    expect(chatTab).toHaveTwStyle({ color: "var(--accent)" });
+    expect(chatTab).toHaveAttribute("aria-pressed", "true");
 
     fireEvent.click(screen.getByRole("button", { name: "graph" }));
     expect(screen.queryByTestId("tutor-messages")).toBeNull();
     expect(rail()).not.toBeNull();
-    expect(aside()).toHaveTwStyle({ width: "100%" });
-    expect(screen.getByRole("button", { name: "graph" })).toHaveTwStyle({ color: "var(--accent)" });
+    expect(aside()).toHaveClass(styles.mapRailMobile);
+    expect(screen.getByRole("button", { name: "graph" })).toHaveAttribute("aria-pressed", "true");
 
     fireEvent.click(chatTab);
     expect(screen.getByTestId("tutor-messages")).toBeInTheDocument();
@@ -654,6 +676,6 @@ describe("mobile", () => {
     renderLearn();
     const start = await screen.findByTestId("tutor-start");
     const grid = start.closest(".card")!.parentElement!;
-    expect(grid).toHaveTwStyle({ gridTemplateColumns: "1fr" });
+    expect(grid).toHaveClass(styles.entryGridStacked);
   });
 });

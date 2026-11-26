@@ -70,11 +70,24 @@ def test_unknown_env_override_fails_at_model_construction(monkeypatch):
 
 
 def test_every_default_slot_is_claude():
-    """The swap itself: no agent slot still defaults to Gemini."""
+    """The swap itself: no agent slot still defaults to Gemini. (A111 cleared
+    LOOP_SLOTS_PENDING_CLAUDE_EVAL on 2026-11-24.)"""
     assert {provider_for_model(m) for m in _DEFAULTS.values()} == {"anthropic"}
     assert set(_ANTHROPIC_EFFORT) == set(_DEFAULTS), (
         "every slot needs an explicit Claude effort level"
     )
+
+
+def test_no_slot_is_pending_and_every_evaluated_slot_defaults_to_an_evaluated_model():
+    """After A111 no slot is pending a Claude eval, and each slot with an
+    evaluated set defaults to a model in it (the all-Claude half is
+    test_every_default_slot_is_claude)."""
+    from agents._providers import EVALUATED_MODELS, LOOP_SLOTS_PENDING_CLAUDE_EVAL
+
+    assert LOOP_SLOTS_PENDING_CLAUDE_EVAL == frozenset()
+    for slot, models in EVALUATED_MODELS.items():
+        if slot in _DEFAULTS:
+            assert _DEFAULTS[slot] in models, slot
 
 
 def test_provider_model_strips_a_provider_qualifier():

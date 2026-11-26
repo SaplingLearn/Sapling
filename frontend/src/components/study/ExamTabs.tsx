@@ -9,25 +9,52 @@
  *
  * The selected tab's underline slides over from the tab that had it, on the
  * clock the rest of the hub changes on (./hubMotion.ts).
+ *
+ * The exams are tabs (WAI-ARIA tabs, automatic activation): a tab re-scopes
+ * the page under the row to its exam, the readiness band with Up Next and the
+ * roadmap (`aria-controls`). One tab is in the Tab order, the selected one;
+ * the arrow keys, Home and End move along the row and select the tab they
+ * land on, which only re-draws what is on the page. With no exam there are no
+ * tabs, and the row holds only its "+ Add Exam or Deadline" link.
  */
 import React from "react";
 import { Icon } from "../Icon";
 import { HUB_EASE, HUB_SWITCH_MS, HUB_WHOLE, reducedMotion } from "./hubMotion";
+import { READINESS_ID, ROADMAP_ID } from "./hubUi";
+import et from "./ExamTabs.module.css";
 import s from "./StudyHub.module.css";
 import { countdown, countFg, daysTo, fmtDow, type AssessType, type Assessment } from "./studyModel";
 import { cn } from "@/lib/cn";
 
-const TYPE_DOT: Record<AssessType, string> = { Exam: "var(--err)", Quiz: "#6A3E68", Homework: "var(--info)" };
+const TYPE_DOT: Record<AssessType, string> = { Exam: et.dotExam, Quiz: et.dotQuiz, Homework: et.dotHomework };
 
-/* The title darkens as the line arrives (the app-wide reduced-motion reset collapses it). */
-const TITLE_FADE = `color ${HUB_SWITCH_MS}ms ${HUB_EASE}`;
+/* The title darkens as the line arrives, on the hub's clock (the app-wide
+   reduced-motion reset collapses it). */
+const TITLE_FADE = { "--tab-fade": `${HUB_SWITCH_MS}ms` } as React.CSSProperties;
 
-function ExamTab({ exam, on, today, onSelect }: { exam: Assessment; on: boolean; today: Date; onSelect: () => void }) {
+/** What every tab re-scopes. */
+const TAB_PANELS = `${READINESS_ID} ${ROADMAP_ID}`;
+
+/**
+ * Where an arrow key, Home or End moves from tab `at` of `count` (the arrows
+ * wrap round the row); null for any other key.
+ */
+export function tabStep(key: string, at: number, count: number): number | null {
+  if (key === "ArrowRight") return (at + 1) % count;
+  if (key === "ArrowLeft") return (at - 1 + count) % count;
+  if (key === "Home") return 0;
+  if (key === "End") return count - 1;
+  return null;
+}
+
+/** `tabStop`: this tab is the row's one stop in the Tab order (roving tabindex). */
+function ExamTab({ exam, on, tabStop, today, onSelect }: { exam: Assessment; on: boolean; tabStop: boolean; today: Date; onSelect: () => void }) {
   return (
-    <button role="tab" aria-selected={on} data-tab={exam.id} className={cn(on ? undefined : s.hoverTab, "relative flex flex-col items-start gap-0 shrink-0 pt-0 px-0 pb-2 border-0 border-b-2 border-b-transparent [background:transparent] [font-family:inherit] [font-size:inherit] [font-weight:inherit] [font-style:inherit] [line-height:inherit] text-left cursor-pointer")} onClick={onSelect}>
-      <span className={cn("text-base font-semibold whitespace-nowrap", on ? "text-text" : "text-text-muted")} style={{ transition: TITLE_FADE }}>{exam.title}</span>
-      <span className="text-sm text-text-muted whitespace-nowrap">{fmtDow(exam.iso, today)}</span>
-      {on && <span data-tab-line="" aria-hidden="true" className="absolute left-0 right-0 -bottom-0.5 h-0.5 bg-brand-forest [transform-origin:0_50%]" />}
+    <button type="button" role="tab" aria-selected={on} aria-controls={TAB_PANELS} tabIndex={tabStop ? 0 : -1} data-tab={exam.id}
+      className={on ? `${et.tab} ${et.tabOn}` : `${et.tab} ${s.hoverTab}`} onClick={onSelect} style={TITLE_FADE}>
+      <span className={et.tabTitle}>{exam.title}</span>
+      <span className={et.tabDate}>{fmtDow(exam.iso, today)}</span>
+      {on && <span data-tab-line="" aria-hidden="true" className={cn(et.tabLine, "[transform-origin:0_50%]")} />}
     </button>
   );
 }
@@ -59,16 +86,31 @@ function useSlidingLine(list: React.RefObject<HTMLElement | null>, selectedId: s
   React.useEffect(() => () => running.current?.cancel(), []);
 }
 
-function DeadlineRow({ item, today, onPick }: { item: Assessment; today: Date; onPick: () => void }) {
+/** The tab list's keys: an arrow, Home or End selects the tab it lands on and
+ *  moves focus there (the tab that had focus leaves the Tab order with it). */
+function tabKeys(exams: Assessment[], onSelectExam: (id: string) => void) {
+  return (e: React.KeyboardEvent<HTMLElement>) => {
+    const at = exams.findIndex(x => x.id === (e.target as HTMLElement).dataset.tab);
+    const to = at < 0 ? null : tabStep(e.key, at, exams.length);
+    if (to === null) return;
+    e.preventDefault();
+    const id = exams[to].id;
+    onSelectExam(id);
+    [...e.currentTarget.querySelectorAll<HTMLElement>("[data-tab]")].find(t => t.dataset.tab === id)?.focus();
+  };
+}
+
+/** `index`: its place in the list, which staggers its entrance. */
+function DeadlineRow({ item, index, today, onPick }: { item: Assessment; index: number; today: Date; onPick: () => void }) {
   const n = daysTo(item.iso, today);
   return (
-    <button className={cn(s.hoverOption, "flex items-center gap-2.5 p-2 border-0 rounded-sm [background:transparent] [font-family:inherit] [font-size:inherit] [font-weight:inherit] [font-style:inherit] [line-height:inherit] text-left cursor-pointer")} onClick={onPick}>
-      <span className="w-2 h-2 rounded-[50%] shrink-0" style={{ background: TYPE_DOT[item.type] }} />
-      <span className="flex-1 min-w-0">
-        <span className="block text-md font-semibold whitespace-nowrap overflow-hidden text-ellipsis">{item.title}</span>
-        <span className="block text-sm text-text-muted">{item.type} · {fmtDow(item.iso)}</span>
+    <button className={`${et.deadline} ${s.hoverOption}`} onClick={onPick} style={{ "--i": index } as React.CSSProperties}>
+      <span className={`${et.dot} ${TYPE_DOT[item.type]}`} />
+      <span className={et.deadlineText}>
+        <span className={`${et.deadlineTitle} ${s.ellipsis}`}>{item.title}</span>
+        <span className={et.deadlineMeta}>{item.type} · {fmtDow(item.iso)}</span>
       </span>
-      <span className="text-sm font-semibold whitespace-nowrap" style={{ color: countFg(n) }}>{countdown(n)}</span>
+      <span className={et.deadlineCount} style={{ color: countFg(n) }}>{countdown(n)}</span>
     </button>
   );
 }
@@ -84,15 +126,15 @@ function DeadlinesPanel({ upcoming, courseLabel, today, onClose, onPick, onManag
 }) {
   return (
     <>
-      <div onClick={onClose} className="fixed inset-0 z-30" />
-      <div role="dialog" aria-label="Upcoming deadlines" className={cn(s.pop, "absolute right-0 top-11 z-31 w-80 max-w-[calc(100vw_-_32px)] [background:var(--bg-panel)] border border-border rounded-md shadow-lg p-1.5 flex flex-col")}>
-        <div className="flex items-baseline justify-between pt-1.5 px-2 pb-2">
-          <span className="font-display text-lg font-semibold">Upcoming Deadlines</span>
-          <span className="text-sm text-text-muted">{courseLabel}</span>
+      <div onClick={onClose} className={s.clickAway} />
+      <div role="dialog" aria-label="Upcoming deadlines" className={`${s.pop} ${s.popover} ${et.panel}`}>
+        <div className={et.panelHead}>
+          <span className={et.panelTitle}>Upcoming Deadlines</span>
+          <span className={et.panelMeta}>{courseLabel}</span>
         </div>
-        {upcoming.length === 0 && <div className="pt-1 px-2 pb-2.5 text-md text-text-muted">Nothing due for this course.</div>}
-        {upcoming.map(item => <DeadlineRow key={item.id} item={item} today={today} onPick={() => onPick(item)} />)}
-        <button onClick={onManage} className="mt-1 p-2 border-0 border-t border-t-border [border-radius:0_0_8px_8px] bg-transparent text-brand-forest [font-family:inherit] [font-style:inherit] [line-height:inherit] text-md font-semibold cursor-pointer">Manage Dates</button>
+        {upcoming.length === 0 && <div className={et.panelEmpty}>Nothing due for this course.</div>}
+        {upcoming.map((item, i) => <DeadlineRow key={item.id} item={item} index={i} today={today} onPick={() => onPick(item)} />)}
+        <button onClick={onManage} className={et.manage}>Manage Dates</button>
       </div>
     </>
   );
@@ -125,12 +167,17 @@ export function ExamTabs(props: ExamTabsProps) {
   const { exams, exam, soon, today, bellOpen, onBell, onAdd } = props;
   const tabs = React.useRef<HTMLDivElement | null>(null);
   useSlidingLine(tabs, exam?.id ?? null);
+  // The selected tab is the row's Tab stop; the first one if none is.
+  const stop = exams.some(e => e.id === exam?.id) ? exam?.id : exams[0]?.id;
+  // The tab list only once there are tabs: the "+ Add" link that stands in
+  // for them is no tab (axe aria-required-children), but keeps their place.
+  const tablist = exams.length > 0 ? { role: "tablist", "aria-label": "Exams", onKeyDown: tabKeys(exams, props.onSelectExam) } : {};
   return (
-    <div className={cn(s.areaTabs, "flex items-center gap-4 border-b border-b-border min-w-0")}>
-      <div ref={tabs} key={props.courseId} className={cn(s.paneEnter, "flex-[0_1_auto] min-w-0 self-stretch flex gap-7 overflow-x-auto overflow-y-hidden")} role="tablist" aria-label="Exams">
-        {exams.map(e => <ExamTab key={e.id} exam={e} on={e.id === exam?.id} today={today} onSelect={() => props.onSelectExam(e.id)} />)}
+    <div className={`${s.areaTabs} ${et.row}`}>
+      <div ref={tabs} key={props.courseId} className={`${s.paneEnter} ${et.list}`} {...tablist}>
+        {exams.map(e => <ExamTab key={e.id} exam={e} on={e.id === exam?.id} tabStop={e.id === stop} today={today} onSelect={() => props.onSelectExam(e.id)} />)}
         {exams.length === 0 && (
-          <button onClick={onAdd} className="self-center pt-0 px-0 pb-2 border-0 bg-transparent [font-family:inherit] [font-style:inherit] [line-height:inherit] text-md font-semibold text-brand-forest cursor-pointer">+ Add Exam or Deadline</button>
+          <button onClick={onAdd} className={et.addLink}>+ Add Exam or Deadline</button>
         )}
       </div>
       {/* Add an exam right where the exams are listed: the "+" follows the
@@ -144,11 +191,11 @@ export function ExamTabs(props: ExamTabsProps) {
       {/* Upcoming deadlines sit with the exams, at the end of the exam row.
           The gear that opened the dates editor is gone: "+" adds a date, and
           the bell's "Manage Dates" opens the editor to change or remove one. */}
-      <div className="flex items-center gap-0.5 shrink-0 ml-auto pb-1.5">
-        <div className="relative">
-          <button className={cn(s.hoverIcon, "w-9 h-9 flex items-center justify-center border-0 rounded-sm text-text-dim cursor-pointer relative", bellOpen ? "[background:var(--bg-soft)]" : "[background:transparent]")} onClick={() => onBell(!bellOpen)} aria-label={`Upcoming deadlines, ${soon} this week`} aria-expanded={bellOpen} title="Upcoming deadlines">
+      <div className={et.bellWrap}>
+        <div className={et.bellAnchor}>
+          <button className={`${et.iconButton} ${s.hoverIcon}${bellOpen ? ` ${et.iconButtonOpen}` : ""}`} onClick={() => onBell(!bellOpen)} aria-label={`Upcoming deadlines, ${soon} this week`} aria-expanded={bellOpen} title="Upcoming deadlines">
             <Icon name="nofitication" size={18} />
-            {soon > 0 && <span className="absolute top-0.5 right-px min-w-4 h-4 py-0 px-1 box-border rounded-[8px] bg-err text-accent-fg text-2xs font-semibold flex items-center justify-center [box-shadow:0_0_0_2px_var(--bg)]">{soon}</span>}
+            {soon > 0 && <span className={et.badge}>{soon}</span>}
           </button>
           {bellOpen && (
             <DeadlinesPanel upcoming={props.upcoming} courseLabel={props.courseLabel} today={today}

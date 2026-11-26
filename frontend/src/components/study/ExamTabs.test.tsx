@@ -6,8 +6,8 @@
  */
 import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
-import { ExamTabs, type ExamTabsProps } from "./ExamTabs";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { ExamTabs, tabStep, type ExamTabsProps } from "./ExamTabs";
 import { HUB_EASE, HUB_SWITCH_MS } from "./hubMotion";
 import type { Assessment } from "./studyModel";
 
@@ -106,5 +106,66 @@ describe("ExamTabs' selected line", () => {
     rerender(<ExamTabs {...tabsProps("e1")} />);
     unmount();
     expect(slides[0].cancel).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("ExamTabs' tabs (WAI-ARIA tabs, automatic activation)", () => {
+  /** A row whose selection follows `onSelectExam`, as the hub's does. */
+  function Row({ initial, onSelect }: { initial: string; onSelect?: (id: string) => void }) {
+    const [selected, setSelected] = React.useState(initial);
+    return <ExamTabs {...tabsProps(selected, { onSelectExam: id => { onSelect?.(id); setSelected(id); } })} />;
+  }
+  const tabStops = () => screen.getAllByRole("tab").filter(t => t.tabIndex === 0).map(t => t.dataset.tab);
+
+  it("controls the readiness band and the roadmap, and only the selected tab is in the Tab order", () => {
+    render(<ExamTabs {...tabsProps("e2")} />);
+    for (const tab of screen.getAllByRole("tab")) {
+      expect(tab.getAttribute("aria-controls")).toBe("study-hub-readiness study-hub-roadmap");
+    }
+    expect(tabStops()).toEqual(["e2"]);
+  });
+
+  it("with no tab selected, the first one is the Tab stop", () => {
+    render(<ExamTabs {...tabsProps(null)} />);
+    expect(tabStops()).toEqual(["e1"]);
+  });
+
+  it("the arrow keys, Home and End select the tab they land on and move focus to it", () => {
+    const onSelect = vi.fn();
+    render(<Row initial="e2" onSelect={onSelect} />);
+    const list = screen.getByRole("tablist", { name: "Exams" });
+    const tab = (id: string) => screen.getAllByRole("tab").find(t => t.dataset.tab === id)!;
+    tab("e2").focus();
+    fireEvent.keyDown(document.activeElement!, { key: "ArrowRight" });
+    expect(document.activeElement).toBe(tab("fin"));
+    expect(tab("fin").getAttribute("aria-selected")).toBe("true");
+    expect(tabStops()).toEqual(["fin"]);
+    // The arrows wrap round the row.
+    fireEvent.keyDown(document.activeElement!, { key: "ArrowRight" });
+    expect(document.activeElement).toBe(tab("e1"));
+    fireEvent.keyDown(document.activeElement!, { key: "ArrowLeft" });
+    expect(document.activeElement).toBe(tab("fin"));
+    fireEvent.keyDown(document.activeElement!, { key: "Home" });
+    expect(document.activeElement).toBe(tab("e1"));
+    fireEvent.keyDown(document.activeElement!, { key: "End" });
+    expect(document.activeElement).toBe(tab("fin"));
+    expect(onSelect.mock.calls.map(([id]) => id)).toEqual(["fin", "e1", "fin", "e1", "fin"]);
+    // Any other key is the page's.
+    fireEvent.keyDown(document.activeElement!, { key: "ArrowDown" });
+    expect(onSelect).toHaveBeenCalledTimes(5);
+    expect(list.contains(document.activeElement)).toBe(true);
+  });
+
+  it("with no exam there is no tab list: the add link stands alone", () => {
+    render(<ExamTabs {...tabsProps(null, { exams: [] })} />);
+    expect(screen.queryByRole("tablist")).toBeNull();
+    expect(screen.getByRole("button", { name: "+ Add Exam or Deadline" })).toBeTruthy();
+  });
+});
+
+describe("tabStep", () => {
+  it("wraps the arrows and jumps to the ends; any other key is not a move", () => {
+    expect([tabStep("ArrowRight", 2, 3), tabStep("ArrowLeft", 0, 3), tabStep("Home", 2, 3), tabStep("End", 0, 3)]).toEqual([0, 2, 0, 2]);
+    expect(tabStep("Enter", 1, 3)).toBeNull();
   });
 });

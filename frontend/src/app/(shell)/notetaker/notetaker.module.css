@@ -1,0 +1,798 @@
+@layer components {
+/* The notetaker screen (page.tsx). The four rails' widths and the fullscreen
+   swap live in lib/notes/notetakerLayout.ts; this sheet styles what sits inside
+   them. Where a rule overrides a global component class (.card, .btn, .chip)
+   it is written `.x:global(.card)` so it wins whatever order the sheets load. */
+
+/* ── Local tokens: sizes with no step on the global scales ─────────────── */
+.screen,
+.loading,
+.empty,
+.backdrop {
+  /* A status/mastery/course dot. */
+  --dot-sm: 7px;
+  --dot-md: 8px;
+  --dot-lg: 12px;
+  /* The title sizes: the empty state's heading and the editor's title,
+     normal and fullscreen. 28px and 42px sit between --fs-* steps. */
+  --empty-title-fs: 28px;
+  --note-title-fs: var(--fs-4xl);
+  --note-title-fs-full: 42px;
+  /* The editor body: 15px reads as a page; fullscreen drops to 14 so a wide
+     line stays comfortable. */
+  --note-body-fs: 15px;
+  --note-body-fs-full: var(--fs-base);
+  --note-body-min-h: 320px;
+  /* Fullscreen: fill the viewport less the title band and footer. */
+  --note-body-min-h-full: calc(100vh - 280px);
+  --empty-copy-max: 420px;
+  --modal-max: 520px;
+  --modal-max-h: 80vh;
+  --tag-input-w: 80px;
+  /* A chat bubble's inset: 11px has no step. */
+  --bubble-pad: var(--sp-4) 11px;
+}
+
+/* ── Loading and empty states ──────────────────────────────────────────── */
+
+.loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--text-muted);
+  font-size: var(--fs-md);
+}
+
+.empty {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: var(--sp-16);
+  gap: var(--sp-6);
+}
+
+.emptyHeader {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-8);
+}
+
+.emptyBody {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: var(--sp-6);
+}
+
+.emptyTitle {
+  margin: 0;
+  font-size: var(--empty-title-fs);
+  font-weight: 500;
+  letter-spacing: -0.015em;
+}
+
+.emptyCopy {
+  margin: 0;
+  max-width: var(--empty-copy-max);
+  color: var(--text-dim);
+  font-size: var(--fs-base);
+  line-height: 1.6;
+}
+
+.emptyCta {
+  margin-top: var(--sp-4);
+}
+
+.hint {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+
+/* ── Screen shell ──────────────────────────────────────────────────────── */
+
+.screen {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.editorSlot {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  justify-content: center;
+}
+
+/* ── Notes list rail ───────────────────────────────────────────────────── */
+
+.listCard:global(.card) {
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.listHead {
+  padding: var(--sp-7) var(--sp-8) var(--sp-5);
+  border-bottom: 1px solid var(--border);
+}
+
+.listTitleRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--sp-5);
+}
+
+.count {
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+}
+
+.searchWrap {
+  position: relative;
+  margin-bottom: var(--sp-5);
+}
+
+.searchIcon {
+  position: absolute;
+  left: var(--sp-5);
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-muted);
+  display: inline-flex;
+  pointer-events: none;
+}
+
+/* A text field: the list search, the concept search, the chat composer. */
+.field {
+  width: 100%;
+  padding: var(--sp-4) var(--sp-5);
+  font-size: var(--fs-md);
+  font-family: var(--font-sans);
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  color: var(--text);
+  transition: border-color var(--dur-fast) var(--ease);
+}
+
+.field:focus {
+  border-color: var(--border-strong);
+}
+
+/* The list search leaves room for its icon. */
+.fieldWithIcon {
+  padding-left: var(--sp-15);
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+}
+
+.listScroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--sp-3);
+}
+
+.listEmpty {
+  padding: var(--sp-10) var(--sp-6);
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.noteRow {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: var(--sp-5) var(--sp-6);
+  margin-bottom: var(--sp-1);
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-dim);
+  font-weight: 400;
+  border: none;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+
+.noteRow:hover {
+  background: var(--bg-subtle);
+  color: var(--text);
+}
+
+.noteRowActive,
+.noteRowActive:hover {
+  background: var(--bg-soft);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.noteTitle {
+  font-size: var(--fs-md);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-bottom: var(--sp-2);
+}
+
+.noteMeta {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+/* A coloured dot; its colour comes in as --dot-color (a course or a mastery). */
+.dot {
+  width: var(--dot-sm);
+  height: var(--dot-sm);
+  border-radius: 50%;
+  background: var(--dot-color);
+  flex-shrink: 0;
+}
+
+.dotInline {
+  display: inline-block;
+}
+
+.dotMd {
+  width: var(--dot-md);
+  height: var(--dot-md);
+}
+
+.dotLg {
+  width: var(--dot-lg);
+  height: var(--dot-lg);
+}
+
+.listFoot {
+  padding: var(--sp-5);
+  border-top: 1px solid var(--border);
+}
+
+/* A full-width centred button (New note, Link concept, Delete note). */
+.blockBtn:global(.btn) {
+  width: 100%;
+  justify-content: center;
+  display: inline-flex;
+}
+
+.filterChip:global(.chip) {
+  cursor: pointer;
+  border: 1px solid transparent;
+  background: var(--bg-soft);
+  color: var(--text-dim);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease);
+}
+
+.filterChip:global(.chip):hover {
+  color: var(--text);
+}
+
+.filterChipActive:global(.chip),
+.filterChipActive:global(.chip):hover {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: var(--accent-border);
+}
+
+/* ── Editor ────────────────────────────────────────────────────────────── */
+
+.editor {
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  width: 100%;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-sm);
+  transition: background var(--dur-slow) var(--ease), border-color var(--dur-slow) var(--ease),
+    box-shadow var(--dur-slow) var(--ease), border-radius var(--dur-slow) var(--ease);
+}
+
+.editorFull {
+  background: transparent;
+  border-color: transparent;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.editorHead {
+  padding: var(--sp-10) var(--sp-14) var(--sp-8);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-6);
+  transition: padding var(--dur-slow) var(--ease), border-color var(--dur-slow) var(--ease);
+}
+
+.editorFull .editorHead {
+  padding: var(--sp-24) var(--sp-28) var(--sp-10);
+  border-bottom-color: transparent;
+}
+
+.titleInput {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--note-title-fs);
+  font-weight: 500;
+  letter-spacing: -0.015em;
+  line-height: 1.2;
+  color: var(--text);
+  background: transparent;
+  border: none;
+  padding: 0;
+  transition: font-size var(--dur-slow) var(--ease);
+}
+
+.editorFull .titleInput {
+  font-size: var(--note-title-fs-full);
+}
+
+.noShrink {
+  flex-shrink: 0;
+}
+
+.editorBody {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--sp-10) var(--sp-14);
+  transition: padding var(--dur-slow) var(--ease);
+}
+
+.editorFull .editorBody {
+  padding: var(--sp-12) var(--sp-28);
+}
+
+.bodyInput {
+  width: 100%;
+  min-height: var(--note-body-min-h);
+  border: none;
+  resize: none;
+  background: transparent;
+  font-size: var(--note-body-fs);
+  line-height: 1.7;
+  color: var(--text);
+  font-family: var(--font-serif);
+  transition: font-size var(--dur-slow) var(--ease);
+}
+
+.editorFull .bodyInput {
+  min-height: var(--note-body-min-h-full);
+  font-size: var(--note-body-fs-full);
+}
+
+.editorFoot {
+  padding: var(--sp-5) var(--sp-11);
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-6);
+  background: var(--bg-inset);
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+  font-family: var(--font-sans);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+  transition: padding var(--dur-slow) var(--ease), background var(--dur-slow) var(--ease),
+    border-color var(--dur-slow) var(--ease);
+}
+
+.editorFull .editorFoot {
+  padding: var(--sp-7) var(--sp-28);
+  border-top-color: transparent;
+  background: transparent;
+}
+
+.inlineRow {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-3);
+}
+
+.inlineRowWide {
+  gap: var(--sp-6);
+}
+
+.saveError {
+  color: var(--state-struggle);
+}
+
+.retryBtn:global(.btn) {
+  padding: 0 var(--sp-3);
+  font-size: var(--fs-xs);
+  color: inherit;
+}
+
+/* ── Detail rail ───────────────────────────────────────────────────────── */
+
+.detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-8);
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.detailCard:global(.card) {
+  padding: var(--pad-lg);
+}
+
+.cardLabel {
+  margin-bottom: var(--sp-5);
+}
+
+.muted {
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.stackLoose {
+  gap: var(--sp-3);
+}
+
+.conceptRow {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-5);
+  padding: var(--sp-4) var(--sp-5);
+  border-radius: var(--r-sm);
+  background: var(--bg-subtle);
+  width: 100%;
+}
+
+.conceptName {
+  flex: 1;
+  font-size: var(--fs-md);
+  color: var(--text);
+}
+
+.tier {
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+
+.iconBtn {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: var(--text-muted);
+  padding: var(--sp-1);
+  display: inline-flex;
+  border-radius: var(--r-xs);
+  transition: color var(--dur-fast) var(--ease);
+}
+
+.iconBtn:hover {
+  color: var(--text);
+}
+
+.cardAction:global(.btn) {
+  margin-top: var(--sp-5);
+}
+
+.tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-3);
+}
+
+.tagChip:global(.chip) {
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  border: 1px solid transparent;
+  transition: border-color var(--dur-fast) var(--ease);
+}
+
+.tagChip:global(.chip):hover {
+  border-color: var(--border-strong);
+}
+
+.tagInput:global(.chip) {
+  background: var(--bg-input);
+  border: 1px dashed var(--border-strong);
+  color: var(--text);
+  width: var(--tag-input-w);
+}
+
+.tagAdd:global(.chip) {
+  background: transparent;
+  border: 1px dashed var(--border-strong);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease);
+}
+
+.tagAdd:global(.chip):hover {
+  background: var(--bg-subtle);
+}
+
+.actionBtn:global(.btn) {
+  justify-content: flex-start;
+  text-align: left;
+}
+
+.summary {
+  margin-top: var(--sp-6);
+  padding: var(--sp-5);
+  border-radius: var(--r-sm);
+  background: var(--bg-subtle);
+  font-size: var(--fs-sm);
+  line-height: 1.6;
+  color: var(--text-dim);
+}
+
+.summaryLabel {
+  margin-bottom: var(--sp-2);
+  font-size: var(--fs-2xs);
+}
+
+.info {
+  margin: 0;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  row-gap: var(--sp-3);
+  column-gap: var(--sp-6);
+  font-size: var(--fs-sm);
+}
+
+.info dt {
+  color: var(--text-muted);
+}
+
+.info dd {
+  margin: 0;
+  color: var(--text);
+}
+
+.deleteBtn:global(.btn) {
+  margin-top: var(--sp-6);
+}
+
+/* ── Picker modals ─────────────────────────────────────────────────────── */
+
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-modal);
+  background: var(--scrim);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--sp-12);
+}
+
+.modal:global(.card) {
+  width: 100%;
+  max-width: var(--modal-max);
+  padding: 0;
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+}
+
+.modalTall:global(.card) {
+  display: flex;
+  flex-direction: column;
+  max-height: var(--modal-max-h);
+}
+
+.modalHead {
+  padding: var(--sp-10) var(--sp-12) var(--sp-6);
+  border-bottom: 1px solid var(--border);
+}
+
+.modalEyebrow {
+  margin-bottom: var(--sp-3);
+}
+
+.modalTitle {
+  margin: 0;
+  font-size: var(--fs-2xl);
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+.modalCopy {
+  margin: var(--sp-3) 0 0;
+  font-size: var(--fs-md);
+  color: var(--text-dim);
+}
+
+.modalSearch {
+  padding: var(--sp-5) var(--sp-7);
+  border-bottom: 1px solid var(--border);
+}
+
+.modalList {
+  padding: var(--sp-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.modalScroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--sp-5);
+}
+
+.modalEmpty {
+  padding: var(--sp-10) var(--sp-7);
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+  text-align: center;
+}
+
+/* A course or concept to pick. */
+.pickRow {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-6);
+  padding: var(--sp-6) var(--sp-7);
+  border-radius: var(--r-md);
+  border: 1px solid var(--border);
+  background: var(--bg-panel);
+  cursor: pointer;
+  text-align: left;
+  transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+}
+
+.pickRow:hover {
+  background: var(--bg-soft);
+  border-color: var(--border-strong);
+}
+
+.pickRowTight {
+  gap: var(--sp-5);
+  padding: var(--sp-5) var(--sp-6);
+}
+
+.pickBody {
+  flex: 1;
+  min-width: 0;
+}
+
+.pickName {
+  font-size: var(--fs-base);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.pickCode {
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+  margin-top: var(--sp-1);
+}
+
+.modalFoot {
+  padding: var(--sp-6) var(--sp-8);
+  border-top: 1px solid var(--border);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: var(--bg-subtle);
+}
+
+.modalFootEnd {
+  justify-content: flex-end;
+}
+
+/* ── Quick-questions chat ──────────────────────────────────────────────── */
+
+.chat {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+.chatHead {
+  padding: var(--sp-7) var(--sp-8);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+}
+
+.thread {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--sp-7) var(--sp-8);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-5);
+}
+
+.chatHint {
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+  line-height: 1.6;
+}
+
+.bubble {
+  align-self: flex-start;
+  max-width: 85%;
+  padding: var(--bubble-pad);
+  border-radius: var(--r-md);
+  background: var(--bg-subtle);
+  color: var(--text);
+  font-size: var(--fs-md);
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.bubbleUser {
+  align-self: flex-end;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.thinking {
+  align-self: flex-start;
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.chatError {
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--bubble-pad);
+  border-radius: var(--r-md);
+  border: 1px solid var(--state-struggle);
+  color: var(--state-struggle);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+}
+
+.composer {
+  padding: var(--sp-5);
+  border-top: 1px solid var(--border);
+  display: flex;
+  gap: var(--sp-3);
+}
+
+.composerField {
+  flex: 1;
+  min-width: 0;
+}
+
+}

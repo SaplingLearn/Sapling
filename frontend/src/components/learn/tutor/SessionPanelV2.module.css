@@ -1,0 +1,102 @@
+@layer components {
+/* The rebuilt session panel (SessionPanelV2.tsx), after the Claude Design
+   board: one list of the plan's concepts, each with its level and a bar, the
+   current one in the accent wash, then the map link at the foot. */
+
+.inner {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-8);
+  min-height: 100%;
+}
+
+.rows {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+.row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  padding: var(--sp-6) var(--sp-7);
+  border-radius: var(--r-md);
+  border: 1px solid transparent;
+}
+
+.row[data-state="now"] {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+.top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--sp-4);
+  font-size: var(--fs-base);
+}
+
+.name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.row[data-state="now"] .name {
+  font-weight: 600;
+}
+
+.row[data-state="done"] .name {
+  color: var(--text-dim);
+}
+
+.word {
+  flex-shrink: 0;
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+}
+
+.empty {
+  margin: 0;
+  font-size: var(--fs-md);
+  color: var(--text-dim);
+}
+
+.mapLink {
+  margin-top: auto;
+  font-size: var(--fs-md);
+  font-weight: 600;
+  color: var(--accent);
+}
+
+/* saved_items: the head's two tabs, Plan and Saved (n). */
+.tabs {
+  display: flex;
+  gap: var(--sp-2);
+  padding: var(--sp-2);
+  border-radius: var(--r-md);
+  background: var(--bg-soft);
+}
+
+.tab {
+  padding: var(--sp-3) var(--sp-6);
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  font: inherit;
+  font-size: var(--fs-md);
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.tab[aria-selected="true"] {
+  background: var(--bg-panel);
+  color: var(--text);
+  font-weight: 600;
+}
+
+}

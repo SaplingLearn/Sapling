@@ -1,5 +1,6 @@
 "use client";
 import React from "react";
+import { motion } from "framer-motion";
 
 import { Icon } from "@/components/Icon";
 import { useToast } from "@/components/ToastProvider";
@@ -11,10 +12,24 @@ import {
   type AdminFlag,
 } from "@/lib/api";
 import type { AdminUserListItem } from "@/lib/types";
+import { useMotionPresets } from "@/lib/motion";
+import { AnimatedNumber } from "../AnimatedNumber";
 
-import { changeSummary, explainPhrase, flagMeta, otherVariant, variantLabel } from "./flagLabels";
+import { changeSummary, explainPhrase, flagMeta, forcedNote, otherVariant, variantLabel } from "./flagLabels";
 
 const PRESETS = [0, 10, 25, 50, 100];
+
+/** The panel's width (Sheet's `width`, px). */
+const PANEL_WIDTH_PX = 520;
+/** A remove button's cross (Icon's `size`, px). */
+const REMOVE_ICON_PX = 14;
+/** Student search: the shortest query sent, how many hits, and the pause
+ *  after the last keystroke before it is sent. */
+const SEARCH_MIN_CHARS = 2;
+const SEARCH_MAX_HITS = 6;
+const SEARCH_DEBOUNCE_MS = 200;
+
+const formatPct = (v: number) => `${Math.round(v)}%`;
 
 /**
  * The right-hand panel for one flag: everyone default + gradual rollout
@@ -33,7 +48,7 @@ export function FlagPanel({ flag, roles, onClose, onSaved }: {
       open={flag !== null}
       onClose={onClose}
       title={flag ? flagMeta(flag.key).title : ""}
-      width={520}
+      width={PANEL_WIDTH_PX}
       testid={flag ? `flag-panel-${flag.key}` : undefined}
     >
       {flag && <PanelBody key={flag.key} flag={flag} roles={roles} onSaved={onSaved} />}
@@ -88,6 +103,8 @@ function PanelBody({ flag, roles, onSaved }: {
   };
 
   const variantOptions = flag.variants.map((v) => ({ value: v, label: variantLabel(flag, v) }));
+  const forced = forcedNote(flag); // #866 K24: the server decides above these settings
+  const m = useMotionPresets();
 
   return (
     <div className="flag-panel">
@@ -101,6 +118,7 @@ function PanelBody({ flag, roles, onSaved }: {
         <div className="flag-panel__fit">
           <Toggle options={variantOptions} value={def} onChange={setDef} testid={`flag-default-${flag.key}`} />
         </div>
+        {forced && <p className="flag-panel__muted" data-testid={`flag-forced-note-${flag.key}`}>{forced.tip}</p>}
       </section>
 
       <section className="flag-panel__section">
@@ -126,7 +144,9 @@ function PanelBody({ flag, roles, onSaved }: {
               <span>to</span>
             </>
           )}
-          <strong className="flag-panel__pct" data-testid={`flag-rollout-value-${flag.key}`}>{pct}%</strong>
+          <strong className="flag-panel__pct" data-testid={`flag-rollout-value-${flag.key}`}>
+            <AnimatedNumber value={pct} format={formatPct} />
+          </strong>
           <span>of students</span>
         </div>
         <div className="flag-panel__presets" role="group" aria-label="Rollout presets">
@@ -160,8 +180,10 @@ function PanelBody({ flag, roles, onSaved }: {
 
       <CheckStudent flag={flag} roles={roles} />
 
+      {/* The footer rises in once there is something to save; it leaves at
+          once on save or discard (no exit, so nothing waits on it). */}
       {(summary || invalid) && (
-        <div className="flag-panel__footer">
+        <motion.div className="flag-panel__footer" variants={m.list.item} initial="hidden" animate="shown">
           <p className="flag-panel__summary" data-testid={`flag-save-scope-${flag.key}`}>
             {invalid ? "Pick which setting the rollout serves." : summary}
           </p>
@@ -179,7 +201,7 @@ function PanelBody({ flag, roles, onSaved }: {
               {saving ? "Saving…" : "Save"}
             </button>
           </div>
-        </div>
+        </motion.div>
       )}
     </div>
   );
@@ -201,14 +223,14 @@ function useStudentSearch() {
   const [hits, setHits] = React.useState<AdminUserListItem[]>([]);
   React.useEffect(() => {
     const q = query.trim();
-    if (q.length < 2) { setHits([]); return; }
+    if (q.length < SEARCH_MIN_CHARS) { setHits([]); return; }
     let live = true;
     const t = setTimeout(() => {
-      adminFetchUsers({ q, page_size: 6 }).then(
+      adminFetchUsers({ q, page_size: SEARCH_MAX_HITS }).then(
         (r) => { if (live) setHits(r.users); },
         () => { if (live) setHits([]); },
       );
-    }, 200);
+    }, SEARCH_DEBOUNCE_MS);
     return () => { live = false; clearTimeout(t); };
   }, [query]);
   return { query, setQuery, hits, clear: () => { setQuery(""); setHits([]); } };
@@ -219,18 +241,19 @@ const userLabel = (u: AdminUserListItem) => u.name || u.email || u.id;
 function StudentResults({ hits, testidPrefix, onPick }: {
   hits: AdminUserListItem[]; testidPrefix: string; onPick: (u: AdminUserListItem) => void;
 }) {
+  const m = useMotionPresets();
   if (hits.length === 0) return null;
   return (
-    <ul className="flag-panel__results" role="listbox">
+    <motion.ul className="flag-panel__results" role="listbox" variants={m.list.container} initial="hidden" animate="shown">
       {hits.map((u) => (
-        <li key={u.id} role="option" aria-selected={false}>
+        <motion.li key={u.id} role="option" aria-selected={false} variants={m.list.item}>
           <button type="button" data-testid={`${testidPrefix}-${u.id}`} onClick={() => onPick(u)}>
             <span>{userLabel(u)}</span>
             {u.email && u.name && <span className="flag-panel__result-sub">{u.email}</span>}
           </button>
-        </li>
+        </motion.li>
       ))}
-    </ul>
+    </motion.ul>
   );
 }
 
@@ -243,6 +266,7 @@ function Overrides({ flag, roles, onSaved, hideFlag }: {
   const [picked, setPicked] = React.useState<string>("");
   const [variant, setVariant] = React.useState(flag.variants[flag.variants.length - 1] ?? flag.variants[0]);
   const search = useStudentSearch();
+  const m = useMotionPresets();
 
   const reset = () => { setTargetId(""); setPicked(""); search.clear(); };
 
@@ -281,7 +305,12 @@ function Overrides({ flag, roles, onSaved, hideFlag }: {
       ) : (
         <ul className="flag-panel__overrides">
           {flag.targets.map((t) => (
-            <li key={`${t.target_type}-${t.target_id}`} data-testid={`flag-target-row-${flag.key}-${t.target_type}-${t.target_id}`}>
+            // A new override rises into the list; a removed one leaves at once.
+            <motion.li
+              key={`${t.target_type}-${t.target_id}`}
+              data-testid={`flag-target-row-${flag.key}-${t.target_type}-${t.target_id}`}
+              variants={m.list.item} initial="hidden" animate="shown"
+            >
               <span className="chip">{t.target_type === "role" ? "Role" : "Student"}</span>
               <span className="flag-panel__override-label">{t.label}</span>
               <span className={`chip ${hideFlag && t.variant === "on" ? "chip--warn" : "chip--accent"}`}>
@@ -295,10 +324,10 @@ function Overrides({ flag, roles, onSaved, hideFlag }: {
                   data-testid={`flag-target-remove-${flag.key}-${t.target_type}-${t.target_id}`}
                   onClick={() => void remove(t.target_type, t.target_id)}
                 >
-                  <Icon name="x" size={14} />
+                  <Icon name="x" size={REMOVE_ICON_PX} />
                 </button>
               </Tooltip>
-            </li>
+            </motion.li>
           ))}
         </ul>
       )}
@@ -373,6 +402,7 @@ function CheckStudent({ flag, roles }: { flag: AdminFlag; roles: { id: string; n
   const toast = useToast();
   const search = useStudentSearch();
   const [result, setResult] = React.useState<{ who: string; text: string } | null>(null);
+  const m = useMotionPresets();
 
   const check = async (id: string, who: string) => {
     if (!id.trim()) return;
@@ -408,11 +438,17 @@ function CheckStudent({ flag, roles }: { flag: AdminFlag; roles: { id: string; n
         testidPrefix={`flag-explain-user-${flag.key}`}
         onPick={(u) => void check(u.id, userLabel(u))}
       />
+      {/* Re-keyed per answer, so each new check fades its verdict in. */}
       {result && (
-        <div className="flag-panel__explain" data-testid={`flag-explain-result-${flag.key}`}>
+        <motion.div
+          key={`${result.who}|${result.text}`}
+          className="flag-panel__explain"
+          data-testid={`flag-explain-result-${flag.key}`}
+          variants={m.list.item} initial="hidden" animate="shown"
+        >
           <span className="flag-panel__muted">{result.who}</span>
           <span>{result.text}</span>
-        </div>
+        </motion.div>
       )}
     </section>
   );

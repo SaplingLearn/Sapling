@@ -6,7 +6,7 @@
  * reading a visibility switch, so the UI only ever says Visible / Hidden.
  * Any other flag keeps its own variant names. Pure functions only.
  */
-import type { AdminFlag } from "@/lib/api";
+import type { AdminFlag, FlagRule } from "@/lib/api";
 import { NAV_SECTIONS, NESTED_NAV_FEATURES } from "@/lib/navFeatures";
 
 export type FlagMeta = { title: string; group: string; hideFlag: boolean };
@@ -26,6 +26,9 @@ export function flagMeta(key: string): FlagMeta {
   if (nested) return { title: nested.label, group: nested.section, hideFlag: true };
   return { title: humanize(key), group: OTHER_GROUP, hideFlag: false };
 }
+
+/** Where a flag the nav list does not name sorts: after every named one. */
+const UNLISTED_RANK = 999;
 
 /** Flags grouped in nav order (Learn, Organize, …), anything else last. */
 export function groupFlags(flags: AdminFlag[]): { group: string; flags: AdminFlag[] }[] {
@@ -50,7 +53,7 @@ export function groupFlags(flags: AdminFlag[]): { group: string; flags: AdminFla
       flags: (groups.get(g) ?? []).slice().sort((a, b) => {
         const ia = navOrder.indexOf(a.key);
         const ib = navOrder.indexOf(b.key);
-        return (ia < 0 ? 999 : ia) - (ib < 0 ? 999 : ib) || a.key.localeCompare(b.key);
+        return (ia < 0 ? UNLISTED_RANK : ia) - (ib < 0 ? UNLISTED_RANK : ib) || a.key.localeCompare(b.key);
       }),
     }));
 }
@@ -115,33 +118,82 @@ export function changeSummary(
   return `${s.charAt(0).toUpperCase()}${s.slice(1)}.${tail}`;
 }
 
-/** The explain endpoint's answer, in words. `roleName` maps a role id. */
-export function explainPhrase(
-  flag: AdminFlag,
-  r: { variant: string; step: string; detail: string },
-  roleName: (id: string) => string | undefined,
-): string {
-  const v = variantLabel(flag, r.variant);
+/** Why a rule decided, in words (the part after "On: "), or null for a step this
+ *  UI does not know. */
+function ruleClause(r: FlagRule, roleName: (id: string) => string | undefined): string | null {
   switch (r.step) {
-    case "user": return `${v}: this student has their own override`;
-    case "role": return `${v}: from the ${roleName(r.detail) ?? r.detail} role override`;
-    case "rollout": return `${v}: they're in the ${r.detail} rollout`;
-    case "default": return `${v}: the default for everyone`;
-    case "env_override": return `${v}: forced by the ${r.detail} environment variable`;
-    case "fail_closed": return `${v}: fell back to off (${r.detail})`;
-    default: return `${v} (${r.step}${r.detail ? `: ${r.detail}` : ""})`;
+    case "user": return "this student has their own override";
+    case "role": return `from the ${roleName(r.detail) ?? r.detail} role override`;
+    case "rollout": return `they're in the ${r.detail} rollout`;
+    case "default": return "the default for everyone";
+    case "env_override": return `forced by the ${r.detail} environment variable`;
+    case "fail_closed": return `fell back to off (${r.detail})`;
+    // #866 K24: the learning loop's gate over its own flags (learning/gate.py)
+    case "kill_switch": return `the ${r.detail} kill switch turns the learning loop off for everyone`;
+    default: return null;
   }
 }
 
+/** The explain endpoint's answer, in words. `roleName` maps a role id. A
+ *  learning-loop flag the loop is off for names what turned the loop off for
+ *  them (#866 K24). */
+export function explainPhrase(
+  flag: AdminFlag,
+  r: FlagRule,
+  roleName: (id: string) => string | undefined,
+): string {
+  const v = variantLabel(flag, r.variant);
+  if (r.step === "requires") {
+    const needs = flagMeta(r.master?.key ?? r.detail).title;
+    const why = r.master ? ruleClause(r.master, roleName) : null;
+    return why ? `${v}: needs ${needs}, which is off for them — ${why}` : `${v}: needs ${needs} on`;
+  }
+  const why = ruleClause(r, roleName);
+  return why ? `${v}: ${why}` : `${v} (${r.step}${r.detail ? `: ${r.detail}` : ""})`;
+}
+
+/** #866 K24: a row whose answer for everyone the server decides above its
+ *  stored settings — the chip's words and its tooltip — or null. */
+export function forcedNote(flag: AdminFlag): { chip: string; tip: string } | null {
+  const f = flag.forced;
+  if (!f) return null;
+  const v = variantLabel(flag, f.variant);
+  const tail = "whatever is set here; a change here applies once that is lifted.";
+  if (f.step === "kill_switch") {
+    return { chip: "Kill switch on", tip: `${v} for every student: the server's ${f.detail} kill switch turns the learning loop off, ${tail}` };
+  }
+  if (f.step === "requires") {
+    const needs = flagMeta(f.master?.key ?? f.detail).title;
+    return { chip: `${needs} off`, tip: `${v} for every student: it needs ${needs}, which the server's ${f.master?.detail ?? "settings"} forces off, ${tail}` };
+  }
+  if (f.only_with) {
+    const needs = flagMeta(f.only_with).title;
+    const off = variantLabel(flag, flag.variants[0]);
+    return {
+      chip: "Set on the server",
+      tip: `${v} for every student with ${needs} on: the server's ${f.detail} environment variable forces it, `
+        + `${tail} Students without ${needs} get ${off}.`,
+    };
+  }
+  return { chip: "Set on the server", tip: `${v} for every student: the server's ${f.detail} environment variable forces it, ${tail}` };
+}
+
+const MS_PER_SECOND = 1000;
+const SECONDS_PER_MINUTE = 60;
+const MINUTES_PER_HOUR = 60;
+const HOURS_PER_DAY = 24;
+/** Past this many days the column shows a date instead of "Nd ago". */
+const RELATIVE_DAYS_MAX = 30;
+
 /** "3h ago" style, for the last-change column. */
 export function relativeTime(iso: string, now: number = Date.now()): string {
-  const s = Math.max(0, Math.round((now - new Date(iso).getTime()) / 1000));
-  if (s < 60) return "just now";
-  const m = Math.round(s / 60);
-  if (m < 60) return `${m}m ago`;
-  const h = Math.round(m / 60);
-  if (h < 24) return `${h}h ago`;
-  const d = Math.round(h / 24);
-  if (d < 30) return `${d}d ago`;
+  const s = Math.max(0, Math.round((now - new Date(iso).getTime()) / MS_PER_SECOND));
+  if (s < SECONDS_PER_MINUTE) return "just now";
+  const m = Math.round(s / SECONDS_PER_MINUTE);
+  if (m < MINUTES_PER_HOUR) return `${m}m ago`;
+  const h = Math.round(m / MINUTES_PER_HOUR);
+  if (h < HOURS_PER_DAY) return `${h}h ago`;
+  const d = Math.round(h / HOURS_PER_DAY);
+  if (d < RELATIVE_DAYS_MAX) return `${d}d ago`;
   return new Date(iso).toLocaleDateString();
 }

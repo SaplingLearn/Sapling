@@ -19,6 +19,9 @@ FROM node:22-slim AS deps
 WORKDIR /app
 RUN npm install -g npm@10.9.2 --engine-strict=false
 COPY package.json package-lock.json ./
+# The audited local braces mitigation runs during npm's postinstall lifecycle.
+COPY scripts/apply-security-patches.mjs ./scripts/apply-security-patches.mjs
+COPY patches ./patches
 RUN npm ci
 
 FROM node:22-slim AS builder

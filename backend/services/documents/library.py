@@ -16,6 +16,11 @@ from starlette.concurrency import run_in_threadpool
 
 from db.connection import table
 from services.academics import offering_course_id
+from services.check_item_service import (
+    forget_drafting,
+    report_withdrawal_failure,
+    retire_items_for_documents,
+)
 from services.document_indexing import PENDING, schedule_document_index
 from services.encryption import bind, decrypt_if_present, decrypt_json
 
@@ -23,10 +28,11 @@ logger = logging.getLogger(__name__)
 
 
 #: Columns the Library reads, as they are once the redesign's migration has
-#: run.
+#: run. check_items_status (A128 / W8.1): student-readable drafting bookkeeping,
+#: so the Library can show "Checks drafting" / offer Quiz when items are ready.
 _LIBRARY_COLS = (
     "id,user_id,offering_id,folder_id,file_name,category,summary,"
-    "concept_notes,page_count,created_at,processed_at"
+    "concept_notes,page_count,created_at,processed_at,check_items_status"
 )
 
 #: What the Library read before it, for the window where the code is deployed
@@ -128,7 +134,13 @@ async def list_user_documents(user_id: str) -> list[dict]:
     abstract ``course_id`` its offering belongs to."""
     docs = await _read_documents(
         {"user_id": f"eq.{user_id}", "deleted_at": "is.null"}, "created_at.desc")
-    return await _hydrate(docs)
+    docs = await _hydrate(docs)
+    # W8.1c: stamp concept_notes with graph node ids when names match, so
+    # Library can pass conceptIds into libraryNext. One graph_nodes read for
+    # the whole list; not persisted on the documents row. Live rows only: the
+    # Trash offers no quiz.
+    await _attach_concept_node_ids(user_id, docs)
+    return docs
 
 
 async def list_trashed_documents(user_id: str) -> list[dict]:
@@ -150,6 +162,65 @@ def _courses_for_offerings(offering_ids: list[str]) -> dict[str, str | None]:
     return {off_id: offering_course_id(off_id) for off_id in offering_ids}
 
 
+def _notes_need_node_ids(docs: list[dict]) -> bool:
+    """True when any decrypted note has a name but no node_id yet."""
+    for d in docs:
+        if not d.get("course_id"):
+            continue
+        notes = d.get("concept_notes")
+        if not isinstance(notes, list):
+            continue
+        for note in notes:
+            if (
+                isinstance(note, dict)
+                and (note.get("name") or "").strip()
+                and not (note.get("node_id") or "").strip()
+            ):
+                return True
+    return False
+
+
+async def _attach_concept_node_ids(user_id: str, docs: list[dict]) -> None:
+    """Mutate each note with ``node_id`` when (course_id, name) hits the graph.
+
+    Dedup matches ``graph_service._normalize_concept`` (case / whitespace).
+    Skips the read when nothing needs an id.
+    """
+    if not _notes_need_node_ids(docs):
+        return
+    # Imported here so list tests that never need ids stay free of a
+    # graph_service import cycle through the module top.
+    from services.graph_service import _normalize_concept
+
+    rows = await table("graph_nodes").aselect(
+        "id,concept_name,course_id",
+        filters={"user_id": f"eq.{user_id}"},
+    ) or []
+    by_key: dict[tuple[str, str], str] = {}
+    for row in rows:
+        course_id = row.get("course_id")
+        name = row.get("concept_name")
+        node_id = row.get("id")
+        if course_id and name and node_id:
+            by_key[(course_id, _normalize_concept(name))] = node_id
+    if not by_key:
+        return
+    for d in docs:
+        course_id = d.get("course_id")
+        notes = d.get("concept_notes")
+        if not course_id or not isinstance(notes, list):
+            continue
+        for note in notes:
+            if not isinstance(note, dict):
+                continue
+            name = note.get("name")
+            if not name or note.get("node_id"):
+                continue
+            node_id = by_key.get((course_id, _normalize_concept(name)))
+            if node_id:
+                note["node_id"] = node_id
+
+
 async def soft_delete_document(document_id: str, user_id: str) -> None:
     """Soft-delete an owned document and withdraw its chunks (#758)."""
     # Soft delete (0025): stamp deleted_at; reads filter it out. The
@@ -166,6 +237,20 @@ async def soft_delete_document(document_id: str, user_id: str) -> None:
     from services.chunk_visibility import withdraw_document_chunks
 
     await run_in_threadpool(withdraw_document_chunks, document_id, user_id)
+    await _withdraw_check_items(document_id, user_id)
+
+
+async def _withdraw_check_items(document_id: str, user_id: str) -> None:
+    """Learning loop PKG-04 (A23): check items drafted from this document's
+    text leave the class pool with it. Never gated on the loop (withdrawal
+    holds under the kill switch, and for a student whose learning_loop flag
+    is off) and never fails the delete — but a failure is reported (Z34),
+    never only logged: an operator re-runs the idempotent withdrawal."""
+    try:
+        await run_in_threadpool(retire_items_for_documents, [document_id])
+    except Exception:
+        logger.warning("Retiring check items for doc %s failed", document_id, exc_info=True)
+        await run_in_threadpool(report_withdrawal_failure, user_id, document_id)
 
 
 async def update_document_row(document_id: str, user_id: str, updates: dict) -> dict:
@@ -185,6 +270,11 @@ async def restore_document(document_id: str, user_id: str) -> None:
     whatever the original index left — and the usual entry point schedules the
     work (a job when `jobs_queue` is on, inline otherwise).
 
+    The delete also DELETED the check items drafted from the document (A23),
+    so its drafting mark goes back to "never drafted": draft on enable claims
+    it when the student next opens the course with the loop on. Nothing is
+    drafted here, and a document the loop never drafted is untouched.
+
     Never raises on the indexing half: the restore itself has happened by
     then, and the lifespan sweeper drains any row left pending.
     """
@@ -192,6 +282,7 @@ async def restore_document(document_id: str, user_id: str) -> None:
         {"deleted_at": None},
         filters={"id": f"eq.{document_id}", "user_id": f"eq.{user_id}"},
     )
+    await run_in_threadpool(forget_drafting, document_id)
     try:
         await table("documents").aupdate(
             {
@@ -218,12 +309,17 @@ async def hard_delete_document(document_id: str, user_id: str) -> None:
     30-day grace the Trash gives.
 
     ``enrollments.syllabus_doc_id`` is ``ON DELETE SET NULL`` and
-    ``course_chunks`` cascade, so the row can go.
+    ``course_chunks`` cascade, so the row can go. Its check items went with
+    the soft delete (A23); withdrawing again is idempotent and covers one that
+    failed then. Only for a row this call removed: one restored meanwhile is
+    live, and keeps its items.
     """
-    await table("documents").adelete(
+    purged = await table("documents").adelete(
         filters={
             "id": f"eq.{document_id}",
             "user_id": f"eq.{user_id}",
             "deleted_at": "not.is.null",
         }
     )
+    if purged:
+        await _withdraw_check_items(document_id, user_id)

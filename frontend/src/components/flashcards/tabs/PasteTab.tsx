@@ -6,6 +6,7 @@ import { useUser } from "@/context/UserContext";
 import { importCloze } from "@/lib/api";
 import { useCrisisSupport } from "@/components/safety/CrisisSupportCard";
 import { detectDelimiters, splitByDelimiters, type ParsedCard } from "@/lib/flashcardParsers";
+import { withheldNotice } from "@/lib/integrityNotice";
 import { pastePlaceholder } from "../importModalModel";
 import s from "../FlashcardImportModal.module.css";
 import { humanizeError } from "@/lib/errorMessage";
@@ -16,6 +17,9 @@ interface Props {
   /** The textarea, so the modal can put focus there when it opens. */
   textareaRef?: React.Ref<HTMLTextAreaElement>;
 }
+
+/** How much text the separators are guessed from, once, as the student types. */
+const DETECT_AFTER_CHARS = 20;
 
 const TERM_OPTIONS = [
   { value: "\t", label: "Tab" },
@@ -105,7 +109,7 @@ export function PasteTab({ cards, onCards, textareaRef }: Props) {
   // (It used to be an effect on `text`, which put a second, commit-phase
   // update behind every keystroke; a burst of input, such as a script typing
   // a deck out, piled those up until React stopped it with "Maximum update
-  // depth exceeded" and a keystroke was lost.) The first 20 characters also
+  // depth exceeded" and a keystroke was lost.) The first DETECT_AFTER_CHARS characters also
   // settle the separators, once.
   const typed = (next: string) => {
     dirtyRef.current = true;
@@ -113,7 +117,7 @@ export function PasteTab({ cards, onCards, textareaRef }: Props) {
     setText(next);
     let t = term;
     let c = card;
-    if (!autoDetectedOnce && next.length >= 20) {
+    if (!autoDetectedOnce && next.length >= DETECT_AFTER_CHARS) {
       const detected = detectDelimiters(next);
       setTermSel(detected.term);
       setCardSel(detected.card);
@@ -141,7 +145,9 @@ export function PasteTab({ cards, onCards, textareaRef }: Props) {
       if (crisis.intercept(res)) return; // no cards were generated
       onCards(res.cards.map((c, i) => ({ front: c.front, back: c.back, row: i + 1 })));
       toast.success(`Generated ${res.cards.length} cloze cards.`);
+      if (res.withheld) toast.warn(withheldNotice(res.withheld, "card"));
     } catch (err) {
+      // humanizeError: a 409 integrity detail (spec §13 A125) reads as prose
       toast.error(humanizeError(err, "Couldn't make cloze cards from that text."));
     } finally {
       setClozing(false);

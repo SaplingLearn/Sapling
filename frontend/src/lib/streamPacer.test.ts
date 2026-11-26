@@ -94,4 +94,21 @@ describe('createStreamPacer', () => {
       expect(chunk.length % 2).toBe(0);
     }
   });
+
+  it('discard drops the queue without releasing it and settles drain', async () => {
+    const out: string[] = [];
+    const pacer = createStreamPacer(t => out.push(t), now);
+    pacer.push(BURST);
+    advance(16);
+    const shown = out.join('');
+    expect(shown.length).toBeLessThan(BURST.length);
+    const drained = pacer.drain();
+    pacer.discard();
+    await drained;
+    advance(5000);
+    expect(out.join('')).toBe(shown); // nothing queued at the discard is ever released
+    pacer.push('after');
+    advance(100);
+    expect(out.join('')).toBe(shown + 'after');
+  });
 });

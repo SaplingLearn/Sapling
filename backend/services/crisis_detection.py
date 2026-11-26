@@ -634,7 +634,7 @@ TOPIC_GUARDS: tuple[str, ...] = (
 # ── Normalization ──────────────────────────────────────────────────────────
 
 _APOSTROPHES = re.compile("['’‘ʼ`´]")
-_INVISIBLE = re.compile("[­​-‏⁠﻿]")
+_INVISIBLE = re.compile("[\u00ad\u200b-\u200f\u2060\ufeff]")
 _SENTENCE_BREAK = re.compile(r"[.!?;:\n\r]+")
 #: Two or more dots on their own (NFKD has already spelled "…" out as "...").
 #: Every pattern reads it as a sentence break; the clause form keeps it as

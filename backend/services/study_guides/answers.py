@@ -4,6 +4,19 @@ question is answered, move the student's mastery of its concept.
 Every answer is graded and explained. Only the first one is stored and
 counted: ``store.arecord_answer`` decides which that is, so a double click
 cannot move mastery twice.
+
+The count is graded evidence, as a quiz question's is (learning-loop PKG-14b:
+evidence is the only mastery write): one ``mc`` Evidence on the concept's
+node through ``graph_service.apply_graph_update``, built the way
+``services/quiz/submission.py::_quiz_evidence`` builds one, and the graph runs
+BKT on it. Never a flat delta.
+
+It obeys the quiz's evidence rules too (#866 review A8), applied by the quiz's
+own code (``services/question_evidence.py``): a question counts at most once
+per student per rolling 24 h, quiz and guide alike (A94/A100's claim), and
+carries the help ledger's floor (A99). A guide's Regenerate clears its stored
+answers, so the claim is what keeps a regenerated question from counting
+again at full weight.
 """
 from __future__ import annotations
 
@@ -12,10 +25,11 @@ from typing import Callable
 
 from starlette.concurrency import run_in_threadpool
 
-from config import get_mastery_tier
+from learning.bkt import tier_for, tier_for_stored
 from models.study_guide import AnswerResult, CheckAnswer, CheckBlock, MasteryChange
 from services import academics, events_service, graph_service
-from services.quiz import mastery_after
+from services.question_evidence import guard_question_evidence
+from services.quiz import question_hash
 from services.study_guides import signals, store
 from services.study_guides.errors import GuideInvalid, GuideNotFound
 from services.study_guides.store import GuideRow
@@ -40,28 +54,33 @@ def _check_block(guide: GuideRow, block_id: str) -> CheckBlock:
     raise GuideNotFound(QUESTION_NOT_FOUND_DETAIL)
 
 
-async def _atree_concept(user_id: str, course_id: str, concept: str) -> tuple[str, float] | None:
-    """The concept as the student's tree spells it, with its mastery score.
-    None when the tree does not have it."""
-    scores = await signals.amastery(user_id, course_id)
-    wanted = signals.concept_key(concept)
-    return next(
-        ((name, score) for name, score in scores.items() if signals.concept_key(name) == wanted),
-        None,
-    )
-
-
-def _graph_update(name: str, before: float, correct: bool) -> dict:
-    """One graded question as a mastery update, by the quiz's own rule."""
-    outcome = "correct" if correct else "incorrect"
+def _evidence(node_id: str, block: CheckBlock, correct: bool) -> dict:
+    """One graded check question as evidence, exactly as the quiz grades a
+    question (``_quiz_evidence``): the "mc" channel, no check item, no
+    session, and the item's identity (``question_hash``) from its stem and
+    options, so it shares the quiz's namespace."""
     return {
-        "updated_nodes": [{
-            "concept_name": name,
-            "mastery_delta": mastery_after(before, score=int(correct), total=1) - before,
-            "reason": f"Study guide check: {outcome}",
-            "event_type": f"guide_check_{outcome}",
-        }]
+        "node_id": node_id,
+        "channel": "mc",
+        "correct": correct,
+        "question_hash": question_hash(block.question, [option.text for option in block.options]),
+        "check_item_id": None,
+        "session_id": None,
     }
+
+
+def _claimant(guide: GuideRow, block: CheckBlock) -> str:
+    """Who claims a question's evidence window (`quiz_evidence_claims.attempt_id`,
+    as a quiz names its attempt): this guide's block."""
+    return f"study_guide:{guide.id}:{block.id}"
+
+
+def _write_evidence(user_id: str, evidence: dict, course_id: str, defer: Defer | None) -> list:
+    """The one graph write: the graded evidence, through the single writer
+    (sanctioned in tests/test_learning_evidence_apply.py)."""
+    return graph_service.apply_graph_update(
+        user_id, {"evidence": [evidence]}, course_id=course_id, defer=defer,
+    )
 
 
 async def _amove_mastery(
@@ -72,24 +91,33 @@ async def _amove_mastery(
     course_id = await run_in_threadpool(academics.offering_course_id, guide.offering_id)
     if not block.concept or not course_id:
         return None
-    found = await _atree_concept(guide.user_id, course_id, block.concept)
-    if found is None:
+    node = await signals.aconcept_node(guide.user_id, course_id, block.concept)
+    if node is None:
         return None
-    name, before = found
-    changes = await run_in_threadpool(
-        graph_service.apply_graph_update,
-        guide.user_id,
-        _graph_update(name, before, correct),
-        course_id=course_id,
-        defer=defer,
+    # #866 review A8: the quiz's rules first — the 24 h per-question claim, then the help floor
+    kept = await run_in_threadpool(
+        guard_question_evidence, guide.user_id, _claimant(guide, block),
+        [_evidence(node["id"], block, correct)],
     )
+    if not kept:  # counted within the window already (a quiz, another guide, a Regenerate)
+        return None
+    changes = await run_in_threadpool(_write_evidence, guide.user_id, kept[0], course_id, defer)
     if not changes:
         return None
     change = changes[0]
+    # "Before" is the tier the student was shown (the node's stored mastery),
+    # not the estimate's starting point: a node with no learner_state yet
+    # starts the update at the prior, which can sit in another tier than the
+    # map showed a moment ago.
+    shown = node.get("mastery_score")
     return MasteryChange(
         concept=change["concept"],
-        before=get_mastery_tier(change["before"]),
-        after=get_mastery_tier(change["after"]),
+        # "Before" may be the node's STORED score, so a drifted old row is
+        # classified, never a 500 after the evidence commit. "After" is the
+        # belief the write just computed: checked strictly, so a real
+        # out-of-range computation still surfaces.
+        before=tier_for_stored(change["before"] if shown is None else shown),
+        after=tier_for(change["after"]),
     )
 
 

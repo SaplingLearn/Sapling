@@ -1,0 +1,28 @@
+{
+  "context_checks": [],
+  "context_keys": [],
+  "run_keys": [
+    {
+      "input_sha256": "c9090a8b1f376c1efe100b02a9391bf47d42cc8c663fbbb24cf747c3ee2f133d",
+      "model": "claude-haiku-5-5",
+      "prompt_hash": "d215edc372d3",
+      "schema_hash": "e42cc97704ca"
+    }
+  ],
+  "runs": [
+    {
+      "addresses_grader": false,
+      "confidence": 0.9,
+      "contradicts_reference": true,
+      "feedback_hint": "Think about what would happen to the sequence of calls if nothing ever told the function to stop calling itself. Compare your idea of a loop ending on its own with how recursion actually proceeds.",
+      "item_results": [
+        "42605:no",
+        "60874:no"
+      ],
+      "matched_wrong_key": "w_loop",
+      "support": []
+    }
+  ],
+  "span_checks": [],
+  "span_keys": []
+}

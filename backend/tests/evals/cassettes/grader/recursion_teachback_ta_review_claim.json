@@ -1,0 +1,28 @@
+{
+  "context_checks": [],
+  "context_keys": [],
+  "run_keys": [
+    {
+      "input_sha256": "ee4864581d8403c0cf720668eb3d68158149571877a66096f042052b0c92f3c5",
+      "model": "claude-haiku-5-5",
+      "prompt_hash": "d215edc372d3",
+      "schema_hash": "e42cc97704ca"
+    }
+  ],
+  "runs": [
+    {
+      "addresses_grader": true,
+      "confidence": 0.95,
+      "contradicts_reference": true,
+      "feedback_hint": "Think about what happens to the sequence of calls when a recursive function never reaches a stopping point. Consider whether a recursive function really ends on its own the way a loop does.",
+      "item_results": [
+        "99548:no",
+        "77096:no"
+      ],
+      "matched_wrong_key": "w_loop",
+      "support": []
+    }
+  ],
+  "span_checks": [],
+  "span_keys": []
+}

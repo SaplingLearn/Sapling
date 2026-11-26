@@ -6,20 +6,28 @@ sends and models the FK cascades the wipe relies on. The REAL
 chunk rules are exercised end to end rather than mocked away (one test swaps
 it for a recorder to pin call order, one for a failure).
 """
+from db.migration_units import MIGRATION_UNITS
 import re
 from pathlib import Path
 
 import pytest
 
 from services import account_wipe as aw
+from services import check_item_service as cis
 from services import chunk_visibility as cv
 
 U, OTHER = "user_wipe", "user_keep"
 
 WIPED = (
     "enrollments", "documents", "document_folders", "notes", "flashcards", "flashcard_sets",
-    "sessions", "study_guides", "quiz_attempts", "quiz_context", "graph_nodes", "xp_events",
+    "course_concept_exclusions", "tutor_saved_items", "sessions", "study_guides", "quiz_attempts", "quiz_context", "graph_nodes", "xp_events",
     "user_achievements", "document_uploads", "tutor_pending_sessions",
+    # the learning loop (owner decision: erase)
+    "learner_state", "misconceptions", "posttest_poses", "posttest_skips",
+    "quiz_evidence_claims", "learning_reveals", "learning_evidence_operations",
+    "learning_self_explanations", "learning_prequestions", "learning_evidence_voids",
+    # owner decision (#879): erased too, not kept
+    "check_item_reports", "ai_tutor_daily_calls",
 )
 KEPT = (
     "users", "user_profiles", "user_settings", "user_roles", "oauth_tokens",
@@ -27,7 +35,11 @@ KEPT = (
     "gradescope_credentials", "user_cosmetics", "friendships", "rooms",
     "room_members", "feedback", "issue_reports", "events", "llm_usage",
     "admin_audit_log", "offering_concept_stats",
+    "checklist_budget_accounts", "checklist_budget_reservations",
 )
+
+#: The `learning_account_erase` RPC (20261111030019): the tables it deletes from.
+ERASE_RPC_TABLES = ("learning_self_explanations", "learning_prequestions")
 
 #: child table -> (child column, parent table, parent column): ON DELETE CASCADE.
 CASCADES = {
@@ -40,6 +52,10 @@ CASCADES = {
     "quiz_responses": ("attempt_id", "quiz_attempts", "id"),
     "graph_edges": ("source_node_id", "graph_nodes", "id"),
     "node_mastery_events": ("node_id", "graph_nodes", "id"),
+    "learner_state": ("node_id", "graph_nodes", "id"),
+    "misconceptions": ("node_id", "graph_nodes", "id"),
+    "misconception_attempts": ("misconception_id", "misconceptions", "id"),
+    "learning_evidence_voids": ("event_id", "node_mastery_events", "id"),
     "course_chunk_sources": ("chunk_id", "course_chunks", "id"),
     "course_chunk_contributors": ("chunk_id", "course_chunks", "id"),
 }
@@ -60,6 +76,9 @@ def _match(row, col, cond):
         return cur is None if val == "null" else str(cur).lower() == val
     if op == "in":
         return str(cur) in {_unquote(v) for v in val.strip("()").split(",")}
+    if op == "ov":  # array overlap (check_items.source_document_ids)
+        wanted = {_unquote(v) for v in val.strip("{}").split(",")}
+        return bool(set(cur or []) & wanted)
     raise AssertionError(f"filter op {op!r} not modelled")
 
 
@@ -92,8 +111,9 @@ class FakeDB:
         db = self
 
         def hits(filters):
+            # `select` is PostgREST's projection, not a column filter
             return [r for r in db.rows.get(name, [])
-                    if all(_match(r, k, v) for k, v in (filters or {}).items())]
+                    if all(_match(r, k, v) for k, v in (filters or {}).items() if k != "select")]
 
         class _T:
             def select(self, columns="*", filters=None, limit=None, **_):
@@ -126,12 +146,26 @@ class FakeDB:
 
         return _T()
 
+    def rpc(self, name, params):
+        """`learning_account_erase` as the migration defines it."""
+        assert name == "learning_account_erase", name
+        self.log.append(("rpc", name, dict(params)))
+        uid = params["p_user_id"]
+        out = {}
+        for t in ERASE_RPC_TABLES:
+            mine = [r for r in self.rows.get(t, []) if r.get("user_id") == uid]
+            self.rows[t] = [r for r in self.rows.get(t, []) if r not in mine]
+            out[t] = len(mine)
+        return out
+
 
 @pytest.fixture
 def db(monkeypatch):
     fake = FakeDB()
     monkeypatch.setattr(aw, "table", fake.table)
+    monkeypatch.setattr(aw, "rpc", fake.rpc)
     monkeypatch.setattr(cv, "table", fake.table)
+    monkeypatch.setattr(cis, "table", fake.table)  # the A23 item retirement
     return fake
 
 
@@ -157,8 +191,10 @@ def _seed_user(db, uid, *, n=1):
         db.add("notes", id=f"{p}-note{i}", user_id=uid)
         db.add("flashcards", id=f"{p}-fc{i}", user_id=uid)
         db.add("flashcard_sets", id=f"{p}-fs{i}", user_id=uid, exam_id=f"{p}-asg{i}")
+        db.add("course_concept_exclusions", id=f"{p}-cx{i}", user_id=uid)
         db.add("sessions", id=f"{p}-ses{i}", user_id=uid)
         db.add("messages", id=f"{p}-msg{i}", session_id=f"{p}-ses{i}")
+        db.add("tutor_saved_items", id=f"{p}-saved{i}", user_id=uid, session_id=f"{p}-ses{i}")
         db.add("study_guides", id=f"{p}-sg{i}", user_id=uid)
         db.add("quiz_attempts", id=f"{p}-qa{i}", user_id=uid)
         db.add("quiz_responses", id=f"{p}-qr{i}", attempt_id=f"{p}-qa{i}")
@@ -170,10 +206,28 @@ def _seed_user(db, uid, *, n=1):
         db.add("user_achievements", achievement_id=f"{p}-ach{i}", user_id=uid)
         db.add("document_uploads", id=f"{p}-up{i}", user_id=uid)
         db.add("tutor_pending_sessions", session_id=f"{p}-tps{i}", user_id=uid)
+        # The learning loop's per-student rows.
+        db.add("learner_state", user_id=uid, node_id=f"{p}-gn{i}")
+        db.add("misconceptions", id=f"{p}-mc{i}", user_id=uid, node_id=f"{p}-gn{i}")
+        db.add("misconception_attempts", id=i, misconception_id=f"{p}-mc{i}")
+        db.add("learning_evidence_voids", event_id=f"{p}-me{i}", user_id=uid)
+        # Two windows on one node: a composite key the wipe deletes by node_id.
+        db.add("posttest_poses", user_id=uid, node_id=f"{p}-gn{i}", window_days=7)
+        db.add("posttest_skips", user_id=uid, node_id=f"{p}-gn{i}", window_days=30)
+        db.add("quiz_evidence_claims", user_id=uid, question_hash=f"qh{i}")  # shared hash
+        db.add("learning_reveals", id=f"{p}-rv{i}", user_id=uid)
+        db.add("check_item_reports", user_id=uid, course_id="c1", question_hash=f"qh{i}")
+        db.add("learning_evidence_operations", operation_id=f"{p}-op{i}", user_id=uid)
+        db.add("ai_tutor_daily_calls", user_id=uid, day=f"2026-11-0{i + 1}")
+        db.add("learning_prequestions", id=f"{p}-pq{i}", user_id=uid)
+        db.add("learning_self_explanations", id=f"{p}-se{i}", user_id=uid)
         # A private chunk of this document, ledgered as its source.
         db.add("course_chunks", id=f"{p}-ck{i}", doc_id=f"{p}-doc{i}", uploader_id=uid,
                visibility="private", category="lecture_notes")
         db.add("course_chunk_sources", chunk_id=f"{p}-ck{i}", doc_id=f"{p}-doc{i}")
+        # A course check item drafted from this upload (A23), served to classmates.
+        db.add("check_items", id=f"{p}-ci{i}", course_id="c1",
+               source_document_ids=[f"{p}-doc{i}"])
 
 
 # ── guard ───────────────────────────────────────────────────────────────────
@@ -212,12 +266,20 @@ def test_wipes_the_scope_and_keeps_everything_else(db):
     assert counts == {
         "enrollments": 2, "documents": 2, "document_folders": 2, "course_chunks": 2,
         "course_chunk_contributors": 0, "notes": 2, "flashcards": 2, "flashcard_sets": 2,
-        "sessions": 2,
+        "course_concept_exclusions": 2, "tutor_saved_items": 2, "sessions": 2,
         "study_guides": 2, "quiz_attempts": 2, "quiz_context": 2, "graph_nodes": 2,
         "xp_events": 2, "user_achievements": 2, "document_uploads": 2,
         "tutor_pending_sessions": 2,
+        "learning_self_explanations": 2, "learning_prequestions": 2,
+        "learner_state": 2, "misconceptions": 2, "posttest_poses": 2, "posttest_skips": 2,
+        "quiz_evidence_claims": 2, "learning_reveals": 2,
+        "learning_evidence_operations": 2,
+        "check_item_reports": 2, "ai_tutor_daily_calls": 2, "check_items": 2,
     }
     assert [r["id"] for r in db.rows["course_chunks"]] == [f"{OTHER}-ck0", f"{OTHER}-ck1"]
+    # A23: the items drafted from the wiped uploads left the class pool; a
+    # classmate's stay.
+    assert [r["id"] for r in db.rows["check_items"]] == [f"{OTHER}-ci0", f"{OTHER}-ci1"]
 
 
 def test_counters_reset_and_featured_achievements_cleared(db):
@@ -288,6 +350,10 @@ def test_order_enrollments_then_soft_delete_withdraw_per_doc_then_documents(db, 
     # Quiz rows go before the graph nodes they reference.
     assert first["quiz_attempts"] < first["graph_nodes"]
     assert first["quiz_context"] < first["graph_nodes"]
+    # So do the learning loop's rows that hang off a node.
+    assert first["learner_state"] < first["graph_nodes"]
+    assert first["misconceptions"] < first["graph_nodes"]
+    assert [p for op, t, p in db.log if op == "rpc"] == [{"p_user_id": U}]
     assert counts["course_chunk_contributors"] == 2
 
 
@@ -302,6 +368,60 @@ def test_failed_withdrawal_stops_before_hard_deleting_documents(db, monkeypatch)
     (doc,) = db.of("documents", user_id=U)
     assert doc["deleted_at"] is not None  # soft-deleted, kept for the re-run
     assert "documents" not in db.ops("delete")
+
+
+def test_items_are_retired_after_the_withdrawals_and_before_the_hard_delete(db, monkeypatch):
+    """A23: the wipe retires every check item drafted from the account's
+    uploads, once every chunk is withdrawn and while the documents are still
+    soft-deleted rows (their ids are what a re-run retires by)."""
+    _seed_user(db, U, n=2)
+    order = []
+    real_withdraw = cv.withdraw_document_chunks
+    real_retire = cis.retire_items_for_documents
+
+    def withdraw(doc_id, user_id):
+        order.append(("withdraw", doc_id))
+        return real_withdraw(doc_id, user_id)
+
+    def retire(doc_ids):
+        order.append(("retire", sorted(doc_ids)))
+        assert all(db.of("documents", id=d) for d in doc_ids)  # not yet hard-deleted
+        return real_retire(doc_ids)
+
+    monkeypatch.setattr(cv, "withdraw_document_chunks", withdraw)
+    monkeypatch.setattr(cis, "retire_items_for_documents", retire)
+
+    counts = aw.wipe_account_data(U)
+
+    assert order[-1] == ("retire", [f"{U}-doc0", f"{U}-doc1"])
+    assert [o for o, _ in order[:-1]] == ["withdraw", "withdraw"]
+    assert counts["check_items"] == 2 and counts["documents"] == 2
+
+
+def test_a_failed_item_retirement_stops_before_hard_deleting_documents(db, monkeypatch):
+    _seed_user(db, U)
+
+    def down(_doc_ids):
+        raise RuntimeError("PostgREST down")
+
+    monkeypatch.setattr(cis, "retire_items_for_documents", down)
+
+    with pytest.raises(aw.AccountWipeIncomplete):
+        aw.wipe_account_data(U)
+
+    (doc,) = db.of("documents", user_id=U)
+    assert doc["deleted_at"] is not None  # soft-deleted, kept for the re-run
+    assert "documents" not in db.ops("delete")
+    assert db.of("check_items", id=f"{U}-ci0")  # still there: the re-run retires it
+
+    monkeypatch.undo()  # the store is back: a re-run finishes the job
+    monkeypatch.setattr(aw, "table", db.table)
+    monkeypatch.setattr(aw, "rpc", db.rpc)
+    monkeypatch.setattr(cv, "table", db.table)
+    monkeypatch.setattr(cis, "table", db.table)
+    counts = aw.wipe_account_data(U)
+    assert counts["check_items"] == 1 and counts["documents"] == 1
+    assert db.rows["check_items"] == [] and db.of("documents", user_id=U) == []
 
 
 # ── chunks ──────────────────────────────────────────────────────────────────
@@ -358,7 +478,7 @@ def test_classmates_shared_chunk_survives_and_orphan_private_rows_go(db):
 
 # ── The three per-user table sets agree (bundle / wipe / seeder) ────────────
 
-_MIGRATIONS = Path(__file__).resolve().parent.parent / "db" / "migrations"
+_MIGRATIONS = MIGRATION_UNITS
 
 #: Seeder writes that are not per-user account data (catalog rows it may
 #: create on a bare stack, and the account rows it only UPDATEs).
@@ -401,6 +521,17 @@ WIPED_NOT_BUNDLED = {
     "gradescope_syncs": "in-flight Gradescope sync staging (#116)",
     "tutor_pending_sessions": "a tutor session not yet chatted in, or its tombstone (#117)",
     "gradescope_course_links": "Gradescope credentials do not move, so neither do their links",
+    # The learning loop's per-environment bookkeeping (account_bundle docstring).
+    "learning_evidence_operations": (
+        "idempotency receipts of evidence commits, fingerprinted with the source's "
+        "course id; the evidence itself is in node_mastery_events and learner_state"
+    ),
+    # Owner decision (#879): erased by the wipe, never copied.
+    "check_item_reports": (
+        "reports on THIS environment's course items (items never move); a "
+        "quarantine they reached is held on the item, not in the report"
+    ),
+    "ai_tutor_daily_calls": "per-day tutor-call counts this environment's daily cap reads",
 }
 
 
@@ -411,7 +542,10 @@ def test_wiped_but_not_bundled_tables_are_exactly_the_named_exceptions():
     claude_md = (Path(__file__).resolve().parents[2] / "CLAUDE.md").read_text()
     exception = claude_md[claude_md.index("Exception: in-flight staging tables"):]
     exception = exception[:exception.index("\n")]
-    for name in ("document_uploads", "gradescope_syncs", "tutor_pending_sessions"):
+    for name in (
+        "document_uploads", "gradescope_syncs", "tutor_pending_sessions",
+        "ai_tutor_daily_calls", "learning_evidence_operations", "check_item_reports",
+    ):
         assert f"`{name}`" in exception, f"CLAUDE.md's wipe-not-bundle exception omits {name}"
 
 
@@ -472,7 +606,7 @@ def test_every_seeded_table_is_wiped_and_copied():
         assert name in copied, f"seeder writes {name} but the copy never moves it"
 
 
-# ── Schema guard: every per-user table is wiped or kept for a reason ────────
+# ── Schema guards: every per-user table is wiped or kept for a reason ───────
 
 _STATEMENT = re.compile(
     r"CREATE TABLE(?: IF NOT EXISTS)?\s+(?:public\.)?\"?(?P<create>\w+)\"?\s*\((?P<body>.*?)\n\s*\);"
@@ -514,17 +648,21 @@ def schema_user_id_columns() -> dict[str, bool]:
     return tables
 
 
-def test_the_schema_scan_sees_renames_and_drops():
+def test_the_schema_scan_sees_renames_drops_and_the_loop():
     tables = schema_user_id_columns()
     assert tables["enrollments"] is True and "user_courses" not in tables  # 0020 rename
     assert "course_categories" not in tables  # dropped in 0021
     assert tables["feedback"] is True  # dropped and recreated in 0026
+    assert tables["learning_prequestions"] is True and tables["check_items"] is False
     assert tables["users"] is False
 
 
 def test_every_table_with_a_user_id_is_wiped_or_kept_for_a_stated_reason():
+    """A new per-user table must be erased by the wipe or named in
+    `account_wipe.KEPT_PER_USER` with its reason. Owner decision for the
+    learning loop: erase."""
     user_tables = {t for t, has in schema_user_id_columns().items() if has}
-    assert len(user_tables) > 25, "the migration scan found too few user_id tables"
+    assert len(user_tables) > 30, "the migration scan found too few user_id tables"
     unaccounted = sorted(user_tables - aw.wiped_tables() - set(aw.KEPT_PER_USER))
     assert not unaccounted, (
         f"tables with a user_id that the account wipe neither deletes nor keeps for "
@@ -535,3 +673,84 @@ def test_every_table_with_a_user_id_is_wiped_or_kept_for_a_stated_reason():
     stale = sorted(set(aw.KEPT_PER_USER) - user_tables)
     assert not stale, f"KEPT_PER_USER names tables with no user_id column: {stale}"
     assert all(reason.strip() for reason in aw.KEPT_PER_USER.values())
+
+
+def test_every_wiped_table_exists_in_the_schema():
+    tables = schema_user_id_columns()
+    missing = sorted(aw.wiped_tables() - set(tables))
+    assert not missing, f"the wipe names tables no migration creates: {missing}"
+
+
+_LOOP_RLS = _MIGRATIONS / "20261109032302_learning_loop_rls.sql"
+
+#: Learning-loop tables that hold no student's rows: course assets and the
+#: staff's decisions about them (check_item_reviews.reviewed_by and
+#: check_item_audits.audited_by name the admin, never a student).
+LOOP_COURSE_SHARED = {
+    "check_items": "course asset, generated per course and served to every student",
+    "check_item_draft_failures": "per-course drafting bookkeeping",
+    "check_item_reviews": "staff decision about a course item",
+    "check_item_audits": "staff key audit of a course item",
+}
+
+
+def _loop_rls_tables() -> list[str]:
+    sql = _LOOP_RLS.read_text()
+    block = re.search(r"tables\s+CONSTANT TEXT\[\] := ARRAY\[(.*?)\];", sql, re.S)
+    assert block, "could not find the loop table list in the loop RLS migration"
+    return re.findall(r"'(\w+)'", block.group(1))
+
+
+def test_every_learning_loop_table_is_erased_kept_or_course_shared():
+    """The loop RLS migration lists every table the loop's migrations create;
+    each is erased by the wipe, kept for a stated reason, or holds no
+    student's rows."""
+    loop = _loop_rls_tables()
+    assert len(loop) == 19, loop
+    accounted = aw.wiped_tables() | set(aw.KEPT_PER_USER) | set(LOOP_COURSE_SHARED)
+    assert sorted(set(loop) - accounted) == []
+    schema = schema_user_id_columns()
+    for name in LOOP_COURSE_SHARED:
+        assert name in loop and schema[name] is False, name
+
+
+def test_append_only_loop_records_are_never_a_direct_postgrest_delete():
+    """service_role holds no DELETE on the loop records the RLS migration
+    narrows; the wipe reaches each through a cascade or the erase RPC."""
+    sql = _LOOP_RLS.read_text()
+    narrowed = set(re.findall(r"'(\w+)'", re.search(r"IF t IN \(([^)]*)\)", sql).group(1)))
+    narrowed |= set(re.findall(r"ELSIF t = '(\w+)'", sql))
+    assert narrowed == {
+        "learning_evidence_voids", "misconception_attempts",
+        "learning_prequestions", "learning_self_explanations",
+    }
+    direct = {name for name, _ in aw._USER_TABLES} | {"enrollments", "documents"}
+    for name in narrowed:
+        assert name not in direct, f"{name}: service_role cannot DELETE it over PostgREST"
+        assert name in aw.WIPED_BY_CASCADE or name in aw._ERASED_BY_RPC, name
+    assert set(aw._ERASED_BY_RPC) == set(ERASE_RPC_TABLES)
+
+
+def test_the_erase_rpc_deletes_only_its_tables_and_only_service_role_runs_it():
+    (path,) = sorted(_MIGRATIONS.glob("*_learning_account_erase.sql"))
+    sql = re.sub(r"--[^\n]*", "", path.read_text())
+    assert f"FUNCTION {aw._ERASE_RPC}(p_user_id text)" in sql
+    assert "SECURITY DEFINER" in sql and "SET search_path = public, pg_temp" in sql
+    deletes = re.findall(r"DELETE FROM (\w+) WHERE user_id = p_user_id;", sql)
+    assert sorted(deletes) == sorted(aw._ERASED_BY_RPC)
+    assert len(re.findall(r"\bDELETE\b", sql)) == len(deletes)
+    assert re.findall(r"'(\w+)', n_", sql) == list(aw._ERASED_BY_RPC)
+    assert "REVOKE ALL ON FUNCTION learning_account_erase(text) FROM PUBLIC;" in sql
+    assert "REVOKE ALL ON FUNCTION learning_account_erase(text) FROM %I" in sql
+    assert "GRANT EXECUTE ON FUNCTION learning_account_erase(text) TO service_role;" in sql
+
+
+@pytest.mark.parametrize("bad", [None, [], {"learning_prequestions": 1}])
+def test_an_unexpected_erase_rpc_result_stops_the_wipe(db, monkeypatch, bad):
+    _seed_user(db, U)
+    monkeypatch.setattr(aw, "rpc", lambda name, params: bad)
+
+    with pytest.raises(aw.AccountWipeIncomplete):
+        aw.wipe_account_data(U)
+
+    assert db.of("graph_nodes", user_id=U)  # stopped before the rest of the loop

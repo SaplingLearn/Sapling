@@ -33,6 +33,8 @@ const api = vi.hoisted(() => ({
   streamChat: vi.fn(),
   sendChat: vi.fn(),
   shouldFallBackToJson: vi.fn(() => true),
+  // the learning loop's budget pause (lib/api.ts): none unless a case says so
+  budgetPauseOf: vi.fn((_err: unknown): { resetAt: string | null; sessionCapped: boolean } | null => null),
   newTurnId: vi.fn(() => "turn-test-0001"),
 }));
 vi.mock("@/lib/api", () => api);
@@ -101,6 +103,7 @@ function makeSession(over: Partial<QuizSession> = {}): QuizSession {
     deliveredShort: false,
     sourceAttemptId: null,
     reserved: null,
+    prereq: null,
     ...over,
   };
 }
@@ -129,7 +132,7 @@ function makeActions(): QuizActions {
   };
 }
 
-function renderScreen(session: QuizSession, actions: QuizActions = makeActions()) {
+function renderScreen(session: QuizSession, actions: QuizActions = makeActions(), askConfidence = false) {
   const view = render(
     <QuizQuestion
       session={session}
@@ -138,6 +141,7 @@ function renderScreen(session: QuizSession, actions: QuizActions = makeActions()
       concept={CONCEPT}
       userId="user-1"
       courseId="course-cs101"
+      askConfidence={askConfidence}
     />,
   );
   return { ...view, actions };
@@ -191,7 +195,12 @@ describe("QuizQuestion — the question", () => {
     const session = makeSession({ items: [item(0, { question: { ...question(1), type, options: [] } })] });
     const view = renderScreen(session, actions);
     const input = screen.getByRole("textbox", { name: /^Your answer/ });
+    // No answer choices: with the loop off no radio group at all, as before the
+    // loop (#866 K46); with it on, the one radio group is the stated confidence (A132).
     expect(screen.queryByRole("radiogroup")).not.toBeInTheDocument();
+    view.rerender(<QuizQuestion session={session} actions={actions} config={null} concept={CONCEPT} userId="user-1" courseId="course-cs101" askConfidence />);
+    expect(screen.queryByRole("radiogroup", { name: "Answer choices" })).not.toBeInTheDocument();
+    expect(screen.getByRole("radiogroup", { name: /How sure/ })).toBeInTheDocument();
     expect(screen.getByTestId("quiz-submit-answer")).toBeDisabled();
     fireEvent.change(input, { target: { value: "2(x+1)" } });
     expect(actions.write).toHaveBeenCalledWith("2(x+1)");
@@ -250,8 +259,31 @@ describe("QuizQuestion — the question", () => {
       expect(screen.getByTestId(`quiz-answer-option-${label}`)).toBeInTheDocument();
     }
     expect(screen.getByTestId("quiz-progress")).toHaveAttribute("aria-label", "Question 2 of 3");
-    expect(screen.getByText("Recursion · CS101")).toBeInTheDocument();
+    expect(screen.getByTestId("quiz-session-top")).toHaveTextContent("CS101");
+    expect(screen.getByTestId("quiz-session-top")).toHaveTextContent("Recursion");
+    expect(screen.getByTestId("quiz-skill-chip")).toHaveTextContent("Understand");
+    expect(screen.getByTestId("quiz-tier-chip")).toHaveTextContent("Struggling");
+    expect(screen.queryByTestId("quiz-returning-chip")).not.toBeInTheDocument();
+    expect(screen.getByTestId("quiz-exam-distance")).toHaveAttribute("data-pips", "4");
+    expect(screen.getByTestId("quiz-session-progress")).toHaveTextContent("Question 2 of 3");
+    expect(screen.getByRole("progressbar", { name: "Question 2 of 3" })).toBeInTheDocument();
+    expect(screen.getByTestId("quiz-hint-slot")).toBeInTheDocument();
+    expect(screen.getByTestId("quiz-skip-slot")).toBeInTheDocument();
     expect(screen.getByText("Medium")).toBeInTheDocument();
+  });
+
+  it("shows Returning when the concept was studied before", () => {
+    render(
+      <QuizQuestion
+        session={makeSession()}
+        actions={makeActions()}
+        config={null}
+        concept={{ ...CONCEPT, timesStudied: 2, lastStudiedAt: "2026-11-01T00:00:00Z" }}
+        userId="user-1"
+        courseId="course-cs101"
+      />,
+    );
+    expect(screen.getByTestId("quiz-returning-chip")).toHaveTextContent("Returning");
   });
 
   it("gives the radiogroup exactly one tab stop — the selection, else the first row", () => {
@@ -429,6 +461,154 @@ describe("QuizQuestion — keyboard", () => {
   });
 });
 
+describe("QuizQuestion — stated confidence (learning-loop spec §13 A132)", () => {
+  const withConfidence = () => ({ ...makeActions(), setConfidence: vi.fn() });
+  const written = (over: Partial<QuizItem> = {}) =>
+    item(0, { question: { ...question(1), type: "short_answer", options: [] }, answerText: "", ...over });
+
+  it.each([
+    ["multiple choice", () => item(0)],
+    ["written", () => written()],
+  ] as const)("offers the optional control on a %s question, with its own testids", (_kind, make) => {
+    renderScreen(makeSession({ items: [make()] }), withConfidence(), true);
+    const group = screen.getByTestId("quiz-confidence");
+    expect(group).toHaveAttribute("role", "radiogroup");
+    expect(group).toHaveAccessibleName(/^How sure\?$/);
+    for (const level of ["guessing", "fairly_sure", "sure"]) {
+      expect(screen.getByTestId(`quiz-confidence-${level}`)).toHaveAttribute("aria-checked", "false");
+    }
+    // Nothing is chosen for the student: no default level.
+    expect(screen.queryByTestId("quiz-confidence-clear")).not.toBeInTheDocument();
+  });
+
+  /** W7.4: SessionTop chrome must not drop or relocate A132; kit "Certain /
+   *  Unsure" wager stays mapped to CheckCard's Guessing / Fairly sure / Sure. */
+  it("keeps A132 under the answer beside SessionTop (CheckCard levels, no XP wager)", () => {
+    renderScreen(makeSession({ items: [item(0), item(1), item(2)] }), withConfidence(), true);
+
+    const panel = screen.getByTestId("quiz-panel");
+    const top = screen.getByTestId("quiz-session-top");
+    const options = screen.getByTestId("quiz-answer-options");
+    const confidence = screen.getByTestId("quiz-confidence");
+    const feedback = panel.querySelector(".quiz-question__feedback");
+    const actionBar = screen.getByTestId("quiz-action-bar");
+
+    expect(panel).toContainElement(top);
+    expect(panel).toContainElement(confidence);
+    // SessionTop is chrome only — confidence stays in the question body.
+    expect(top.contains(confidence)).toBe(false);
+    expect(actionBar.contains(confidence)).toBe(false);
+    expect(options.compareDocumentPosition(confidence) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(feedback).not.toBeNull();
+    expect(confidence.compareDocumentPosition(feedback!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    // Same labels as CheckCard / ConfidenceControl — not the kit Certain/Unsure wager copy.
+    expect(screen.getByTestId("quiz-confidence-guessing")).toHaveTextContent("Guessing");
+    expect(screen.getByTestId("quiz-confidence-fairly_sure")).toHaveTextContent("Fairly sure");
+    expect(screen.getByTestId("quiz-confidence-sure")).toHaveTextContent("Sure");
+    expect(panel.textContent ?? "").not.toMatch(/\bCertain\b|\bUnsure\b|\+\d+\s*\/\s*[−\-]\d+|wager/i);
+  });
+
+  it("shows the current question's level and hands a choice to the hook — no request of its own", () => {
+    const actions = withConfidence();
+    renderScreen(makeSession({ items: [item(0, { confidence: "fairly_sure" }), item(1), item(2)] }), actions, true);
+    expect(screen.getByTestId("quiz-confidence-fairly_sure")).toHaveAttribute("aria-checked", "true");
+    fireEvent.click(screen.getByTestId("quiz-confidence-sure"));
+    expect(actions.setConfidence).toHaveBeenLastCalledWith("sure");
+    fireEvent.click(screen.getByTestId("quiz-confidence-clear"));
+    expect(actions.setConfidence).toHaveBeenLastCalledWith(null);
+    expect(actions.submitAnswer).not.toHaveBeenCalled();
+    expect(actions.select).not.toHaveBeenCalled();
+  });
+
+  it("Submit never waits on it: a skipped control leaves Submit as the answer alone decides", () => {
+    const actions = withConfidence();
+    renderScreen(makeSession({ items: [item(0, { selectedIndex: 1 }), item(1), item(2)] }), actions, true);
+    expect(screen.getByTestId("quiz-submit-answer")).toBeEnabled();
+    fireEvent.click(screen.getByTestId("quiz-submit-answer"));
+    expect(actions.submitAnswer).toHaveBeenCalledOnce();
+  });
+
+  it("stops taking changes while the answer is in flight and once its verdict is showing", () => {
+    const actions = withConfidence();
+    const view = renderScreen(makeSession({ items: [item(0, { selectedIndex: 1, confidence: "sure" })] }), actions, true);
+    view.rerender(
+      <QuizQuestion session={makeSession({ items: [item(0, { selectedIndex: 1, confidence: "sure" })] })}
+        actions={actions} config={null} concept={CONCEPT} userId="user-1" courseId="course-cs101" pending askConfidence />,
+    );
+    expect(screen.getByTestId("quiz-confidence-guessing")).toBeDisabled();
+    view.rerender(
+      <QuizQuestion
+        session={makeSession({
+          phase: "answered",
+          items: [item(0, {
+            selectedIndex: 1, confidence: "sure",
+            verdict: { isCorrect: true, correctIndex: 1, explanation: "Right." },
+          })],
+        })}
+        actions={actions} config={null} concept={CONCEPT} userId="user-1" courseId="course-cs101" askConfidence
+      />,
+    );
+    // Still on screen (nothing moves when the verdict lands), showing the level sent.
+    expect(screen.getByTestId("quiz-confidence-sure")).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByTestId("quiz-confidence-sure")).toBeDisabled();
+    expect(screen.getByTestId("quiz-confidence-clear")).toBeDisabled();
+  });
+
+  it("owns its keys: arrows move and choose, Enter chooses instead of submitting, a letter is no answer shortcut", () => {
+    const actions = withConfidence();
+    renderScreen(makeSession({ items: [item(0, { selectedIndex: 1 }), item(1), item(2)] }), actions, true);
+    const guessing = screen.getByTestId("quiz-confidence-guessing");
+
+    fireEvent.keyDown(guessing, { key: "ArrowRight" });
+    expect(actions.setConfidence).toHaveBeenLastCalledWith("fairly_sure");
+    fireEvent.keyDown(guessing, { key: "End" });
+    expect(actions.setConfidence).toHaveBeenLastCalledWith("sure");
+
+    // Enter is the button's own activation here (a choice), never the footer's
+    // submit: the root must not pre-empt it.
+    expect(fireEvent.keyDown(guessing, { key: "Enter" })).toBe(true);
+    expect(fireEvent.keyDown(guessing, { key: " " })).toBe(true);
+    expect(actions.submitAnswer).not.toHaveBeenCalled();
+    fireEvent.keyDown(guessing, { key: "c" });
+    expect(actions.select).not.toHaveBeenCalled();
+
+    // Escape is still the way out of the quiz from anywhere on the screen.
+    fireEvent.keyDown(guessing, { key: "Escape" });
+    expect(actions.requestLeave).toHaveBeenCalledOnce();
+  });
+
+  it("is one tab stop: the chosen level, else the first", () => {
+    const view = renderScreen(makeSession(), withConfidence(), true);
+    const tabbable = () =>
+      ["guessing", "fairly_sure", "sure"].filter(l => screen.getByTestId(`quiz-confidence-${l}`).tabIndex === 0);
+    expect(tabbable()).toEqual(["guessing"]);
+    view.rerender(
+      <QuizQuestion session={makeSession({ items: [item(0, { confidence: "sure" }), item(1), item(2)] })}
+        actions={withConfidence()} config={null} concept={CONCEPT} userId="user-1" courseId="course-cs101" askConfidence />,
+    );
+    expect(tabbable()).toEqual(["sure"]);
+  });
+
+  it("with the learning loop off it asks nothing: no control, and the letters are answer shortcuts again", () => {
+    // #866 K46: the control is the learning system's; off is the pre-loop screen.
+    const actions = withConfidence();
+    renderScreen(makeSession(), actions);
+    expect(screen.queryByTestId("quiz-confidence")).not.toBeInTheDocument();
+    expect(screen.queryByRole("radiogroup", { name: /How sure/ })).not.toBeInTheDocument();
+    fireEvent.keyDown(root(), { key: "b" });
+    expect(actions.select).toHaveBeenCalledWith(1);
+    expect(actions.setConfidence).not.toHaveBeenCalled();
+  });
+
+  it("a written question's Enter still submits from its input", () => {
+    const actions = withConfidence();
+    renderScreen(makeSession({ items: [written({ answerText: "base case", confidence: "guessing" })] }), actions, true);
+    fireEvent.keyDown(screen.getByRole("textbox", { name: /^Your answer/ }), { key: "Enter" });
+    expect(actions.submitAnswer).toHaveBeenCalledOnce();
+  });
+});
+
 describe("QuizQuestion — the verdict", () => {
   const answeredSession = () =>
     makeSession({
@@ -481,7 +661,7 @@ describe("QuizQuestion — the verdict", () => {
 
   it("switches the one footer button's label and testid in place", () => {
     const { rerender } = renderScreen(makeSession());
-    expect(screen.getByTestId("quiz-submit-answer")).toHaveTextContent("Submit");
+    expect(screen.getByTestId("quiz-submit-answer")).toHaveTextContent("Check");
     expect(screen.getByTestId("quiz-submit-answer")).toBeDisabled();
     expect(screen.queryByTestId("quiz-next")).toBeNull();
 
@@ -709,6 +889,11 @@ describe("QuizQuestion — Ask about this never orphans the attempt", () => {
       true,
       "course-cs101",
     ]);
+    // spec §13 A99: the session is ABOUT this question — the attempt and its index
+    expect(api.startSessionStream.mock.calls[0][7]).toEqual({
+      attemptId: "attempt-1",
+      questionIndex: 0,
+    });
 
     await waitFor(() => expect(api.streamChat).toHaveBeenCalledTimes(1));
     const seedMessage = api.streamChat.mock.calls[0][2] as string;
@@ -824,6 +1009,50 @@ describe("QuizQuestion — each format looks like itself", () => {
         verdict: { isCorrect: true, correctIndex: -1, explanation: "", correctAnswer: "base case" } })] }));
     expect(document.querySelector(".quiz-written__field .quiz-written__status")).toHaveTextContent("Correct");
     expect(screen.getByTestId("quiz-verdict-outcome")).toHaveTextContent("Correct.");
+  });
+
+  it("shows the W7.6 prereq banner with a Learn CTA when generate redirected", () => {
+    renderScreen(makeSession({
+      conceptId: "foundation",
+      prereq: {
+        prereq_id: "foundation",
+        prereq_name: "Foundations",
+        dependent_id: "blocked",
+        dependent_name: "Matrices",
+        course_id: "course-cs101",
+        redirected: true,
+      },
+    }));
+    const banner = screen.getByTestId("quiz-prereq-banner");
+    expect(banner).toHaveAttribute("data-redirected", "true");
+    expect(banner).toHaveTextContent("Starting with Foundations — Matrices needs it first.");
+    expect(screen.getByTestId("quiz-prereq-learn")).toHaveAttribute(
+      "href",
+      "/learn?topic=Foundations&concept=foundation&mode=socratic&course=course-cs101",
+    );
+    // Already posing the prereq — no Quiz CTA that would restart the same quiz.
+    expect(screen.queryByTestId("quiz-prereq-quiz")).toBeNull();
+  });
+
+  it("offers Quiz + Learn on the weak prereq when the banner did not redirect", () => {
+    renderScreen(makeSession({
+      prereq: {
+        prereq_id: "foundation",
+        prereq_name: "Foundations",
+        dependent_id: CONCEPT.id,
+        dependent_name: CONCEPT.name,
+        course_id: "course-cs101",
+        redirected: false,
+      },
+    }));
+    expect(screen.getByTestId("quiz-prereq-banner")).toHaveTextContent(
+      "Foundations isn't solid yet — Recursion builds on it.",
+    );
+    expect(screen.getByTestId("quiz-prereq-quiz")).toHaveAttribute(
+      "href",
+      expect.stringContaining("concept=foundation"),
+    );
+    expect(screen.getByTestId("quiz-prereq-learn")).toBeInTheDocument();
   });
 
 });

@@ -1,0 +1,11 @@
+{
+  "judge_model": "claude-opus-5-5",
+  "judge_prompt_hash": "3ce1196b8fd5e1ddd2ef0e7ebfd972ec099f635d11b5ab028bf18efcd8a32a71",
+  "output": {
+    "affirms_misconception": false,
+    "confronts": true,
+    "evidence": "What does your belief give for the derivative of x^3 at x = 2, and how does it compare with the slope you get by estimating (f(2.01) - f(2)) / 0.01?",
+    "only_states_correction": false
+  },
+  "served_sha256": "c3667c8832a549ebb1b95a6ecd00abcabca25b70d3b43467a1f77921650bdb27"
+}

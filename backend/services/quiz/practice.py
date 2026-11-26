@@ -108,7 +108,7 @@ async def _reserved_misses(body: GenerateQuizBody) -> ReservedMisses | None:
         raise QuizAPIError(
             status_code=404,
             code=QuizErrorCode.QUIZ_ATTEMPT_NOT_FOUND,
-            message="We couldn't find the quiz you wanted to practise from.",
+            message="We couldn't find the quiz you wanted to practice from.",
         )
     attempt = rows[0]
     # `require_self(body.user_id, request)` at the top of generate_quiz has

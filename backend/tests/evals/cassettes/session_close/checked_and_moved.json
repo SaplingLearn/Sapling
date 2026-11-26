@@ -1,0 +1,14 @@
+{
+  "input_sha256": "d9609f9dfe71882abdb9d8b3fd3413d820d7b211dc1ec9ebee8216d67b0f0a04",
+  "model": "claude-haiku-5-5",
+  "output": {
+    "if_then_plan": "If you open your next session and start writing a recursive function, then first write out the base case and trace factorial(1) by hand before writing the recursive call.",
+    "open_misconception_keys": [
+      "off_by_one"
+    ],
+    "self_eval_prompt": "Which step were you least sure of today, the base case or the recursive call, and what made it feel uncertain?",
+    "summary": "This session checked the base case and the recursive step of factorial, and you answered both checks correctly, explaining that factorial(0) returns 1 as the empty product and that factorial(n) calls factorial(n - 1) and multiplies by n. Base Case moved up from 0.35 to 0.58 and Recursive Step moved up from 0.40 to 0.55. The misconception off_by_one remains open, and no check was graded this session."
+  },
+  "prompt_hash": "fa130592ad53",
+  "schema_hash": "fcf1232c0ffe"
+}

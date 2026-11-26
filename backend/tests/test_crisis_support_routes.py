@@ -13,6 +13,11 @@ The one exception is a note's stored CONTENT (its title and body, read by
 the notes agent actions): a match there never blocks. The action runs as
 usual and the card rides ALONGSIDE whatever answer goes back: the result, a
 429 or an error.
+
+The learning loop's routes (/api/learn/loop/*) are covered too. Most of
+them carry their rate limit as a route dependency, so their screen is a
+dependency listed before it (`crisis_support.screened`); the rest screen
+inline, first thing after the loop's gate.
 """
 
 from __future__ import annotations
@@ -32,10 +37,11 @@ from pydantic_ai import Agent
 
 import db.connection as dbconn
 from main import app
-from services import crisis_support, events_service, llm_budget, posthog_client
+from services import ai_budget, crisis_support, events_service, llm_budget, posthog_client
 from services import crisis_support_copy as crisis_copy
 from services.feature_flags import REGISTRY
 from services.tutor_sessions import PENDING_SESSIONS
+from tests.split_patches import setattr_loop
 
 client = TestClient(app)
 
@@ -66,6 +72,11 @@ class Case:
         return self.note_field is None and not self.graph_concept
 
     @property
+    def loop(self) -> bool:
+        """A learning-loop route (/api/learn/loop/*)."""
+        return self.path.startswith("/api/learn/loop/")
+
+    @property
     def id(self) -> str:
         return f"{self.path}:{self.note_field or ('graph_concept' if self.graph_concept else self.body.__name__)}"
 
@@ -76,6 +87,20 @@ def _chat(text):
 
 def _start(text):
     return {"user_id": "u1", "topic": text, "course_id": "c1"}
+
+
+def _start_goal(text):
+    """A start whose typed text is the learning loop's goal (the topic is calm)."""
+    return {"user_id": "u1", "topic": "Recursion", "course_id": "c1",
+            "goal": {"text": text, "target_node_ids": ["n1"]}}
+
+
+def _answer(text):
+    return {"session_id": "s1", "user_id": "u1", "question_hash": "qh", "answer": text}
+
+
+def _reason(text):
+    return {"session_id": "s1", "user_id": "u1", "question_hash": "qh", "option": "B", "reason": text}
 
 
 def _note_message(text):
@@ -114,6 +139,52 @@ CASES: list[Case] = [
          async_next=True, neutral=START),
     Case("tutor_start", "/api/learn/start-session/stream", _start, "services.tutor.start_session_stream",
          stream=True, async_next=True, neutral={"session_id": None, **TURN}),
+    # the learning loop's goal on a tutor start is typed text too
+    Case("tutor_start", "/api/learn/start-session", _start_goal, "services.tutor.start_session",
+         async_next=True, neutral=START),
+    # /api/learn/loop/* — the learning loop
+    Case("loop_chat", "/api/learn/loop/chat", _chat, "services.loop.teach._consume_pending_off_loop",
+         async_next=True, neutral=TURN),
+    Case("loop_chat", "/api/learn/loop/chat/stream", _chat, "services.loop.teach._consume_pending_off_loop",
+         stream=True, async_next=True, neutral=TURN),
+    Case("loop_start", "/api/learn/loop/start-session", _start, "services.loop.teach._LoopOpener",
+         neutral=START),
+    Case("loop_start", "/api/learn/loop/start-session/stream", _start, "services.loop.teach._LoopOpener",
+         stream=True, neutral={"session_id": None, **TURN}),
+    Case("loop_start", "/api/learn/loop/start-session", _start_goal, "services.loop.teach._LoopOpener",
+         neutral=START),
+    Case("loop_goal", "/api/learn/loop/goal",
+         lambda t: {"session_id": "s1", "user_id": "u1", "goal": {"text": t, "target_node_ids": ["n1"]}},
+         "services.loop.goal._probe_plan_read_limit"),
+    Case("loop_check_answer", "/api/learn/loop/check/answer", _answer,
+         "services.loop.grading._consume_pending_off_loop", async_next=True, neutral=TURN),
+    Case("loop_check_answer", "/api/learn/loop/check/answer/stream", _answer,
+         "services.loop.grading._consume_pending_off_loop", stream=True, async_next=True, neutral=TURN),
+    Case("loop_check_answer", "/api/learn/loop/check/answer", _reason,
+         "services.loop.grading._consume_pending_off_loop", async_next=True, neutral=TURN),
+    Case("loop_step_attempt", "/api/learn/loop/step/attempt",
+         lambda t: {"session_id": "s1", "user_id": "u1", "question_hash": "qh", "attempt_text": t},
+         "services.loop.attempts._session_scope", neutral={"genuine": False, "counted": False}),
+    Case("loop_probe_answer", "/api/learn/loop/probe/answer", _answer,
+         "services.ai_budget.enforce_rate_limit_for", neutral={"graded": False}),
+    Case("loop_review_answer", "/api/learn/loop/review/answer",
+         lambda t: {"user_id": "u1", "session_id": "r1", "kind": "check", "item_id": "i1", "answer": t},
+         "services.loop.reviews._review_course",
+         neutral={"correct": None, "unavailable": True, "refused": False}),
+    Case("loop_posttest_answer", "/api/learn/loop/posttest/answer",
+         lambda t: {"user_id": "u1", "node_id": "n1", "question_hash": "qh", "answer": t},
+         "services.loop.posttest._posttest_node", neutral={"graded": False}),
+    # learning-loop spec §13 A138: a guess at the segment prequestion (free and
+    # multiple choice), JSON and stream; A139: a self-explanation reply
+    Case("loop_prequestion_answer", "/api/learn/loop/prequestion/answer", _answer,
+         "services.loop.prequestion._consume_pending_off_loop", async_next=True, neutral=TURN),
+    Case("loop_prequestion_answer", "/api/learn/loop/prequestion/answer/stream", _answer,
+         "services.loop.prequestion._consume_pending_off_loop", stream=True, async_next=True, neutral=TURN),
+    Case("loop_prequestion_answer", "/api/learn/loop/prequestion/answer", _reason,
+         "services.loop.prequestion._consume_pending_off_loop", async_next=True, neutral=TURN),
+    Case("loop_self_explain", "/api/learn/loop/self-explain",
+         lambda t: {"session_id": "s1", "user_id": "u1", "prompt_id": "p1", "reply": t},
+         "services.loop.self_explain._session_scope", neutral={"recorded": False}),
     # /api/notes/* — the message, or the note an agent action hands a model
     Case("note_chat", "/api/notes/n1/chat", _note_message, "routes.notes.offering_course_id",
          neutral={"degraded": False}),
@@ -145,9 +216,29 @@ BLOCKING = [c for c in CASES if c.blocks]
 BLOCKING_IDS = [c.id for c in BLOCKING]
 CONTENT = [c for c in CASES if not c.blocks]
 CONTENT_IDS = [c.id for c in CONTENT]
+LOOP = [c for c in CASES if c.loop]
+LOOP_IDS = [c.id for c in LOOP]
 
 
 # ── Fixtures ────────────────────────────────────────────────────────────────
+
+
+@pytest.fixture(autouse=True)
+def no_rate_limit(request):
+    """The learning loop's A20 rate-limit dependency reads llm_usage (route
+    tests override it, as tests/test_learn_loop_routes.py does); a case that
+    names the inline check as its next step patches over this. A test that
+    asks for `real_limiters` gets the real dependency and inline check
+    instead: this fixture steps aside rather than being patched over
+    (re-patching an attribute this `patch` holds would leak the stub past
+    the test)."""
+    if "real_limiters" in request.fixturenames:
+        yield
+        return
+    app.dependency_overrides[ai_budget.enforce_rate_limit] = lambda: None
+    with patch("services.ai_budget.enforce_rate_limit_for", return_value=None):
+        yield
+    app.dependency_overrides.pop(ai_budget.enforce_rate_limit, None)
 
 
 @pytest.fixture
@@ -253,12 +344,14 @@ def test_flag_on_a_crisis_message_gets_the_card_and_nothing_else(
     assert body["reply"] == crisis_support.render_reply(payload)
     for key, value in case.neutral.items():
         assert body[key] == value, key
-    if case.surface == "tutor_start" and not case.stream:
+    if case.surface in ("tutor_start", "loop_start") and not case.stream:
         assert body["initial_message"] == body["reply"]
 
     next_step.assert_not_called()  # the turn never started
-    assert model_calls == []  # no model
-    assert _db_writes() == writes  # no message, session, summary, concept or card row
+    assert model_calls == []  # no model, no grader, no tutor
+    # no message, session, summary, concept or card row; on the loop no
+    # evidence, help-ledger or session row either
+    assert _db_writes() == writes
     assert dict(PENDING_SESSIONS) == pending  # no lazy session stashed
 
     rows = _crisis_rows(sink)
@@ -382,6 +475,40 @@ def test_a_typed_note_chat_message_is_screened_whole_quotes_and_all(flag, model_
     next_step.assert_not_called()
 
 
+def _note_chat_with_tags(tags: list):
+    """POST a calm note-chat message over a note whose only crisis text (if
+    any) is in its tags; the route's next step is a sentinel 418."""
+    note = {"id": "n1", "user_id": "u1", "offering_id": "o1", "title": "Week 3",
+            "body": "Hash tables.", "tags": tags}
+    sentinel = HTTPException(status_code=SENTINEL, detail="reached the route's own next step")
+    nxt = MagicMock(side_effect=sentinel)
+    with (
+        patch("routes.notes.offering_course_id", nxt),
+        patch("routes.notes.get_note", AsyncMock(return_value=note)),
+    ):
+        return client.post("/api/notes/n1/chat", json={"user_id": "u1", "message": CALM}), nxt
+
+
+def test_a_crisis_phrase_only_in_the_notes_tags_rides_beside_the_note_chat(flag, model_calls, sink):
+    """The note-chat agent reads the note's tags (its read_active_note tool
+    serves them, and A125's integrity guard checks them:
+    services/note_guard.py), so the note's content screen reads them too. A
+    tag is stored material like the body: the chat runs, and the card rides
+    beside its answer."""
+    flag("on")
+    r, nxt = _note_chat_with_tags(["midterm", CRISIS])
+    nxt.assert_called_once()  # stored material never blocks
+    assert r.status_code == SENTINEL, r.text
+    assert r.json()["crisis_support"] == crisis_support.client_payload(crisis_copy.DEFAULT_CAMPUS_COUNSELING)
+    (row,) = _crisis_rows(sink)
+    assert row["payload"]["surface"] == "note_chat"
+    # control: the same note with calm tags carries on without the card
+    r, nxt = _note_chat_with_tags(["midterm", "hashing"])
+    assert r.status_code == SENTINEL, r.text
+    assert "crisis_support" not in r.json()
+    nxt.assert_called_once()
+
+
 def test_the_screen_authenticates_before_the_flag_and_the_event(flag, model_calls, sink, monkeypatch):
     """The screen runs before the handler's own require_self, so on a match it
     checks the caller itself, before it reads the flag or records anything:
@@ -410,11 +537,12 @@ def test_the_screen_authenticates_before_the_flag_and_the_event(flag, model_call
     assert [row["user_id"] for row in _crisis_rows(sink)] == ["u1"]
 
 
-def test_the_streamed_card_is_the_tutor_streams_own_terminal_shape(flag, model_calls):
+@pytest.mark.parametrize("path", ["/api/learn/chat/stream", "/api/learn/loop/chat/stream"])
+def test_the_streamed_card_is_the_tutor_streams_own_terminal_shape(path, flag, model_calls):
     """The frontend's consumeChatStream resolves a turn from `done.data` and
     needs nothing before it; the crisis stream is exactly that one event."""
     flag("on")
-    r = client.post("/api/learn/chat/stream", json=_chat(CRISIS))
+    r = client.post(path, json=_chat(CRISIS))
     assert r.headers["cache-control"] == "no-store, no-transform"
     assert r.headers["x-request-id"]
     (name, event), = _sse_events(r.text)
@@ -1085,7 +1213,7 @@ def _note_start(**overrides) -> dict:
     return {"user_id": "u1", "topic": CRISIS, "course_id": "c1", "from_note_id": "n1", **overrides}
 
 
-async def _greeting_stream(body, request):
+async def _greeting_stream(body, request, **_route_kwargs):  # the route also hands the loop's `loop_handler`
     from sse_starlette.sse import EventSourceResponse
 
     from services.agent_events import SaplingEvent, sapling_event_to_sse
@@ -1283,6 +1411,139 @@ def test_the_handoff_key_holds_no_content_or_id(flag, sink, note_start):
     assert keys and not any(word in keys for word in CRISIS_WORDS + ("n1", "u1"))
 
 
+# ── The same hand-over on the learning loop's start routes (C4) ─────────────
+#
+# With the loop on, LoopLearn starts on /api/learn/loop/start-session[/stream]
+# directly; Send to tutor names its note there too. The topic is the note's
+# title, so it is stored material: the loop session opens with the card
+# beside it, exactly as on the legacy route, instead of the card twice and no
+# session.
+
+LOOP_START = "/api/learn/loop/start-session"
+LOOP_START_STREAM = "/api/learn/loop/start-session/stream"
+
+
+@pytest.fixture
+def loop_note_start():
+    """The loop's two start bodies stood in (a greeting); the student's note
+    is CRISIS_NOTE. Yields the mocks."""
+    mocks = {
+        "start": AsyncMock(return_value=dict(GREETING)),
+        "stream": AsyncMock(side_effect=_greeting_stream),
+        "get_note": AsyncMock(return_value=dict(CRISIS_NOTE)),
+    }
+    with (
+        patch("services.loop.start_session", mocks["start"]),
+        patch("services.loop.start_session_stream", mocks["stream"]),
+        patch("services.tutor.note_topic.get_note", mocks["get_note"]),
+    ):
+        yield mocks
+
+
+def test_a_note_titled_loop_start_opens_the_session_with_the_card_beside_it(flag, sink, loop_note_start):
+    flag("on")
+    r = client.post(LOOP_START, json=_note_start())
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert {k: body[k] for k in GREETING} == GREETING  # the session started
+    assert body["crisis_support"] == crisis_support.client_payload(crisis_copy.DEFAULT_CAMPUS_COUNSELING)
+    assert body["crisis_support_alongside"] is True
+    loop_note_start["start"].assert_awaited_once()
+    loop_note_start["get_note"].assert_awaited_once_with(note_id="n1", user_id="u1")
+    assert len(_crisis_rows(sink)) == 1  # one card shown, one event
+    assert _surfaces(sink) == ["loop_start"]  # recorded as the loop's start, not the legacy one
+
+
+def test_a_note_titled_loop_start_streams_the_greeting_with_the_card_in_done(flag, sink, loop_note_start):
+    flag("on")
+    r = client.post(LOOP_START_STREAM, json=_note_start())
+    assert r.status_code == 200, r.text
+    events = _sse_events(r.text)
+    assert [name for name, _ in events] == ["token", "done"]
+    done = events[-1][1]["data"]
+    assert {k: done[k] for k in DONE_DATA} == DONE_DATA
+    assert done["crisis_support_alongside"] is True
+    assert "crisis_support" not in events[0][1]["data"]
+
+
+@pytest.mark.parametrize("path", [LOOP_START, LOOP_START_STREAM])
+def test_the_loop_start_send_to_tutor_hands_over_records_no_second_card(path, flag, sink, loop_note_start):
+    flag("on")
+    note = {**CRISIS_NOTE, "updated_at": "2026-11-14T10:00:00Z"}
+    loop_note_start["get_note"].return_value = dict(note)
+    _send_to_tutor(note)
+    r = client.post(path, json=_note_start())
+    assert r.status_code == 200, r.text
+    assert "crisis_support" in r.text  # the card rides beside the session
+    assert _surfaces(sink) == ["note_send_to_tutor"]
+
+
+def test_a_rate_limited_note_titled_loop_start_still_carries_the_card(
+    flag, sink, loop_note_start, live_accounts, real_limiters,
+):
+    """The loop's rate limit is a route dependency, after the screen: its 429
+    goes back with the card on it, and the session is not started."""
+    flag("on")
+    real_limiters["limited"] = True
+    r = client.post(LOOP_START, json=_note_start())
+    assert r.status_code == 429, r.text
+    assert r.json()["crisis_support"] == crisis_support.client_payload(crisis_copy.DEFAULT_CAMPUS_COUNSELING)
+    loop_note_start["start"].assert_not_called()
+
+
+@pytest.mark.parametrize("why, body, note", [
+    ("no note named", {"from_note_id": None}, CRISIS_NOTE),
+    ("not the student's note (or gone)", {}, None),
+    ("the student edited the topic", {"topic": f"{CRISIS} please"}, CRISIS_NOTE),
+], ids=lambda v: v if isinstance(v, str) else "")
+@pytest.mark.parametrize("path", [LOOP_START, LOOP_START_STREAM])
+def test_a_loop_topic_that_is_not_the_notes_title_blocks_as_typed(why, body, note, path, flag, sink, loop_note_start):
+    flag("on")
+    loop_note_start["get_note"].return_value = note
+    r = client.post(path, json=_note_start(**body))
+    assert r.status_code == 200, r.text
+    card = _sse_events(r.text)[-1][1]["data"] if path.endswith("/stream") else r.json()
+    assert card["session_id"] is None and "crisis_support" in card  # the card INSTEAD of a session
+    assert "crisis_support_alongside" not in card
+    loop_note_start["start"].assert_not_called()
+    loop_note_start["stream"].assert_not_called()
+
+
+def test_a_typed_crisis_goal_still_blocks_a_note_titled_loop_start(flag, sink, loop_note_start):
+    flag("on")
+    goal = {"text": CRISIS, "target_node_ids": ["n1"]}
+    r = client.post(LOOP_START, json=_note_start(topic="Week 3", goal=goal))
+    assert r.status_code == 200, r.text
+    assert r.json()["session_id"] is None and "crisis_support" in r.json()
+    loop_note_start["start"].assert_not_called()
+    assert _surfaces(sink) == ["loop_start"]
+
+
+def test_a_calm_note_titled_loop_start_starts_as_usual_without_reading_the_note(flag, sink, loop_note_start):
+    flag("on")
+    r = client.post(LOOP_START, json=_note_start(topic="Week 3"))
+    assert r.status_code == 200, r.text
+    assert r.json() == GREETING
+    assert _crisis_rows(sink) == []
+    loop_note_start["get_note"].assert_not_called()
+
+
+def test_a_stranger_naming_a_note_on_the_loop_is_refused_before_it_is_read(flag, sink, loop_note_start, monkeypatch):
+    from services import auth_guard
+
+    flag("on")
+
+    def require_self(user_id, request, **_kwargs):
+        if user_id != "u1":
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+    monkeypatch.setattr(auth_guard, "require_self", require_self)
+    r = client.post(LOOP_START, json=_note_start(user_id="u2"))
+    assert r.status_code == 403
+    loop_note_start["get_note"].assert_not_called()
+    assert _crisis_rows(sink) == []
+
+
 # ── Screening precedes every rate limit, budget and quota ───────────────────
 #
 # A student in crisis must never be answered with a 429 instead of the card.
@@ -1293,9 +1554,11 @@ def test_the_handoff_key_holds_no_content_or_id(flag, sink, note_start):
 @pytest.fixture
 def real_limiters(monkeypatch):
     """Every limiter on a covered path, live, with only its verdict replaced:
-    the flashcard import window, the set-suggest window and the per-user LLM
-    budget at the model chokepoint. Set `limited`; `consulted` logs every read
-    (empty = no limiter was even read)."""
+    the flashcard import window, the set-suggest window, the per-user LLM
+    budget at the model chokepoint, and the learning loop's rate-limit
+    dependency, inline check and probe/plan window (the autouse
+    `no_rate_limit` steps aside for this fixture). Set `limited`; `consulted`
+    logs every read (empty = no limiter was even read)."""
     from services.flashcards import import_flow, suggest
 
     state: dict[str, Any] = {"limited": True, "consulted": []}
@@ -1316,6 +1579,19 @@ def real_limiters(monkeypatch):
     async def candidates(user_id, course_id):  # the suggest limiter only guards a model call
         return [{"concept_name": "Hash tables", "course_id": "c1", "mastery_tier": "learning"}]
 
+    def loop_rate_limit(user_id):
+        state["consulted"].append("ai_budget.rate_limit")
+        decision = ai_budget.BudgetDecision(
+            level="hard", tier_ceiling="none", scope="rate_limit", reset_at=None,
+        )
+        return (decision if state["limited"] else None), None
+
+    def probe_plan_window(key, *, limit, window_sec):
+        state["consulted"].append("request_limits.check_rate_limit")
+        return 30 if state["limited"] else None
+
+    monkeypatch.setattr(ai_budget, "_rate_limit_decision", loop_rate_limit)
+    setattr_loop(monkeypatch, "check_rate_limit", probe_plan_window)
     monkeypatch.setattr(import_flow, "check_rate_limit", import_window)
     monkeypatch.setattr(suggest, "acheck_rate_limit", suggest_window)
     monkeypatch.setattr(suggest, "_candidates", candidates)
@@ -1325,7 +1601,7 @@ def real_limiters(monkeypatch):
 
 #: The covered routes with a rate limiter of their own on main (the tutor and
 #: notes routes and flashcard generation are budgeted at the model chokepoint
-#: only).
+#: only). The learning loop's routes are limited too: see the LOOP tests below.
 RATE_LIMITED = [c for c in CASES
                 if c.path.startswith("/api/flashcards/") and c.path != "/api/flashcards/generate"]
 
@@ -1368,25 +1644,191 @@ def test_a_budget_capped_student_gets_the_card(case, flag, model_calls, sink, re
 
 @pytest.mark.parametrize("case", BLOCKING, ids=BLOCKING_IDS)
 def test_a_crisis_turn_consumes_no_rate_limit_or_budget_unit(
-    case, flag, model_calls, sink, real_limiters, monkeypatch
+    case, flag, model_calls, sink, live_accounts, real_limiters, monkeypatch
 ):
     """Nothing a limiter counts moves: no limiter is even read, no llm_usage
-    row is logged, and no sliding-window slot is taken."""
+    row is logged, no sliding-window slot is taken, and no tutor call is
+    counted (in process or in the database: the loop's A20 unit)."""
     from services import request_limits
 
     flag("on")
     real_limiters["limited"] = False
     usage_rows = MagicMock(wraps=events_service.log_llm_usage)
+    tutor_calls = MagicMock(wraps=ai_budget.count_tutor_call)
     monkeypatch.setattr(events_service, "log_llm_usage", usage_rows)
+    monkeypatch.setattr(ai_budget, "count_tutor_call", tutor_calls)
     windows = {k: list(v) for k, v in request_limits._rate_state.items()}
+    local_calls = dict(ai_budget._tutor_calls_local)
     writes = _db_writes()
 
     _card_of(case, _post_real(case, CRISIS))
 
     assert real_limiters["consulted"] == []
     usage_rows.assert_not_called()
+    tutor_calls.assert_not_called()
     assert {k: list(v) for k, v in request_limits._rate_state.items()} == windows
-    assert _db_writes() == writes
+    assert dict(ai_budget._tutor_calls_local) == local_calls
+    assert _db_writes() == writes  # the tutor-call RPC is a write too
+
+
+# ── The learning loop's limiters ────────────────────────────────────────────
+#
+# Most loop routes carry their rate limit as a ROUTE DEPENDENCY
+# (`_RATE_LIMITED`), which runs before any handler code, so their screen is a
+# dependency too (`crisis_support.screened`), listed between the loop's kill
+# switch and the rate limit. The rest (goal, probe, review) screen inline,
+# first thing after the loop's gate.
+
+
+@pytest.mark.parametrize("case", LOOP, ids=LOOP_IDS)
+def test_a_rate_limited_loop_student_gets_the_card_and_ordinary_text_still_gets_the_429(
+    case, flag, model_calls, sink, live_accounts, real_limiters
+):
+    flag("on")
+    real_limiters["limited"] = True
+    consulted = real_limiters["consulted"]
+
+    body = _card_of(case, _post_real(case, CRISIS))
+    assert "crisis_support" in body
+    assert "budget" not in body  # no pause notice rides on the card
+    assert consulted == []  # the limiter was not even read
+    events_service.flush_now()
+    assert [r for r in sink if r["event_type"] == "ai.budget_capped"] == []  # no cap recorded
+
+    r = _post_real(case, CALM)
+    assert r.status_code == 429, r.text
+    assert consulted, "the limiter answered the ordinary request"
+
+
+@pytest.mark.parametrize("case", LOOP, ids=LOOP_IDS)
+def test_a_budget_capped_loop_student_gets_the_card(case, flag, model_calls, sink, monkeypatch):
+    """The loop's AI budget (A20) is never consulted on a crisis turn, so it
+    cannot pause the student instead of showing the card."""
+    flag("on")
+    budget = MagicMock(return_value=ai_budget.BudgetDecision(
+        level="hard", tier_ceiling="none", scope="daily_usd", reset_at=None, pause_novice=True,
+    ))
+    monkeypatch.setattr(ai_budget, "check", budget)
+
+    body = _card_of(case, _post_real(case, CRISIS))
+    assert "crisis_support" in body
+    assert "budget" not in body
+    budget.assert_not_called()
+
+
+def test_the_screen_dependency_authenticates_before_the_flag_and_the_event(flag, model_calls, sink, monkeypatch):
+    """The dependency runs before the handler's own require_self, so it checks
+    the caller itself, before it reads the flag or records anything: another
+    student's user_id is refused, and nothing is attributed to them."""
+    from services import auth_guard
+
+    flag("on")
+
+    def require_self(user_id, request, **_kwargs):
+        if user_id != "u1":  # the session is u1's
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+    monkeypatch.setattr(auth_guard, "require_self", require_self)
+    flag_reads = MagicMock(return_value=True)
+    monkeypatch.setattr(crisis_support, "flag_on", flag_reads)
+
+    r = client.post("/api/learn/loop/chat", json={**_chat(CRISIS), "user_id": "u2"})
+    assert r.status_code == 403
+    flag_reads.assert_not_called()
+    assert _crisis_rows(sink) == []
+
+    r = client.post("/api/learn/loop/chat", json=_chat(CRISIS))
+    assert r.status_code == 200 and "crisis_support" in r.json()
+    assert [row["user_id"] for row in _crisis_rows(sink)] == ["u1"]
+
+
+def test_a_body_naming_no_student_is_screened_as_the_session_user(flag, model_calls, sink):
+    """posttest/answer's body may omit user_id (resolved from the session); the
+    screen does the same, so the card and the event are the session user's."""
+    flag("on")
+    r = client.post("/api/learn/loop/posttest/answer",
+                    json={"node_id": "n1", "question_hash": "qh", "answer": CRISIS})
+    assert r.status_code == 200 and "crisis_support" in r.json()
+    assert [row["user_id"] for row in _crisis_rows(sink)] == ["user_andres"]  # conftest's session stub
+
+
+def test_the_screen_dependency_reads_no_flag_for_ordinary_text(flag, model_calls, monkeypatch):
+    flag("on")
+    flag_reads = MagicMock(return_value=True)
+    monkeypatch.setattr(crisis_support, "flag_on", flag_reads)
+    case = next(c for c in CASES if c.path == "/api/learn/loop/chat")
+    r, _ = _post(case, CALM)
+    assert r.status_code == SENTINEL
+    flag_reads.assert_not_called()
+
+
+#: Every covered loop route whose limiter is a route dependency (`_RATE_LIMITED`).
+SCREENED_BY_DEPENDENCY = {
+    "/api/learn/loop/chat", "/api/learn/loop/chat/stream",
+    "/api/learn/loop/check/answer", "/api/learn/loop/check/answer/stream",
+    "/api/learn/loop/posttest/answer", "/api/learn/loop/step/attempt",
+    "/api/learn/loop/start-session", "/api/learn/loop/start-session/stream",
+    # spec §13 A138 / A139
+    "/api/learn/loop/prequestion/answer", "/api/learn/loop/prequestion/answer/stream",
+    "/api/learn/loop/self-explain",
+}
+#: Every covered loop route whose limiters are all inline: (path, the screen's
+#: call, the limiter calls it must precede in the handler's source).
+SCREENED_INLINE = [
+    ("/api/learn/loop/goal", "crisis_support.screen(", ("_probe_plan_read_limit(",)),
+    # #117: the loop's limiter read hops off the event loop, as the tutor's does
+    ("/api/learn/loop/probe/answer", "crisis_support.screen_async", ("enforce_rate_limit_for,",)),
+    ("/api/learn/loop/review/answer", "crisis_support.screen_async", ("enforce_rate_limit_for,",)),
+]
+
+
+def _loop_routes():
+    """(full path, route) for every POST route of the loop's own router (an
+    included router is one app.routes entry)."""
+    from routes import learn_loop
+
+    for route in learn_loop.router.routes:
+        if "POST" in getattr(route, "methods", set()):
+            yield "/api/learn/loop" + route.path, route
+
+
+def test_every_covered_loop_route_is_pinned():
+    assert {c.path for c in LOOP} == SCREENED_BY_DEPENDENCY | {p for p, _, _ in SCREENED_INLINE}
+
+
+def test_a_screen_dependency_precedes_every_rate_limit_dependency():
+    """Structural pin: on every loop route that carries both, the crisis screen
+    comes before the rate limit, and after only the kill switch."""
+    from routes import learn_loop
+
+    screened_paths = set()
+    for path, route in _loop_routes():
+        calls = [d.call for d in route.dependant.dependencies]
+        screens = [i for i, call in enumerate(calls) if crisis_support.is_screen(call)]
+        if not screens:
+            continue
+        screened_paths.add(path)
+        assert len(screens) == 1, path
+        assert ai_budget.enforce_rate_limit in calls, path
+        assert calls.index(learn_loop._kill_switch_first) < screens[0] < calls.index(
+            ai_budget.enforce_rate_limit
+        ), path
+    assert screened_paths == SCREENED_BY_DEPENDENCY
+
+
+@pytest.mark.parametrize("path, screen_call, limiters", SCREENED_INLINE)
+def test_an_inline_loop_screen_precedes_every_inline_limiter(path, screen_call, limiters):
+    """Structural pin for the loop routes whose limiters are inline: the screen
+    is called before each of them in the handler, and no limiter is a
+    dependency."""
+    route = next(r for full, r in _loop_routes() if full == path)
+    assert ai_budget.enforce_rate_limit not in [d.call for d in route.dependant.dependencies], path
+    import services.loop as loop  # #118: the thin route wrapper's body
+
+    source = inspect.getsource(getattr(loop, route.endpoint.__name__, route.endpoint))
+    for limiter in limiters:
+        assert limiter in source, (path, limiter)
+        assert source.index(screen_call) < source.index(limiter), (path, limiter)
 
 
 def _covered_routes():
@@ -1394,7 +1836,7 @@ def _covered_routes():
     own router (an included router is one app.routes entry)."""
     from routes import flashcards, learn, notes
 
-    covered = {c.path.replace("/n1/", "/{note_id}/") for c in CASES}
+    covered = {c.path.replace("/n1/", "/{note_id}/") for c in CASES if not c.loop}
     for prefix, router in (("/api/learn", learn.router), ("/api/notes", notes.router),
                            ("/api/flashcards", flashcards.router)):
         for route in router.routes:
@@ -1408,7 +1850,9 @@ _LIMITER_CALL = re.compile(r"\b\w*(?:limit|budget|quota|throttle)\w*\s*\(", re.I
 
 
 def test_every_covered_route_is_found():
-    assert {path for path, _ in _covered_routes()} == {c.path.replace("/n1/", "/{note_id}/") for c in CASES}
+    assert {path for path, _ in _covered_routes()} == {
+        c.path.replace("/n1/", "/{note_id}/") for c in CASES if not c.loop
+    }
 
 
 @pytest.mark.parametrize("path, route", list(_covered_routes()), ids=lambda v: v if isinstance(v, str) else "")
@@ -1808,9 +2252,11 @@ def test_function_mode_the_scripted_model_is_never_called_on_a_crisis_message(mo
     """Under SAPLING_MODEL_MODE=function a crisis turn needs no handler: the
     path makes no model call, so the scripted model is never reached. A
     handler is registered for EVERY task, counting calls; the control turn
-    (a tutor session opener, the shortest real model path) proves the harness
-    does see a model call when one is made."""
+    (a tutor session opener with the learning loop off, the shortest real
+    model path) proves the harness does see a model call when one is made."""
     from typing import get_args
+
+    import config
 
     from pydantic_ai.messages import ModelResponse, TextPart
 
@@ -1845,6 +2291,8 @@ def test_function_mode_the_scripted_model_is_never_called_on_a_crisis_message(mo
                 assert r.status_code == 200 and "crisis_support" in r.text, case.path
             assert calls == [], "the scripted model must never run on a crisis message"
 
+            # with the loop on, the tutor start delegates to the loop's opener
+            monkeypatch.setattr(config, "LEARNING_LOOP_ENABLED", False)
             r = client.post("/api/learn/start-session", json={"user_id": "u1", "topic": "Recursion"})
             assert r.status_code == 200, r.text
             assert r.json()["initial_message"] == "scripted reply"

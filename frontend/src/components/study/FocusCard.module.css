@@ -1,0 +1,81 @@
+@layer components {
+/* The Up Next block (FocusCard.tsx). Its layout (the row, the clamp, the
+   actions) is in StudyHub.module.css's `.focus*` rules; these are its parts.
+   Every word on the block is --sidenav-fg on --sidenav-bg (spec §13 A135). */
+
+.block {
+  position: relative; min-width: 0;
+  border-radius: var(--r-lg); background: var(--sidenav-bg); color: var(--sidenav-fg);
+  padding: var(--sp-8) var(--sp-9);
+}
+.emptyBlock { display: flex; flex-direction: column; justify-content: center; gap: var(--sp-3); }
+.emptyTitle { font-family: var(--font-display); font-size: var(--fs-xl); font-weight: 600; }
+.emptyBody { font-size: var(--fs-md); }
+
+/* `.label-micro`, for the one place it sits on the dark block. */
+.micro { font-family: var(--font-sans); font-size: var(--fs-sm); }
+.fallbackNote { margin: 0 0 var(--sp-5); font-size: var(--fs-sm); line-height: 1.3; }
+.nameCol { min-width: 0; display: flex; flex-direction: column; gap: var(--sp-2); }
+.name { font-family: var(--font-display); font-size: var(--fs-2xl); font-weight: 600; line-height: 1.2; letter-spacing: -0.01em; }
+.actIcon { display: grid; }
+
+/* The mastery ring: 72px, the ceiling the concept row allows (see .focusConcept). */
+.ringBox {
+  --ring-size: 72px;
+  position: relative; width: var(--ring-size); height: var(--ring-size); flex-shrink: 0;
+}
+.ringSvg { display: block; transform: rotate(-90deg); }
+/* The ring's empty track: the block's white, faint. */
+.ringTrack { stroke: color-mix(in srgb, var(--sidenav-fg) 18%, transparent); }
+.ringPct {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  /* Between --fs-2xl and --fs-3xl: sized to sit inside the 72px ring. */
+  --ring-pct-size: 24px;
+  font-size: var(--ring-pct-size); font-weight: 600; letter-spacing: -0.02em;
+}
+
+/* A chip on the prerequisite line. */
+.chip {
+  display: inline-flex; align-items: center; height: var(--chip-h); padding: 0 var(--sp-4);
+  border-radius: var(--r-full); color: var(--sidenav-fg);
+  font-size: var(--fs-xs); font-weight: 600; white-space: nowrap;
+  transition: background-color var(--dur-fast) var(--ease);
+}
+.chipMore { background: var(--sidenav-wash-strong); cursor: default; }
+.chipPrereq { gap: var(--sp-2); min-width: 0; background: var(--sidenav-wash); }
+.chipGap { padding: 0 var(--gap-mark-pad); border: 0; background: var(--warn-soft); cursor: default; }
+.clipText { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+
+/* One fixed-height line: --chip-h tall, its gap and the gap mark's padding
+   set from FocusCard.tsx (the same numbers chipsThatFit measures with). */
+.prereqs {
+  --chip-h: 22px;
+  display: flex; flex-wrap: nowrap; align-items: center; gap: var(--prereq-gap);
+  height: var(--chip-h); min-width: 0; font-size: var(--fs-sm);
+}
+.prereqChips { display: flex; align-items: center; gap: var(--prereq-gap); min-width: 0; overflow: hidden; }
+.noPrereqs { flex-shrink: 0; white-space: nowrap; }
+
+/* The two pop-ups under the line ("+N more", the gap reason). */
+.hoverAnchor { position: relative; flex-shrink: 0; }
+.hoverAnchorFlex { display: flex; }
+.popAnchor { position: absolute; left: 0; top: 100%; padding-top: var(--sp-3); z-index: var(--z-popover); }
+.popAnchorNudge { left: calc(-1 * var(--sp-2)); }
+.moreList {
+  display: flex; flex-direction: column; gap: var(--sp-3); min-width: 180px;
+  padding: var(--sp-4) var(--sp-5);
+}
+.moreRow {
+  display: flex; align-items: center; gap: var(--sp-4);
+  font-size: var(--fs-md); font-weight: 600; color: var(--text); white-space: nowrap;
+}
+.gapTip {
+  display: flex; align-items: flex-start; gap: var(--sp-4); width: 260px;
+  padding: var(--sp-5) var(--sp-6);
+  background: var(--warn-soft); border: 1px solid transparent; border-radius: var(--r-md);
+  box-shadow: var(--shadow-lg); color: var(--warn);
+  font-size: var(--fs-sm); line-height: 1.45; text-wrap: pretty;
+}
+.gapTipName { font-weight: 700; }
+
+}

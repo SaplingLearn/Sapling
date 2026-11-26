@@ -428,6 +428,23 @@ Or fold it into a full reset:
 All ids are namespaced `rich-*`; encrypted columns use the local `ENCRYPTION_KEY`.
 The script refuses to run against a non-local `SUPABASE_URL`.
 
+### Real learning-loop questions for a live-model demo (optional)
+
+The rich seed's learning-loop check items are E2E placeholders ("[e2e-loop] Check
+item: type the e2e grader's correct token…"): the deterministic journeys assert on
+them. To demo or smoke-test the tutor with real models (`SAPLING_MODEL_MODE=real`),
+run this once after the rich seed, from `backend/` with the stack up:
+
+    python -m db.seed_showcase_loop
+
+It swaps the placeholders for 72 hand-written, verified CS101 items (one per
+format × difficulty for each of the eight CS101 concepts on a seeded graph) and
+adds the lecture-notes document they cite. Sign in as `rich-user-loop` (Binary
+Numbers → Bitwise Operators → Two's Complement) or `rich-user-active` (Recursion,
+Control Flow, …). No E2E lane runs it; re-running `seed_local_rich` brings the
+placeholders back, so run the overlay again after a reseed. Details in the module
+docstring of `backend/db/seed_showcase_loop.py`.
+
 ## Integration tests (opt-in, #362)
 
 With the local stack up and `backend/.env` active, from `backend/`:
@@ -436,8 +453,11 @@ With the local stack up and `backend/.env` active, from `backend/`:
       RUN_INTEGRATION=1 python -m pytest -m integration -q
 
 These bypass the hermetic mocks and hit the real local Supabase (real Postgres,
-encryption round-trips, migrated schema). Skipped by default. The suite seeds the
-rich dataset (idempotent) on first run and never resets your DB.
+encryption round-trips, migrated schema). Skipped by default. Before EVERY test the
+suite truncates every mutable table and re-seeds the rich baseline
+(`tests/integration/conftest.py::_reset_between_tests`; the reference tables in its
+`_TRUNCATE_DENYLIST` are kept), so running it wipes anything you created by hand in
+the local database. It refuses to run against a non-local `SUPABASE_DB_URL`.
 
 The function-mode variables are not optional. The quiz subcutaneous tests (#545)
 drive the write paths through real HTTP, so without the seam they would call live

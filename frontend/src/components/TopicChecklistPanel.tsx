@@ -1,6 +1,9 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
+import { AnimatePresence, motion } from "framer-motion";
+import { useMotionPresets } from "@/lib/motion";
+import styles from "./TopicChecklistPanel.module.css";
 import { getTopicChecklist, refreshTopicChecklist, setTopicReviewed, type TopicChecklist } from "@/lib/topicChecklistApi";
 
 const STATUS_LABELS = {
@@ -22,6 +25,7 @@ export function TopicChecklistPanel({ userId, courseId, semester, semesters = []
   const scopedSemester = semester || selectedSemester || undefined;
   const controller = useRef<AbortController | null>(null);
   const generation = useRef<object | null>(null);
+  const m = useMotionPresets();
 
   useEffect(() => () => controller.current?.abort(), []);
 
@@ -63,8 +67,9 @@ export function TopicChecklistPanel({ userId, courseId, semester, semesters = []
     setError("");
     // A controlled checkbox only moves when state does: show the check now and
     // put it back if the save fails, rather than lagging behind the request.
-    const setChecked = (value: boolean) => setData((prev) => prev && {
-      ...prev, topics: prev.topics.map((topic) => topic.id === topicId ? { ...topic, checked: value } : topic),
+    const setChecked = (value: boolean) => setData((prev) => {
+      if (generation.current !== version || abort.signal.aborted || !prev) return prev;
+      return { ...prev, topics: prev.topics.map((topic) => topic.id === topicId ? { ...topic, checked: value } : topic) };
     });
     if (topicId) setChecked(!!checked);
     try {
@@ -79,8 +84,10 @@ export function TopicChecklistPanel({ userId, courseId, semester, semesters = []
         if (generation.current === version && !abort.signal.aborted) setData(result);
       }
     } catch {
-      if (topicId) setChecked(!checked);
-      if (generation.current === version && !abort.signal.aborted) setError("Could not save the checklist. Please try again.");
+      if (generation.current === version && !abort.signal.aborted) {
+        if (topicId) setChecked(!checked);
+        setError("Could not save the checklist. Please try again.");
+      }
     } finally {
       if (generation.current === version) setBusy(false);
     }
@@ -89,56 +96,60 @@ export function TopicChecklistPanel({ userId, courseId, semester, semesters = []
   const names = new Map(data?.topics.map((topic) => [topic.id, topic.name]));
   const topics = data?.topics.filter((topic) => filter === "all" || topic.status === filter) ?? [];
   return (
-    <section data-testid="topic-checklist" className="border-b border-b-border py-2.5 px-4 shrink-0">
+    <section data-testid="topic-checklist" className={styles.root}>
       <button data-testid="topic-checklist-toggle" className="btn btn--sm" type="button" aria-expanded={open} aria-controls="topic-checklist-content" onClick={() => setOpen(!open)}>
         {open ? "Hide topic checklist" : "Topic checklist"}
       </button>
-      {open && (
-        <div id="topic-checklist-content" className="max-h-[35vh] overflow-y-auto pt-2.5" aria-busy={busy}>
-          <p className="text-md">Course topics from BU catalog information and your materials. Check a topic after studying it; mastery and review needs remain separate.</p>
-          {data?.semester && <p className="text-md">Semester: {data.semester}</p>}
-          <div className="flex gap-3 flex-wrap items-center my-2.5 mx-0">
-            {!semester && semesters.length > 1 && <label className="text-md">Semester {" "}
-              <select data-testid="topic-checklist-semester" aria-label="Checklist semester" value={selectedSemester} onChange={(e) => setSelectedSemester(e.target.value)}>
-                <option value="">Current or most recent enrollment</option>
-                {semesters.map((term) => <option key={term} value={term}>{term}</option>)}
-              </select>
-            </label>}
-            <label className="text-md">Show topics {" "}
-              <select data-testid="topic-checklist-filter" aria-label="Filter checklist topics" value={filter} onChange={(e) => setFilter(e.target.value)}>
-                <option value="all">All topics</option>
-                {Object.entries(STATUS_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-              </select>
-            </label>
-            <button data-testid="topic-checklist-refresh" className="btn btn--sm" type="button" disabled={busy} onClick={() => update()}>Update from materials</button>
-            {busy && <span role="status">Updating checklist…</span>}
-          </div>
-          {error && <p role="alert">{error}</p>}
-          {data?.needs_refresh && !busy && <p className="text-md">Showing the previous outline. Update from materials to include recent changes.</p>}
-          {data?.warnings.map((warning) => <p key={warning} className="text-md">{warning}</p>)}
-          {!!data?.assessments.length && (
-            <p className="text-md">Upcoming assessments: {data.assessments.map((a) => `${a.title} (${a.due_date})`).join("; ")}. Topic coverage is shown only when supported by your materials.</p>
-          )}
-          {!busy && data && !topics.length && <p>No topics match this view.</p>}
-          <ul className="list-none p-0">
-            {topics.map((topic) => (
-              <li key={topic.id} data-testid={`topic-checklist-topic-${topic.id}`} className="border-t border-t-border py-2.5 px-0">
-                {topic.parent_id && <small>{names.get(topic.parent_id)}</small>}
-                <div className="flex gap-2.5 items-baseline flex-wrap">
-                  <label><input data-testid={`topic-checklist-check-${topic.id}`} type="checkbox" aria-label={`Studied ${topic.name}`} checked={topic.checked} disabled={busy} onChange={(e) => update(topic.id, e.target.checked)} /> {topic.name}</label>
-                  <span className="text-sm">{STATUS_LABELS[topic.status]}{topic.priority === "high" ? " · Prioritize" : ""}</span>
-                  {topic.mastery_score !== null && <span className="text-sm">Mastery {Math.round(topic.mastery_score * 100)}%</span>}
-                </div>
-                <p className="text-md my-1.5 mx-0">{topic.description}</p>
-                {!!topic.review_reasons.length && <p className="text-sm">{topic.review_reasons.join(" · ")}</p>}
-                {!!topic.prerequisite_gaps.length && <p className="text-sm">Review prerequisites: {topic.prerequisite_gaps.join(", ")}</p>}
-                {!!topic.assessments.length && <p className="text-sm">For: {topic.assessments.map((a) => `${a.title} · ${a.due_date}`).join("; ")}</p>}
-                {!!topic.sources.length && <small>Sources: {topic.sources.map((s) => s.label).join(", ")}</small>}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.div key="checklist" {...m.collapse}>
+            <div id="topic-checklist-content" className={styles.content} aria-busy={busy}>
+              <p className={styles.note}>Course topics from BU catalog information and your materials. Check a topic after studying it; mastery and review needs remain separate.</p>
+              {data?.semester && <p className={styles.note}>Semester: {data.semester}</p>}
+              <div className={styles.controls}>
+                {!semester && semesters.length > 1 && <label className={styles.note}>Semester {" "}
+                  <select data-testid="topic-checklist-semester" aria-label="Checklist semester" value={selectedSemester} onChange={(e) => setSelectedSemester(e.target.value)}>
+                    <option value="">Current or most recent enrollment</option>
+                    {semesters.map((term) => <option key={term} value={term}>{term}</option>)}
+                  </select>
+                </label>}
+                <label className={styles.note}>Show topics {" "}
+                  <select data-testid="topic-checklist-filter" aria-label="Filter checklist topics" value={filter} onChange={(e) => setFilter(e.target.value)}>
+                    <option value="all">All topics</option>
+                    {Object.entries(STATUS_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                  </select>
+                </label>
+                <button data-testid="topic-checklist-refresh" className="btn btn--sm" type="button" disabled={busy} onClick={() => update()}>Update from materials</button>
+                {busy && <motion.span role="status" {...m.fade}>Updating checklist…</motion.span>}
+              </div>
+              {error && <motion.p role="alert" {...m.fade}>{error}</motion.p>}
+              {data?.needs_refresh && !busy && <p className={styles.note}>Showing the previous outline. Update from materials to include recent changes.</p>}
+              {data?.warnings.map((warning) => <p key={warning} className={styles.note}>{warning}</p>)}
+              {!!data?.assessments.length && (
+                <p className={styles.note}>Upcoming assessments: {data.assessments.map((a) => `${a.title} (${a.due_date})`).join("; ")}. Topic coverage is shown only when supported by your materials.</p>
+              )}
+              {!busy && data && !topics.length && <p>No topics match this view.</p>}
+              <motion.ul className={styles.list} variants={m.list.container} initial="hidden" animate="shown">
+                {topics.map((topic) => (
+                  <motion.li key={topic.id} data-testid={`topic-checklist-topic-${topic.id}`} className={styles.topic} variants={m.list.item}>
+                    {topic.parent_id && <small>{names.get(topic.parent_id)}</small>}
+                    <div className={styles.topicHead}>
+                      <label><input data-testid={`topic-checklist-check-${topic.id}`} type="checkbox" aria-label={`Studied ${topic.name}`} checked={topic.checked} disabled={busy} onChange={(e) => update(topic.id, e.target.checked)} /> {topic.name}</label>
+                      <span className={styles.meta}>{STATUS_LABELS[topic.status]}{topic.priority === "high" ? " · Prioritize" : ""}</span>
+                      {topic.mastery_score !== null && <span className={styles.meta}>Mastery {Math.round(topic.mastery_score * 100)}%</span>}
+                    </div>
+                    <p className={styles.description}>{topic.description}</p>
+                    {!!topic.review_reasons.length && <p className={styles.meta}>{topic.review_reasons.join(" · ")}</p>}
+                    {!!topic.prerequisite_gaps.length && <p className={styles.meta}>Review prerequisites: {topic.prerequisite_gaps.join(", ")}</p>}
+                    {!!topic.assessments.length && <p className={styles.meta}>For: {topic.assessments.map((a) => `${a.title} · ${a.due_date}`).join("; ")}</p>}
+                    {!!topic.sources.length && <small>Sources: {topic.sources.map((s) => s.label).join(", ")}</small>}
+                  </motion.li>
+                ))}
+              </motion.ul>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </section>
   );
 }

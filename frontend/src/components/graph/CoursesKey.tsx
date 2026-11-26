@@ -5,6 +5,7 @@
 // course legend the graph has: the host wires hover (the graph fades every other course) and click
 // (the Dashboard zooms to the course, the Tree filters to it).
 
+import { graphUsesSkill } from "@/lib/levels";
 import React from "react";
 import type { EnrolledCourse } from "@/lib/api";
 import type { GraphNode } from "@/lib/data";
@@ -18,6 +19,8 @@ export type CourseProgressEntry = {
   unexplored: number;
   total: number;
   progress: number;
+  /** The counts are the skill ladder's levels (the loop's graph, `lib/levels.ts`). */
+  skill: boolean;
 };
 
 /** Per-course tier counts for the key, from the graph's own nodes. */
@@ -32,7 +35,7 @@ export function courseProgressFor(
     const struggling = courseNodes.filter((n) => n.mastery_tier === "struggling").length;
     const unexplored = courseNodes.filter((n) => n.mastery_tier === "unexplored" || !n.mastery_tier).length;
     const total = courseNodes.length;
-    return { course: c, mastered, learning, struggling, unexplored, total, progress: total ? mastered / total : 0 };
+    return { course: c, mastered, learning, struggling, unexplored, total, progress: total ? mastered / total : 0, skill: graphUsesSkill(courseNodes) };
   });
 }
 

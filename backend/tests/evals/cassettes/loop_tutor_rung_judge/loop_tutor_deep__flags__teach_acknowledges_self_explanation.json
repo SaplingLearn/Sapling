@@ -1,0 +1,10 @@
+{
+  "judge_model": "claude-opus-5-5",
+  "judge_prompt_hash": "24a91d185fa1dcc9d48aab3d4be22377fd6d2ddfd8c7aaac6c21e6eb819cfb40",
+  "output": {
+    "evidence": "A recursive call stops only when the input is guaranteed to reach a base case, which returns an answer without calling itself again.",
+    "reveals_final_answer": false,
+    "rung": 2
+  },
+  "served_sha256": "89753d79844ac0cd94557fe40e7ba862afc9f2c93e5c1ff694b9d6e0e086444e"
+}

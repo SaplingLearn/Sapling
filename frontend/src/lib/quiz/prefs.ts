@@ -11,7 +11,7 @@
  */
 
 import { PREFS_KEY } from "./session";
-import type { FeedbackMode, QuizConfig, QuizPrefs } from "./types";
+import type { FeedbackMode, QuizConfig, QuizPrefs, QuizSessionMode } from "./types";
 
 /** The only hardcoded option list in the quiz (R-2). */
 export const FEEDBACK_MODES: readonly FeedbackMode[] = ["as-you-go", "at-end"] as const;
@@ -21,10 +21,27 @@ export const FEEDBACK_LABELS: Record<FeedbackMode, string> = {
   "at-end": "At the end",
 };
 
-export const DEFAULT_PREFS: QuizPrefs = { count: null, difficulty: null, feedback: "at-end" };
+/** W7.8: Practice vs Exam Twin — mirrored from `learning/quiz_session_mode.LABELS`. */
+export const SESSION_MODES: readonly QuizSessionMode[] = ["practice", "exam_twin"] as const;
+
+export const SESSION_MODE_LABELS: Record<QuizSessionMode, string> = {
+  practice: "Practice",
+  exam_twin: "Exam Twin",
+};
+
+export const DEFAULT_PREFS: QuizPrefs = {
+  count: null,
+  difficulty: null,
+  feedback: "at-end",
+  sessionMode: "practice",
+};
 
 function isFeedbackMode(value: unknown): value is FeedbackMode {
   return typeof value === "string" && (FEEDBACK_MODES as readonly string[]).includes(value);
+}
+
+function isSessionMode(value: unknown): value is QuizSessionMode {
+  return typeof value === "string" && (SESSION_MODES as readonly string[]).includes(value);
 }
 
 /**
@@ -61,6 +78,7 @@ export function loadPrefs(config?: QuizConfig | null): QuizPrefs {
         ? null
         : difficulty,
     feedback: isFeedbackMode(stored.feedback) ? stored.feedback : DEFAULT_PREFS.feedback,
+    sessionMode: isSessionMode(stored.sessionMode) ? stored.sessionMode : DEFAULT_PREFS.sessionMode,
   };
 }
 

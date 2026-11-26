@@ -1,0 +1,267 @@
+@layer components {
+/* The Calendar screen (Calendar.tsx): the month / week / day views, the
+   assignments table, the load-error banner and the Google events modal.
+   Every value is a token from app/globals.css; the few layout dimensions
+   with no token (a cell's minimum height, a column's width) are named
+   locally below. */
+
+.screen {
+  /* Layout dimensions, not design tokens. */
+  --cal-month-cell-min-h: 96px;
+  --cal-week-cell-min-h: 200px;
+  --cal-day-max-w: 720px;
+  --cal-modal-max-w: 640px;
+  --cal-modal-max-h: 82vh;
+  --cal-dot: 6px;
+  --cal-dot-lg: 8px;
+  --cal-col-check: 32px;
+  --cal-col-actions: 90px;
+  --cal-sort-min-w: 140px;
+  /* The week view's date numeral and the day view's heading sit between two
+     type steps (--fs-xl 18 / --fs-2xl 22, --fs-2xl 22 / --fs-3xl 26). */
+  --cal-week-num-size: 20px;
+  --cal-day-title-size: 24px;
+}
+
+/* Every view's inset (the TopBar's gutters). */
+.body { padding: var(--sp-10) var(--sp-16); }
+
+/* ---- Load error ---------------------------------------------------------- */
+
+.errorBanner {
+  padding: var(--sp-10) var(--sp-12);
+  border-radius: var(--r-md);
+  background: var(--err-soft);
+  border: 1px solid color-mix(in oklab, var(--err) 20%, transparent);
+  display: flex;
+  gap: var(--sp-8);
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+.errorTitle { font-weight: 600; color: var(--err); margin-bottom: var(--sp-2); }
+.errorMessage { font-size: var(--fs-md); color: var(--text-dim); }
+.retry { padding: var(--sp-4) var(--sp-8); }
+
+/* The Disconnect button's "Click again" state. */
+.armed {
+  background: var(--err-soft);
+  color: var(--err);
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+
+/* ---- Shared ------------------------------------------------------------- */
+
+/* An assignment's course (or type) colour, set per item as --dot. */
+.dot {
+  width: var(--cal-dot);
+  height: var(--cal-dot);
+  border-radius: 50%;
+  background: var(--dot);
+  flex-shrink: 0;
+}
+.muted { color: var(--text-muted); }
+
+/* ---- Month -------------------------------------------------------------- */
+
+.monthHead,
+.monthGrid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: var(--sp-2);
+}
+.monthHead { margin-bottom: var(--sp-2); }
+.weekday { padding: var(--sp-3); }
+
+.monthCell {
+  padding: var(--sp-4);
+  min-height: var(--cal-month-cell-min-h);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  background: var(--bg-panel);
+  border-color: var(--border);
+}
+.monthCell.outside { opacity: 0.45; }
+
+.monthDate { font-size: var(--fs-xs); font-weight: 600; color: var(--text-dim); }
+.today .monthDate { color: var(--accent); }
+
+.monthItem {
+  font-size: var(--fs-2xs);
+  padding: var(--sp-1) var(--sp-3);
+  border-radius: var(--r-xs);
+  background: transparent;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ellipsis { overflow: hidden; text-overflow: ellipsis; }
+.more { font-size: var(--fs-2xs); color: var(--text-muted); }
+
+/* ---- Week --------------------------------------------------------------- */
+
+.weekGrid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: var(--sp-4);
+}
+.weekCell {
+  padding: var(--sp-5);
+  min-height: var(--cal-week-cell-min-h);
+  background: var(--bg-panel);
+  border-color: var(--border);
+}
+.weekCell.weekHead {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: var(--sp-4);
+}
+.weekNum { font-size: var(--cal-week-num-size); }
+.weekEmpty { font-size: var(--fs-xs); color: var(--text-muted); }
+.weekItem {
+  font-size: var(--fs-xs);
+  padding: var(--sp-3) 0;
+  margin-bottom: var(--sp-3);
+  display: flex;
+  gap: var(--sp-4);
+  align-items: flex-start;
+}
+.weekItem .dot { margin-top: var(--sp-2); }
+.minW0 { min-width: 0; }
+.itemTitle { font-weight: 600; color: var(--text); }
+.itemCourse { color: var(--text-muted); font-size: var(--fs-2xs); }
+
+/* ---- Day ---------------------------------------------------------------- */
+
+.dayBody { max-width: var(--cal-day-max-w); }
+.dayTitle {
+  font-size: var(--cal-day-title-size);
+  font-weight: 500;
+  margin-bottom: var(--sp-8);
+}
+.dayEmpty { padding: var(--pad-lg); text-align: center; color: var(--text-muted); }
+.dayItem {
+  padding: var(--pad-lg);
+  margin-bottom: var(--sp-5);
+  display: flex;
+  gap: var(--sp-7);
+  align-items: flex-start;
+}
+.dayItem .dot {
+  width: var(--cal-dot-lg);
+  height: var(--cal-dot-lg);
+  margin-top: var(--sp-4);
+}
+.grow { flex: 1; }
+.dayItemHead { display: flex; align-items: center; gap: var(--sp-4); margin-bottom: var(--sp-2); }
+.dayMeta { font-size: var(--fs-sm); color: var(--text-muted); }
+.dayNotes { font-size: var(--fs-sm); color: var(--text-dim); margin-top: var(--sp-3); }
+
+/* ---- Table -------------------------------------------------------------- */
+
+.toolbar {
+  display: flex;
+  gap: var(--sp-4);
+  margin-bottom: var(--sp-6);
+  align-items: center;
+  flex-wrap: wrap;
+}
+.spacer { flex: 1; }
+.sortGroup { display: flex; align-items: center; gap: var(--sp-3); }
+.sortLabel { font-size: var(--fs-2xs); }
+.sortSelect { min-width: var(--cal-sort-min-w); }
+
+.tableCard { padding: 0; overflow: hidden; }
+.table { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); }
+.headRow { background: var(--bg-subtle); text-align: left; }
+.table th,
+.table td { padding: var(--sp-5); }
+.colCheck { width: var(--cal-col-check); }
+.colActions { width: var(--cal-col-actions); }
+.row + .row { border-top: 1px solid var(--border); }
+.row { transition: background var(--dur-fast) var(--ease); }
+.row:hover { background: var(--bg-subtle); }
+.capitalize { text-transform: capitalize; }
+.table td.actions { display: flex; gap: var(--sp-2); }
+.danger { color: var(--err); }
+.table td.emptyRow { padding: var(--sp-16); text-align: center; color: var(--text-muted); }
+
+.input {
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--border);
+  border-radius: var(--r-xs);
+  font-size: var(--fs-sm);
+  transition: border-color var(--dur-fast) var(--ease);
+}
+.input:focus-visible { border-color: var(--focus-ring); }
+.inputWide { width: 100%; }
+
+/* ---- Google events modal ------------------------------------------------ */
+
+.scrim {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-modal);
+  background: var(--scrim);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--sp-12);
+}
+.modal {
+  background: var(--bg);
+  border-radius: var(--r-lg);
+  border: 1px solid var(--border);
+  max-width: var(--cal-modal-max-w);
+  width: 100%;
+  max-height: var(--cal-modal-max-h);
+  overflow: auto;
+}
+.modalHead {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--sp-7) var(--sp-10);
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  background: var(--bg);
+}
+.modalBody { padding: var(--sp-10); }
+.modalEmpty {
+  color: var(--text-muted);
+  font-size: var(--fs-md);
+  text-align: center;
+  padding: var(--sp-14);
+}
+.eventList { display: flex; flex-direction: column; gap: var(--sp-5); }
+.event { padding: var(--sp-6); }
+.eventHead {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--sp-5);
+}
+.eventTitle { font-weight: 600; font-size: var(--fs-md); }
+.event .eventTime { font-size: var(--fs-2xs); }
+.eventWhen { font-size: var(--fs-xs); color: var(--text-muted); margin-top: var(--sp-2); }
+.eventDesc {
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+  margin-top: var(--sp-3);
+  line-height: 1.5;
+}
+.eventLink {
+  font-size: var(--fs-xs);
+  color: var(--accent);
+  margin-top: var(--sp-3);
+  display: inline-block;
+}
+
+}

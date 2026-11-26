@@ -22,6 +22,7 @@ from services.flashcards.context import (
 )
 from services.flashcards.errors import NotFound, StorageError, UpstreamError
 from services.flashcards.importing import generate_flashcards
+from services.flashcards.integrity import card_guard, screened, with_withheld
 from services.llm_budget import reraise_budget_refusal
 from services.tutor_sessions import session_owned_by
 
@@ -126,6 +127,7 @@ def generate(
     session_id: str | None = None,
     semester: str | None = None,
     course_id: str | None = None,
+    loop_on: bool = False,
 ) -> dict:
     """Generate AI flashcards grounded in the student's actual course material
     (their library documents for the course, term-scoped when a ``semester`` is
@@ -134,7 +136,13 @@ def generate(
     Raises ``NotFound`` for a ``course_id`` the student is not enrolled in,
     ``UpstreamError`` when the model call fails and ``StorageError`` when the
     cards cannot be saved.
+
+    ``loop_on`` is the route's learning-loop gate (spec §13 A125): the topic is
+    the text this request sends the model, so one quoting a posed check is
+    ``IntegrityRefused`` before anything else, and a card stating one's key is
+    withheld before anything is stored (``withheld`` counts them).
     """
+    guard = card_guard(user_id, (topic,), active=loop_on)
     # Generated for a course: file the cards under it, or the list cannot say
     # which course they belong to. Resolved first, so a course the student is
     # not enrolled in (or a failed lookup) costs no reads and no generation.
@@ -153,6 +161,7 @@ def generate(
         )
     except Exception as e:
         raise generation_failed(e) from e
+    cards, withheld = screened(guard, cards)  # A125: before anything is stored
 
     # The response the frontend renders (freshly generated cards, before any
     # list re-fetch) carries these plaintext rows; `_save` writes ciphertext.
@@ -163,10 +172,10 @@ def generate(
     _save(rows)
     _after_generation(user_id, len(rows), len(documents), len(weak_concepts))
     filed_under = course_id if offering_id else None
-    return {
+    return with_withheld({
         "flashcards": [{**row, "course_id": filed_under} for row in rows],
         "context_used": {
             "documents_found": len(documents),
             "weak_concepts_found": len(weak_concepts),
         },
-    }
+    }, withheld)

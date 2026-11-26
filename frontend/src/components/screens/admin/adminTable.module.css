@@ -1,0 +1,159 @@
+@layer components {
+/* The admin analytics tables and their prose (#866): AdminAnalytics, the
+   learning-loop panels under admin/, AdminLoopCost. One look for every panel:
+   a muted sentence-case header row, ruled body rows, numbers right-aligned in
+   tabular figures. */
+
+/* ── a section: its heading, prose and stat row ─────────────────────────── */
+
+.heading {
+  font-size: var(--fs-lg);
+  margin: var(--sp-8) 0 var(--sp-4);
+}
+
+/* The panel's first heading sits closer to what precedes it. */
+.headingTight {
+  font-size: var(--fs-lg);
+  margin: var(--sp-4) 0;
+}
+
+.muted {
+  color: var(--text-muted);
+  font-size: var(--fs-md);
+  margin: 0;
+}
+
+/* Prose under a heading, with room before what it explains. */
+.lede {
+  color: var(--text-muted);
+  font-size: var(--fs-md);
+  margin: 0 0 var(--sp-6);
+}
+
+/* A last line after the tables. */
+.tail {
+  color: var(--text-muted);
+  font-size: var(--fs-md);
+  margin: var(--sp-4) 0 0;
+}
+
+.small {
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+  margin: 0;
+}
+
+/* A line under a figure or a cell: an interval, a reason, a count left out. */
+.sub {
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.label {
+  margin-bottom: var(--sp-3);
+}
+
+.stack {
+  display: grid;
+  gap: var(--sp-6);
+}
+
+.stackLoose {
+  display: grid;
+  gap: var(--sp-8);
+}
+
+/* The headline figures of a panel: a wrapping row, type carries the hierarchy. */
+.stats {
+  display: flex;
+  gap: var(--sp-12);
+  flex-wrap: wrap;
+  margin-bottom: var(--sp-6);
+}
+
+/* With .stats: a closer or a looser gap below the row. */
+.statsTight { margin-bottom: var(--sp-4); }
+.statsLoose { margin-bottom: var(--sp-8); }
+
+.statValue {
+  --stat-value-size: 24px; /* between --fs-2xl and --fs-3xl: the admin figure size */
+  font-size: var(--stat-value-size);
+  font-weight: 600;
+}
+
+.statNote {
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+
+/* ── tables ─────────────────────────────────────────────────────────────── */
+
+/* Panel tables keep a minimum width so columns stay readable; this wrapper
+   lets a narrow viewport scroll the table instead of overflowing the page. */
+.scrollX {
+  overflow-x: auto;
+}
+
+.table {
+  border-collapse: collapse;
+}
+
+.tableFull {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.th {
+  text-align: left;
+  font-size: var(--fs-md);
+  color: var(--text-muted);
+  padding: var(--sp-2) var(--sp-4);
+}
+
+
+.td {
+  font-size: var(--fs-md);
+  padding: var(--sp-3) var(--sp-4);
+  border-top: 1px solid var(--border);
+}
+
+/* With .th or .td: a number column. */
+.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.strong {
+  font-weight: 600;
+}
+
+.nowrap {
+  white-space: nowrap;
+}
+
+.mono {
+  font-family: var(--font-code);
+  font-size: var(--fs-sm);
+}
+
+/* ── each table's minimum width before its wrapper scrolls ─────────────── */
+
+.minDaySeries { min-width: 280px; }
+.minCalibration,
+.minEventTypes { min-width: 360px; }
+.minDelay { min-width: 420px; }
+.minConfidence { min-width: 480px; }
+.minUsers,
+.minLoopWindows,
+.minNextItem { min-width: 520px; }
+.minGain,
+.minFunnel,
+.minCostRows { min-width: 560px; }
+.minErrors,
+.minJuncture,
+.minLoopCourses { min-width: 640px; }
+.minMultiConcept { min-width: 680px; }
+.minHelpGroup { min-width: 760px; }
+
+}

@@ -276,7 +276,8 @@ def test_a_forwarding_header_does_not_buy_a_fresh_budget():
 def test_budgets_are_per_user():
     """One student's spent tutor budget never limits another's."""
     _exhaust(abuse_limits.TUTOR_TURN, "someone-else")
-    with patch("services.tutor.turns._open_turn_session", side_effect=HTTPException(404, "x")):
+    # the loop's entry check (#761) is the first step past the limiter
+    with patch("services.tutor.turns._require_turn_session", side_effect=HTTPException(404, "x")):
         r = client.post("/api/learn/chat", json={"session_id": "s1", "user_id": "u1", "message": "hi"})
     assert r.status_code == 404  # past the limiter
 

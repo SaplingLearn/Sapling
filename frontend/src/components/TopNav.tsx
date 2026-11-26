@@ -29,16 +29,23 @@ import { Avatar } from "./Avatar";
 import { Icon } from "./Icon";
 import { ShellActions } from "./ShellActions";
 import { SaplingWordmark } from "./SaplingWordmark";
+import { RETENTION_NAV_HREF, RetentionDueDot } from "./RetentionDueDot";
 import { useUser } from "@/context/UserContext";
+import { useRetentionNavDue } from "./useRetentionNav";
 import { useIsMobile } from "@/lib/useIsMobile";
 import type { NavSection } from "@/lib/navFeatures";
 import { useVisibleNavSections } from "@/lib/useNavSections";
 import { STUDY_TOOL_PATHS } from "@/lib/toolHrefs";
-import { cn } from "@/lib/cn";
+import styles from "./TopNav.module.css";
 
 type NavGroup = NavSection;
 
+/** The bar's height, px: `--sp-28`, which TopNav.module.css sets it to. */
 export const TOP_NAV_HEIGHT = 56;
+/** How long a hovered group's panel stays open after the cursor leaves the row, ms. */
+const HOVER_CLOSE_DELAY_MS = 140;
+/** The wordmark's rendered width, px, by layout. */
+const WORDMARK_WIDTH = { mobile: 88, desktop: 104 } as const;
 
 function isActiveItem(pathname: string, href: string): boolean {
   if (href === "/dashboard") return pathname === "/" || pathname.startsWith("/dashboard");
@@ -56,6 +63,8 @@ export function TopNav() {
   const { userName, avatarUrl, isAdmin, isAuthenticated } = useUser();
   const isMobile = useIsMobile();
   const groups = useVisibleNavSections();
+  // hide_study hides the check's page: the closed menu then carries no dot
+  const { due: retentionDue } = useRetentionNavDue();
   const [mobileOpen, setMobileOpen] = React.useState(false);
   const mobileRef = React.useRef<HTMLDivElement | null>(null);
 
@@ -82,24 +91,22 @@ export function TopNav() {
     <nav
       role="navigation"
       aria-label="Primary"
-      className={cn("h-14 min-h-14 bg-bg-topbar border-b border-b-border flex items-center sticky top-0 z-20", isMobile ? "gap-2" : "gap-5", isMobile ? "py-0 px-3" : "py-0 px-5")}
+      className={isMobile ? `${styles.nav} ${styles.navMobile}` : styles.nav}
     >
       {/* Mobile hamburger */}
       {isMobile && (
-        <div ref={mobileRef} className="relative">
+        <div ref={mobileRef} className={styles.menuWrap}>
           <button
-            aria-label="Navigation menu"
+            aria-label={retentionDue ? "Navigation menu, retention check due" : "Navigation menu"}
             aria-expanded={mobileOpen}
             onClick={() => setMobileOpen((o) => !o)}
-            className="p-1.5 flex flex-col justify-center gap-1 min-w-11 min-h-11 items-center"
+            className={styles.burger}
           >
-            {[0, 1, 2].map((i) => (
-              <span
-                key={i}
-                className={cn("w-4.5 h-0.5 rounded-[1px] bg-text-dim [transition:transform_var(--dur-fast)_var(--ease),_opacity_var(--dur-fast)_var(--ease)]", mobileOpen && i === 1 ? "opacity-0" : "opacity-100")} style={{ transform:
-                    mobileOpen && i === 0 ? "rotate(45deg) translateY(4px)" :
-                    mobileOpen && i === 2 ? "rotate(-45deg) translateY(-4px)" : "none" }}
-              />
+            {/* A126: the closed menu hides the Study row, so the button carries the dot */}
+            {retentionDue && !mobileOpen && <RetentionDueDot testid="topnav-menu-retention-due" overlay />}
+            {/* Three bars that cross into an X while open (aria-expanded). */}
+            {[styles.barTop, styles.barMid, styles.barBottom].map((bar, i) => (
+              <span key={i} className={`${styles.burgerBar} ${bar}`} />
             ))}
           </button>
           {mobileOpen && <MobilePanel pathname={pathname} groups={groups} />}
@@ -107,14 +114,14 @@ export function TopNav() {
       )}
 
       {/* Logo — the approved wordmark (#728). */}
-      <Link href="/dashboard" aria-label="Sapling — home" className="flex items-center no-underline">
-        <SaplingWordmark width={isMobile ? 88 : 104} decorative />
+      <Link href="/dashboard" aria-label="Sapling — home" className={styles.logo}>
+        <SaplingWordmark width={isMobile ? WORDMARK_WIDTH.mobile : WORDMARK_WIDTH.desktop} decorative />
       </Link>
 
       {/* Desktop group row — hover/focus reveals each group's items */}
       {!isMobile && <DesktopGroups pathname={pathname} groups={groups} />}
 
-      <div className={cn("flex items-center gap-2", isMobile ? "ml-auto" : "ml-0")}>
+      <div className={isMobile ? `${styles.right} ${styles.rightMobile}` : styles.right}>
         {isAuthenticated && (
           <>
             <ShellActions />
@@ -123,9 +130,8 @@ export function TopNav() {
                 href="/admin"
                 aria-label="Admin"
                 title="Admin"
-                className={cn("inline-flex items-center justify-center w-11 h-11 rounded-sm [transition:background_var(--dur-fast)_var(--ease),_color_var(--dur-fast)_var(--ease)]", pathname.startsWith("/admin") ? "text-text" : "text-text-muted")}
-                onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-soft)"; e.currentTarget.style.color = "var(--text)"; }}
-                onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = pathname.startsWith("/admin") ? "var(--text)" : "var(--text-muted)"; }}
+                data-active={pathname.startsWith("/admin")}
+                className={styles.admin}
               >
                 <Icon name="shield" size={16} />
               </Link>
@@ -133,7 +139,7 @@ export function TopNav() {
             <div
               aria-label={userName || "Account"}
               title={userName || "Account"}
-              className="flex items-center gap-2 p-[3px] rounded-[var(--r-full)]"
+              className={styles.account}
             >
               <Avatar name={userName || "?"} size={30} img={avatarUrl || undefined} />
             </div>
@@ -186,7 +192,7 @@ function DesktopGroups({ pathname, groups }: { pathname: string; groups: NavGrou
   };
   const scheduleClose = () => {
     cancelClose();
-    closeTimer.current = window.setTimeout(() => setOpenIndex(null), 140);
+    closeTimer.current = window.setTimeout(() => setOpenIndex(null), HOVER_CLOSE_DELAY_MS);
   };
 
   // Cancel any pending close-timer on unmount (e.g. route change while
@@ -223,7 +229,7 @@ function DesktopGroups({ pathname, groups }: { pathname: string; groups: NavGrou
   }, [openIndex]);
 
   return (
-    <div className="flex items-center gap-1 flex-1 min-w-0">
+    <div className={styles.groups}>
       {groups.map((g, i) => (
         <NavGroupTrigger
           key={g.label}
@@ -264,6 +270,9 @@ function NavGroupTrigger({
 }) {
   const active = isActiveGroup(pathname, group);
   const wrapperRef = React.useRef<HTMLDivElement | null>(null);
+  // A126: the Study row hides in the panel, so its group's trigger carries the dot
+  const { due: retentionDue } = useRetentionNavDue();
+  const groupDue = retentionDue && group.items.some((item) => item.href === RETENTION_NAV_HREF);
 
   return (
     <div
@@ -281,7 +290,7 @@ function NavGroupTrigger({
           onClose();
         }
       }}
-      className="relative"
+      className={styles.groupWrap}
     >
       <button
         type="button"
@@ -289,19 +298,12 @@ function NavGroupTrigger({
         aria-expanded={open}
         onClick={() => (open ? onClose() : onOpen())}
         onFocus={onOpen}
-        className={cn("inline-flex items-center gap-1 py-1.5 px-2.5 rounded-sm text-md whitespace-nowrap [transition:color_var(--dur-fast)_var(--ease)] cursor-pointer bg-transparent border-0", active ? "font-bold" : "font-medium", active || open ? "text-text" : "text-text-muted")}
-        onMouseEnter={(e) => {
-          if (!active) e.currentTarget.style.color = "var(--text-dim)";
-        }}
-        onMouseLeave={(e) => {
-          if (!active && !open) e.currentTarget.style.color = "var(--text-muted)";
-        }}
+        data-active={active}
+        className={styles.trigger}
       >
         {group.label}
-        <span
-          aria-hidden
-          className={cn("inline-flex [transition:transform_var(--dur-fast)_var(--ease)] text-current opacity-60 mt-px", open ? "[transform:rotate(180deg)]" : "[transform:rotate(90deg)]")}
-        >
+        {groupDue && <RetentionDueDot testid="topnav-group-retention-due" />}
+        <span aria-hidden className={styles.chev}>
           <Icon name="chev" size={10} />
         </span>
       </button>
@@ -318,7 +320,7 @@ function NavGroupTrigger({
           // navigation between items, which we don't implement. Linear
           // tab order through Links is the actual UX, so we leave the
           // semantics as "nav with links" rather than over-claim.
-          className="absolute top-full left-0 min-w-50 p-1.5 bg-bg-panel border border-border rounded-md shadow-md flex flex-col gap-0.5 z-100"
+          className={styles.panel}
         >
           {group.items.map((item) => {
             const itemActive = isActiveItem(pathname, item.href);
@@ -326,18 +328,14 @@ function NavGroupTrigger({
               <Link
                 key={item.href}
                 href={item.href}
-                className={cn("flex items-center gap-2.5 py-2 px-2.5 rounded-sm text-md no-underline [transition:background_var(--dur-fast)_var(--ease),_color_var(--dur-fast)_var(--ease)]", itemActive ? "bg-bg-soft" : "bg-transparent", itemActive ? "text-text" : "text-text-dim", itemActive ? "font-semibold" : "font-normal")}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.background = "var(--bg-soft)";
-                  e.currentTarget.style.color = "var(--text)";
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = itemActive ? "var(--bg-soft)" : "transparent";
-                  e.currentTarget.style.color = itemActive ? "var(--text)" : "var(--text-dim)";
-                }}
+                data-active={itemActive}
+                className={styles.item}
               >
                 <Icon name={item.icon} size={15} />
-                <span className="flex-1">{item.label}</span>
+                <span className={styles.itemLabel}>{item.label}</span>
+                {groupDue && item.href === RETENTION_NAV_HREF && (
+                  <RetentionDueDot testid="topnav-retention-due" />
+                )}
               </Link>
             );
           })}
@@ -348,16 +346,13 @@ function NavGroupTrigger({
 }
 
 function MobilePanel({ pathname, groups }: { pathname: string; groups: NavGroup[] }) {
+  const { due: retentionDue } = useRetentionNavDue();
   return (
-    <div
-      className="absolute top-[calc(100%_+_6px)] left-0 min-w-60 py-1.5 px-0 bg-bg-panel border border-border rounded-md shadow-md z-100"
-    >
+    <div className={styles.mobilePanel}>
       {groups.map((g, i) => (
         <React.Fragment key={g.label}>
-          {i > 0 && <div className="h-px bg-border my-1.5 mx-2" aria-hidden />}
-          <div
-            className="label-micro pt-2 px-3.5 pb-1"
-          >
+          {i > 0 && <div className={styles.divider} aria-hidden />}
+          <div className={`label-micro ${styles.mobileHeading}`}>
             {g.label}
           </div>
           {g.items.map((item) => {
@@ -366,12 +361,14 @@ function MobilePanel({ pathname, groups }: { pathname: string; groups: NavGroup[
               <Link
                 key={item.href}
                 href={item.href}
-                className={cn("flex items-center gap-2.5 py-2.5 px-3.5 min-h-11 box-border text-base no-underline [transition:background_var(--dur-fast)_var(--ease)]", itemActive ? "font-bold" : "font-medium", itemActive ? "text-text" : "text-text-dim")}
-                onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-soft)"; }}
-                onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+                data-active={itemActive}
+                className={styles.mobileItem}
               >
                 <Icon name={item.icon} size={15} />
                 {item.label}
+                {retentionDue && item.href === RETENTION_NAV_HREF && (
+                  <RetentionDueDot testid="topnav-mobile-retention-due" />
+                )}
               </Link>
             );
           })}

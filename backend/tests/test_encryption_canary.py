@@ -269,6 +269,7 @@ WRITE_SCRIPTS = [
     "db/seed_showcase.py",
     "db/seed_local_rich.py",
     "db/seed_local_study.py",
+    "db/seed_showcase_loop.py",
     "db/e2e_staging_http.py",
     "scripts/backfill_encrypt_chunk_text.py",
     "scripts/ingest_catalog.py",
@@ -278,6 +279,10 @@ WRITE_SCRIPTS = [
     "scripts/dedupe_course_chunks.py",
     "scripts/move_unapproved_users_to_waitlist.py",
     "scripts/retire_gradescope_passwords.py",
+    "scripts/seed_learning_check_beats.py",
+    "scripts/seed_learning_close_beat.py",
+    "scripts/seed_learning_goal_journey.py",
+    "scripts/seed_learning_teach_prompts.py",
 ]
 
 

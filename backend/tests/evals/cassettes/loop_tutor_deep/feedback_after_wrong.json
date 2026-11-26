@@ -1,0 +1,19 @@
+{
+  "attempts": [
+    "{\"key_idea\": \"A recursive function stops only when a base case returns a value directly, without making another recursive call.\", \"body\": \"Your attempt was graded not yet correct: if factorial(0) calls factorial(-1), the calls keep moving away from the stopping point, so nothing ever ends the chain. The stored solution above shows what the function does at 0, so compare it with your version.\", \"question\": \"Looking at that solution, what does factorial(0) do differently from your version, and why does that mean no further call is made?\"}"
+  ],
+  "input_sha256": "9b455c7f8af1c23e73135f6ba007d9712915b8415da93bb06e4d7a156060b044",
+  "model": "claude-sonnet-5-5",
+  "output": {
+    "body": "Your attempt was graded not yet correct: if factorial(0) calls factorial(-1), the calls keep moving away from the stopping point, so nothing ever ends the chain. The stored solution above shows what the function does at 0, so compare it with your version.",
+    "key_idea": "A recursive function stops only when a base case returns a value directly, without making another recursive call.",
+    "question": "Looking at that solution, what does factorial(0) do differently from your version, and why does that mean no further call is made?"
+  },
+  "prompt_hash": "7d2b25572445",
+  "requests": 1,
+  "rescued": false,
+  "retries": 0,
+  "schema_hash": "ab89f4f429db",
+  "slot": "loop_tutor_deep",
+  "tool_calls": []
+}

@@ -21,9 +21,8 @@ on that title unchanged is the note's content too, so it starts with the
 card beside it.
 
 (First built on the learning loop and removed with it by the revert
-e5a08d47; this is the same path re-landed on the surfaces main has. The loop
-re-land, PR #866, should screen its own routes the same way: see "Adding a
-surface" below.)
+e5a08d47, then re-landed on main's surfaces. The loop re-land, PR #866,
+screens the learning loop's routes the same way: see "Surfaces covered".)
 
 ## What it does
 
@@ -41,6 +40,20 @@ surface" below.)
    (`services/llm_budget.py`, flag `llm_budget`) is checked at the model
    chokepoint, which a crisis turn never reaches. A crisis turn consumes no
    rate-limit slot, budget token or quota unit and writes no `llm_usage` row.
+
+   The learning loop's routes whose rate limit is a ROUTE DEPENDENCY
+   (`routes/learn_loop.py::_RATE_LIMITED`) cannot screen in the handler,
+   which runs after that dependency: their screen is a dependency placed
+   right after the loop's kill switch and before the rate limit
+   (`crisis_support.screened`, via `learn_loop._screened`). On a match it
+   authenticates the caller (the body's `user_id`, else the session user),
+   reads the flag and raises `CrisisAnswered`, whose finished response
+   `main.py`'s `answered_handler` returns as-is, so neither the rate limit
+   nor the handler runs. The loop's other routes (goal, probe, review) screen
+   inline, first thing after the loop's gate. A loop crisis turn consumes no
+   tutor-call unit either (the A20 budget), and the loop's chat composer
+   stays usable during a budget pause so a paused student's message can
+   still reach the screen.
 
    The notes routes screen the note they read with
    `crisis_support.screen_content_async`, right after that read and still
@@ -98,12 +111,15 @@ surface" below.)
      action's normal result plus `crisis_support` and
      `crisis_support_alongside: true` (no card `reply`: the note chat's
      `reply` is the agent's), for the streamed start in its `done` event's
-     data; or its error body plus `crisis_support`.
+     data; or its error body plus `crisis_support` (a streamed start that
+     ends in an `error` event carries it in that event's data).
    - The frontend renders `crisis_support` as a calm card
      (`frontend/src/components/safety/CrisisSupportCard.tsx`): inline in a
      conversation; as a dialog where there is none (the tutor's start screen,
      a note action, a flashcard generator, the study guide's "ask the
-     tutor"). With `crisis_support_alongside` the notetaker shows the result
+     tutor"); and on the learning loop's session start in the place the
+     session would have filled, with "Back to studying" starting a fresh
+     session on the course. With `crisis_support_alongside` the notetaker shows the result
      too (the new summary, the linked concepts, the chat reply under the
      card) and opens the tutor for Send to tutor once the card is closed.
      The tutor's start screen shows the card over the session it started, except for the start Send to tutor just handed over after the student closed that note's card (a one-shot, per-tab mark, `lib/crisisSupport.ts::markNoteCardShown`/`takeNoteCardShown`, valid ten minutes): that start does not pop the same card up again. A card instead of a session always shows.
@@ -122,7 +138,10 @@ surface" below.)
    where event_type = 'safety.crisis_support_shown' order by created_at desc;`
 
 A crisis turn makes no model call and writes nothing a turn writes: no
-message row, lazy tutor session, summary, concept, card or graph change. (A
+message row, lazy tutor session, summary, concept, card or graph change, and
+on the learning loop no learning evidence, grade, grading claim, hint rung,
+help-ledger row, XP or streak. An answered check item stays posed, and the
+student can carry on studying whenever they're ready. (A
 note action whose note matched is not a crisis turn: it runs, writes and is
 limited exactly as without the card.)
 Because no message row is written, the exchange is not in the transcript
@@ -136,9 +155,19 @@ PostHog, not to Logfire.
 
 | Surface (`event.payload.surface`) | Route(s) | Text screened | The card |
 |---|---|---|---|
-| `tutor_chat` | `POST /api/learn/chat`, `/chat/stream` | `message` | instead of a tutor turn (also the quiz's "Ask about this" panel and the study guide's "ask the tutor", which ride it) |
-| `tutor_start` | `POST /api/learn/start-session`, `/start-session/stream` | `topic` | instead of opening a session |
-| `note_chat` | `POST /api/notes/{id}/chat` | `message` (first), then the note title + body | the message: instead of a reply; the note: beside the reply |
+| `tutor_chat` | `POST /api/learn/chat`, `/chat/stream` | `message` | instead of a tutor turn (also the quiz's "Ask about this" panel and the study guide's "ask the tutor", which ride it); beside the turn when what matched is the quiz question the panel's first message quotes (`quiz_attempt_id` + `quiz_question_index`, read off the student's own attempt: its stem, options, key and explanation, each only where it fills a whole field of the message; the answer the student wrote is their own typed text and still blocks; `crisis_support.screen_quoting_async`, #866 K12) |
+| `tutor_start` | `POST /api/learn/start-session`, `/start-session/stream` | `topic`, the learning loop's `goal.text` | instead of opening a session |
+| `loop_chat` | `POST /api/learn/loop/chat`, `/chat/stream` | `message` | instead of a loop tutor turn |
+| `loop_start` | `POST /api/learn/loop/start-session`, `/start-session/stream` | `topic`, `goal.text` | instead of opening a session |
+| `loop_goal` | `POST /api/learn/loop/goal` | `goal.text` | instead of storing the goal (it rides every later tutor prompt) |
+| `loop_check_answer` | `POST /api/learn/loop/check/answer`, `/check/answer/stream` | `answer`, `reason` | instead of grading + the feedback turn |
+| `loop_step_attempt` | `POST /api/learn/loop/step/attempt` | `attempt_text` | instead of counting an attempt toward a hint |
+| `loop_probe_answer` | `POST /api/learn/loop/probe/answer` | `answer`, `reason` | instead of grading the probe item |
+| `loop_review_answer` | `POST /api/learn/loop/review/answer` | `answer`, `reason` | instead of grading the review item |
+| `loop_posttest_answer` | `POST /api/learn/loop/posttest/answer` | `answer`, `reason` | instead of grading the retention check |
+| `loop_prequestion_answer` | `POST /api/learn/loop/prequestion/answer`, `/prequestion/answer/stream` | `answer`, `reason` | instead of revealing and explaining the segment prequestion (spec §13 A138) |
+| `loop_self_explain` | `POST /api/learn/loop/self-explain` | `reply` | instead of recording a self-explanation (spec §13 A139) |
+| `note_chat` | `POST /api/notes/{id}/chat` | `message` (first), then the note title + body + tags | the message: instead of a reply; the note: beside the reply (the agent reads the note, tags included, as A125's integrity guard does) |
 | `note_send_to_tutor` | `POST /api/notes/{id}/send-to-tutor` | note title + body | beside handing the note to the tutor |
 | `note_summarize` | `POST /api/notes/{id}/summarize` | note title + body | beside the summary |
 | `note_extract_concepts` | `POST /api/notes/{id}/extract-concepts` | note title + body | beside concept extraction |
@@ -148,7 +177,10 @@ PostHog, not to Logfire.
 | `flashcard_generate` | `POST /api/flashcards/generate` | `topic` | instead of generating cards for a typed topic; beside the cards when the topic is one of the student's own graph concepts (`concept_topic.topic_is_graph_concept`, checked only on a match) |
 
 Frontend surfaces that render the card: the tutor (`Learn.tsx`: chat turns
-inline, a session start as a dialog over the picker), the quiz's "Ask about
+inline, a session start as a dialog over the picker), the learning loop
+(`LoopLearn.tsx`: chat, check answers, start, goal, probe, hints, the
+prequestion and self-explanation), Study's review queue (`DueQueue`), the
+retention check (`RetentionCheck`), the quiz's "Ask about
 this" panel (`AskPanel`), the study guide's "ask the tutor"
 (`useTutorHandoff`, a dialog; the tutor is not opened), the notetaker (chat
 inline, the reply under the card when the note matched; Summarize, Extract
@@ -157,11 +189,16 @@ toast when the answer was a 429 carrying the card), and the
 flashcards hero ("What do you want to study?"), AI-generate tab, cloze tab
 and the review start that generates cards (dialogs; a concept's cards that
 come back with the card beside them show it once per Start and the review
-goes on).
+goes on). While a card is on screen, in either form, it holds the shell's
+feedback prompts (`frontend/src/lib/feedbackPacing.ts`), so no survey opens
+over it. On the notes actions the crisis screen runs before the learning
+loop's integrity guard (spec §13 A125): a student in crisis gets the card,
+never an integrity refusal.
 
 **Checked and not covered** (no student-written text reaches a model there):
 
-- `/api/learn/action` and `/mode-switch` carry no free text.
+- `/api/learn/action`, `/api/learn/loop/action`, `/hint` and `/mode-switch`
+  carry no free text.
 - Quiz generation takes a concept id; quiz answers (multiple choice and
   written) are graded deterministically (`services/quiz/grading.py`).
   Written answers do reach the post-submit `quiz_context` agent as a
@@ -196,8 +233,9 @@ goes on).
 | Detection + every phrase list | `backend/services/crisis_detection.py` |
 | **All user-facing copy (owner review)** | `backend/services/crisis_support_copy.py` |
 | Campus counseling, per school | `CAMPUS_COUNSELING` in that same copy file |
-| Screen, flag, event, response builders | `backend/services/crisis_support.py` |
-| The screens | the first statement of each handler in `routes/learn.py`, `routes/notes.py`, `routes/flashcards.py` (the notes actions: right after the note read, `screen_content_async` + `alongside`; a tutor start on a note's title: `crisis_support.screen_tutor_start_async` (`tutor.note_title_version`) + `alongside`; a flashcard generation on a graph concept: `concept_topic.topic_is_graph_concept` + `alongside`) |
+| Screen, flag, event, response builders, the screen dependency (`screened`) | `backend/services/crisis_support.py` |
+| Screen-before-rate-limit wiring on the loop | `backend/routes/learn_loop.py::_screened` |
+| The screens | the first statement of each handler in `routes/learn.py`, `routes/notes.py`, `routes/flashcards.py` (the notes actions: right after the note read, `screen_content_async` + `alongside`; a tutor start on a note's title: `crisis_support.screen_tutor_start_async` (`tutor.note_title_version`) + `alongside`; a flashcard generation on a graph concept: `concept_topic.topic_is_graph_concept` + `alongside`; a tutor chat turn quoting a quiz question: `crisis_support.screen_quoting_async` (`quiz_ask.quoted_question_texts`) + `alongside`) |
 | Flag registration | `backend/services/feature_flags.py::REGISTRY["crisis_support"]` |
 | Event taxonomy / PostHog exclusion | `services/events_service.py::EVENT_TAXONOMY`, `services/posthog_client.py::_NOT_MIRRORED` |
 | The card | `frontend/src/components/safety/CrisisSupportCard.tsx`, `frontend/src/lib/crisisSupport.ts` |
@@ -225,10 +263,13 @@ goes on).
   sits above the screen in the handler, or if the route gains a route-level
   dependency (a dependency runs before the handler body, so before the
   screen). A limiter that must be a dependency needs the screen as a
-  dependency listed before it: the original build had one
-  (`crisis_support.screened` + a `CrisisAnswered` exception handler, commit
-  d7a0cd45), dropped here because no covered route on main has a limiter
-  dependency.
+  dependency listed before it: `crisis_support.screened` (+ the
+  `CrisisAnswered` exception handler in `main.py`), as the learning loop's
+  `_RATE_LIMITED` routes use it.
+  `test_a_screen_dependency_precedes_every_rate_limit_dependency` pins those
+  (after the kill switch, before the rate limit), and
+  `test_an_inline_loop_screen_precedes_every_inline_limiter` the loop routes
+  that limit inline.
 
 ## Detection
 
@@ -380,8 +421,14 @@ points at it).
 - **False positives remain, and cost the most on typed text.** A literature
   or psychology question TYPED to the tutor that uses an explicit
   first-person phrase ("the speaker says 'I want to die'") gets the card
-  instead of an answer. So can a quiz option about suicide quoted in the
-  quiz's "Ask about this" opening message.
+  instead of an answer. A quiz question QUOTED in the quiz's "Ask about this"
+  opening message does not (#866 K12): that message names the question, the
+  server reads the question (stem, options, key, explanation) off their own
+  attempt, and a match inside that text, where it fills a whole field of the
+  message, shows the card beside the explanation, its event once a day per
+  question. The rest of the message — the answer the student wrote ("I
+  wrote: …") included, and a stored word found only inside it — and every
+  follow-up the student types, is typed text and blocks.
 - **A note's false positive costs the student nothing but the card.** A
   psychology or literature note that quotes a patient or a play ("a patient
   says 'I want to kill myself'", "Macbeth: 'I want to die'"), or names
@@ -408,7 +455,9 @@ points at it).
   rates, eval spend, and a latency budget on every turn. It would also send
   the student's crisis text to a model provider, which this path never does.
   It would be a separate decision.
-- **Only auth comes first.** An unauthenticated or foreign request gets its
+- **Only auth (and on the loop, its kill switch) comes first.** A loop
+  route while the loop is switched off (404) is refused before the screen
+  too. An unauthenticated or foreign request gets its
   401/403 (and a hidden nav feature its 404, `nav_feature_gate`) before the
   card. Those refusals say who you are and whether the feature exists, never
   that you used too much.
@@ -487,11 +536,11 @@ ordinary registered handlers.
 
 - Backend: `cd backend && venv/bin/python -m pytest tests/test_crisis_detection.py tests/test_crisis_support_routes.py -q`.
 - Frontend: `cd frontend && npx vitest run crisis` and the touched suites
-  (`ChatPanel`, `Learn.sessionState`, `AskPanel`,
-  `notetaker/page.crisisSupport`, `flashcards/crisisSupport`,
+  (`ChatPanel`, `LoopLearn`, `Learn.sessionState`, `AskPanel`, `DueQueue`,
+  `RetentionCheck`, `notetaker/page.crisisSupport`, `flashcards/crisisSupport`,
   `useTutorHandoff.crisis`).
 - E2E (flag off, so behaviour is unchanged): `tutor`, `streaming`,
-  `quiz-journeys`, `study-guide`, `feature-flags`, `analytics`, `events`. Once
+  `learn-loop`, `learn-grade-recovery`, `quiz-journeys`, `study-guide`, `feature-flags`, `analytics`, `events`. Once
   the copy is approved, add a crisis journey and the card's a11y scan
   (`frontend/e2e/a11y.spec.ts`, spec §13 A135) with
   `SAPLING_FLAG_CRISIS_SUPPORT=on` in the stack. The card uses the

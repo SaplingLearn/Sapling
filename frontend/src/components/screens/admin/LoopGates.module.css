@@ -1,0 +1,28 @@
+@layer components {
+/* The learning loop's spec §10 gates (LoopGates.tsx). */
+
+.gates {
+  display: grid;
+  gap: var(--sp-4);
+  margin-bottom: var(--sp-8);
+}
+
+.chips {
+  display: flex;
+  gap: var(--sp-4);
+  flex-wrap: wrap;
+}
+
+/* A gate that flips (a new range) eases between pass and fail. */
+.chip {
+  transition:
+    background-color var(--dur) var(--ease-in-out),
+    color var(--dur) var(--ease-in-out),
+    border-color var(--dur) var(--ease-in-out);
+}
+
+.unscanned {
+  color: var(--text);
+}
+
+}

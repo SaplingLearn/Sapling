@@ -61,8 +61,10 @@ def test_a_long_lopsided_outline_still_gives_every_section_a_point():
 # ── Sections ──────────────────────────────────────────────────────────────────
 
 CONCEPTS = ["Variables", "Loops", "Functions", "Recursion", "Pointers", "Structs"]
+# On learning.bkt.tier_for's cuts (spec §3.1): mastered from 0.95, struggling
+# below 0.30.
 SCORES = {
-    "Variables": 0.9, "Loops": 0.5, "Functions": 0.3, "Recursion": 0.15, "Pointers": 0.8,
+    "Variables": 0.98, "Loops": 0.5, "Functions": 0.25, "Recursion": 0.15, "Pointers": 0.96,
 }
 
 
@@ -86,7 +88,7 @@ def test_repeated_concepts_are_one_section_under_the_first_spelling():
 
 def test_with_history_the_weakest_concepts_are_kept_in_their_original_order():
     # cram keeps 3 of 6: Structs (not in the tree, counts as 0), Recursion
-    # (0.15) and Functions (0.3), in the order the materials gave them.
+    # (0.15) and Functions (0.25), in the order the materials gave them.
     sections = plan.plan_sections(CONCEPTS, SCORES, depth="cram", use_history=True)
     assert [(s.title, s.tier) for s in sections] == [
         ("Functions", "struggling"), ("Recursion", "struggling"), ("Structs", "unexplored"),
@@ -121,7 +123,7 @@ def test_fewer_concepts_than_the_depth_allows_are_all_kept():
 
 def test_scores_match_concepts_whatever_the_case_and_spacing():
     sections = plan.plan_sections(
-        ["supply  and demand"], {"Supply and Demand": 0.9}, depth="cram", use_history=True,
+        ["supply  and demand"], {"Supply and Demand": 0.98}, depth="cram", use_history=True,
     )
     assert (sections[0].title, sections[0].tier) == ("supply  and demand", "mastered")
 

@@ -1,0 +1,10 @@
+{
+  "judge_model": "claude-opus-5-5",
+  "judge_prompt_hash": "150caae2136ef67c5970b3ede1a03a78378b1b31aa4b3d95753e30f9160bc419",
+  "output": {
+    "evidence": "A derivative measures the instantaneous rate of change of a function, defined as the limit of the change in output divided by the change in input as that change shrinks to zero.",
+    "reveals_final_answer": false,
+    "rung": 2
+  },
+  "served_sha256": "cb4a7552c065a1a9b03229cdd7476df2d6732662662eaa4ca4b89641a8045773"
+}

@@ -1,0 +1,17 @@
+@layer components {
+/* The prequestion's saved state (a resume after the guess was saved); the
+   card itself is the shared QuestionCard. */
+
+.saved {
+  display: flex;
+  gap: var(--sp-5);
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.savedNote {
+  font-size: var(--fs-base);
+  color: var(--text-dim);
+}
+
+}

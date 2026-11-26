@@ -632,7 +632,7 @@ export const RECIPES_CORE: RecipeBook = {
     run: async (page) => {
       await openDashboard(page);
       await page.getByRole("button", { name: "Fullscreen graph" }).click();
-      await text(page, "Knowledge graph — fullscreen");
+      await text(page, "Knowledge map — fullscreen");
       await text(page, "Press Esc to exit");
       await waitGraph(page);
     },
@@ -1548,7 +1548,7 @@ export const RECIPES_CORE: RecipeBook = {
     run: async (page) => {
       await openTree(page);
       await activateNode(page, NODE_RECURSION);
-      await expect(page.getByRole("button", { name: "Learn this" })).toBeVisible();
+      await expect(page.getByTestId("tree-node-action-teach")).toBeVisible();
       await visible(page, "tree-node-recent-quizzes");
       await expect(page.getByTestId("tree-node-recent-quizzes")).not.toContainText("Loading…", { timeout: 15_000 });
     },
@@ -1629,7 +1629,7 @@ export const RECIPES_CORE: RecipeBook = {
     run: async (page) => {
       await openTree(page);
       await activateNode(page, `subject_root__${COURSE_CS101}`);
-      await expect(page.getByRole("button", { name: "Learn this" })).toBeVisible();
+      await expect(page.getByTestId("tree-node-action-teach")).toBeVisible();
       await expect(page.getByRole("button", { name: "Delete concept" })).toHaveCount(0);
       await expect(page.getByTestId("tree-node-recent-quizzes")).toHaveCount(0);
     },
@@ -1638,7 +1638,7 @@ export const RECIPES_CORE: RecipeBook = {
   "tree/node-param": {
     run: async (page) => {
       await openTree(page, `/tree?node=${NODE_RECURSION}`);
-      await expect(page.getByRole("button", { name: "Learn this" })).toBeVisible();
+      await expect(page.getByTestId("tree-node-action-teach")).toBeVisible();
       await expect(page.getByRole("heading", { name: "Recursion" })).toBeVisible();
     },
   },

@@ -88,6 +88,7 @@ const HANDLER_VARIABLES = [
   "GEMINI_VISION_OCR_MAX_PAGES",
   "GOT_OCR_ENABLED",
   "GOT_OCR_MODEL_PATH",
+  "GOT_OCR_MODEL_REVISION",
   // services/cache.py: the content-addressed OCR cache, shared with the API
   "REDIS_URL",
   // services/document_indexing.py (document.index)
@@ -113,6 +114,23 @@ const HANDLER_VARIABLES = [
   "FEATURE_FLAGS_VERSION_CHECK_S",
   // config.py (read on import; the worker does not configure Logfire yet)
   "LOGFIRE_TOKEN",
+  // config.py, the learning loop: its kill switch (document.process picks the
+  // loop's index-then-draft post-roll by it and the uploader's learning_loop
+  // flag; check_items.document drafts only with it on), its gate clock, and the per-student AI caps
+  // (services/ai_budget.py) that check-item generation is held to
+  "LEARNING_LOOP_ENABLED",
+  "LEARNING_GATE_TIME_SCALE",
+  "STUDENT_DAILY_BUDGET_USD",
+  "BUDGET_NOVICE_MULTIPLIER",
+  "STUDENT_SOFT_FRACTION",
+  "STUDENT_MONTHLY_BUDGET_USD",
+  "STUDENT_DAILY_TOKENS",
+  "STUDENT_DAILY_GRADES",
+  "LEARN_RATE_LIMIT_PER_MIN",
+  "STUDENT_DAILY_TUTOR_CALLS",
+  "PLATFORM_DAILY_BUDGET_USD",
+  "PLATFORM_ALERT_FRACTION",
+  "PLATFORM_CHECK_INTERVAL_S",
 ];
 
 /** Every server-side flag's env kill switch (services/feature_flags.py
@@ -138,6 +156,43 @@ const FLAG_KILL_SWITCHES = [
   "stateless_rate_limit",
   "stateless_locks",
   "stateless_tutor_sessions",
+  // the learning loop's server flags (the upload's prerequisite edges and the
+  // drafting flags are read on the worker's document.process and
+  // check_items.document paths; learning_loop, the uploader's, picks the
+  // document.process post-roll's index-then-draft chain)
+  "learning_loop",
+  "item_reports",
+  "retention_due_badge",
+  "probe_matched_pretest",
+  "upload_prereq_edges",
+  "loop_tutor_v2",
+  "help_gate_strict",
+  "segment_prequestion",
+  "self_explanation_prompts",
+  "next_probe_hint",
+  "varied_isomorphs",
+  "multi_concept_items",
+  // the quiz in the learning system (A143-A147)
+  "quiz_concept_plan",
+  "skill_ladder",
+  "hint_ladder",
+  "verdict_v2",
+  "wrapup_v2",
+  "plan_v2",
+  "new_session_v2",
+  "session_v2",
+  "course_page_v2",
+  "review_v2",
+  "milestones",
+  "just_ask",
+  "saved_items",
+  // the Tutor's course setup: apply_graph_update reads it on the worker's
+  // document.process too (a removed concept stays out of the upload)
+  "course_setup",
+  "quiz_planned_questions",
+  "quiz_item_gates",
+  "quiz_misconceptions",
+  "quiz_results_routing",
   // services/spend_alerts.py: the API's hourly admin alert emails. No job
   // reads it; shared so the switch reads the same on every service.
   "spend_alerts",
@@ -157,10 +212,13 @@ const FLAG_KILL_SWITCHES = [
 /** Per-slot model overrides (agents/_providers.py: `SAPLING_MODEL_<TASK>`,
  * `SAPLING_MODEL_FALLBACK_<TASK>`) for the agent tasks a worker runs:
  * classifier/summary/concepts/syllabus (document.process), ocr_vision
- * (page OCR), course_summary (course_context.refresh). Without them a slot
- * rolled back on the API would still run the default model in the worker. */
+ * (page OCR), course_summary (course_context.refresh), and the learning
+ * loop's check-item drafting and its two checks (check_items.document).
+ * Without them a slot rolled back on the API would still run the default
+ * model in the worker. */
 const WORKER_AGENT_TASKS = [
   "classifier", "summary", "concepts", "syllabus", "ocr_vision", "course_summary",
+  "check_items", "check_items_verify", "check_items_solve",
 ];
 const MODEL_SLOT_VARIABLES = WORKER_AGENT_TASKS.flatMap((task) => [
   `SAPLING_MODEL_${task.toUpperCase()}`,

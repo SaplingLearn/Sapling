@@ -12,6 +12,9 @@ import type { Candidate } from "@/lib/quiz/proposals";
 import type { GraphEdge, GraphNode } from "@/lib/data";
 import { LiveNeighbourhood } from "./LiveNeighbourhood";
 
+/** A placeholder line's height: the definition paragraph's line of text. */
+const DEFINITION_LINE_H = 13;
+
 interface CardTextProps {
   /** Show "← Back to the suggestion" (a topic is picked). */
   showReset: boolean;
@@ -19,6 +22,8 @@ interface CardTextProps {
   title: string;
   meta: string;
   rationale: string | null;
+  /** The learner model's reason and skill meter (spec §13 A143), or `null`. */
+  planLine: string | null;
   definitionPending: boolean;
   definition: string | null;
   configLine: string;
@@ -30,6 +35,7 @@ function CardText({
   title,
   meta,
   rationale,
+  planLine,
   definitionPending,
   definition,
   configLine,
@@ -51,13 +57,18 @@ function CardText({
 
       {meta && <p className="quiz-home__meta">{meta}</p>}
       {rationale && <p className="quiz-home__rationale">{rationale}</p>}
+      {planLine && (
+        <p className="quiz-home__rationale" data-testid="quiz-plan-reason">
+          {planLine}
+        </p>
+      )}
       {/* Keyed on its text: the AI sentence replacing the built stand-in a
           moment later fades in rather than snapping. */}
       {definitionPending && (
         <div className="quiz-home__definition-pending" data-testid="quiz-definition-pending" aria-hidden>
-          <Skeleton width="100%" height={13} />
-          <Skeleton width="92%" height={13} />
-          <Skeleton width="60%" height={13} />
+          <Skeleton width="100%" height={DEFINITION_LINE_H} />
+          <Skeleton width="92%" height={DEFINITION_LINE_H} />
+          <Skeleton width="60%" height={DEFINITION_LINE_H} />
         </div>
       )}
       {definition && (
@@ -105,6 +116,11 @@ export interface ProposalCardProps extends Omit<CardTextProps, "onReset"> {
   /** The due link's numbers, or `null` to leave it out. */
   dueLink: Omit<DueLinkProps, "onClick"> | null;
   onReviewDue: () => void;
+  /**
+   * List-mode neighbourhood under the card (default). Map mode hides it —
+   * the full course graph lives in the side pane (W7.D3 / W7.10).
+   */
+  showNeighbourhood?: boolean;
 }
 
 export function ProposalCard({
@@ -119,6 +135,7 @@ export function ProposalCard({
   onAdjust,
   dueLink,
   onReviewDue,
+  showNeighbourhood = true,
   ...text
 }: ProposalCardProps) {
   return (
@@ -135,13 +152,15 @@ export function ProposalCard({
           eases onto the new cluster, instead of the graph being rebuilt. */}
       <CardText key={card.node.id} {...text} onReset={() => onPick(null)} />
 
-      <LiveNeighbourhood
-        centreId={card.node.id}
-        nodes={viewNodes}
-        edges={edges}
-        onPick={onPick}
-        ariaLabel={`${card.node.concept_name} and its neighbours on your knowledge tree`}
-      />
+      {showNeighbourhood && (
+        <LiveNeighbourhood
+          centreId={card.node.id}
+          nodes={viewNodes}
+          edges={edges}
+          onPick={onPick}
+          ariaLabel={`${card.node.concept_name} and its neighbours on your knowledge tree`}
+        />
+      )}
 
       <div className="quiz-home__actions">
         <Button

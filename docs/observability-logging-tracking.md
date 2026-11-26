@@ -142,6 +142,15 @@ details and the exact pydantic-ai 1.107 / logfire 4.37 attribute names):
   It also removes `final_result`, tool arguments/results (`tool_arguments` /
   `tool_response`, or `gen_ai.tool.call.arguments` / `gen_ai.tool.call.result`
   on instrumentation v3+) and exception messages.
+- **Content-free tracer boundary**: the pinned SDK still serializes
+  instructions inside `model_request_parameters` (a key Logfire exempts from
+  callback scrubbing), so `instrument_pydantic_ai` is also handed
+  `tracer_provider=content_free_tracer_provider()` (`services/ai_trace_privacy.py`).
+  It wraps the public OpenTelemetry tracer API with a finite metadata allowlist
+  for initial/later attributes, links, generic span names, events and
+  exceptions, keeping provider/model/token/cost/trace/tool identifiers while
+  omitting bodies, schemas, arbitrary keys, exception text and stack traces.
+  The grader's explicit instrumentation settings use this same boundary.
 - **Scrubbing callback**: every attribute Logfire routes whose name looks like
   content (`EXTRA_PATTERNS`) is replaced whole by
   `[redacted, type:…, length:…, sha256:…]`; URL attributes lose their query
@@ -158,13 +167,47 @@ details and the exact pydantic-ai 1.107 / logfire 4.37 attribute names):
 - **Uvicorn access log** (stdout → Railway logs): `services/access_log.py`'s
   `StripQueryStringFilter` logs the path without its query string.
 
+The AI-specific tracer does not sanitize arbitrary application/third-party logs
+or exception messages outside AI spans. Parent trace identifiers and incoming
+OpenTelemetry TraceState are preserved for correlation, not certified as
+content-free. Do not put learner data in these fields or arbitrary telemetry
+labels. The finite accounting bridge below avoids exporting those record fields.
+
 ### Verifying the scrubbing
 
 `backend/tests/test_logfire_scrubber.py` runs real spans (a pydantic-ai agent
 run with a tool call; a FastAPI request with a body and a query string)
 through Logfire configured as main.py configures it, pending spans included,
 and asserts no 12-character run of any content string survives. AST guards fail
-if main.py drops any layer.
+if main.py drops any layer. `test_ai_trace_privacy.py` exercises the
+content-free tracer boundary with short answers, synthetic PII, dynamic object
+keys, tool arguments/results, binary input, grader output, exception text and
+parent/child traces. These hermetic tests make no collector/provider calls;
+they do not establish external delivery, routing, billing completeness or uptime.
+
+### Controlled accounting signals
+
+`services/ops_logging.py` adds an idempotent handler only to the finite source
+loggers it recognizes. It exports six exact accounting-hook failure templates,
+the queue-full/aggregate-flush-drop warnings, the usage-row-drop error and the
+platform-spend warning. Exported events have fixed messages and finite
+`sapling.signal`/`sapling.stage` metadata. Counts and known table names are
+validated; spend components are finite nonnegative decimal strings. Malformed
+records and unknown templates are ignored, and exporter failure does not change
+the caller or stderr delivery. Original exception text, stack, formatting args
+and arbitrary record extras are never forwarded.
+
+The per-row delivery DEBUG traceback is deliberately excluded; its existing
+aggregate WARNING is covered. The unstructured platform-read-failure warning
+also remains stderr-only. This is not a root-logger/third-party log bridge.
+
+Set an actual collector rule on the fixed `sapling.signal` values and verify
+receipt at the selected destination with a bounded synthetic failure drill.
+`LOGFIRE_TOKEN` alone configures export, not an alert rule or recipient. Railway
+captures stderr separately; seeing a line there does not prove a Logfire alert
+was delivered or acknowledged. Keep source/deployment IDs, a unique synthetic
+request ID, collector event ID, delivery status and acknowledgement time; do not
+include learner/model prose or credentials.
 
 ## Conventions honored
 

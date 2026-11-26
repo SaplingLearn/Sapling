@@ -30,10 +30,15 @@
  *   SAPLING_MODEL_MODE=function \
  *   SAPLING_FUNCTION_HANDLERS=agents.function_handlers_e2e make e2e-up
  */
-import { expect, test } from "./support/fixtures";
+import { expect, loopOffLane, test } from "./support/fixtures";
 import { queryRaw } from "./support/db";
 import { decryptTexts } from "./support/decrypt";
 import { BACKEND_URL } from "./support/stack";
+
+// PKG-14b (spec §11.4): the legacy Learn screen exists only while the loop is
+// off (the kill switch, or the learning_loop flag off) — this whole file runs
+// in the kill-switch and flag-off lanes only.
+test.skip(!loopOffLane, "legacy path: loop-off lanes only");
 
 /** Seeded by db/seed_local_rich.py for rich-user-active. */
 const SESSION_ID = "rich-sess-cs-recursion";

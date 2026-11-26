@@ -603,7 +603,8 @@ def test_normalize_folds_the_forms_the_patterns_are_written_against():
     assert normalize("I’m NOT sure — can't go ON!!") == "im not sure cant go on |"
     assert normalize("self-harm") == "self harm"
     assert normalize("killlll") == "kil"
-    assert normalize("su​icide") == "suicide"  # zero-width joiner
+    assert normalize("su\u200bicide") == "suicide"  # zero-width space
+    assert normalize("su\u200dicide") == "suicide"  # zero-width joiner
     assert normalize("suïcide") == "suicide"  # accents
 
 

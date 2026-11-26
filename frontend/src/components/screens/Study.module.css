@@ -1,0 +1,40 @@
+@layer components {
+/* The learning loop's reviews on Study (Study.tsx): the "Due today" queue and
+   the retention check, side by side. They render in the hub's `reviews` slot
+   (StudyHub.module.css .areaReviews, under the header across both columns),
+   so the hub's own padding (32 / 24 / 20px) gives them its edges and they add
+   none. Sized from the container, as the hub is, so the side nav's width
+   counts. */
+
+.shell {
+  container: studyreviews / inline-size;
+}
+
+.reviews {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: var(--sp-8);
+  padding: 0;
+}
+
+/* Two cards need room for a question and its answer box each. */
+@container studyreviews (max-width: 900px) {
+  .reviews { grid-template-columns: minmax(0, 1fr); }
+}
+
+@container studyreviews (max-width: 700px) {
+  .reviews { gap: var(--sp-6); }
+}
+
+/* A failed loop-status read: a notice in the reviews slot, not the grid. */
+.statusNotice {
+  display: block;
+  font-size: var(--fs-md);
+}
+
+.statusNotice p {
+  margin: 0 0 var(--sp-4);
+}
+
+}

@@ -1,0 +1,66 @@
+@layer components {
+/* The 1–4 "How was that session?" scale (SessionRatingScale). */
+
+.scale {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+.row {
+  display: flex;
+  gap: var(--sp-4);
+  justify-content: space-between;
+}
+
+.digit {
+  /* The digits sit between --fs-xl and --fs-2xl: no type step is 20px. */
+  --rating-digit-size: 20px;
+  /* Press feedback: a slight give, not a movement. No scale token exists. */
+  --rating-press-scale: 0.97;
+  flex: 1;
+  padding: var(--sp-6) var(--sp-2);
+  font-size: var(--rating-digit-size);
+  font-weight: 500;
+  color: var(--text-dim);
+  border-radius: var(--r-md);
+  border: 1px solid var(--border);
+  background: var(--bg-panel);
+  cursor: pointer;
+  transition:
+    background-color var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease),
+    transform var(--dur-instant) var(--ease-out);
+}
+
+.digit[aria-pressed="false"]:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+.digit[aria-pressed="true"] {
+  color: var(--accent);
+  border-color: var(--accent-border);
+  background: var(--accent-soft);
+}
+
+.digit:disabled {
+  cursor: default;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .digit:active:not(:disabled) {
+    transform: scale(var(--rating-press-scale));
+  }
+}
+
+.ends {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--sp-4);
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+
+}

@@ -160,7 +160,7 @@ describe("AchievementWiki — cosmetics linking (Finding 2)", () => {
       links: [{ achievement_id: "a1", cosmetic_id: "cos-2" }],
     });
     const user = userEvent.setup();
-    await user.click(within(card).getByRole("button", { name: "Pick a cosmetic to link…" }));
+    await user.click(within(card).getByRole("button", { name: /^Cosmetic to link/ }));
     await user.click(await within(card).findByRole("option", { name: /Trailblazer/ }));
     fireEvent.click(within(card).getByRole("button", { name: "Link" }));
     await waitFor(() => expect(api.adminLinkAchievementCosmetic).toHaveBeenCalledWith("a1", "cos-2"));

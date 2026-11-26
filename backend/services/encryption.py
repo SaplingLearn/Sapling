@@ -62,6 +62,8 @@ cross-user and cross-session moves, not moves inside one session.
 from __future__ import annotations
 
 import base64
+import hashlib
+import hmac
 import json
 import logging
 import os
@@ -104,6 +106,17 @@ def _load_key() -> bytes:
 
 _KEY = _load_key()
 _AESGCM = AESGCM(_KEY)
+
+
+def derive_key(purpose: str) -> bytes:
+    """A 32-byte server secret for `purpose`, derived from ENCRYPTION_KEY as
+    HMAC-SHA256(key, "sapling/" + purpose): deterministic, never the AES key
+    itself, and a different key for every purpose. For keyed hashes a client
+    must not be able to recompute (e.g. the check items' correct-option slot,
+    learning-loop spec §13 A37) — never for encryption."""
+    if not purpose:
+        raise ValueError("derive_key needs a non-empty purpose")
+    return hmac.new(_KEY, f"sapling/{purpose}".encode("utf-8"), hashlib.sha256).digest()
 
 
 def _cipher_for(kid: str) -> AESGCM | None:
@@ -230,8 +243,29 @@ ENCRYPTED_COLUMNS: tuple[ColumnSpec, ...] = tuple([
                note="one row per (attempt, question): the natural key"),
     # Study.
     *_cols("flashcards", {"front": TEXT, "back": TEXT}),
+    # The Tutor's Saved tab (services/saved_items.py mints the id first).
+    *_cols("tutor_saved_items", {"title": TEXT, "content": TEXT}),
     *_cols("study_guides", {"content": JSON, "previous_content": JSON, "answers": JSON}),
     ColumnSpec("room_summaries", "summary", key=("room_id",), pk=("room_id",)),
+    # Learning loop. check_items ids are minted in Python (item_id: a hash of
+    # course, concept key and question hash); a re-tag that moves an item to a
+    # new id re-seals every value for the new row (check_item_service).
+    *_cols("check_items", {
+        "prompt": TEXT, "reference_answer": TEXT, "final_answer": TEXT,
+        "rubric_json": JSON, "common_wrong_json": JSON, "options_json": JSON,
+        "correct_option": TEXT, "canonical_answer": TEXT, "surface_context": TEXT,
+    }),
+    ColumnSpec("sessions", "close_json", JSON),
+    ColumnSpec("sessions", "loop_brief"),
+    # Upserted by SQL on (user_id, node_id, wrong_key) WHERE resolved_at IS
+    # NULL, which keeps an existing row's id: bind to that natural key.
+    ColumnSpec("misconceptions", "evidence_text", key=("user_id", "node_id", "wrong_key"),
+               note="the upsert keeps an existing row's id: its natural key"),
+    # id is a DB default; one row per (user, session, node).
+    ColumnSpec("learning_prequestions", "guess_json", JSON,
+               key=("user_id", "session_id", "node_id"),
+               note="id is a DB default: the row's unique natural key"),
+    ColumnSpec("learning_self_explanations", "reply_text"),
     # The key canary: read with legacy always allowed, never backfilled (a v2
     # canary would make a rollback to pre-v2 code refuse to boot).
     ColumnSpec("encryption_key_check", "canary", backfill=False),
@@ -276,6 +310,34 @@ def bind(table: str, column: str, row: Any) -> Binding:
 def claim_binding(claim: str) -> Binding:
     """Binding for one claim of the pending sign-up token (not a column)."""
     return Binding(TOKEN_CLAIMS, claim, "claims")
+
+
+#: Ciphertexts stored INSIDE a plaintext jsonb column rather than as a column
+#: of their own: (table, column, path). Not in ENCRYPTED_COLUMNS (a real
+#: column's registry); bound with `nested_bind`. The AAD backfill re-seals them
+#: in every table that holds the column (db/backfill_encryption_aad.py
+#: NESTED_HOLDERS) and the account bundle re-keys them (NESTED_ENCRYPTED), so a
+#: new path here is covered by both.
+#: sessions.loop_state carries the student's goal text (ADR 0033), a step's
+#: or probe's sealed grade checkpoint (ADR 0038), and a free/teachback check's
+#: optional reason-before-submit prose (W2.3; never evidence), all keyed on
+#: the session.
+NESTED_CIPHERTEXTS: frozenset[tuple[str, str, str]] = frozenset({
+    ("sessions", "loop_state", "goal.text_encrypted"),
+    ("sessions", "loop_state", "grade_checkpoint"),
+    ("sessions", "loop_state", "reasoning_encrypted"),
+})
+
+
+def nested_bind(table: str, column: str, path: str, row_key: Any) -> Binding:
+    """The binding for a ciphertext at ``path`` inside ``table.column`` of the
+    row keyed ``row_key``. Refuses a (table, column, path) not listed in
+    NESTED_CIPHERTEXTS, and an empty row key, like `bind`."""
+    if (table, column, path) not in NESTED_CIPHERTEXTS:
+        raise UnknownColumn(f"{table}.{column}#{path} is not in encryption.NESTED_CIPHERTEXTS")
+    if row_key is None or row_key == "":
+        raise MissingRowKey(f"{table}.{column}#{path}: empty row key")
+    return Binding(table, f"{column}#{path}", str(row_key))
 
 
 # ── Settings (read per call: cheap, and tests can flip them) ────────────────

@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Course setup: review what we found</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Aleo:wght@400;600;700&amp;family=SUSE:wght@400;500;600;700&amp;display=swap">
+<style>
+body{margin:0}
+a{color:#445D22;text-decoration:none}a:hover{color:#384E19}
+</style>
+</helmet>
+<div style="min-height: 980px; background: #faf8f3; font-family: 'SUSE', system-ui, sans-serif; color: #1a1814; padding: 48px 24px; box-sizing: border-box;">
+  <div style="max-width: 840px; margin: 0 auto; display: flex; flex-direction: column; gap: 28px;">
+    <ol aria-label="Setup steps" style="margin: 0; padding: 0; list-style: none; display: flex; align-items: center; gap: 12px; font-size: 14px; color: #3f3b31;">
+      <li style="display: flex; align-items: center; gap: 8px;"><span style="width: 24px; height: 24px; border-radius: 50%; background: #e1ecd7; color: #445D22; display: inline-flex; align-items: center; justify-content: center; font-weight: 600;">1</span>Course</li>
+      <li aria-hidden="true" style="flex: 1; height: 1px; background: #ddd6c6;"></li>
+      <li style="display: flex; align-items: center; gap: 8px;"><span style="width: 24px; height: 24px; border-radius: 50%; background: #e1ecd7; color: #445D22; display: inline-flex; align-items: center; justify-content: center; font-weight: 600;">2</span>Syllabus</li>
+      <li aria-hidden="true" style="flex: 1; height: 1px; background: #ddd6c6;"></li>
+      <li aria-current="step" style="display: flex; align-items: center; gap: 8px; color: #1a1814; font-weight: 600;"><span style="width: 24px; height: 24px; border-radius: 50%; background: #445D22; color: #ffffff; display: inline-flex; align-items: center; justify-content: center;">3</span>Review</li>
+      <li aria-hidden="true" style="flex: 1; height: 1px; background: #ddd6c6;"></li>
+      <li style="display: flex; align-items: center; gap: 8px;"><span style="width: 24px; height: 24px; border-radius: 50%; border: 1px solid #b9b1a0; display: inline-flex; align-items: center; justify-content: center;">4</span>Done</li>
+    </ol>
+
+    <h1 style="margin: 0; font-family: 'Aleo', Georgia, serif; font-size: 30px; font-weight: 600;">Here's what we found in your CS 112 syllabus</h1>
+
+    <section aria-labelledby="dates-h" style="display: flex; flex-direction: column; gap: 12px; padding: 24px; border-radius: 16px; background: #fdfcf9; border: 1px solid rgba(42,39,31,0.10);">
+      <h2 id="dates-h" style="margin: 0; font-family: 'Aleo', Georgia, serif; font-size: 22px; font-weight: 600;">Exams and assignments</h2>
+      <p style="margin: 0; font-size: 14px; color: #3f3b31;">Each becomes a milestone with a countdown. Fix any date before you confirm.</p>
+      <sc-for list="{{dates}}" as="d" hint-placeholder-count="5">
+        <div style="display: grid; grid-template-columns: minmax(0, 1fr) 180px 80px; align-items: center; gap: 16px; padding: 10px 0; border-top: 1px solid rgba(42,39,31,0.08);">
+          <label for="{{d.id}}" style="font-size: 15px;">{{d.name}}</label>
+          <input id="{{d.id}}" type="text" value="{{d.date}}" style="height: 38px; padding: 0 12px; border-radius: 8px; border: 1px solid rgba(42,39,31,0.18); background: #fdfcf9; font: inherit; font-size: 14px; color: #1a1814;">
+          <button type="button" style="height: 38px; border: 0; background: transparent; font: inherit; font-size: 14px; color: #3f3b31; text-align: right;">Remove</button>
+        </div>
+      </sc-for>
+      <button type="button" style="align-self: flex-start; height: 38px; padding: 0 14px; border-radius: 8px; border: 1px solid rgba(42,39,31,0.18); background: #fdfcf9; font: inherit; font-size: 14px; color: #1a1814;">Add a date</button>
+    </section>
+
+    <section aria-labelledby="concepts-h" style="display: flex; flex-direction: column; gap: 12px; padding: 24px; border-radius: 16px; background: #fdfcf9; border: 1px solid rgba(42,39,31,0.10);">
+      <h2 id="concepts-h" style="margin: 0; font-family: 'Aleo', Georgia, serif; font-size: 22px; font-weight: 600;">18 concepts</h2>
+      <p style="margin: 0; font-size: 14px; color: #3f3b31;">Your tutor teaches and checks these. Untick any that aren't part of your course.</p>
+      <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+        <sc-for list="{{concepts}}" as="c" hint-placeholder-count="18">
+          <label style="display: inline-flex; align-items: center; gap: 8px; height: 36px; padding: 0 12px; border-radius: 999px; border: 1px solid #c5d7b2; background: #f2f6ee; font-size: 14px;"><input type="checkbox" checked="{{ true }}" style="accent-color: #445D22;">{{c}}</label>
+        </sc-for>
+      </div>
+    </section>
+
+    <div style="display: flex; align-items: center; gap: 16px;">
+      <p style="margin: 0; flex: 1; font-size: 14px; color: #3f3b31;">Practice questions are being written from your lectures. You can start learning now.</p>
+      <a href="Course.dc.html" style="height: 44px; padding: 0 24px; border-radius: 10px; background: #445D22; color: #ffffff; font-size: 15px; font-weight: 600; display: inline-flex; align-items: center;">Confirm</a>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":980}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const dates = [['Midterm 1', 'Oct 21'], ['HW 7', 'Dec 2'], ['Midterm 2', 'Dec 9'], ['Final exam', 'Dec 18'], ['Project', 'Dec 12']];
+    return {
+      dates: dates.map(([name, date], i) => ({ id: 'date-' + i, name, date })),
+      concepts: ['Big-O notation', 'Arrays', 'Linked lists', 'Stacks', 'Queues', 'Recursion', 'Hash tables', 'Collision resolution', 'Binary search trees', 'Heaps', 'Priority queues', 'Graphs', 'BFS', 'DFS', 'Sorting', 'Merge sort', 'Quicksort', 'Tries']
+    };
+  }
+}
+</script>
+</body>
+</html>

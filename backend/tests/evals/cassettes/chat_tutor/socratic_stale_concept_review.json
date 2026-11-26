@@ -1,11 +1,19 @@
 {
-  "text": "Two concepts, Supply And Demand and Closures, have no review on record. You've never reviewed them, so they're the rustiest. Both are also at or near 0 mastery.\n\nHere are the ones you have reviewed, oldest first:\n- Mitosis: Jul 8 (mastery 0.80)\n- Photosynthesis: Jul 10 (0.55)\n- Newton's First Law: Jul 12 (0.25)\n- Big-O Notation: Jul 15 (0.48)\n\nNewton's First Law is the best pick among those. It's been sitting for 10 days and your mastery is only 0.25. Mitosis is older, but you've mastered it, so it can wait.\n\nBetween the two never-reviewed concepts, I'd start with Closures. Which would you like: Closures, Newton's First Law, or something else? And if it's Closures, how would you explain in your own words what a closure is?",
-  "tool_calls": [
-    {
-      "args": {
-        "limit": 25
-      },
-      "tool_name": "read_concepts_for_user"
-    }
-  ]
+  "output": {
+    "text": "Here's what your review dates show.\n\n**Never reviewed:** Supply And Demand and Closures. Both have mastery near zero.\n\n**Reviewed, oldest first:**\n- Mitosis, July 8 (mastery 0.80)\n- Photosynthesis, July 10 (0.55)\n- Newton's First Law, July 12 (0.25)\n- Big-O Notation, July 15 (0.48)\n\nStrictly speaking, the rustiest are the two you've never touched. Of the concepts you *have* reviewed, Mitosis is the oldest, but at 0.80 it's in good shape. I'd pick **Closures**. It's never been reviewed and it's nearly at zero. It may also connect to the Recursion work you did recently.\n\nBefore we start, what do you already remember about closures? A rough guess is fine, and so is \"nothing yet.\" Which is closer?",
+    "tool_calls": [
+      {
+        "args": {
+          "limit": 25
+        },
+        "tool_name": "read_concepts_for_user"
+      }
+    ]
+  },
+  "recorded_under": {
+    "input_sha256": "d4f5ac7feb40c0f252284c219b3ccdb32a8131688789cd77af19553f1e5baa62",
+    "model": "claude-sonnet-5-5",
+    "prompt_hash": "3962b95f3e62",
+    "schema_hash": "38a346cadbd3"
+  }
 }

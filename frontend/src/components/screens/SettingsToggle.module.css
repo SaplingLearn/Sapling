@@ -1,0 +1,62 @@
+@layer components {
+/* The settings on/off switch (SettingsToggle.tsx): a pill track with a knob
+   that slides from one end to the other. The knob moves by transform, so the
+   two end states are exactly where `left` used to put them. */
+
+.toggle {
+  /* The switch's own geometry: not design tokens, a component size. */
+  --toggle-w: 36px;
+  --toggle-h: 20px;
+  --toggle-knob: 16px;
+  --toggle-inset: var(--sp-1);
+
+  flex-shrink: 0;
+  position: relative;
+  width: var(--toggle-w);
+  height: var(--toggle-h);
+  padding: 0;
+  border: none;
+  border-radius: var(--r-full);
+  background: var(--bg-soft);
+  cursor: pointer;
+  transition:
+    background-color var(--dur) var(--ease),
+    opacity var(--dur-fast) var(--ease);
+}
+
+.toggle[aria-checked="true"] { background: var(--accent); }
+
+.toggle:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.toggle:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.knob {
+  position: absolute;
+  top: var(--toggle-inset);
+  left: var(--toggle-inset);
+  width: var(--toggle-knob);
+  height: var(--toggle-knob);
+  border-radius: var(--r-full);
+  background: var(--text-on-fill);
+  box-shadow: var(--shadow-sm);
+  transition:
+    transform var(--dur) var(--ease-in-out),
+    scale var(--dur-instant) var(--ease-out);
+}
+
+.toggle[aria-checked="true"] .knob {
+  transform: translateX(calc(var(--toggle-w) - var(--toggle-knob) - 2 * var(--toggle-inset)));
+}
+
+/* Press feedback: the knob gives a little under the finger. */
+@media (prefers-reduced-motion: no-preference) {
+  .toggle:not(:disabled):active .knob { scale: 0.9; }
+}
+
+}

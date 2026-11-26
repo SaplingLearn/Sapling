@@ -255,6 +255,62 @@ def test_callback_alone_redacts_tool_and_result_attributes(exporter, version):
     assert checked >= 3  # final_result + the tool span's arguments and result
 
 
+def test_content_free_provider_keeps_tool_results_dynamic_keys_and_binaries_out(exporter, monkeypatch):
+    """The content-free tracer provider (services/ai_trace_privacy.py) on top
+    of the content settings, as main.py wires them: a structured output with
+    a dynamic key, a tool's arguments and result, the system instructions and
+    a binary attachment never reach the exporter; the usage still does."""
+    import logfire
+    from pydantic import BaseModel
+    from pydantic_ai import Agent, BinaryContent
+    from pydantic_ai.messages import ModelResponse, ToolCallPart
+    from pydantic_ai.models.function import FunctionModel
+    from pydantic_ai.usage import RequestUsage
+
+    from services.ai_trace_privacy import content_free_tracer_provider
+
+    class Output(BaseModel):
+        value: dict[str, str]
+
+    monkeypatch.setattr(Agent, "_instrument_default", Agent._instrument_default)
+    logfire.instrument_pydantic_ai(
+        **PYDANTIC_AI_INSTRUMENTATION, tracer_provider=content_free_tracer_provider()
+    )
+    calls = []
+
+    def respond(_messages, info):
+        calls.append(True)
+        if len(calls) == 1:
+            parts = [ToolCallPart("read_source", {"learner_text": "PRIVATE_TOOL_ARG"})]
+        else:
+            parts = [ToolCallPart(info.output_tools[0].name,
+                                  {"value": {"PRIVATE_DYNAMIC_OUTPUT_KEY": "SHORT_PRIVATE_7"}})]
+        return ModelResponse(parts, usage=RequestUsage(input_tokens=23, output_tokens=11),
+                             model_name="synthetic-model")
+
+    agent = Agent(FunctionModel(respond, model_name="synthetic-model"),
+                  instructions="PRIVATE_SYSTEM_INSTRUCTION", output_type=Output)
+
+    @agent.tool_plain
+    def read_source(learner_text: str) -> dict[str, str]:
+        assert learner_text == "PRIVATE_TOOL_ARG"
+        return {"PRIVATE_DYNAMIC_TOOL_KEY": "student@example.invalid"}
+
+    result = agent.run_sync([
+        "PRIVATE_STUDENT_PROMPT",
+        BinaryContent(data=b"PRIVATE_BINARY_CONTENT", media_type="image/png"),
+    ])
+    assert result.output.value == {"PRIVATE_DYNAMIC_OUTPUT_KEY": "SHORT_PRIVATE_7"} and len(calls) == 2
+    spans = exporter.exported_spans_as_dict(_include_pending_spans=True)
+    blob = json.dumps(spans)
+    for private in ("PRIVATE_SYSTEM_INSTRUCTION", "PRIVATE_TOOL_ARG", "PRIVATE_DYNAMIC_OUTPUT_KEY",
+                    "SHORT_PRIVATE_7", "PRIVATE_DYNAMIC_TOOL_KEY", "student@example.invalid",
+                    "PRIVATE_STUDENT_PROMPT", "PRIVATE_BINARY_CONTENT"):
+        assert private not in blob, private
+    assert spans and "synthetic-model" in blob
+    assert any(s["attributes"].get("gen_ai.usage.input_tokens") == 23 for s in spans)
+
+
 def test_request_query_string_and_body_never_reach_spans(exporter):
     import logfire
     from fastapi import FastAPI, Query
@@ -315,6 +371,10 @@ def test_settings_disable_agent_content_capture():
 
 
 def test_main_instruments_pydantic_ai_without_content():
+    """The content settings come whole from PYDANTIC_AI_INSTRUMENTATION, never
+    overridden, and the spans go through the content-free tracer provider
+    (services/ai_trace_privacy.py: pinned pydantic-ai still exports raw
+    model_request_parameters, a key Logfire's scrubber exempts)."""
     calls = _main_calls("instrument_pydantic_ai")
     assert len(calls) == 1
     (call,) = calls
@@ -322,7 +382,11 @@ def test_main_instruments_pydantic_ai_without_content():
     starred = [kw for kw in call.keywords if kw.arg is None]
     assert len(starred) == 1 and isinstance(starred[0].value, ast.Name)
     assert starred[0].value.id == "PYDANTIC_AI_INSTRUMENTATION"
-    assert all(kw.arg is None for kw in call.keywords), "no override of the content settings"
+    named = {kw.arg: kw.value for kw in call.keywords if kw.arg is not None}
+    assert set(named) == {"tracer_provider"}, "no override of the content settings"
+    provider = named["tracer_provider"]
+    assert isinstance(provider, ast.Call) and isinstance(provider.func, ast.Name)
+    assert provider.func.id == "content_free_tracer_provider"
 
 
 def test_main_configures_the_scrubber_with_every_pattern():

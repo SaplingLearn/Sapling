@@ -5,7 +5,8 @@
 
 /* A .btn field, so it carries the same panel fill, hairline border and height
    language as the page's other buttons. */
-.field { max-width: 100%; height: 36px; padding: 0 11px; cursor: pointer; }
+/* 11px: the inset that lines the field's row up with the menu's (3 + 8). */
+.field { --field-pad: 11px; max-width: 100%; height: 36px; padding: 0 var(--field-pad); cursor: pointer; }
 /* Hover and open change the border only. The fill stays the panel colour the
    menu has (a grey field over a white menu read as two unrelated things). */
 button.field:hover,
@@ -18,19 +19,46 @@ button.field[aria-expanded="true"] { background: var(--bg-panel); border-color: 
   to   { opacity: 1; transform: none; }
 }
 .menu {
-  position: absolute; left: 0; top: calc(100% + 4px); z-index: 31;
-  width: 100%; box-sizing: border-box; padding: 3px;
-  display: flex; flex-direction: column; gap: 1px;
+  /* A 3px inset and 1px between rows: the menu's rows sit at the field's 11px (3 + 8). */
+  --menu-pad: 3px; --row-gap: 1px;
+  position: absolute; left: 0; top: calc(100% + var(--sp-2)); z-index: var(--z-popover);
+  width: 100%; box-sizing: border-box; padding: var(--menu-pad);
+  display: flex; flex-direction: column; gap: var(--row-gap);
   background: var(--bg-panel); border: 1px solid var(--border-strong);
   border-radius: var(--r-sm); box-shadow: var(--shadow-lg);
   animation: coursePickerPop var(--dur-fast) var(--ease) both; transform-origin: top;
 }
 .option {
-  display: flex; align-items: center; gap: 8px;
-  height: 32px; padding: 0 7px; border: 0; border-radius: var(--r-xs);
+  display: flex; align-items: center; gap: var(--sp-4);
+  /* 7px: with the menu's 3px inset, the field's 11px. */
+  --option-pad: 7px;
+  height: 32px; padding: 0 var(--option-pad); border: 0; border-radius: var(--r-xs);
+  transition: background-color var(--dur-fast) var(--ease);
   background: transparent; color: var(--text);
   font: inherit; text-align: left; cursor: pointer;
 }
-.option:hover, .option[aria-selected="true"] { background: var(--bg-subtle); }
+.option[data-active], .option[aria-selected="true"] { background: var(--bg-subtle); }
+/* The list holds focus; its active row carries the ring a focused button would. */
+.menu:focus { outline: none; }
+.menu:focus-visible .option[data-active] { box-shadow: inset 0 0 0 var(--focus-w) var(--focus-ring); }
+.menu { --focus-w: 2px; }
+
+/* The parts of a row (CoursePicker.tsx RowContent), in the field and the menu alike. */
+.anchor { position: relative; flex: 0 1 auto; min-width: 0; max-width: 560px; }
+.anchorFull { flex: 1 1 100%; }
+.fieldFull { width: 100%; }
+.stack { display: grid; min-width: 0; }
+/* Every row is drawn in one grid cell, so the field is as wide as its widest. */
+.stackRow { grid-area: 1 / 1; display: flex; align-items: center; gap: var(--sp-4); min-width: 0; visibility: hidden; }
+.stackRowShown { visibility: visible; }
+.dot { --dot: 9px; width: var(--dot); height: var(--dot); border-radius: 50%; flex-shrink: 0; background: var(--text-muted); }
+.label { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.labelGrow { flex: 1; }
+.code { font-size: var(--fs-base); font-weight: 600; }
+.name { margin-left: var(--sp-4); font-size: var(--fs-md); font-weight: 400; color: var(--text-dim); }
+.meta { padding-left: var(--sp-4); flex-shrink: 0; font-size: var(--fs-xs); font-weight: 400; color: var(--text-muted); white-space: nowrap; }
+.metaReserve { visibility: hidden; }
+.tick { margin-left: auto; width: 10px; display: grid; justify-items: center; flex-shrink: 0; color: var(--brand-forest); }
+.clickAway { position: fixed; inset: 0; z-index: var(--z-popover); }
 
 }

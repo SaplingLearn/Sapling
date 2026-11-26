@@ -1,9 +1,10 @@
 """M7: the tutor's graph write tools are bounded in code.
 
 Claude cannot enforce maxItems/maxLength, so the bounds live in validators and
-in the tool bodies: at most 5 concepts and 10 mastery updates per call, 10 new
-concepts per run, names of at most 80 characters, and a new concept only when
-the turn's message or context named it.
+in the tool bodies: at most 5 concepts per call, 10 new concepts per run, names
+of at most 80 characters, and a new concept only when the turn's message or
+context named it. (No tool moves mastery at all since PKG-14b, so main's
+mastery-update bounds have nothing to bound here.)
 """
 
 from __future__ import annotations
@@ -18,11 +19,8 @@ from agents.deps import SaplingDeps
 from agents.tools.graph import (
     MAX_CONCEPT_NAME_CHARS,
     MAX_CONCEPTS_PER_CALL,
-    MAX_MASTERY_UPDATES_PER_CALL,
     MAX_NEW_CONCEPTS_PER_TURN,
-    ConceptMasteryUpdate,
     GraphUpdateInput,
-    MasteryUpdateInput,
     allow_concept_text,
     apply_graph_update_tool,
     concept_is_grounded,
@@ -47,19 +45,10 @@ def test_concepts_are_clipped_to_the_per_call_cap():
     assert update.concepts[0] == "Concept 0"
 
 
-def test_mastery_updates_are_clipped_to_the_per_call_cap():
-    update = MasteryUpdateInput(updates=[
-        {"concept_name": f"C{i}", "mastery_delta": 0.1} for i in range(15)
-    ])
-    assert len(update.updates) == MAX_MASTERY_UPDATES_PER_CALL
-
-
 def test_overlong_names_fail_validation_with_a_recoverable_message():
     long_name = "x" * (MAX_CONCEPT_NAME_CHARS + 1)
     with pytest.raises(ValidationError, match="at most 80 characters"):
         GraphUpdateInput(concepts=[long_name])
-    with pytest.raises(ValidationError, match="at most 80 characters"):
-        ConceptMasteryUpdate(concept_name=long_name, mastery_delta=0.1)
     # exactly at the cap is fine
     GraphUpdateInput(concepts=["y" * MAX_CONCEPT_NAME_CHARS])
 

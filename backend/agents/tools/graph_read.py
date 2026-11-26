@@ -21,6 +21,7 @@ from db.connection import table
 from services import prompt_dimensions
 from services.academics import user_offering_ids_for_course
 from services.tool_signals import Expect, report_empty_result_async
+from learning.bkt import stored_score
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +79,7 @@ async def read_concepts_for_user(
     return [
         ConceptMastery(
             concept_name=r.get("concept_name") or "",
-            mastery=float(r.get("mastery_score") or 0.0),
+            mastery=stored_score(r.get("mastery_score")),
             last_reviewed_at=r.get("last_studied_at"),
         )
         for r in rows

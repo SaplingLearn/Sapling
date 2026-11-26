@@ -1,0 +1,19 @@
+{
+  "attempts": [
+    "{\"key_idea\": \"Every recursive definition needs a stopping rule, usually called a base case, that gives a result without making another recursive call.\", \"body\": \"I won't hand over the answer, but with an hour left a quick pointer will help more. Think about the general definition of a base case in recursion, and about what it does to the chain of calls.\", \"question\": \"In your own words, what does a base case say, and how does it differ from the recursive case?\"}"
+  ],
+  "input_sha256": "7cb6cfcaeee090d3291ec05bad0cf7bfe7dafe9b805aad85daa140dd1f6f6f5e",
+  "model": "claude-sonnet-5-5",
+  "output": {
+    "body": "I won't hand over the answer, but with an hour left a quick pointer will help more. Think about the general definition of a base case in recursion, and about what it does to the chain of calls.",
+    "key_idea": "Every recursive definition needs a stopping rule, usually called a base case, that gives a result without making another recursive call.",
+    "question": "In your own words, what does a base case say, and how does it differ from the recursive case?"
+  },
+  "prompt_hash": "575193db5424",
+  "requests": 1,
+  "rescued": false,
+  "retries": 0,
+  "schema_hash": "ee2a0f1f177f",
+  "slot": "loop_tutor_deep",
+  "tool_calls": []
+}

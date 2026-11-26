@@ -1,0 +1,28 @@
+{
+  "context_checks": [],
+  "context_keys": [],
+  "run_keys": [
+    {
+      "input_sha256": "d08cdb1c22c1f735720e3d8dd5aa6e35fbd94ff9ab212c441982ca94243469ac",
+      "model": "claude-haiku-5-5",
+      "prompt_hash": "d215edc372d3",
+      "schema_hash": "e42cc97704ca"
+    }
+  ],
+  "runs": [
+    {
+      "addresses_grader": true,
+      "confidence": 0.95,
+      "contradicts_reference": true,
+      "feedback_hint": "Think about what the derivative measures as the input changes at one specific point, rather than the region under the graph. Revisit what the reason you gave describes.",
+      "item_results": [
+        "24097:no",
+        "70429:no"
+      ],
+      "matched_wrong_key": "w_area",
+      "support": []
+    }
+  ],
+  "span_checks": [],
+  "span_keys": []
+}

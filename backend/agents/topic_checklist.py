@@ -2,14 +2,42 @@
 from __future__ import annotations
 
 import hashlib
-from typing import Annotated
+from typing import Annotated, cast
 import unicodedata
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic_ai import Agent, ModelRetry, RunContext
+from pydantic_ai.exceptions import UnexpectedModelBehavior
+from pydantic_ai.messages import ModelMessage
+from pydantic_ai.models import Model, ModelRequestParameters, check_allow_model_requests
+from pydantic_ai.models.anthropic import AnthropicModel
+from pydantic_ai.models.function import FunctionModel
+from pydantic_ai.models.wrapper import WrapperModel
+from pydantic_ai.settings import ModelSettings
+from pydantic_ai.usage import RequestUsage, UsageLimits
 
 from agents._bounded import clip_prose
-from agents._providers import model_for
+from agents._providers import fallback_model_name_for, model_for, model_name_for
+from agents.topic_checklist_model import wrap_topic_checklist_model
+
+# Native completion/request bounds, independent of the reported-usage
+# backstop. A concise outline may include 60 topics, but a maximal schema-sized
+# outline need not fit this completion budget; validation still fails closed.
+# The wrapper counts the full input request before each attempt, on whichever
+# provider the slot resolves to (`_ChecklistModel`).
+# Reported aggregate limits can still detect a final response's overshoot
+# afterwards; these per-run bounds are not a global spending reservation.
+CHECKLIST_MAX_OUTPUT_TOKENS = 8192
+CHECKLIST_REQUEST_TIMEOUT_SECONDS = 60.0
+CHECKLIST_OUTPUT_RETRIES = 2
+CHECKLIST_LIMITS = UsageLimits(
+    request_limit=1 + CHECKLIST_OUTPUT_RETRIES,
+    tool_calls_limit=0,
+    input_tokens_limit=50_000,
+    count_tokens_before_request=True,
+    output_tokens_limit=(1 + CHECKLIST_OUTPUT_RETRIES) * CHECKLIST_MAX_OUTPUT_TOKENS,
+    total_tokens_limit=50_000,
+)
 
 # Array caps, enforced by OUR validation after the call, never by the schema
 # Gemini compiles. Constrained decoding multiplies array bounds: each
@@ -184,8 +212,58 @@ SYSTEM_PROMPT = (
     "Return an empty list if the evidence contains no academic topic information."
 )
 PROMPT_VERSION = hashlib.sha256(SYSTEM_PROMPT.encode()).hexdigest()[:12]
+
+
+def _base_model(model: Model) -> Model:
+    while isinstance(model, WrapperModel):
+        model = model.wrapped
+    return model
+
+
+class _ChecklistModel(WrapperModel):
+    """The checklist's model, counting the whole request before every attempt
+    (`CHECKLIST_LIMITS.count_tokens_before_request`) on whichever provider the
+    `topic_checklist` slot resolves to. Claude counts natively: its
+    messages.count_tokens takes the system prompt, the output schema and the
+    messages, the whole request. Gemini counts through the full-envelope
+    counter of agents/topic_checklist_model.py (pydantic-ai's own Google
+    counter leaves the instructions and schema out), which also counts the
+    function-mode seam as zero and refuses any other model. Generation and the
+    provider lifecycle delegate unchanged; a failed count stops generation."""
+
+    async def count_tokens(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> RequestUsage:
+        if not isinstance(_base_model(self.wrapped), AnthropicModel):
+            return await wrap_topic_checklist_model(self.wrapped).count_tokens(
+                messages, model_settings, model_request_parameters
+            )
+        check_allow_model_requests()
+        count = (
+            await self.wrapped.count_tokens(messages, model_settings, model_request_parameters)
+        ).input_tokens
+        # A real checklist request always has instructions, a schema and an
+        # evidence payload; a zero count cannot describe one.
+        if type(count) is not int or count <= 0:
+            raise UnexpectedModelBehavior("Checklist token counter returned no valid token count.")
+        return RequestUsage(input_tokens=count)
+
+
+def checklist_model(model: Model) -> Model:
+    """`model` with the checklist's full-request input counter (`_ChecklistModel`)."""
+    return model if isinstance(model, _ChecklistModel) else _ChecklistModel(model)
+
+
 topic_checklist_agent = Agent[dict, TopicOutline](
-    model=model_for("topic_checklist"), deps_type=dict, output_type=TopicOutline, retries=2,
+    model=checklist_model(model_for("topic_checklist")), deps_type=dict, output_type=TopicOutline,
+    retries=CHECKLIST_OUTPUT_RETRIES,
+    # Provider-neutral bounds: they apply to Claude and Gemini alike.
+    model_settings=ModelSettings(
+        max_tokens=CHECKLIST_MAX_OUTPUT_TOKENS, timeout=CHECKLIST_REQUEST_TIMEOUT_SECONDS,
+    ),
     system_prompt=SYSTEM_PROMPT,
     metadata={"prompt_version": PROMPT_VERSION, "agent": "topic_checklist"},
 )
@@ -198,3 +276,23 @@ def validate_references(ctx: RunContext[dict], outline: TopicOutline) -> TopicOu
     if any(not set(t.source_ids) <= sources or not set(t.assessment_ids) <= assessments for t in outline.topics):
         raise ModelRetry("Use only source_ids and assessment_ids supplied in the input JSON.")
     return outline
+
+
+def checklist_model_names(model: Model | None = None, *, with_fallback: bool = True) -> tuple[str, ...]:
+    """The models a checklist run on `model` (default: the agent's) can be
+    billed under, for its spend hold (services/checklist_budget.py): the model
+    the slot resolved to, then the other-provider model its resilience retries
+    on while the `llm_fallback` flag is on (agents/_providers.py; the flag is
+    read per request, so a run admitted with it off can still be served by the
+    fallback). Under the function-mode seam, which never bills, the names the
+    slot's real model would have, so the seam's run is admitted and released as
+    a real one is. `with_fallback=False`: the primary only — the budgeted run
+    sends SINGLE_ATTEMPT_SETTING (agents/_resilience.py), so no fallback can
+    serve it (#866 b1-budget review).
+    """
+    base = _base_model(model if model is not None else cast(Model, topic_checklist_agent.model))
+    primary = model_name_for("topic_checklist") if isinstance(base, FunctionModel) else base.model_name
+    fallback = fallback_model_name_for("topic_checklist", primary) if with_fallback else None
+    # Bare names, as provider_model builds them (an override may say `anthropic:…`).
+    names = [name.rsplit(":", 1)[-1].strip() for name in (primary, fallback) if name]
+    return tuple(dict.fromkeys(names))

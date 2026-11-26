@@ -1,0 +1,134 @@
+import { describe, expect, it } from 'vitest';
+
+import type { LoopTurnResult } from '@/lib/api';
+import { initialLoopState, isGradedTurn, reduceLoopEvent } from './loopState';
+
+const item = { question_hash: 'qh1', format: 'free' as const, difficulty: 1 as const, prompt: 'p' };
+
+describe('reduceLoopEvent', () => {
+  it('starts in probe with no item', () => {
+    expect(initialLoopState()).toEqual({
+      phase: 'probe', item: null, learnerState: {}, practiced: [], budgetPause: null, focusNodeId: null,
+    });
+  });
+
+  it('phase events move the phase and nothing else', () => {
+    const s = reduceLoopEvent({ ...initialLoopState(), item }, { type: 'phase', phase: 'teach' });
+    expect(s.phase).toBe('teach');
+    expect(s.item).toEqual(item);
+  });
+
+  it("a turn's 'hint' phase is the check phase to the UI (the item stays current)", () => {
+    const s = reduceLoopEvent({ ...initialLoopState(), phase: 'check', item }, { type: 'phase', phase: 'hint' });
+    expect(s.phase).toBe('check');
+  });
+
+  it('an unknown phase string changes nothing', () => {
+    const start = { ...initialLoopState(), phase: 'teach' as const };
+    expect(reduceLoopEvent(start, { type: 'phase', phase: 'bogus' })).toBe(start);
+  });
+
+  it('check sets the current item', () => {
+    const s = reduceLoopEvent(initialLoopState(), { type: 'check', item });
+    expect(s.item).toEqual({ ...item, options: null });
+  });
+
+  it('a partial check event (hash only) keeps the pose it already has for that hash', () => {
+    const s0 = reduceLoopEvent(initialLoopState(), { type: 'check', item: { ...item, options: null } });
+    const s1 = reduceLoopEvent(s0, { type: 'check', item: { question_hash: 'qh1', format: 'free', difficulty: 1 } });
+    expect(s1.item?.prompt).toBe('p');
+  });
+
+  it('a partial check event for an item with no known pose never makes a promptless item', () => {
+    // The `check` stream event carries only hash/format/difficulty; the pose comes
+    // from done.check (or /status). Until then there is no card to render.
+    const s = reduceLoopEvent(initialLoopState(), { type: 'check', item: { question_hash: 'qh9', format: 'free', difficulty: 1 } });
+    expect(s.item).toBeNull();
+    const other = reduceLoopEvent({ ...initialLoopState(), item }, { type: 'check', item: { question_hash: 'qh9', format: 'free', difficulty: 1 } });
+    expect(other.item).toBeNull(); // the server moved on from qh1: never keep the stale pose
+  });
+
+  it('check null clears the item (graded)', () => {
+    expect(reduceLoopEvent({ ...initialLoopState(), item }, { type: 'check', item: null }).item).toBeNull();
+  });
+
+  it('an unmeasured learner_state (#866 K52) moves the focus but records no skill', () => {
+    const s = reduceLoopEvent(initialLoopState(), { type: 'learner_state', state: { node_id: 'n1', p_known: 0.35, band: 'develop', measured: false } });
+    expect(s.focusNodeId).toBe('n1');
+    expect(s.learnerState).toEqual({});
+  });
+
+  it('W3.2: a resume seeds the practiced concepts, with no skill and no focus', () => {
+    const s = reduceLoopEvent(initialLoopState(), { type: 'practiced', nodeIds: ['n1', 'n2'] });
+    expect(s).toEqual({ ...initialLoopState(), practiced: ['n1', 'n2'] });
+  });
+
+  it('W3.2: practiced is the resumed concepts and the graded ones; a plain turn or an unmeasured state adds none', () => {
+    let s = reduceLoopEvent(initialLoopState(), { type: 'practiced', nodeIds: ['n1'] });
+    s = reduceLoopEvent(s, { type: 'learner_state', state: { node_id: 'n2', p_known: 0.4, band: 'develop' }, graded: true });
+    s = reduceLoopEvent(s, { type: 'learner_state', state: { node_id: 'n2', p_known: 0.5, band: 'develop' }, graded: true }); // once
+    s = reduceLoopEvent(s, { type: 'learner_state', state: { node_id: 'n3', p_known: 0.35, band: 'develop', measured: false }, graded: true });
+    s = reduceLoopEvent(s, { type: 'learner_state', state: { node_id: 'n4', p_known: 0.7, band: 'develop' } }); // an earlier session's skill
+    expect(s.practiced).toEqual(['n1', 'n2']);
+    expect(Object.keys(s.learnerState).sort()).toEqual(['n2', 'n4']); // the chip still shows n4's skill
+    expect(reduceLoopEvent(s, { type: 'reset' }).practiced).toEqual([]); // another session's map starts bare
+  });
+
+  it("W3.2: a turn is graded on a graded submission or one delivering its owed feedback, as the server's steps are", () => {
+    const turn = (over: Partial<LoopTurnResult>): LoopTurnResult => ({ reply: 'ok', graph_update: { new_nodes: [], new_edges: [] }, mastery_changes: [], ...over });
+    expect(isGradedTurn(turn({ graded: true, phase: 'feedback' }))).toBe(true);
+    expect(isGradedTurn(turn({ phase: 'feedback' }))).toBe(true);
+    for (const phase of ['teach', 'check', 'hint', undefined]) expect(isGradedTurn(turn({ phase }))).toBe(false);
+    expect(isGradedTurn(turn({ graded: false, unavailable: true, phase: 'check' }))).toBe(false);
+  });
+
+  it('learner_state is keyed by node_id, overwrites, and focuses the node', () => {
+    let s = reduceLoopEvent(initialLoopState(), { type: 'learner_state', state: { node_id: 'n1', p_known: 0.4, band: 'develop' } });
+    s = reduceLoopEvent(s, { type: 'learner_state', state: { node_id: 'n1', p_known: 0.6, band: 'develop' } });
+    expect(s.learnerState.n1.p_known).toBe(0.6);
+    expect(s.focusNodeId).toBe('n1');
+  });
+
+  it('a hard budget event pauses; a soft one changes nothing (spec §3.5)', () => {
+    const hard = reduceLoopEvent(initialLoopState(), { type: 'budget', level: 'hard', resetAt: '2026-09-27T00:00:00Z' });
+    expect(hard.budgetPause).toEqual({ resetAt: '2026-09-27T00:00:00Z', sessionCapped: false });
+    expect(reduceLoopEvent(initialLoopState(), { type: 'budget', level: 'soft', resetAt: null }).budgetPause).toBeNull();
+    expect(hard.phase).toBe('probe');
+  });
+
+  it('A39: session_capped rides the pause', () => {
+    const s = reduceLoopEvent(initialLoopState(), { type: 'budget', level: 'hard', resetAt: null, sessionCapped: true });
+    expect(s.budgetPause).toEqual({ resetAt: null, sessionCapped: true });
+    // #866 K35: whether the hard level holds novice checks rides along
+    const held = reduceLoopEvent(initialLoopState(), { type: 'budget', level: 'hard', resetAt: null, pauseNovice: true });
+    expect(held.budgetPause).toEqual({ resetAt: null, sessionCapped: false, pauseNovice: true });
+  });
+
+  it('budget_clear lifts the pause (the next successful tutor turn, or its reset time)', () => {
+    const hard = reduceLoopEvent(initialLoopState(), { type: 'budget', level: 'hard', resetAt: null });
+    expect(reduceLoopEvent(hard, { type: 'budget_clear' }).budgetPause).toBeNull();
+  });
+
+  it('reset returns to the initial state but keeps a pause (it is per student, not per session)', () => {
+    const s = reduceLoopEvent(
+      { ...initialLoopState(), phase: 'teach', item, budgetPause: { resetAt: null, sessionCapped: false } },
+      { type: 'reset' },
+    );
+    expect(s.phase).toBe('probe');
+    expect(s.item).toBeNull();
+    expect(s.budgetPause).toEqual({ resetAt: null, sessionCapped: false });
+  });
+
+  it('reset drops a session-capped pause (a new session starts fresh, A39)', () => {
+    const s = reduceLoopEvent(
+      { ...initialLoopState(), budgetPause: { resetAt: null, sessionCapped: true } },
+      { type: 'reset' },
+    );
+    expect(s.budgetPause).toBeNull();
+  });
+
+  it('never advances the phase on its own', () => {
+    const s = reduceLoopEvent(initialLoopState(), { type: 'learner_state', state: { node_id: 'n1', p_known: 0.9, band: 'profic' } });
+    expect(s.phase).toBe('probe');
+  });
+});

@@ -1,0 +1,10 @@
+{
+  "judge_model": "claude-opus-5-5",
+  "judge_prompt_hash": "71530d86d71daaecad405563f53fdab3f424bf8124ff0b35fb8f6237f943b326",
+  "output": {
+    "evidence": "Take f(x) = x^3 and think about its slope at x = 1 ... compare f(1) = 1 with f(1.01) = 1.030301, so the slope is roughly (1.030301 - 1) / 0.01",
+    "reveals_final_answer": false,
+    "rung": 4
+  },
+  "served_sha256": "c3667c8832a549ebb1b95a6ecd00abcabca25b70d3b43467a1f77921650bdb27"
+}

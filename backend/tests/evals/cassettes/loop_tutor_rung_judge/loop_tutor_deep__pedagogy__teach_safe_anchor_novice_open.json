@@ -1,0 +1,10 @@
+{
+  "judge_model": "claude-opus-5-5",
+  "judge_prompt_hash": "e37dbcf781aba6dd4ddefcadeb0c668d166f4aed5d01139c8e9e5208607e87a7",
+  "output": {
+    "evidence": "Here is a worked example on a different problem: the sum of 1 to n, called sum(n). Two facts define it: sum(1) = 1 (the base case",
+    "reveals_final_answer": false,
+    "rung": 4
+  },
+  "served_sha256": "d83d8f352fb529a126563c5a090a1d80c4d2bba1814967d398649e777d18c424"
+}

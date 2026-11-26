@@ -1,0 +1,93 @@
+@layer components {
+/* The session's notices region (LoopNotices): the styles its inline style
+   objects held (#866). */
+
+/* Always in the DOM (an empty polite region takes no room); with notices it is
+   a padded column. The padding tweens, so the region opens and closes with
+   the notice collapsing in or out of it. */
+.region {
+  transition: padding var(--dur) var(--ease-in-out);
+}
+
+.region[data-has-notices="true"] {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  padding: var(--sp-6) var(--sp-16) 0;
+}
+
+.note {
+  padding: var(--sp-5) var(--sp-7);
+  border-radius: var(--r-md);
+  background: var(--info-soft);
+  font-size: var(--fs-md);
+}
+
+.practice {
+  font-size: var(--fs-base);
+  line-height: 1.5;
+}
+
+.para {
+  margin: 0 0 var(--sp-3);
+}
+
+.paraLast {
+  margin: 0 0 var(--sp-4);
+}
+
+.anywhere {
+  overflow-wrap: anywhere;
+}
+
+.studyLink {
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.actions {
+  display: flex;
+  gap: var(--sp-5);
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+/* The practice handoffs: a 44px touch target each, sharing the row and
+   wrapping under one another below 130px. */
+.handoff {
+  --touch-target: 44px;
+  --handoff-basis: 130px;
+  min-height: var(--touch-target);
+  flex: 1 1 var(--handoff-basis);
+  white-space: normal;
+}
+
+.centered {
+  justify-content: center;
+  text-align: center;
+}
+
+.topicOffer {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-5);
+  flex-wrap: wrap;
+  font-size: var(--fs-md);
+}
+
+.topicCopy {
+  color: var(--text-dim);
+}
+
+/* A press sinks the button a touch (the global .btn transition carries it). */
+.press {
+  --press-scale: 0.98;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .press:active:not(:disabled) {
+    transform: scale(var(--press-scale));
+  }
+}
+
+}

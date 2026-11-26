@@ -1,0 +1,87 @@
+@layer components {
+/* "Due today" (DueQueue): the styles its inline style objects held (#866). */
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-6);
+  min-width: 0;
+  padding: var(--sp-8);
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+}
+
+/* 17px, between --fs-lg and --fs-xl: rounded up a px to --fs-xl, the size
+   the app's other card titles use. */
+.title {
+  margin: 0;
+  font-size: var(--fs-xl);
+}
+
+.spacer {
+  flex: 1;
+}
+
+.note {
+  font-size: var(--fs-md);
+  color: var(--text-muted);
+}
+
+.status {
+  font-size: var(--fs-base);
+  color: var(--text-muted);
+}
+
+.item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-5);
+}
+
+.result {
+  font-size: var(--fs-base);
+  white-space: pre-wrap;
+}
+
+.start {
+  align-self: flex-start;
+}
+
+/* A question and a card's faces were 15px, between --fs-base and --fs-lg:
+   rounded up a px to --fs-lg. */
+.face {
+  font-size: var(--fs-lg);
+  white-space: pre-wrap;
+}
+
+.back {
+  color: var(--text-dim);
+}
+
+.tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-3);
+}
+
+.ratings {
+  display: flex;
+  gap: var(--sp-4);
+}
+
+/* A press sinks the button a touch (the global .btn transition carries it). */
+.press {
+  --press-scale: 0.98;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .press:active:not(:disabled) {
+    transform: scale(var(--press-scale));
+  }
+}
+
+}

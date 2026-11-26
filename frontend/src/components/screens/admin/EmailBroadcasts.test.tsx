@@ -83,9 +83,26 @@ const fill = (subject: string, body: string) => {
 const previewed = (testId = "email-send-test") =>
   waitFor(() => expect((screen.getByTestId(testId) as HTMLButtonElement).disabled).toBe(false), PREVIEW_WAIT);
 
+/** Fake intervals only (the waits keep their real clock), with the history poll's counted. */
+function fakePollClock() {
+  vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+  const intervals = vi.spyOn(window, "setInterval");
+  return {
+    /** The poll's interval starts in an effect, after the row it follows has
+     *  painted: the clock must not move before it exists. */
+    started: async () => {
+      while (!intervals.mock.calls.some(([, ms]) => ms === POLL_MS)) {
+        await act(async () => { await new Promise((r) => setTimeout(r, 1)); });
+      }
+    },
+    tick: (times = 1) => act(async () => { vi.advanceTimersByTime(POLL_MS * times); }),
+  };
+}
+
 describe("EmailBroadcastsTab", () => {
   afterEach(() => {
     cleanup();
+    vi.restoreAllMocks();
     vi.useRealTimers();
   });
 
@@ -287,7 +304,7 @@ describe("EmailBroadcastsTab", () => {
   });
 
   it("polls history every 5s while a broadcast is sending, then stops", async () => {
-    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    const poll = fakePollClock();
     api.adminListBroadcasts
       .mockResolvedValueOnce({ broadcasts: [broadcast({ status: "sending", sent_count: 1 })] })
       .mockResolvedValueOnce({ broadcasts: [broadcast({ status: "sending", sent_count: 2 })] })
@@ -297,22 +314,23 @@ describe("EmailBroadcastsTab", () => {
     expect((await screen.findByTestId("email-history-status-b1")).textContent).toBe("sending");
     expect(api.adminListBroadcasts).toHaveBeenCalledTimes(1);
 
-    await act(async () => { vi.advanceTimersByTime(POLL_MS); });
+    await poll.started();
+    await poll.tick();
     expect(api.adminListBroadcasts).toHaveBeenCalledTimes(2);
     expect(screen.getByTestId("email-history-status-b1").textContent).toBe("sending");
 
-    await act(async () => { vi.advanceTimersByTime(POLL_MS); });
+    await poll.tick();
     expect(api.adminListBroadcasts).toHaveBeenCalledTimes(3);
     await waitFor(() => expect(screen.getByTestId("email-history-status-b1").textContent).toBe("sent"));
 
-    await act(async () => { vi.advanceTimersByTime(POLL_MS * 4); });
+    await poll.tick(4);
     expect(api.adminListBroadcasts).toHaveBeenCalledTimes(3);
   });
 
   it("drops a poll that was in flight when a new broadcast was sent", async () => {
     // #763: the old list landing after the send used to erase the new row and,
     // with nothing left `sending`, stop the polling.
-    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    const poll = fakePollClock();
     const inFlight = deferred<{ broadcasts: unknown[] }>();
     api.adminListBroadcasts
       .mockResolvedValueOnce({ broadcasts: [broadcast({ id: "b1", status: "sending" })] })
@@ -322,7 +340,8 @@ describe("EmailBroadcastsTab", () => {
 
     render(<EmailBroadcastsTab />);
     await screen.findByTestId("email-history-row-b1");
-    await act(async () => { vi.advanceTimersByTime(POLL_MS); }); // poll #2 now in flight
+    await poll.started();
+    await poll.tick(); // poll #2 now in flight
 
     fireEvent.click(screen.getByTestId("email-audience-waitlist_all"));
     fill("News", "Hello");
@@ -338,7 +357,7 @@ describe("EmailBroadcastsTab", () => {
     expect(screen.getByTestId("email-history-status-b9").textContent).toBe("sending");
 
     // ...and polling carries on for the new row.
-    await act(async () => { vi.advanceTimersByTime(POLL_MS); });
+    await poll.tick();
     expect(api.adminListBroadcasts).toHaveBeenCalledTimes(3);
   });
 
@@ -355,7 +374,7 @@ describe("EmailBroadcastsTab", () => {
   });
 
   it("marks a stalled broadcast and resumes it", async () => {
-    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    const poll = fakePollClock();
     api.adminListBroadcasts.mockResolvedValue({ broadcasts: [
       broadcast({ id: "b1", status: "sending", stale: true, resumable: true }),
     ] });
@@ -365,7 +384,7 @@ describe("EmailBroadcastsTab", () => {
     render(<EmailBroadcastsTab />);
     expect((await screen.findByTestId("email-history-status-b1")).textContent).toBe("stalled");
     // A stalled run isn't going anywhere: no polling until it's resumed.
-    await act(async () => { vi.advanceTimersByTime(POLL_MS * 2); });
+    await poll.tick(2);
     expect(api.adminListBroadcasts).toHaveBeenCalledTimes(1);
 
     fireEvent.click(screen.getByTestId("email-history-resume-b1"));
@@ -373,7 +392,8 @@ describe("EmailBroadcastsTab", () => {
     await waitFor(() => expect(screen.getByTestId("email-history-status-b1").textContent).toBe("sending"));
     expect(screen.queryByTestId("email-history-resume-b1")).toBeNull();
     expect(toastSpies.success).toHaveBeenCalled();
-    await act(async () => { vi.advanceTimersByTime(POLL_MS); });
+    await poll.started();
+    await poll.tick();
     expect(api.adminListBroadcasts).toHaveBeenCalledTimes(2);
   });
 

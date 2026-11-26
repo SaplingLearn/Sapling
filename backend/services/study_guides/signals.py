@@ -10,8 +10,8 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
-from config import get_mastery_tier
 from db.connection import pg_quote_value, table
+from learning.bkt import stored_score, tier_for_stored
 from models.study_guide import Tier
 from services.concept_edges import normalize as concept_key
 from services.encryption import bind, decrypt_json_column
@@ -51,7 +51,7 @@ async def _anodes(user_id: str, course_id: str) -> list[dict]:
 async def amastery(user_id: str, course_id: str) -> dict[str, float]:
     """Mastery score (0 to 1) per concept name for the course."""
     nodes = await _anodes(user_id, course_id)
-    scores = {n["concept_name"]: float(n.get("mastery_score") or 0.0) for n in nodes}
+    scores = {n["concept_name"]: stored_score(n.get("mastery_score")) for n in nodes}
     await report_empty_result_async(
         "study_guide_mastery",
         user_id=user_id,
@@ -65,9 +65,20 @@ async def amastery(user_id: str, course_id: str) -> dict[str, float]:
     return scores
 
 
+async def aconcept_node(user_id: str, course_id: str, concept: str) -> dict | None:
+    """The student's node for ``concept`` in the course, matched the way the
+    tree spells it (``concept_key``): its ``id``, ``concept_name`` and
+    ``mastery_score``. None when the tree does not have it."""
+    wanted = concept_key(concept)
+    return next(
+        (n for n in await _anodes(user_id, course_id) if concept_key(n["concept_name"]) == wanted),
+        None,
+    )
+
+
 def tiers(scores: dict[str, float]) -> dict[str, Tier]:
     """Mastery tier per concept name."""
-    return {name: get_mastery_tier(score) for name, score in scores.items()}
+    return {name: tier_for_stored(score) for name, score in scores.items()}
 
 
 def _digest_mistakes(row: dict) -> list[str]:

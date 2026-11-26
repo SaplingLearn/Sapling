@@ -12,9 +12,19 @@
  *
  * `--quiz-accent` is the one thing bound at runtime: the screen root sets it
  * from the active concept's course colour with an inline custom property (the
- * single inline-style exemption in R-1). Everything downstream reads
- * `var(--quiz-accent, var(--accent))`, so an unset accent degrades to the app's
- * own, never to a hardcoded colour.
+ * single inline-style exemption in R-1). W7.D1 split: that token is **course
+ * identity only** (concept pill / blob tint, results course rule). Session
+ * chrome CTAs, Check (`.btn--primary` → `--brand-forest`), and progress fills
+ * use brand forest / `--accent` — never the course tint. Fallback
+ * `var(--quiz-accent, var(--accent))` stays valid for primitives outside a
+ * bound quiz root.
+ *
+ * W7.1 shell (Quiz Shell.dc.html + w7-design-decisions.md):
+ * - Chrome / progress / Check = forest; `--quiz-accent` = course identity.
+ * - No XP / streak in the session top (only wired on results today).
+ * - No skill / exam-distance / Returning chips (need data + formula first).
+ * - Question body is open (no card wrapper on the stem).
+ * - Hint / Skip are layout slots only; Check ships as the primary.
  */
 
 .quiz-root {
@@ -22,9 +32,9 @@
   --quiz-col-question: 880px;
   --quiz-col-results: 640px;
 
-  --quiz-pad-home: 52px var(--pad-xl) 32px;
-  --quiz-pad-question: 56px var(--pad-xl) 36px;
-  --quiz-pad-results: 28px var(--pad-xl) 32px;
+  --quiz-pad-home: 52px var(--pad-xl) var(--sp-16);
+  --quiz-pad-question: var(--sp-28) var(--pad-xl) 36px;
+  --quiz-pad-results: var(--sp-14) var(--pad-xl) var(--sp-16);
 
   /* The rail the question screen's progress dots sit in, mirrored on the right
      so the content column stays optically centred. */
@@ -69,8 +79,29 @@
    `.quiz-col` itself and the padding lives on `.quiz-body--*`, where it is on a
    different element for the same reason. */
 .quiz-body--home { padding: 0; display: block; }
+/* Error phase only — live attempts use `.quiz-body--session` (no body pad). */
 .quiz-body--question { padding: var(--quiz-pad-question); }
 .quiz-body--results { padding: var(--quiz-pad-results); }
+
+/* Focus session: the question screen owns SessionTop edge-to-edge, so the
+   body stops padding and stops centering — the column lives inside
+   QuizQuestion. Flex column so `.quiz-question { min-height: 100% }` fills
+   the scrollport and the action bar can pin to the bottom. */
+.quiz-body--session {
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+}
+
+/* Hide the app rail / top nav while an attempt is live. Same `:has()` fence
+   the study-guide print stylesheet uses; home and results never set the
+   attribute, so they keep the ordinary shell. */
+html:has([data-quiz-session]) [data-app-sidenav],
+html:has([data-quiz-session]) [data-app-sidenav-slot],
+html:has([data-quiz-session]) nav[aria-label="Primary"] {
+  display: none !important;
+}
 
 /* The page padding home would have had. Must be the PARENT of
    `.quiz-col--home`, never a sibling class on it — see above. */
@@ -141,7 +172,7 @@
 
 /* Phones: the question page keeps a 16px gutter instead of the desktop air. */
 @media (max-width: 640px) {
-  .quiz-root { --quiz-pad-question: 24px 16px 20px; }
+  .quiz-root { --quiz-pad-question: var(--sp-12) var(--sp-8) var(--sp-10); }
 }
 
 }

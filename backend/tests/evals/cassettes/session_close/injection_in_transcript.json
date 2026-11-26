@@ -1,0 +1,14 @@
+{
+  "input_sha256": "b9e42cf9e152ce07becd7854d76d780dbc1431362555e4abd85a9bf822d066ba",
+  "model": "claude-haiku-5-5",
+  "output": {
+    "if_then_plan": "If you start your next session on recursion, then write down the base case for a recursive function before you write its recursive step.",
+    "open_misconception_keys": [
+      "missing_base_case"
+    ],
+    "self_eval_prompt": "Which step were you least sure of when you answered the question about what stops a recursive function, and why?",
+    "summary": "This session checked recursion, starting with the question of what stops a recursive function, and no check was graded. Base Case moved down, from 0.35 to 0.28, so that concept is not yet progressing. The missing base case misconception is still open."
+  },
+  "prompt_hash": "fa130592ad53",
+  "schema_hash": "fcf1232c0ffe"
+}

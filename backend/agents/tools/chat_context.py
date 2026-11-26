@@ -44,7 +44,7 @@ from pydantic import BaseModel, Field
 from pydantic_ai import RunContext
 
 from agents.deps import SaplingDeps
-from config import is_mastered, is_weak
+from learning.bkt import in_mastered_tier, is_weak, stored_score
 from db.connection import table
 from services.academics import course_offering_ids
 from services.encryption import bind, decrypt_if_present, decrypt_json
@@ -497,7 +497,7 @@ class CourseProgress(BaseModel):
     clamped to [0, 1] and is 0.0 when there are no concepts."""
 
     total_concepts: int = Field(ge=0)
-    # Tiers per config.get_mastery_tier (#557): "mastered", "struggling" +
+    # Tiers per learning.bkt.tier_for (#557, PKG-14b): "mastered", "struggling" +
     # "unexplored" (together: weak), and "learning" (in progress).
     mastered_count: int = Field(ge=0)
     weak_count: int = Field(ge=0)
@@ -556,27 +556,20 @@ async def read_user_progress(
     mastered = 0
     weak = 0
     in_progress = 0
-    total = 0
     mastery_sum = 0.0
     for r in rows:
-        try:
-            m = float(r.get("mastery_score") or 0.0)
-        except (TypeError, ValueError):
-            continue
-        # Defensive clamp — old rows occasionally drift outside [0, 1].
-        m = max(0.0, min(1.0, m))
-        total += 1
+        # The one stored-score rule (learning.bkt.stored_score): drifted rows
+        # clamp into [0, 1] and NaN reads as 0.0, as on every reader.
+        m = stored_score(r.get("mastery_score"))
         mastery_sum += m
-        if is_mastered(m):
+        if in_mastered_tier(m):
             mastered += 1
         elif is_weak(m):
             weak += 1
         else:
             in_progress += 1
 
-    if total == 0:
-        return _empty_progress()
-
+    total = len(rows)  # every row counts: none is skipped above
     return CourseProgress(
         total_concepts=total,
         mastered_count=mastered,
@@ -593,6 +586,20 @@ async def read_user_progress_tool(
     Fetches through the retrieval seam (ADR 0023)."""
     from agents.tools.retrieval import resolve_retrieval
 
-    return await resolve_retrieval(ctx.deps).progress(
+    progress = await resolve_retrieval(ctx.deps).progress(
         ctx.deps.user_id, ctx.deps.course_id
     )
+    # F5 (CLAUDE.md: every agent read tool that can return zero rows reports
+    # it): a student with graph nodes in this course whose progress read finds
+    # none is a discrepancy (a course-id keyspace mismatch), not a new student.
+    # Scoped to the course the read was scoped to, like read_concepts_for_user.
+    await report_empty_result_async(
+        "read_user_progress",
+        user_id=ctx.deps.user_id,
+        count=progress.total_concepts,
+        expect=Expect.HAS_GRAPH,
+        feature=getattr(ctx.deps, "feature", "unknown"),
+        scope={"course_id": f"eq.{ctx.deps.course_id}"} if ctx.deps.course_id else None,
+        payload={"course_id": ctx.deps.course_id},
+    )
+    return progress

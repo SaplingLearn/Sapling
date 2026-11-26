@@ -1,0 +1,311 @@
+{
+  "output": {
+    "items": [
+      {
+        "answer_kind": "free",
+        "canonical_answer": "",
+        "chunk_ids": [
+          "eval-doc-2:c3"
+        ],
+        "concept": "Big-O Notation",
+        "difficulty": 1,
+        "final_answer": "An asymptotic upper bound on running time",
+        "format": "free",
+        "options": [],
+        "prompt": "What does Big-O notation describe about an algorithm?",
+        "reference_answer": "Big-O notation gives an asymptotic upper bound on an algorithm's running time. Final answer: An asymptotic upper bound on running time.",
+        "rubric": [
+          "States that Big-O is an upper bound",
+          "Relates it to running time or growth as input grows"
+        ],
+        "stepwise": false,
+        "tolerance": "",
+        "wrong_keys": [
+          "exact_time"
+        ],
+        "wrong_texts": [
+          "Thinks Big-O gives the exact running time in seconds."
+        ]
+      },
+      {
+        "answer_kind": "free",
+        "canonical_answer": "",
+        "chunk_ids": [
+          "eval-doc-2:c3"
+        ],
+        "concept": "Big-O Notation",
+        "difficulty": 2,
+        "final_answer": "O(2^n)",
+        "format": "free",
+        "options": [],
+        "prompt": "A naive recursive Fibonacci function is written in Python, with each call making two recursive calls on smaller inputs. What is its Big-O running time for input n?",
+        "reference_answer": "The passage states that naive Fibonacci recursion has an asymptotic upper bound of O(2^n), so its running time grows exponentially. Final answer: O(2^n).",
+        "rubric": [
+          "Gives O(2^n)",
+          "Identifies the growth as exponential in n"
+        ],
+        "stepwise": false,
+        "tolerance": "",
+        "wrong_keys": [
+          "linear_claim"
+        ],
+        "wrong_texts": [
+          "Claims the running time is O(n) because there are n values."
+        ]
+      },
+      {
+        "answer_kind": "free",
+        "canonical_answer": "",
+        "chunk_ids": [
+          "eval-doc-2:c3"
+        ],
+        "concept": "Big-O Notation",
+        "difficulty": 3,
+        "final_answer": "The claim is wrong because O(2^n) growth makes n = 50 very slow.",
+        "format": "free",
+        "options": [],
+        "prompt": "A colleague says naive recursive Fibonacci is fine for n = 50 because it is just a short function. Using Big-O, evaluate this claim.",
+        "reference_answer": "Naive Fibonacci is O(2^n), an upper bound on running time that grows exponentially, so the work for n = 50 is enormous. A short function does not mean a small running time. Final answer: The claim is wrong because O(2^n) growth makes n = 50 very slow.",
+        "rubric": [
+          "Cites O(2^n) for naive Fibonacci",
+          "Concludes the running time is impractically large for n = 50"
+        ],
+        "stepwise": false,
+        "tolerance": "",
+        "wrong_keys": [
+          "code_length_equals_speed"
+        ],
+        "wrong_texts": [
+          "Believes short code implies fast running time."
+        ]
+      },
+      {
+        "answer_kind": "free",
+        "canonical_answer": "",
+        "chunk_ids": [
+          "eval-doc-2:c3"
+        ],
+        "concept": "Big-O Notation",
+        "difficulty": 1,
+        "final_answer": "Big-O is an asymptotic upper bound on running time.",
+        "format": "teachback",
+        "options": [],
+        "prompt": "Explain to a classmate who missed the lecture what Big-O notation is.",
+        "reference_answer": "Big-O notation is an asymptotic upper bound on running time. It describes how running time grows as the input gets large. Final answer: Big-O is an asymptotic upper bound on running time.",
+        "rubric": [
+          "Says Big-O is an upper bound",
+          "Mentions running time and growth with input size"
+        ],
+        "stepwise": false,
+        "tolerance": "",
+        "wrong_keys": [
+          "exact_time"
+        ],
+        "wrong_texts": [
+          "Thinks Big-O gives exact running time."
+        ]
+      },
+      {
+        "answer_kind": "free",
+        "canonical_answer": "",
+        "chunk_ids": [
+          "eval-doc-2:c3"
+        ],
+        "concept": "Big-O Notation",
+        "difficulty": 2,
+        "final_answer": "Naive Fibonacci is O(2^n), exponential.",
+        "format": "teachback",
+        "options": [],
+        "prompt": "Explain to a classmate who missed the lecture how Big-O describes the running time of naive recursive Fibonacci.",
+        "reference_answer": "Naive Fibonacci recursion is O(2^n). Big-O is an upper bound on running time, so the time grows exponentially with n. Final answer: Naive Fibonacci is O(2^n), exponential.",
+        "rubric": [
+          "States O(2^n)",
+          "Explains it as an upper bound on running time growth"
+        ],
+        "stepwise": false,
+        "tolerance": "",
+        "wrong_keys": [
+          "linear_claim"
+        ],
+        "wrong_texts": [
+          "Says naive Fibonacci is linear in n."
+        ]
+      },
+      {
+        "answer_kind": "free",
+        "canonical_answer": "",
+        "chunk_ids": [
+          "eval-doc-2:c2",
+          "eval-doc-2:c3"
+        ],
+        "concept": "Big-O Notation",
+        "difficulty": 3,
+        "final_answer": "Termination does not imply speed; naive Fibonacci is correct but O(2^n).",
+        "format": "teachback",
+        "options": [],
+        "prompt": "Explain to a classmate who missed the lecture why knowing a recursive function is correct, with a base case, does not tell you it is fast, using Big-O.",
+        "reference_answer": "A base case ensures the recursion terminates, but Big-O describes the running time separately. Naive Fibonacci has a base case and still has O(2^n) running time. Final answer: Termination does not imply speed; naive Fibonacci is correct but O(2^n).",
+        "rubric": [
+          "Separates termination (base case) from running time",
+          "Uses naive Fibonacci O(2^n) as the example"
+        ],
+        "stepwise": false,
+        "tolerance": "",
+        "wrong_keys": [
+          "base_case_means_fast"
+        ],
+        "wrong_texts": [
+          "Believes a base case guarantees efficient running time."
+        ]
+      },
+      {
+        "answer_kind": "free",
+        "canonical_answer": "",
+        "chunk_ids": [
+          "eval-doc-2:c3"
+        ],
+        "concept": "Big-O Notation",
+        "difficulty": 1,
+        "final_answer": "Asymptotic upper bound on running time",
+        "format": "mc_reason",
+        "options": [
+          {
+            "is_correct": true,
+            "misconception_key": null,
+            "misconception_text": null,
+            "text": "Asymptotic upper bound on running time"
+          },
+          {
+            "is_correct": false,
+            "misconception_key": "exact_time",
+            "misconception_text": "Thinks Big-O measures exact clock time.",
+            "text": "Exact running time in seconds"
+          },
+          {
+            "is_correct": false,
+            "misconception_key": "memory_lower_bound",
+            "misconception_text": "Confuses Big-O with a memory lower bound.",
+            "text": "Lower bound on memory usage"
+          },
+          {
+            "is_correct": false,
+            "misconception_key": "code_size",
+            "misconception_text": "Confuses running time with code length.",
+            "text": "Number of lines in the code"
+          }
+        ],
+        "prompt": "Which option best describes what Big-O notation gives for an algorithm? Pick one and give your reason.",
+        "reference_answer": "Big-O bounds how running time grows for large inputs from above. Final answer: Asymptotic upper bound on running time.",
+        "rubric": [
+          "Says Big-O is an upper bound",
+          "Ties it to running time growth"
+        ],
+        "stepwise": false,
+        "tolerance": "",
+        "wrong_keys": [],
+        "wrong_texts": []
+      },
+      {
+        "answer_kind": "free",
+        "canonical_answer": "",
+        "chunk_ids": [
+          "eval-doc-2:c3"
+        ],
+        "concept": "Big-O Notation",
+        "difficulty": 2,
+        "final_answer": "O(2^n)",
+        "format": "mc_reason",
+        "options": [
+          {
+            "is_correct": true,
+            "misconception_key": null,
+            "misconception_text": null,
+            "text": "O(2^n)"
+          },
+          {
+            "is_correct": false,
+            "misconception_key": "linear_claim",
+            "misconception_text": "Assumes one unit of work per value of n.",
+            "text": "O(n)"
+          },
+          {
+            "is_correct": false,
+            "misconception_key": "constant_claim",
+            "misconception_text": "Thinks recursion costs constant time.",
+            "text": "O(1)"
+          },
+          {
+            "is_correct": false,
+            "misconception_key": "log_claim",
+            "misconception_text": "Assumes problem size halves each call.",
+            "text": "O(log n)"
+          }
+        ],
+        "prompt": "Which Big-O bound applies to naive recursive Fibonacci? Pick one and give your reason.",
+        "reference_answer": "The course states naive Fibonacci recursion has an upper bound of exponential time, because each call spawns further calls. Final answer: O(2^n).",
+        "rubric": [
+          "Identifies exponential growth",
+          "Links it to naive Fibonacci recursion"
+        ],
+        "stepwise": false,
+        "tolerance": "",
+        "wrong_keys": [],
+        "wrong_texts": []
+      },
+      {
+        "answer_kind": "free",
+        "canonical_answer": "",
+        "chunk_ids": [
+          "eval-doc-2:c2",
+          "eval-doc-2:c3"
+        ],
+        "concept": "Big-O Notation",
+        "difficulty": 3,
+        "final_answer": "Wrong; naive Fibonacci has a base case yet is O(2^n)",
+        "format": "mc_reason",
+        "options": [
+          {
+            "is_correct": true,
+            "misconception_key": null,
+            "misconception_text": null,
+            "text": "Wrong; naive Fibonacci has a base case yet is O(2^n)"
+          },
+          {
+            "is_correct": false,
+            "misconception_key": "base_case_means_fast",
+            "misconception_text": "Thinks a base case forces linear time.",
+            "text": "Right; a base case bounds time by O(n)"
+          },
+          {
+            "is_correct": false,
+            "misconception_key": "recursion_faster",
+            "misconception_text": "Believes recursion is inherently faster.",
+            "text": "Right; recursion is always faster than loops"
+          },
+          {
+            "is_correct": false,
+            "misconception_key": "base_case_overflow",
+            "misconception_text": "Reverses the role of the base case, which prevents overflow.",
+            "text": "Wrong; a base case makes recursion overflow"
+          }
+        ],
+        "prompt": "A teammate says a recursive function with a correct base case must run quickly. Which response is right, judged by Big-O? Pick one and give your reason.",
+        "reference_answer": "The base case only terminates the recursion, preventing stack overflow; it says nothing about running time. Naive Fibonacci has one and is still exponential. Final answer: Wrong; naive Fibonacci has a base case yet is O(2^n).",
+        "rubric": [
+          "Says the base case ensures termination, not speed",
+          "Cites naive Fibonacci O(2^n) as counterexample"
+        ],
+        "stepwise": false,
+        "tolerance": "",
+        "wrong_keys": [],
+        "wrong_texts": []
+      }
+    ]
+  },
+  "recorded_under": {
+    "input_sha256": "d41ea06a748881a0e0f92834a1579d2436e06fd66ce878a5ebf6582fc2fe75ce",
+    "model": "claude-sonnet-5-5",
+    "prompt_hash": "4710781c2f16",
+    "schema_hash": "d4d6bdaf562d"
+  }
+}

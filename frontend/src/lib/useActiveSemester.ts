@@ -5,7 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 export const ACTIVE_SEMESTER_STORAGE_KEY = "sapling_active_semester";
 const CHANGE_EVENT = "sapling-active-semester-change";
 
-type TermScoped = { term?: string | null; terms?: string[] | null };
+export type TermScoped = { term?: string | null; terms?: string[] | null };
 
 /** Every term label a course/concept belongs to. Prefers the `terms` array (a
  *  course collapsed across enrollments carries all its terms, #449); falls back

@@ -1,0 +1,28 @@
+{
+  "context_checks": [],
+  "context_keys": [],
+  "run_keys": [
+    {
+      "input_sha256": "0fd9389ff05f1fca8cbb9fe96b9948a0430e38e62dab84dccf443e8cf41bdc5a",
+      "model": "claude-haiku-5-5",
+      "prompt_hash": "d215edc372d3",
+      "schema_hash": "e42cc97704ca"
+    }
+  ],
+  "runs": [
+    {
+      "addresses_grader": false,
+      "confidence": 0.9,
+      "contradicts_reference": true,
+      "feedback_hint": "Think about what would happen during the recursive calls if the check for the end condition were missing entirely, rather than how fast the function runs. Consider what keeps the chain of calls from continuing forever.",
+      "item_results": [
+        "27895:no",
+        "93888:no"
+      ],
+      "matched_wrong_key": "w_speed",
+      "support": []
+    }
+  ],
+  "span_checks": [],
+  "span_keys": []
+}

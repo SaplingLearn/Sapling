@@ -1,0 +1,109 @@
+{
+  "output": {
+    "items": [
+      {
+        "answer_kind": "free",
+        "canonical_answer": "",
+        "chunk_ids": [
+          "eval-doc-1:c1",
+          "eval-doc-1:c2"
+        ],
+        "concept": "Limits",
+        "difficulty": 2,
+        "final_answer": "The limit of the quotient as h approaches 0",
+        "format": "mc_reason",
+        "options": [
+          {
+            "is_correct": true,
+            "misconception_key": null,
+            "misconception_text": null,
+            "text": "The limit of the quotient as h approaches 0"
+          },
+          {
+            "is_correct": false,
+            "misconception_key": "large_h_gives_slope",
+            "misconception_text": "Believes a large step size gives the tangent slope rather than a secant slope.",
+            "text": "The quotient evaluated at a large value of h"
+          },
+          {
+            "is_correct": false,
+            "misconception_key": "substitute_zero_directly",
+            "misconception_text": "Thinks the limit is found by plugging in h = 0 even though the quotient is then undefined.",
+            "text": "The quotient with h set equal to 0 directly"
+          },
+          {
+            "is_correct": false,
+            "misconception_key": "averages_function_values",
+            "misconception_text": "Confuses averaging function values with a rate of change.",
+            "text": "The average of f at the two endpoints"
+          }
+        ],
+        "prompt": "A student wants the slope of the tangent line to a curve at a point, using the difference quotient (f(x+h) - f(x))/h. Which quantity should the student compute to get that slope exactly? Pick one option and give your reason.",
+        "reference_answer": "The derivative is the slope of the tangent line, defined as a limit of difference quotients. A limit is the value the quotient approaches as the input h approaches 0, so it gives the instantaneous rate of change rather than a secant slope. Final answer: The limit of the quotient as h approaches 0.",
+        "rubric": [
+          "States that the tangent slope (derivative) is defined as a limit of difference quotients",
+          "Explains that the limit is the value the quotient approaches as h approaches 0, not the value at a fixed h"
+        ],
+        "stepwise": false,
+        "tolerance": "",
+        "wrong_keys": [],
+        "wrong_texts": []
+      },
+      {
+        "answer_kind": "free",
+        "canonical_answer": "",
+        "chunk_ids": [
+          "eval-doc-1:c0",
+          "eval-doc-1:c1",
+          "eval-doc-1:c2"
+        ],
+        "concept": "Limits",
+        "difficulty": 3,
+        "final_answer": "They are the foundation of the derivative definition",
+        "format": "mc_reason",
+        "options": [
+          {
+            "is_correct": true,
+            "misconception_key": null,
+            "misconception_text": null,
+            "text": "They are the foundation of the derivative definition"
+          },
+          {
+            "is_correct": false,
+            "misconception_key": "limits_only_chain_rule",
+            "misconception_text": "Thinks limits are used only in the chain rule and not in defining the derivative.",
+            "text": "They are only needed for the chain rule"
+          },
+          {
+            "is_correct": false,
+            "misconception_key": "limits_unrelated_to_rate",
+            "misconception_text": "Thinks limits have no link to instantaneous rate of change.",
+            "text": "They are unrelated to instantaneous rates of change"
+          },
+          {
+            "is_correct": false,
+            "misconception_key": "limit_is_average",
+            "misconception_text": "Confuses taking a limit with computing an average rate of change.",
+            "text": "They replace the derivative with an average slope"
+          }
+        ],
+        "prompt": "A classmate says limits matter only as a side topic in calculus and that the derivative could be defined without them. Which role do limits actually play in the definition of the derivative? Pick one option and give your reason.",
+        "reference_answer": "The derivative is the instantaneous rate of change, the slope of the tangent line, and it is defined as a limit of difference quotients. Without the limit as the input difference approaches 0, only average slopes over intervals would exist. Final answer: They are the foundation of the derivative definition.",
+        "rubric": [
+          "States that the derivative is defined as a limit of difference quotients",
+          "Links the limit to getting an instantaneous rate rather than an average rate"
+        ],
+        "stepwise": false,
+        "tolerance": "",
+        "wrong_keys": [],
+        "wrong_texts": []
+      }
+    ]
+  },
+  "recorded_under": {
+    "input_sha256": "e7cc69b7d0c79f72ecf60ea9b5fb2d32d39c9e3afb3d54986347997d50fb7351",
+    "model": "claude-sonnet-5-5",
+    "prompt_hash": "8c4d6fdcc602",
+    "schema_hash": "d4d6bdaf562d"
+  }
+}

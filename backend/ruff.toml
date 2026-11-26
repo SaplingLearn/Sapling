@@ -31,8 +31,8 @@ line-length = 100
 [lint]
 select = ["E4", "E7", "E9", "F", "C901"]
 
-# C901 (McCabe complexity) is the Phase 4 "no function over complexity 25"
-# target of the architecture-hardening plan (#118). ruff can only baseline per
+# C901 (McCabe complexity): no function over complexity 15 (tightened from the
+# Phase 4 target of 25, #118, when PR #866 brought its own code under 15). ruff can only baseline per
 # FILE, so the C901 entries below exempt whole files; the per-FUNCTION ceilings
 # live in code_size_baseline.json and are enforced by
 # tests/test_code_size_ratchet.py (scripts/code_size_ratchet.py), which also
@@ -44,23 +44,43 @@ select = ["E4", "E7", "E9", "F", "C901"]
 # on any exclude / include / extend-per-file-ignores / ignore setting here that
 # would hide one from plain `ruff check .`.
 [lint.mccabe]
-max-complexity = 25
+max-complexity = 15
 
 # Baseline of pre-existing violations as of 2026-06-12 (generated from
 # `ruff check . --select E4,E7,E9,F`). Do NOT add new entries — fix the
 # violation instead.
 [lint.per-file-ignores]
+"agents/tools/graph_read.py" = ["C901"]
 "db/dedup_nodes.py" = ["E402"]
 "main.py" = ["E402"]
+"promotion/runner.py" = ["C901"]
 "routes/admin.py" = ["F401"]
-"routes/auth.py" = ["F401"]
+"routes/auth.py" = ["F401", "C901"]
 "routes/calendar.py" = ["F401"]
 "routes/documents.py" = ["E402"]
 "routes/flashcards.py" = ["F401"]
 "routes/notes.py" = ["F401"]
 "routes/social.py" = ["F841"]
+"scripts/backfill_concept_edges.py" = ["C901"]
+"scripts/code_size_ratchet.py" = ["C901"]
+"scripts/prune_junk_concepts.py" = ["C901"]
+"services/account_seed/seeder.py" = ["C901"]
+"services/chat_stream.py" = ["C901"]
+"services/concept_edges.py" = ["C901"]
+"services/course_context_service.py" = ["C901"]
+"services/documents/stream.py" = ["C901"]
+"services/email_service.py" = ["C901"]
+"services/extraction_backends/docling_backend.py" = ["C901"]
+"services/feature_flags.py" = ["C901"]
 "services/flashcards/importing.py" = ["F401"]
+"services/gradescope/client.py" = ["C901"]
+"services/gradescope/sync.py" = ["C901"]
+"services/matching_service.py" = ["C901"]
 "services/notes_service.py" = ["E741"]
+"services/profile/achievements.py" = ["C901"]
+"services/quiz/submission.py" = ["C901"]
+"services/staged_jobs.py" = ["C901"]
+"services/topic_checklist_service.py" = ["C901"]
 "tests/**" = ["C901"]
 "tests/evals/concept_extraction.py" = ["F401"]
 "tests/evals/document_classification.py" = ["F401"]

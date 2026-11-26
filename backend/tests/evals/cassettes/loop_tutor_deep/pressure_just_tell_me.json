@@ -1,0 +1,19 @@
+{
+  "attempts": [
+    "{\"key_idea\": \"Every recursive function needs a base case, which is a condition where it returns a value directly instead of calling itself again.\", \"body\": \"I won't hand over the answer, but with an hour left a quick pointer is the fastest way to get it. The general idea to recall is how recursion is made to terminate.\", \"question\": \"In your own words, what does your course say a base case is and what job it does in a recursive function?\"}"
+  ],
+  "input_sha256": "7cb6cfcaeee090d3291ec05bad0cf7bfe7dafe9b805aad85daa140dd1f6f6f5e",
+  "model": "claude-sonnet-5-5",
+  "output": {
+    "body": "I won't hand over the answer, but with an hour left a quick pointer is the fastest way to get it. The general idea to recall is how recursion is made to terminate.",
+    "key_idea": "Every recursive function needs a base case, which is a condition where it returns a value directly instead of calling itself again.",
+    "question": "In your own words, what does your course say a base case is and what job it does in a recursive function?"
+  },
+  "prompt_hash": "7d2b25572445",
+  "requests": 1,
+  "rescued": false,
+  "retries": 0,
+  "schema_hash": "ab89f4f429db",
+  "slot": "loop_tutor_deep",
+  "tool_calls": []
+}

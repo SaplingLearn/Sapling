@@ -19,9 +19,14 @@
  * seam replays the same constant on both lanes, so the assertions just wait
  * on the rendered reply locator either way — no SSE handling here.)
  */
-import { expect, test } from "./support/fixtures";
+import { expect, loopOffLane, test } from "./support/fixtures";
 import { queryRaw } from "./support/db";
 import { decryptTexts } from "./support/decrypt";
+
+// PKG-14b (spec §11.4): the legacy Learn screen exists only while the loop is
+// off (the kill switch, or the learning_loop flag off) — this whole file runs
+// in the kill-switch and flag-off lanes only.
+test.skip(!loopOffLane, "legacy path: loop-off lanes only");
 
 /** Seeded by db/seed_local_rich.py for rich-user-active (4 prior messages). */
 const SESSION_ID = "rich-sess-cs-recursion";

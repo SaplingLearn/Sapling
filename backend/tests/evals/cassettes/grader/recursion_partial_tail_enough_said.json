@@ -1,0 +1,79 @@
+{
+  "context_checks": [
+    {
+      "withdrawn": [
+        "65700:no"
+      ]
+    }
+  ],
+  "context_keys": [
+    {
+      "input_sha256": "bb070799b7450e32e92d2dfc3669dbcd26ca30833b92a3f48fd55b2f50b4bca5",
+      "model": "claude-sonnet-5-5",
+      "prompt_hash": "d215edc372d3",
+      "schema_hash": "c322bdba6718"
+    }
+  ],
+  "run_keys": [
+    {
+      "input_sha256": "dc356999a86b0f05140aed853581b404c82f67cf049bd84074a1db1c7d875b62",
+      "model": "claude-haiku-5-5",
+      "prompt_hash": "d215edc372d3",
+      "schema_hash": "e42cc97704ca"
+    },
+    {
+      "input_sha256": "dc356999a86b0f05140aed853581b404c82f67cf049bd84074a1db1c7d875b62",
+      "model": "claude-sonnet-5-5",
+      "prompt_hash": "d215edc372d3",
+      "schema_hash": "e42cc97704ca"
+    }
+  ],
+  "runs": [
+    {
+      "addresses_grader": true,
+      "confidence": 0.8,
+      "contradicts_reference": false,
+      "feedback_hint": "Think about what would happen on every call if the function never reached the point where it stops, and say what that leads to. Also, the phrase 'Enough said' is not an explanation, so add the reasoning behind your point.",
+      "item_results": [
+        "65700:yes",
+        "92027:no"
+      ],
+      "matched_wrong_key": "",
+      "support": [
+        "65700: It's the case where the function stops recursing."
+      ]
+    },
+    {
+      "addresses_grader": false,
+      "confidence": 0.9,
+      "contradicts_reference": false,
+      "feedback_hint": "You've said what the base case does. Now think about what would happen to the chain of calls and the call stack if nothing ever made the function stop.",
+      "item_results": [
+        "65700:yes",
+        "92027:no"
+      ],
+      "matched_wrong_key": "",
+      "support": [
+        "65700: It's the case where the function stops recursing."
+      ]
+    }
+  ],
+  "span_checks": [
+    {
+      "asserted": [
+        "65700:yes"
+      ],
+      "item_results": [
+        "65700:yes"
+      ]
+    }
+  ],
+  "span_keys": [
+    {
+      "input_sha256": "b136b722c749fe51605e873fe672953770af3add966339355672fe6fa10215e0",
+      "model": "claude-sonnet-5-5",
+      "prompt_hash": "d215edc372d3",
+      "schema_hash": "f72e918aa5ce"
+    }
+  ]
+}

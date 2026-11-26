@@ -327,7 +327,8 @@ class TestSaveOnboardingProfile:
         assert profile["year"] == "junior"
         assert profile["majors"] == ["Computer Science"]
         assert profile["minors"] == ["Mathematics"]
-        assert profile["learning_style"] == "visual"
+        # PKG-14b: the payload may still carry it (older client); it is ignored.
+        assert "learning_style" not in profile
 
         # One enrollment per course, keyed on an offering of the onboarding
         # term (created on demand), never on the abstract course id.

@@ -12,12 +12,17 @@ patch must target the module that LOOKS UP the name now (``patch_tutor`` in
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request
+from starlette.concurrency import run_in_threadpool
 
 import services.tutor as tutor_service
+from db.scope import service_route
+from learning.gate import learning_loop_for_request
 from services import crisis_support
 from models import StartSessionBody, ChatBody, EndSessionBody, ActionBody, ModeSwitchBody, RenameSessionBody
 from routes._docs import same_doc
+from services.auth_guard import get_session_user_id
+from services.quiz_ask import quoted_question_texts
 
 # ── Re-exports: every name that moved out of this file (#118) ────────────────
 from services.tutor.course import (  # noqa: F401  (re-export, #118)
@@ -46,7 +51,12 @@ from services.tutor.pending import (  # noqa: F401  (re-export, #118)
     _open_turn_session,
     get_user_name,
 )
+from services.tutor.pending import (  # noqa: F401  (re-export, #118)
+    _materialize_turn_session,
+    _require_turn_session,
+)
 from services.tutor.run import (  # noqa: F401  (re-export, #118)
+    _usage_session_id,
     _CONTINUATION_INSTRUCTIONS,
     _CONTINUATION_NUDGE,
     _CONTINUATION_RUN_KEYS,
@@ -87,58 +97,162 @@ from services.tutor_sessions import (  # noqa: F401  (re-export, #118)
 router = APIRouter()
 
 
+def _loop_delegate(name: str):
+    """The learning loop's handler `name` (its body in services/loop/, #118),
+    resolved lazily, at the hand-off: nothing of the loop loads with the
+    legacy tutor (the PKG-06 inertness probe imports the app with the loop
+    route stubbed). Here, not in services/tutor/: the tutor body is handed this
+    callable and calls it at its hand-off point (spec §7), so the tutor domain
+    never imports the loop's.
+
+    #115 (spec §13 A148): a delegated request runs as the loop router does,
+    as the service role under `db_user_scope` — the loop's tables are
+    service-only. Marked on the request's shared state (not a ContextVar), so
+    a streamed loop response keeps it after this handler returns. Marked when
+    the body hands off, never before: the checks ahead of the hand-off run as
+    the student."""
+
+    def delegate(body, request: Request):
+        import services.loop as loop_service
+
+        service_route(request)
+        return getattr(loop_service, name)(body, request)
+
+    return delegate
+
+
+def _loop_for(user_id: str | None, name: str, request: Request):
+    """Owner decision 00 (A38): the learning-loop gate, evaluated ONCE at
+    route entry — the env kill switch, then this student's `learning_loop`
+    flag (learning/gate.py). The loop's handler when it is on, else None: the
+    tutor body then runs the pre-loop path (spec §11.6), the kill switch's and
+    a flag-off student's alike. The answer is carried on
+    `request.state.learning_loop` as `(user_id, answer)`, so the delegated
+    loop handler's `_gate`
+    (require_self first) does not resolve it again. The flag read may reach
+    the flag store: call this from a sync route (the threadpool), and
+    `_loop_for_async` from an `async def` one. It decides nothing the body's
+    own checks do: a request for another student's id is refused by the body
+    or the loop handler either way."""
+    loop_on = learning_loop_for_request(user_id)
+    request.state.learning_loop = (user_id, loop_on)
+    return _loop_delegate(name) if loop_on else None
+
+
+async def _loop_for_async(user_id: str | None, name: str, request: Request):
+    """`_loop_for` from an `async def` route: the gate is resolved in a worker
+    thread, never on the event loop (the flag resolver can read the store)."""
+    return await run_in_threadpool(_loop_for, user_id, name, request)
+
+
+def _quoting(body: ChatBody) -> dict:
+    """What a chat turn quotes, for its crisis screen (#866 K12): the quiz
+    question the Ask panel's first message names, read off the student's own
+    attempt (services/quiz_ask.py) on a match only; a Retry re-sends the same
+    message, so its card's event is recorded once a day per question."""
+    question = (body.quiz_attempt_id, body.quiz_question_index)
+    return {
+        "quoted": lambda: quoted_question_texts(body),
+        "once_a_day": ("quiz_ask", *question) if body.quiz_attempt_id else None,
+    }
+
+
+def _session_user_or_none(request: Request) -> str | None:
+    try:
+        return get_session_user_id(request)
+    except HTTPException:
+        return None
+
+
 @router.post("/start-session")
 @same_doc(tutor_service.start_session)
 async def start_session(body: StartSessionBody, request: Request):
     # docs/safety/crisis-support.md: first, before every limit and budget; no session is opened...
+    # (the loop's goal text is typed too: it blocks like a typed topic)
+    if crisis := await crisis_support.screen_async(
+        request, body.user_id, "tutor_start", body.goal.text if body.goal else None,
+    ):
+        return crisis_support.start_json(crisis)
     screened = await crisis_support.screen_tutor_start_async(
         request, body.user_id, body.topic, note_version=lambda: tutor_service.note_title_version(body),
     )
+    loop_handler = await _loop_for_async(body.user_id, "start_session", request)
     if isinstance(screened, crisis_support.ContentScreen):
         # ...unless the topic is the student's own note title (Send to tutor): the card beside the session
-        return await crisis_support.alongside(screened, tutor_service.start_session(body, request))
+        return await crisis_support.alongside(
+            screened, tutor_service.start_session(body, request, loop_handler=loop_handler),
+        )
     if screened is not None:
         return crisis_support.start_json(screened)
-    return await tutor_service.start_session(body, request)
+    return await tutor_service.start_session(body, request, loop_handler=loop_handler)
 
 
 @router.post("/chat")
 @same_doc(tutor_service.chat)
 async def chat(body: ChatBody, request: Request):
     # docs/safety/crisis-support.md: first, before every limit and budget; nothing of the turn is written
-    if crisis := await crisis_support.screen_async(request, body.user_id, "tutor_chat", body.message):
-        return crisis_support.turn_json(crisis)
-    return await tutor_service.chat(body, request)
+    screened = await crisis_support.screen_quoting_async(
+        request, body.user_id, "tutor_chat", body.message, **_quoting(body),
+    )
+    if screened is not None and not isinstance(screened, crisis_support.ContentScreen):
+        return crisis_support.turn_json(screened)
+    turn = tutor_service.chat(body, request, loop_handler=await _loop_for_async(body.user_id, "chat", request))
+    if screened is not None:
+        # ...unless what matched is the quiz question the turn quotes (#866 K12): the card beside the reply
+        return await crisis_support.alongside(screened, turn)
+    return await turn
 
 
 @router.post("/chat/stream")
 @same_doc(tutor_service.chat_stream)
 async def chat_stream(body: ChatBody, request: Request):
     # docs/safety/crisis-support.md: first, before every limit and budget; nothing of the turn is written
-    if crisis := await crisis_support.screen_async(request, body.user_id, "tutor_chat", body.message):
-        return crisis_support.sse_response(crisis, request)
-    return await tutor_service.chat_stream(body, request)
+    screened = await crisis_support.screen_quoting_async(
+        request, body.user_id, "tutor_chat", body.message, **_quoting(body),
+    )
+    if screened is not None and not isinstance(screened, crisis_support.ContentScreen):
+        return crisis_support.sse_response(screened, request)
+    turn = tutor_service.chat_stream(
+        body, request, loop_handler=await _loop_for_async(body.user_id, "chat_stream", request)
+    )
+    if screened is not None:
+        # ...unless what matched is the quiz question the turn quotes (#866 K12): the card in `done`
+        return await crisis_support.alongside(screened, turn)
+    return await turn
 
 
 @router.post("/start-session/stream")
 @same_doc(tutor_service.start_session_stream)
 async def start_session_stream(body: StartSessionBody, request: Request):
     # docs/safety/crisis-support.md: first, before every limit and budget; no session is opened...
+    # (the loop's goal text is typed too: it blocks like a typed topic)
+    if crisis := await crisis_support.screen_async(
+        request, body.user_id, "tutor_start", body.goal.text if body.goal else None,
+    ):
+        return crisis_support.sse_response(crisis, request, session_id=None)
     screened = await crisis_support.screen_tutor_start_async(
         request, body.user_id, body.topic, note_version=lambda: tutor_service.note_title_version(body),
     )
+    loop_handler = await _loop_for_async(body.user_id, "start_session_stream", request)
     if isinstance(screened, crisis_support.ContentScreen):
         # ...unless the topic is the student's own note title (Send to tutor): the card in `done`
-        return await crisis_support.alongside(screened, tutor_service.start_session_stream(body, request))
+        return await crisis_support.alongside(
+            screened, tutor_service.start_session_stream(body, request, loop_handler=loop_handler),
+        )
     if screened is not None:
         return crisis_support.sse_response(screened, request, session_id=None)
-    return await tutor_service.start_session_stream(body, request)
+    return await tutor_service.start_session_stream(body, request, loop_handler=loop_handler)
 
 
 @router.post("/end-session")
 @same_doc(tutor_service.end_session)
 def end_session(body: EndSessionBody, request: Request):
-    return tutor_service.end_session(body, request)
+    # A body without user_id is the session user's (the body resolves it), and
+    # the gate is per student: it is evaluated for that same student.
+    user_id = body.user_id or _session_user_or_none(request)
+    return tutor_service.end_session(
+        body, request, loop_handler=_loop_for(user_id, "end_session", request)
+    )
 
 
 @router.get("/sessions/{user_id}")
@@ -168,7 +282,9 @@ async def resume_session(session_id: str, request: Request):
 @router.post("/action")
 @same_doc(tutor_service.action)
 async def action(body: ActionBody, request: Request):
-    return await tutor_service.action(body, request)
+    return await tutor_service.action(
+        body, request, loop_handler=await _loop_for_async(body.user_id, "action", request)
+    )
 
 
 @router.post("/mode-switch")

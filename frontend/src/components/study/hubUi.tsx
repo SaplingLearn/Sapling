@@ -16,6 +16,11 @@ export const DISPLAY = "var(--font-display)";
 export const SANS = "var(--font-sans)";
 export const LABEL = "var(--font-sans)";
 
+/** The two parts of the page an exam tab re-scopes, by id: the readiness band
+ *  with Up Next, and the roadmap (each tab's `aria-controls`). */
+export const READINESS_ID = "study-hub-readiness";
+export const ROADMAP_ID = "study-hub-roadmap";
+
 /** One line, cut with an ellipsis. */
 export const ELLIPSIS: React.CSSProperties = { whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" };
 
@@ -29,15 +34,17 @@ export const POPOVER: React.CSSProperties = {
 
 /** Each tool's name, glyph and tint, wherever the hub shows it. */
 export const TOOL: Record<ToolKey, { title: string; icon: GlyphName; bg: string; fg: string }> = {
-  quiz: { title: "Quiz", icon: "bulb", bg: "#EBDDEE", fg: "#7A4A78" },
+  quiz: { title: "Quiz", icon: "bulb", bg: "var(--tool-quiz-soft)", fg: "var(--tool-quiz)" },
   cards: { title: "Flashcards", icon: "cards", bg: "var(--sap-100)", fg: "var(--brand-forest)" },
-  guide: { title: "Study Guide", icon: "file", bg: "#F1E3C4", fg: "var(--warn)" },
+  // No Study Guide tint token: a cream built from the amber, under --warn.
+  guide: { title: "Study Guide", icon: "file", bg: "color-mix(in srgb, var(--c-amber) 20%, var(--bg-panel))", fg: "var(--warn)" },
 };
 /** The order the tools are offered in. */
 export const TOOL_ORDER: ToolKey[] = ["quiz", "cards", "guide"];
 
 /** The tools on offer: hide_quiz (#620) hides Quiz everywhere it appears. */
-export const shownTools = <T extends { key: ToolKey }>(items: T[], quizShown: boolean): T[] =>
+/** Filter hub actions; `key` may be a ToolKey or an extra action (e.g. learn). */
+export const shownTools = <T extends { key: string }>(items: T[], quizShown: boolean): T[] =>
   items.filter(item => item.key !== "quiz" || quizShown);
 
 export type GlyphName = "bulb" | "cards" | "file";

@@ -280,6 +280,35 @@ class TestImportCleanup:
             r = client.post("/api/flashcards/import/cleanup", json=body)
         assert r.status_code == 429
 
+    def test_cleanup_over_the_text_cap_is_refused_before_the_guard(self):
+        """Audit Z01: a deck over the cleanup's text cap is a 413 before the
+        rate slot, the integrity guard's fold or a model call — the guard
+        used to fold and index a whole 12 MB body first."""
+        from services.flashcards import import_flow
+        side = "x" * 5_000
+        n = import_flow.CLEANUP_MAX_CHARS // (2 * len(side)) + 1
+        body = {"user_id": "u1", "cards": [{"front": side, "back": side}] * n}
+        with _mock_self(), \
+             patch("services.flashcards.import_flow.card_guard") as guard, \
+             patch_flashcards("gemini_cleanup_cards") as cln, \
+             patch_flashcards("check_rate_limit", return_value=None) as rl:
+            r = client.post("/api/flashcards/import/cleanup", json=body)
+        assert r.status_code == 413, r.text
+        guard.assert_not_called()
+        cln.assert_not_called()
+        rl.assert_not_called()
+
+    def test_cleanup_at_the_text_cap_runs(self):
+        from services.flashcards import import_flow
+        side = "x" * 5_000
+        n = import_flow.CLEANUP_MAX_CHARS // (2 * len(side))
+        body = {"user_id": "u1", "cards": [{"front": side, "back": side}] * n}
+        with _mock_self(), \
+             patch_flashcards("gemini_cleanup_cards", return_value=[{"front": "F", "back": "B"}]), \
+             patch_flashcards("check_rate_limit", return_value=None):
+            r = client.post("/api/flashcards/import/cleanup", json=body)
+        assert r.status_code == 200, r.text
+
 
 # ── /import/cloze ─────────────────────────────────────────────────────────────
 

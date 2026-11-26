@@ -1,0 +1,47 @@
+@layer components {
+/* Preferences → Quiz (QuizPrefsSection.tsx): a titled block of label / select
+   rows, laid out like the other Settings sections around it. */
+
+.section {
+  margin-top: var(--sp-14);
+}
+
+.title {
+  margin-bottom: var(--sp-2);
+  font-size: var(--fs-md);
+  font-weight: 600;
+}
+
+.lead {
+  margin-bottom: var(--sp-4);
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+}
+
+.row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--sp-10);
+  padding: var(--sp-8) 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.label {
+  font-size: var(--fs-md);
+  font-weight: 500;
+}
+
+.help {
+  margin-top: var(--sp-1);
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+}
+
+.control {
+  /* The select's width, matching the other Settings rows' controls. */
+  --quiz-prefs-control-w: 180px;
+  min-width: var(--quiz-prefs-control-w);
+}
+
+}

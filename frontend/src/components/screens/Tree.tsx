@@ -1,4 +1,5 @@
 "use client";
+import { graphUsesSkill, tierWord } from "@/lib/levels";
 import React from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { TopBar } from "../TopBar";
@@ -17,12 +18,18 @@ import { CoursesKey, courseProgressFor } from "../graph/CoursesKey";
 import { useToast } from "../ToastProvider";
 import { useConfirm, type ConfirmHandle } from "@/lib/useConfirm";
 import type { GraphNode as ApiNode, GraphEdge as ApiEdge } from "@/lib/types";
-import { apiToGraphNode, learnHrefForNode, type GraphNode, type GraphEdge } from "@/lib/data";
-import { buildQuizHref } from "@/lib/quiz/source";
+import { useFlag } from "@/context/FlagsContext";
+import { apiToGraphNode, type GraphNode, type GraphEdge } from "@/lib/data";
+import { LEARNING_LOOP_FLAG } from "@/lib/learningLoopFlag";
 import { listAttempts } from "@/lib/quiz/api";
 import { relativeStudied } from "@/lib/quiz/relativeTime";
 import type { AttemptSummary } from "@/lib/quiz/types";
+import { treeNodeActions, type TreeNodeAction } from "@/lib/treeNodeActions";
+import { motion } from "framer-motion";
+import { useMotionPresets } from "@/lib/motion";
 import { deleteButtonStyle, highlightIdFor, selectedCourseIdOf } from "./treeHelpers";
+import { AnimatedNumber } from "./AnimatedNumber";
+import styles from "./Tree.module.css";
 
 type Tier = "all" | "mastered" | "learning" | "struggling" | "unexplored";
 
@@ -33,7 +40,7 @@ const ATTEMPT_HISTORY_LIMIT = 100;
 /** Rows in the node panel's "Recent quizzes" block. */
 const RECENT_QUIZ_ROWS = 5;
 
-/** `mastery_delta` is a 0–1 fraction (`routes/quiz.py:1780`,
+/** `p_delta` is a 0–1 fraction (`routes/quiz.py::attempt history`,
  *  `mastery_after - mastery_before`); the panel speaks in whole percent, the
  *  same unit as the Mastery tile above it. `null` is "the attempt recorded no
  *  move", not zero — say so with an em dash rather than inventing a number. */
@@ -50,11 +57,12 @@ function attemptTime(a: AttemptSummary): number {
   return Number.isNaN(t) ? 0 : t;
 }
 
-const TIER_META: Record<Exclude<Tier, "all">, { label: string; color: string }> = {
-  mastered: { label: "Mastered", color: "var(--state-mastery)" },
-  learning: { label: "Learning", color: "var(--state-progress)" },
-  struggling: { label: "Struggling", color: "var(--state-struggle)" },
-  unexplored: { label: "Unexplored", color: "var(--state-neutral)" },
+// The filter's colours; its words are `tierWord`'s (the ladder's on a skill graph).
+const TIER_META: Record<Exclude<Tier, "all">, { color: string }> = {
+  mastered: { color: "var(--state-mastery)" },
+  learning: { color: "var(--state-progress)" },
+  struggling: { color: "var(--state-struggle)" },
+  unexplored: { color: "var(--state-neutral)" },
 };
 
 export function Tree() {
@@ -68,6 +76,8 @@ export function Tree() {
   // fuzzier twin (a concept NAME) and is untouched by this; they are written by
   // different callers and are not expected together.
   const focusNodeId = search.get("node");
+  // `?course=<id>` — Library W8.1b handoff: centre the map on that course.
+  const focusCourseId = search.get("course");
 
   const [courseFilter, setCourseFilter] = React.useState<string>("all");
   // The "My courses" key and the graph, wired together: hovering a course row
@@ -84,6 +94,8 @@ export function Tree() {
   const [ref, size] = useGraphSize<HTMLDivElement>({ w: 900, h: 600 });
 
   const [nodes, setNodes] = React.useState<GraphNode[]>([]);
+  // On a skill graph (the loop on) the filter names the ladder's levels.
+  const skillWords = graphUsesSkill(nodes);
   const [edges, setEdges] = React.useState<GraphEdge[]>([]);
   const [courses, setCourses] = React.useState<EnrolledCourse[]>([]);
   const [sessions, setSessions] = React.useState<Session[]>([]);
@@ -102,7 +114,11 @@ export function Tree() {
   const [savingConcept, setSavingConcept] = React.useState(false);
 
   const toast = useToast();
-
+  // W8.2: Cards + Guide join Teach/Quiz when the loop is on; hide_* still
+  // suppress destinations the nav already gates.
+  const loopOn = useFlag(LEARNING_LOOP_FLAG) === "on";
+  const quizShown = useFlag("hide_quiz") !== "on";
+  const studyShown = useFlag("hide_study") !== "on";
 
   const load = React.useCallback(async () => {
     if (!userId) return;
@@ -258,6 +274,19 @@ export function Tree() {
     setNewConceptName("");
   };
 
+  // `?course=<id>` focus (W8.1b): same once-per-value rule as `?node=`. An
+  // unknown / unenrolled id is ignored so a stale Library link still lands on
+  // an ordinary tree. Applied after courses load — the key only needs enrollments.
+  const courseFocusApplied = React.useRef<string | null>(null);
+  React.useEffect(() => {
+    if (!focusCourseId || !courses.length) return;
+    if (courseFocusApplied.current === focusCourseId) return;
+    if (!courses.some((c) => c.course_id === focusCourseId)) return;
+    courseFocusApplied.current = focusCourseId;
+    setCourseFilter(focusCourseId);
+    setZoomRequest((r) => ({ courseId: focusCourseId, seq: (r?.seq ?? 0) + 1 }));
+  }, [focusCourseId, courses]);
+
   const filteredNodes = React.useMemo(() => {
     const q = query.trim().toLowerCase();
     return nodes.filter(n => {
@@ -296,33 +325,12 @@ export function Tree() {
     return n?.id;
   }, [suggest, nodes]);
 
-  const onLearn = (n: GraphNode) => router.push(learnHrefForNode(n));
-
-  // Quick quiz (#537 §6). Two things changed from the `?topic=<name>` link this
-  // replaces. First, a concept is addressed by ID: a name is only unique within
-  // a course, so the fuzzy link could seed the wrong node. Second, the link now
-  // carries where it came from, which is what lets every quiz exit come BACK
-  // here — to this node's open panel — instead of the hardcoded `/learn` that
-  // #537 found on every exit.
-  //
-  // Subject-root (course) nodes still have no single topic (the #319 fix), but
-  // "open the bare picker" is no longer the only honest answer: the quiz home
-  // takes an abstract `course` and proposes within it. The root carries that id
-  // directly (`graph_service.py` synthesizes `subject_root__{course_id}` with
-  // `course_id` set); the id is only unpicked as a belt-and-braces fallback.
-  const onQuiz = (n: GraphNode) => {
-    if (n.is_subject_root) {
-      const courseId = n.course_id || n.id.replace(/^subject_root__/, "");
-      router.push(buildQuizHref({ course: courseId }, { kind: "tree", returnTo: "/tree" }));
-      return;
-    }
-    router.push(
-      buildQuizHref(
-        { concept: n.id },
-        { kind: "tree", returnTo: `/tree?node=${encodeURIComponent(n.id)}`, conceptId: n.id },
-      ),
-    );
-  };
+  const nodeActions = React.useMemo(
+    () => (selected
+      ? treeNodeActions(selected, { loopOn, quizShown, studyShown })
+      : []),
+    [selected, loopOn, quizShown, studyShown],
+  );
 
   const del = useConfirm(async () => {
     if (!userId || !selected) return;
@@ -343,9 +351,9 @@ export function Tree() {
       attempts={attempts}
       recentQuizzes={recentQuizzes}
       sessions={sessionsForSelected}
+      actions={nodeActions}
       onClose={() => setSelected(null)}
-      onLearn={onLearn}
-      onQuiz={onQuiz}
+      onAction={(href) => router.push(href)}
       onOpenSession={(id) => router.push(`/learn?resume=${encodeURIComponent(id)}`)}
     />
   );
@@ -354,7 +362,7 @@ export function Tree() {
   const highlightId = highlightIdFor(suggestId, selected);
 
   return (
-    <FullHeightScreen>
+    <FullHeightScreen className={styles.root}>
       <TopBar
         title="Your Knowledge Tree"
         subtitle="The living map of what you've learned, organized by course."
@@ -364,19 +372,16 @@ export function Tree() {
           course). Right: the mastery-status pills, kept as pills because their
           colours double as the graph's legend. Course is a dropdown so the row
           never wraps however many courses a student has. */}
-      <div
-        data-testid="tree-toolbar"
-        className="py-3.5 px-8 flex gap-2.5 border-b border-b-border flex-wrap items-center shrink-0"
-      >
-        <div className="relative flex-[0_1_220px]">
+      <div data-testid="tree-toolbar" className={styles.toolbar}>
+        <div className={styles.search}>
           <input
             value={query}
             onChange={e => setQuery(e.target.value)}
             placeholder="Search concepts…"
             aria-label="Search concepts"
-            className="w-full pt-[5px] pr-2.5 pb-[5px] pl-7 text-sm border border-border rounded-[var(--r-full)] bg-bg-panel"
+            className={`${styles.field} ${styles.searchInput}`}
           />
-          <span className="absolute left-2.5 top-1/2 [transform:translateY(-50%)] text-text-muted pointer-events-none">
+          <span className={styles.searchIcon}>
             <Icon name="search" size={12} />
           </span>
         </div>
@@ -392,13 +397,13 @@ export function Tree() {
           />
         )}
         {/* Right side: the mastery-status filter (its colours are the legend). */}
-        <div className="ml-auto">
+        <div className={styles.pillsSlot}>
           <FilterPills
             options={[
               { value: "all" as Tier, label: "All" },
               ...(Object.keys(TIER_META) as Array<Exclude<Tier, "all">>).map((t) => ({
                 value: t as Tier,
-                label: TIER_META[t].label,
+                label: tierWord(t, skillWords),
                 color: TIER_META[t].color,
               })),
             ]}
@@ -415,8 +420,8 @@ export function Tree() {
           contentRect becomes <KnowledgeGraph width height>, so a hardcoded
           `calc(100vh - …)` mis-sized the CANVAS in whichever shell layout the
           constant wasn't calibrated for (#341). */}
-      <div className="flex flex-1 min-h-0">
-        <div ref={ref} className="flex-1 min-w-0 relative">
+      <div className={styles.graphRow}>
+        <div ref={ref} className={styles.graphArea}>
           {loading || !size ? (
             <GraphPanelSkeleton />
           ) : (
@@ -456,9 +461,9 @@ export function Tree() {
                 data-testid="graph-fullscreen"
                 aria-label="Fullscreen"
                 title="Fullscreen"
-                className="btn btn--ghost btn--sm absolute right-3 z-5 p-0 inline-flex items-center justify-center bg-bg-panel border border-border rounded-sm shadow-sm"
                 onClick={() => setFullscreen(true)}
-                style={{ top: FULLSCREEN_BTN.top, width: FULLSCREEN_BTN.w, height: FULLSCREEN_BTN.h }}
+                className={`btn btn--ghost btn--sm ${styles.fullscreenBtn}`}
+                style={FULLSCREEN_BTN_VARS}
               >
                 <Icon name="max" size={13} />
               </button>
@@ -466,9 +471,9 @@ export function Tree() {
           )}
         </div>
         {selected && !isMobile && (
-          <aside
-            className="w-80 border-l border-l-border p-5 bg-bg-subtle overflow-y-auto"
-          >
+          // Keyed by the concept: picking another node fades its panel in
+          // afresh rather than swapping the content in place.
+          <aside key={selected.id} className={`fade-in ${styles.aside}`}>
             {detailPanel}
           </aside>
         )}
@@ -477,11 +482,11 @@ export function Tree() {
       {selected && isMobile && (
         <div
           onClick={() => setSelected(null)}
-          className="fixed inset-0 z-90 bg-[rgba(25,_37,_11,0.35)] flex flex-col justify-end"
+          className={`fade-in ${styles.scrim}`}
         >
           <div
             onClick={e => e.stopPropagation()}
-            className="slide-up [background:var(--bg-panel)] [border-top-left-radius:var(--r-lg)] [border-top-right-radius:var(--r-lg)] p-5 max-h-[80vh] overflow-y-auto"
+            className={`slide-up ${styles.sheet}`}
           >
             {detailPanel}
           </div>
@@ -489,11 +494,11 @@ export function Tree() {
       )}
 
       {fullscreen && (
-        <div className="fixed inset-0 z-150 bg-bg flex flex-col">
-          <div className="flex justify-between items-center py-3.5 px-5 border-b border-b-border">
+        <div className={`fade-in ${styles.fullscreen}`}>
+          <div className={styles.fullscreenHead}>
             <div>
               <div className="label-micro">Knowledge tree — fullscreen</div>
-              <div className="h-serif text-xl">Press Esc to exit</div>
+              <div className={`h-serif ${styles.fullscreenTitle}`}>Press Esc to exit</div>
             </div>
             <button className="btn btn--ghost btn--sm" onClick={() => setFullscreen(false)}>
               <Icon name="x" size={14} />
@@ -525,7 +530,7 @@ function AddConceptControl({
   onCancel: () => void;
 }) {
   return adding ? (
-    <span className="inline-flex gap-1.5 items-center">
+    <span className={`fade-in ${styles.addConcept}`}>
       <input
         data-testid="graph-add-concept-input"
         autoFocus
@@ -536,7 +541,7 @@ function AddConceptControl({
           if (e.key === "Enter") onSubmit();
           if (e.key === "Escape") onCancel();
         }}
-        className="text-sm py-[5px] px-2.5 border border-border rounded-[var(--r-full)] bg-bg-panel w-45"
+        className={`${styles.field} ${styles.addInput}`}
       />
       <button
         data-testid="graph-add-concept-submit"
@@ -560,66 +565,87 @@ function AddConceptControl({
 
 /** The selected node's detail panel: the desktop `<aside>` and the mobile
  *  bottom sheet render the same content. */
+const ACTION_ICON: Record<TreeNodeAction["key"], string> = {
+  teach: "brain",
+  quiz: "bolt",
+  cards: "book",
+  guide: "doc",
+};
+
 function NodeDetailPanel({
-  node, del, attempts, recentQuizzes, sessions, onClose, onLearn, onQuiz, onOpenSession,
+  node, del, attempts, recentQuizzes, sessions, actions, onClose, onAction, onOpenSession,
 }: {
   node: GraphNode;
   del: ConfirmHandle;
   attempts: AttemptSummary[] | null;
   recentQuizzes: AttemptSummary[];
   sessions: Session[];
+  actions: TreeNodeAction[];
   onClose: () => void;
-  onLearn: (n: GraphNode) => void;
-  onQuiz: (n: GraphNode) => void;
+  onAction: (href: string) => void;
   onOpenSession: (sessionId: string) => void;
 }) {
+  const m = useMotionPresets();
   return (
     <>
       {/* Course on the left, close in the top-right corner. */}
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2 min-w-0">
-          <span className="w-2.5 h-2.5 rounded-[50%] shrink-0" style={{ background: node.color }} />
-          <span className="label-micro overflow-hidden text-ellipsis whitespace-nowrap">
+      <div className={styles.panelHead}>
+        <div className={styles.panelCourse}>
+          <span className={styles.dot} style={nodeColorVar(node.color)} />
+          <span className={`label-micro ${styles.ellipsis}`}>
             {node.subject}
           </span>
         </div>
         <button
-          className="btn btn--ghost btn--sm shrink-0 -mr-1.5 w-7 h-7 p-0 justify-center"
           onClick={onClose}
           aria-label="Close detail panel"
+          className={`btn btn--ghost btn--sm ${styles.close}`}
         >
           <Icon name="x" size={14} />
         </button>
       </div>
-      <h2 className="h-serif text-[24px] mt-1.5 mx-0 mb-3 font-medium">
+      <h2 className={`h-serif ${styles.nodeTitle}`}>
         {node.name}
       </h2>
-      <div className="grid grid-cols-[1fr_1fr] gap-2.5 mb-4">
-        <div className="card p-3">
+      <div className={styles.tiles}>
+        <div className={`card ${styles.tile}`}>
           <div className="label-micro">Mastery</div>
-          <div className="mono text-2xl" style={{ color: node.color }}>
-            {Math.round((node.mastery_score || 0) * 100)}%
+          <div className={`mono ${styles.mastery}`} style={nodeColorVar(node.color)}>
+            <AnimatedNumber value={Math.round((node.mastery_score || 0) * 100)} format={formatPct} />
           </div>
         </div>
-        <div className="card p-3">
+        <div className={`card ${styles.tile}`}>
           <div className="label-micro">Tier</div>
-          <div className="text-base font-medium mt-1 capitalize">
+          <div className={styles.tier}>
             {node.mastery_tier}
           </div>
         </div>
       </div>
-      <div className="mb-3">
-        <div className="label-micro mb-1.5">Last studied</div>
-        <div className="text-md">
+      <div className={styles.lastStudied}>
+        <div className={`label-micro ${styles.lastStudiedLabel}`}>Last studied</div>
+        <div className={styles.lastStudiedValue}>
           {node.last_studied_at ? new Date(node.last_studied_at).toLocaleString() : "never"}
         </div>
       </div>
-      <button className="btn btn--primary w-full" onClick={() => onLearn(node)}>
-        <Icon name="brain" size={14} /> Learn this
-      </button>
-      <button className="btn w-full mt-2" onClick={() => onQuiz(node)}>
-        <Icon name="bolt" size={14} /> Quick quiz
-      </button>
+      {/* W8.2: one action menu — Teach / Quiz (+ Cards / Guide when the loop is on). */}
+      <nav
+        aria-label={`Study ${node.name}`}
+        data-testid="tree-node-actions"
+        className={styles.actions}
+        data-cols={actions.length > 2 ? 2 : 1}
+      >
+        {actions.map(ac => (
+          <button
+            key={ac.key}
+            type="button"
+            className={`${ac.primary ? "btn btn--primary" : "btn"} ${styles.actionBtn}`}
+            data-testid={`tree-node-action-${ac.key}`}
+            onClick={() => onAction(ac.href)}
+          >
+            <Icon name={ACTION_ICON[ac.key]} size={14} /> {ac.label}
+          </button>
+        ))}
+      </nav>
       {!node.is_subject_root && (
         <button
           onClick={del.trigger}
@@ -633,28 +659,38 @@ function NodeDetailPanel({
         <RecentQuizzes attempts={attempts} recentQuizzes={recentQuizzes} />
       )}
       {sessions.length > 0 && (
-        <div className="mt-4.5">
-          <div className="label-micro mb-2">Sessions for this concept</div>
-          {sessions.slice(0, 4).map(s => (
-            <button
-              key={s.id}
-              onClick={() => onOpenSession(s.id)}
-              className="flex justify-between items-center w-full py-2 px-2.5 bg-bg-panel border border-border rounded-sm mb-1.5 text-left"
-            >
-              <div className="text-sm min-w-0 overflow-hidden">
-                <div className="font-medium capitalize">{s.mode}</div>
-                <div className="text-2xs text-text-muted">
-                  {s.message_count} msgs · {new Date(s.started_at).toLocaleDateString()}
+        <div className={styles.section}>
+          <div className={`label-micro ${styles.sectionLabel}`}>Sessions for this concept</div>
+          <motion.div variants={m.list.container} initial="hidden" animate="shown">
+            {sessions.slice(0, 4).map(s => (
+              <motion.button
+                key={s.id}
+                variants={m.list.item}
+                onClick={() => onOpenSession(s.id)}
+                className={`${styles.row} ${styles.sessionBtn}`}
+              >
+                <div className={styles.sessionText}>
+                  <div className={styles.sessionMode}>{s.mode}</div>
+                  <div className={styles.sessionMeta}>
+                    {s.message_count} msgs · {new Date(s.started_at).toLocaleDateString()}
+                  </div>
                 </div>
-              </div>
-              <Icon name="chev" size={12} />
-            </button>
-          ))}
+                <Icon name="chev" size={12} />
+              </motion.button>
+            ))}
+          </motion.div>
         </div>
       )}
     </>
   );
 }
+
+/** The concept's colour as a custom property (its dot and Mastery figure). */
+function nodeColorVar(color: string | null | undefined): React.CSSProperties | undefined {
+  return color ? ({ "--node-color": color } as React.CSSProperties) : undefined;
+}
+
+const formatPct = (v: number) => `${Math.round(v)}%`;
 
 /** The node panel's "Recent quizzes" block. `attempts === null` is "not
  *  fetched yet", never "none". */
@@ -664,34 +700,40 @@ function RecentQuizzes({
   attempts: AttemptSummary[] | null;
   recentQuizzes: AttemptSummary[];
 }) {
+  const m = useMotionPresets();
   return (
-    <div data-testid="tree-node-recent-quizzes" className="mt-4.5">
-      <div className="label-micro mb-2">Recent quizzes</div>
+    <div data-testid="tree-node-recent-quizzes" className={styles.section}>
+      <div className={`label-micro ${styles.sectionLabel}`}>Recent quizzes</div>
       {attempts === null ? (
-        <div className="text-sm text-text-muted">Loading…</div>
+        <div className={styles.note}>Loading…</div>
       ) : recentQuizzes.length === 0 ? (
-        // No second CTA here on purpose: "Quick quiz" is a few pixels up
+        // No second CTA here on purpose: the Quiz action is a few pixels up
         // and is the action this empty state would ask for.
-        <div className="text-sm text-text-muted">No quizzes yet</div>
+        <div className={styles.note}>No quizzes yet</div>
       ) : (
-        recentQuizzes.map(a => (
-          <div
+        // The history arrives after the panel opens ("Loading…" first), so
+        // its rows stagger in.
+        <motion.div variants={m.list.container} initial="hidden" animate="shown">
+        {recentQuizzes.map(a => (
+          <motion.div
             key={a.quiz_id}
+            variants={m.list.item}
             data-testid={`tree-node-recent-quiz-${a.quiz_id}`}
-            className="flex justify-between items-center gap-2 py-2 px-2.5 bg-bg-panel border border-border rounded-sm mb-1.5"
+            className={`${styles.row} ${styles.quizRow}`}
           >
             {/* Not a link: there is no finished-attempt review endpoint —
                 `GET /attempts/{id}` answers `resumable: false, questions: []`
                 for a completed row (gap G5). A row that navigated nowhere
                 would be a broken promise. */}
-            <span className="text-sm">
+            <span className={styles.quizWhen}>
               {relativeStudied(a.completed_at || a.created_at)}
             </span>
-            <span className="mono text-xs text-text-muted">
-              {a.score ?? "—"}/{a.total ?? "—"} · {formatMasteryDelta(a.mastery_delta)} mastery
+            <span className={`mono ${styles.quizScore}`}>
+              {a.score ?? "—"}/{a.total ?? "—"} · {formatMasteryDelta(a.p_delta)} mastery
             </span>
-          </div>
-        ))
+          </motion.div>
+        ))}
+        </motion.div>
       )}
     </div>
   );
@@ -706,7 +748,7 @@ function FullscreenGraph({
 }) {
   const [ref, size] = useGraphSize<HTMLDivElement>({ w: 1200, h: 700 });
   return (
-    <div ref={ref} className="flex-1 relative">
+    <div ref={ref} className={styles.fullscreenGraph}>
       {size && (
         <KnowledgeGraph
           nodes={nodes}
@@ -725,4 +767,10 @@ function FullscreenGraph({
 /** The graph-corner Fullscreen icon: as wide as the 2D zoom stack (36px:
  *  4px padding + 26px buttons + 1px borders) so the two read as one column. */
 const FULLSCREEN_BTN = { top: 12, w: 36, h: 32 };
+/** FULLSCREEN_BTN for Tree.module.css's .fullscreenBtn (unitless px). */
+const FULLSCREEN_BTN_VARS = {
+  "--btn-top": FULLSCREEN_BTN.top,
+  "--btn-w": FULLSCREEN_BTN.w,
+  "--btn-h": FULLSCREEN_BTN.h,
+} as React.CSSProperties;
 

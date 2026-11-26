@@ -17,6 +17,7 @@ from services.academics import resolve_offering
 from services.achievement_service import check_achievements
 from services.flashcards.cards import encrypted_card, library_doc_source_text, new_card_rows
 from services.flashcards.errors import (
+    FlashcardError,
     InvalidRequest,
     NotFound,
     PayloadTooLarge,
@@ -39,12 +40,19 @@ from services.flashcards.importing import (
     parse_xlsx,
     scrape_quizlet_url,
 )
+from services.flashcards.integrity import card_guard, cleanup_withheld, screened, with_withheld
 from services.llm_budget import reraise_budget_refusal
 from services.upload_validation import GIF, JPEG, PDF, PNG, WEBP, sniff_type
 
 logger = logging.getLogger(__name__)
 
 MAX_UPLOAD_BYTES = 5 * 1024 * 1024
+
+#: Card text (every front and back) one cleanup may send (audit Z01): the
+#: same bound as a pasted generate source. The model rewrites the whole deck
+#: in one reply, so a larger deck cannot come back anyway, and the integrity
+#: guard folds and indexes all of this text before any refusal.
+CLEANUP_MAX_CHARS = 200_000
 
 
 def _claim_rate_slot(user_id: str) -> None:
@@ -117,15 +125,28 @@ def _ocr_filename(file_bytes: bytes) -> str:
     return f"import.{ext}"
 
 
-def _parse_file(source: str, file_bytes: bytes) -> list[dict]:
+def _parse_file(
+    source: str, file_bytes: bytes, user_id: str, loop_on: bool,
+) -> tuple[list[dict], int]:
+    """The file's cards and how many the integrity guard withheld (OCR only)."""
     # Before the try: its refusal is the student's file, not a parser error.
     ocr_name = _ocr_filename(file_bytes) if source == "ocr" else ""
     try:
         if source == "xlsx":
-            return parse_xlsx(file_bytes)
+            return parse_xlsx(file_bytes), 0
         if source == "anki":
-            return parse_anki_apkg(file_bytes)
-        return extract_cards_from_image(file_bytes, filename=ocr_name)
+            return parse_anki_apkg(file_bytes), 0
+        # spec §13 A125: the photographed page's text is what this request
+        # sends the card model — guarded once it is text, before the model
+        guards: list = []
+        cards = extract_cards_from_image(
+            file_bytes,
+            filename=ocr_name,
+            screen=lambda text: guards.append(card_guard(user_id, (text,), active=loop_on)),
+        )
+        return screened(guards[0], cards) if guards else (cards, 0)
+    except FlashcardError:
+        raise
     except ValueError as e:
         raise Unprocessable(str(e)) from e
     except Exception as e:
@@ -144,19 +165,29 @@ def _scrape(url: str) -> list[dict]:
         raise Unprocessable(str(e)) from e
 
 
-def import_parse(user_id: str, source: str, payload: str, options: dict | None = None) -> dict:
+def import_parse(
+    user_id: str,
+    source: str,
+    payload: str,
+    options: dict | None = None,
+    *,
+    loop_on: bool = False,
+) -> dict:
     """Cards read out of an upload (``anki`` / ``xlsx`` / ``ocr``: base64 file
     bytes) or a Quizlet page (``url``). Nothing is saved. Charged to the
     import limiter like its siblings: every source parses an attacker-shaped
-    file or fetches a page, and ``ocr`` runs OCR and the flashcard agent."""
+    file or fetches a page, and ``ocr`` runs OCR and the flashcard agent.
+    ``loop_on`` (the route's learning-loop gate) guards the OCR text (spec
+    §13 A125)."""
     _claim_rate_slot(user_id)
+    withheld = 0
     if source in ("anki", "xlsx", "ocr"):
-        cards = _parse_file(source, _decode_upload(payload))
+        cards, withheld = _parse_file(source, _decode_upload(payload), user_id, loop_on)
     elif source == "url":
         cards = _scrape(payload)
     else:
         raise InvalidRequest(f"Unsupported source: {source}")
-    return {"cards": cards, "errors": []}
+    return with_withheld({"cards": cards, "errors": []}, withheld)
 
 
 # ── /import/generate, /import/cleanup, /import/cloze ─────────────────────────
@@ -183,15 +214,24 @@ def import_generate(
     document_id: str | None = None,
     count: int = 25,
     difficulty: str = "recall",
+    loop_on: bool = False,
 ) -> dict:
     """Cards generated from pasted text or one of the user's library
-    documents, for review (nothing is saved until ``import_commit``)."""
+    documents, for review (nothing is saved until ``import_commit``).
+
+    Spec §13 A125 (``loop_on``: the route's learning-loop gate): pasted text is
+    guarded both ways; a library document is stored course material, not
+    request text, so it is not."""
     _claim_rate_slot(user_id)
     source_text = _source_text(user_id, source, text, document_id)
+    guard = card_guard(user_id, (source_text,), active=loop_on) if source == "paste" else None
     try:
         cards = gemini_generate_cards(source_text, count=count, difficulty=difficulty)
     except Exception as e:
         raise generation_failed(e) from e
+    withheld = 0
+    if guard is not None:
+        cards, withheld = screened(guard, cards)
 
     # #117 taxonomy (+ the ADR 0028 PostHog mirror): this IS the AI
     # generation (the cards come back for review; /import/commit only
@@ -210,22 +250,34 @@ def import_generate(
                 "via": source,
             },
         )
-    return {"cards": cards}
+    return with_withheld({"cards": cards}, withheld)
 
 
-def import_cleanup(user_id: str, cards: list[dict]) -> dict:
-    """The cards, rewritten by the flashcard agent."""
+def import_cleanup(user_id: str, cards: list[dict], *, loop_on: bool = False) -> dict:
+    """The cards, rewritten by the flashcard agent. Spec §13 A125: the cards'
+    own text is what this request sends the model (guarded); a cleaned card
+    stating a posed check's key withholds the cleanup whole, and the student's
+    own cards come back as they sent them — a cleanup never loses a card.
+    A deck over ``CLEANUP_MAX_CHARS`` is a 413 before anything runs."""
+    if sum(len(c["front"]) + len(c["back"]) for c in cards) > CLEANUP_MAX_CHARS:
+        raise PayloadTooLarge("Too many cards to clean up at once. Clean up a smaller part of the deck.")
     _claim_rate_slot(user_id)
+    guard = card_guard(user_id, [t for c in cards for t in (c["front"], c["back"])], active=loop_on)
     try:
-        return {"cards": gemini_cleanup_cards(cards)}
+        out = gemini_cleanup_cards(cards)
     except Exception as e:
         raise generation_failed(e) from e
+    withheld = cleanup_withheld(guard, out)
+    return {"cards": cards, "withheld": withheld} if withheld else {"cards": out}
 
 
-def import_cloze(user_id: str, paragraph: str) -> dict:
-    """Cloze cards made from one paragraph."""
+def import_cloze(user_id: str, paragraph: str, *, loop_on: bool = False) -> dict:
+    """Cloze cards made from one paragraph (guarded both ways, spec §13 A125)."""
     _claim_rate_slot(user_id)
+    guard = card_guard(user_id, (paragraph,), active=loop_on)
     try:
-        return {"cards": gemini_cloze(paragraph)}
+        cards = gemini_cloze(paragraph)
     except Exception as e:
         raise generation_failed(e) from e
+    cards, withheld = screened(guard, cards)
+    return with_withheld({"cards": cards}, withheld)

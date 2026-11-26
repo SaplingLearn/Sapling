@@ -1,0 +1,150 @@
+@layer components {
+/* The rebuilt check-in result and plan (PlanV2.tsx), after the Claude Design
+   board: one column, the tutor's line, Where you're starting, then Today's
+   plan in a card with its two actions. */
+
+.root {
+  height: 100%;
+  overflow-y: auto;
+  padding: var(--sp-16) var(--sp-11);
+}
+
+.col {
+  max-width: 720px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-10);
+}
+
+.lead {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--fs-lg);
+  line-height: 1.6;
+}
+
+.lead:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: var(--sp-2);
+  border-radius: var(--r-sm);
+}
+
+.h2 {
+  margin: 0;
+  font-size: var(--fs-2xl);
+  font-weight: 600;
+}
+
+.starting {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+}
+
+.startList,
+.planList {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.startList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+}
+
+.startRow {
+  /* The bar's and the word's columns: layout sizes, not scale steps. */
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 120px 120px;
+  gap: var(--sp-6);
+  align-items: center;
+  font-size: var(--fs-base);
+}
+
+.name {
+  overflow-wrap: anywhere;
+}
+
+.word {
+  font-size: var(--fs-md);
+  color: var(--text-dim);
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-8);
+  padding: var(--sp-12);
+  border-radius: var(--r-lg);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+}
+
+.planRow {
+  display: grid;
+  grid-template-columns: var(--sp-14) minmax(0, 1fr) auto;
+  gap: var(--sp-6);
+  align-items: center;
+  padding: var(--sp-6) 0;
+  border-bottom: 1px solid var(--border);
+  font-size: var(--fs-base);
+}
+
+.planRow:last-child {
+  border-bottom: 0;
+}
+
+.num {
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.planRow .word {
+  text-align: right;
+}
+
+.status {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: var(--fs-base);
+}
+
+.failed {
+  display: flex;
+  gap: var(--sp-4);
+  align-items: center;
+  flex-wrap: wrap;
+  color: var(--text);
+}
+
+.actions {
+  display: flex;
+  gap: var(--sp-6);
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+@media (max-width: 640px) {
+  .root {
+    padding: var(--sp-10) var(--sp-6);
+  }
+
+  .card {
+    padding: var(--sp-8);
+  }
+
+  .startRow {
+    grid-template-columns: minmax(0, 1fr) auto;
+    row-gap: var(--sp-2);
+  }
+
+  .startRow > [role="meter"] {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+}
+
+}

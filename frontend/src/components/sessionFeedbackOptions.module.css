@@ -1,0 +1,42 @@
+@layer components {
+/* The session-feedback chip picker (sessionFeedbackOptions.tsx). */
+.label {
+  margin-bottom: var(--sp-4);
+}
+
+.group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-3);
+}
+
+.chip {
+  padding: var(--sp-3) var(--sp-6);
+  font-size: var(--fs-sm);
+  border-radius: var(--r-full);
+  background: transparent;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  transition:
+    background var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease),
+    transform var(--dur-instant) var(--ease-out);
+}
+
+.chip:hover:not(:disabled):not([aria-pressed="true"]) {
+  background: var(--bg-subtle);
+  border-color: var(--border-strong);
+}
+
+.chip:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
+.chip[aria-pressed="true"] {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: var(--accent-border);
+}
+
+}

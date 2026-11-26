@@ -10,6 +10,8 @@ import { AchievementUnlockWatcher } from "./AchievementUnlockWatcher";
 import { NavFeatureGate } from "./NavFeatureGate";
 import { useLayoutPref } from "@/lib/useLayoutPref";
 import { useIsMobile } from "@/lib/useIsMobile";
+import { MotionProvider } from "@/lib/motion";
+import styles from "./ShellFrame.module.css";
 
 /**
  * `100dvh`, not `100vh`: on iOS Safari `100vh` is the *large* viewport (the
@@ -22,18 +24,28 @@ import { useIsMobile } from "@/lib/useIsMobile";
  * collapses and the value stays put — no resize thrash.
  */
 export function ShellFrame({ children }: { children: React.ReactNode }) {
+  // The app-wide framer-motion defaults (MOTION's timing, and reduced motion
+  // honoured for every animation), mounted once here: every signed-in page
+  // renders inside this client boundary, and React context reaches the
+  // portalled modals and toasts too.
+  return (
+    <MotionProvider>
+      <ShellLayout>{children}</ShellLayout>
+    </MotionProvider>
+  );
+}
+
+function ShellLayout({ children }: { children: React.ReactNode }) {
   const [pref] = useLayoutPref();
   const isMobile = useIsMobile();
   const useSidebar = pref === "sidebar" && !isMobile;
 
   if (useSidebar) {
     return (
-      <div
-        className="flex flex-row h-dvh overflow-hidden relative"
-      >
+      <div className={`${styles.root} ${styles.rootRow}`}>
         <a href="#main-content" className="skip-link">Skip to content</a>
         <SideNav />
-        <div className="flex-1 min-w-0 flex flex-col relative">
+        <div className={styles.body}>
           <main
             id="main-content"
             tabIndex={-1}
@@ -44,7 +56,7 @@ export function ShellFrame({ children }: { children: React.ReactNode }) {
             // The shell's scrollport: the root above is height:100dvh/overflow:hidden,
             // so this — not <body> — is what scrolls. `useScrollLock` targets it.
             data-scroll-container=""
-            className="flex-1 overflow-y-auto min-w-0 relative"
+            className={styles.main}
           >
             <NavFeatureGate>{children}</NavFeatureGate>
           </main>
@@ -61,22 +73,26 @@ export function ShellFrame({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <div
-      className="flex flex-col h-dvh overflow-hidden relative"
-    >
+    <div className={`${styles.root} ${styles.rootColumn}`}>
       <a href="#main-content" className="skip-link">Skip to content</a>
       <TopNav />
-      <main
-        id="main-content"
-        tabIndex={-1}
-        // The "authed shell mounted" E2E anchor — see the sidebar layout above.
-        data-testid="app-shell"
-        // The shell's scrollport — see the sidebar layout above.
-        data-scroll-container=""
-        className="flex-1 overflow-y-auto min-w-0 relative z-1"
-      >
-        <NavFeatureGate>{children}</NavFeatureGate>
-      </main>
+      {/* Same element path to <main> as the sidebar layout (root → nav →
+          wrapper div → main): crossing the mobile breakpoint swaps the nav but
+          must NOT remount the page — a remount drops a screen's in-memory
+          state (quiz results, a streaming chat turn, unsaved input). */}
+      <div className={styles.body}>
+        <main
+          id="main-content"
+          tabIndex={-1}
+          // The "authed shell mounted" E2E anchor — see the sidebar layout above.
+          data-testid="app-shell"
+          // The shell's scrollport — see the sidebar layout above.
+          data-scroll-container=""
+          className={`${styles.main} ${styles.mainRaised}`}
+        >
+          <NavFeatureGate>{children}</NavFeatureGate>
+        </main>
+      </div>
       <Suspense fallback={null}>
         <FeedbackFlow />
         <SessionFeedbackGlobal />

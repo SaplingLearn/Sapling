@@ -220,6 +220,31 @@ describe("FlagsProvider/useFlag", () => {
     await waitFor(() => expect(screen.getByTestId("m").textContent).toBe("{}"));
   });
 
+  // #866 K49: a remembered map is the last-known guess, not the server's
+  // answer; useLoopStatus does not let a guessed "off" skip its probe.
+  function FreshProbe() {
+    const { flags, ready, fresh } = useFlagMap();
+    return <span data-testid="f">{ready ? `${JSON.stringify(flags)}|${fresh}` : "loading"}</span>;
+  }
+
+  it("useFlagMap says whether the map is this visit's read or a remembered one (#866 K49)", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });
+    fetchFlags.mockResolvedValueOnce({ learning_loop: "off" });
+    render(<FlagsProvider><FreshProbe /></FlagsProvider>);
+    await waitFor(() => expect(screen.getByTestId("f").textContent).toBe('{"learning_loop":"off"}|true'));
+    cleanup();
+    fetchFlags.mockRejectedValue(new Error("down"));
+    render(<FlagsProvider><FreshProbe /></FlagsProvider>);
+    // the read failed: the remembered map stands in, and says so
+    await waitFor(() => expect(screen.getByTestId("f").textContent).toBe('{"learning_loop":"off"}|false'));
+    await waitFor(() => expect(vi.getTimerCount()).toBeGreaterThan(0)); // refresh armed
+    fetchFlags.mockResolvedValue({ learning_loop: "on" });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
+    expect(screen.getByTestId("f").textContent).toBe('{"learning_loop":"on"}|true');
+  });
+
   it("useFlagMap is ready at once when signed out, and off the shell", () => {
     user = { userId: "", isAuthenticated: false, userReady: true };
     render(<FlagsProvider><MapProbe /></FlagsProvider>);

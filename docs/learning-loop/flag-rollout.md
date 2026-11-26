@@ -1,0 +1,211 @@
+# Turning on the learning-loop flags
+
+Every newer learning-loop behaviour ships behind its own feature flag, off by default. With a flag off, its code path is byte-identical to before it existed. This page is the checklist for switching each one on: what it changes, what must be true first, how to roll it out, what to watch, and how to roll it back.
+
+Nothing here is switched on by this document. Turning a flag on is the owner's call.
+
+## The master flag: `learning_loop`
+
+Every flag below only matters for a student who has the learning system at all. That is the per-student `learning_loop` flag (`off` | `on`, ships `off`): the loop tutor and its routes, Study's review queue and retention check, the retention badge, the quiz learning features, the integrity guard on notes and flashcards, and check-item drafting on their uploads. Off is the pre-loop app. Roll it out the same way as any flag (yourself, then a class, then everyone).
+
+Above it sits the env kill switch `LEARNING_LOOP_ENABLED`: `false`/`0`/`off`/`no` turns the loop off for everyone, whatever the flag says, with no database read. Unset means "the flag decides" — it no longer means on. `SAPLING_FLAG_LEARNING_LOOP=off` forces the flag off without touching the kill switch. Both off paths answer the loop routes as 404 (`invariants.md` §9) and each has its own E2E lane (kill switch, flag-off).
+
+The showcase drivers (`scripts/gallery-shots.sh`, `scripts/figma-capture.sh`) boot the flag-off lane: their recipes and `backend/agents/function_handlers_showcase.py` photograph production's default, the pre-loop app. Before the flag is on for everyone, give them loop recipes and showcase handlers for the loop slots, or the public gallery keeps showing the legacy tutor.
+
+## How to switch a flag
+
+Flags live in `backend/services/feature_flags.py::REGISTRY`; their stored configuration is in the `feature_flags` and `feature_flag_targets` tables. Change them through the admin Flags tab, or the admin API (`routes/admin_flags.py`):
+
+| Step | Admin API | Effect |
+|---|---|---|
+| 1. Try it on yourself | `PUT /api/admin/flags/{key}/targets` with your user | On for the listed users only |
+| 2. Partial rollout | `PATCH /api/admin/flags/{key}` with `rollout_percent` and `rollout_variant: "on"` | On for a stable percentage of students |
+| 3. Everyone | `PATCH /api/admin/flags/{key}` with `default_variant: "on"` | On for all students |
+| Check one student | `GET /api/admin/flags/{key}/explain` | Which rule decided their variant; for a learning-loop flag the kill switch, then their `learning_loop` flag, come first (`learning/gate.py::served_flag`) |
+| **Roll back** | `PATCH` with `default_variant: "off"`, `rollout_percent: 0`; or set the env var `SAPLING_FLAG_<KEY>=off` on the backend | Off at once; the env var overrides everything stored |
+
+Per-student flags are resolved once per request (or once per quiz generation and submit), so a rollback takes effect on the student's next action.
+
+### The shared blocker: live eval recordings
+
+Several flags change a prompt or an output schema, so their eval datasets must be recorded live and pass before the flag goes on (`backend/tests/evals/README.md`; record with `SAPLING_EVAL_MODE=record`, three recordings for a floor).
+
+**As of 2026-11-24 (A111 on #866 + Day 9 W0.3b/W0.5), re-checked against `floors.py --check`:** `LOOP_SLOTS_PENDING_CLAUDE_EVAL` is empty. Default-path Claude cassettes + floors landed for `loop_tutor*`, confront, grader, check_items, decisions; plus `__pedagogy`, `__flags`, `__v2`, and `check_item_gates` (verify/solve/topup/varied/combo). Only `deep` is routable on Claude (`LOOP_ROUTABLE_TIERS`). **The `__v2` floors do not hold:** they were set to 1.0 by hand, but the committed run logs show RawAnswerLeak / ServedAnswerLeak / SycophancyResists / ServedNoReveal at 0.9 and confront Confronts / FeedbackNeverEndsInAnswer at 0.875 in at least one of three runs, so `floors.py --check` and `tests/test_eval_floors.py` fail. A prompt fix is prepared; it needs a three-run Claude re-record. `loop_tutor_v2` is not ready, even for self-target, until that passes. The default `check_items` dataset also owes a three-run re-record (McOptionsValid 0.875 against its required 1.0; the drafter retry landed in `9bd4bd9a`). The pending set tracks model slots only, so its being empty does not cover `__v2`, `__flags` or a below-contract floor. Self-target runbook and per-flag readiness: [w0-flag-enable-checklist.md](w0-flag-enable-checklist.md).
+
+`SAPLING_EVAL_USAGE_LOG=<path>` records each run's token cost, so a recording also measures what the flag will cost.
+
+## Recommended order
+
+1. **Read-only, no eval needed:** `quiz_concept_plan`, `quiz_results_routing`, `item_reports`, `skill_ladder`, `hint_ladder`, `verdict_v2`, `wrapup_v2`, `plan_v2`, `new_session_v2`, `session_v2`, `course_page_v2`, `review_v2`, `milestones`, `just_ask`, `saved_items`, `course_setup`.
+2. **Safety, after copy review:** `crisis_support`.
+3. **Prompt changes, after their evals:** `loop_tutor_v2`, `segment_prequestion`, `self_explanation_prompts`, `quiz_planned_questions`, `quiz_item_gates`, then `quiz_misconceptions`.
+4. **Drafting changes, after their evals:** `varied_isomorphs`, `multi_concept_items`, `upload_prereq_edges`.
+5. **Measurement-protocol changes, only at a trial boundary:** `probe_matched_pretest`, `retention_due_badge`, `help_gate_strict`.
+
+## Flag by flag
+
+### quiz_concept_plan (A143) — client-visible
+- **Changes:** the quiz home suggests concepts from the learner model: FSRS-due reviews first, then open misconceptions, then concepts whose prerequisites are proficient. "Review everything due" means due by FSRS.
+- **Before:** nothing; it only reads. Check the plan on a seeded student (`GET /api/quiz/plan`).
+- **Watch:** quiz starts per student. A failed plan read falls back to the old tier ranking, so check the backend log for plan errors.
+- **Roll back:** off restores the tier ranking.
+
+### quiz_results_routing (A147)
+- **Changes:** quiz results show how each skill meter moved, what is due, and a next step (review queue, or Learn on the weakest ready concept).
+- **Before:** nothing; it only reads.
+- **Watch:** clicks on the next-step links; results-page errors.
+
+### skill_ladder (Tutor redesign phase 2)
+- **Changes:** `GET /api/graph` gives each concept the learner model's decayed skill (`skill`, null until the concept has a graded answer of its own; `skill_mastered`, the backend's mastered rule). The frontend (`frontend/src/lib/levels.ts::applySkill`) then makes that skill each concept's score and tier, so the Tree, Study, the Dashboard, the Quiz home and the Tutor colour, sort, count and name concepts on one ladder: Not started, Getting started (<30%), Developing (30–79%), Proficient (80%+). "Mastered" is never a level.
+- **Before:** check a seeded student's `learner_state`: a concept with no graded answer reads **Not started**, even where the map's stored score is high (history from before the loop). Students whose mastery predates the loop see that drop until they answer again. E2E: the lanes run the loop on but this flag off; turning it on in a lane needs `learner_state` seeded and the Tree / Dashboard / Study / quiz-home specs moved to the ladder.
+- **Watch:** Tree and Study page errors; graph read latency (one extra batched `learner_state` read).
+- **Roll back:** off restores the map's stored score and four tiers everywhere, with no data change.
+
+### hint_ladder (Tutor redesign phase 4) — client-visible
+- **Changes:** the check card draws the help ladder as steps: the hints taken stay stacked, the next step names its cost before it is taken (a correct answer after hints counts half; after the worked steps it counts nothing, `learning/evidence.py::evidence_weight`), and a hint locked only for time alone counts down on its button. Frontend only: the `/hint` gate, rungs and weights are unchanged.
+- **Before:** nothing; it reads what `/hint` and `/step/attempt` already return.
+- **Watch:** hint requests per item and how often the worked steps are taken (`help_abuse` in the admin learning-loop report).
+- **Roll back:** off restores the one Hint button and the latest hint.
+
+### verdict_v2 (Tutor redesign phase 4) — client-visible
+- **Changes:** the graded check's verdict leads with a title ("Correct", "Correct, half credit", "Not quite"), at most one credit line, and the concept's skill change shown once (the learner model's level before the answer against after it); Continue names the plan's next concept and counts the confident-miss hold down on itself. Frontend only: grades, credit and the hold are the server's, unchanged.
+- **Before:** nothing; it reads the graded turn's `verdict`, `credit`, `credit_reasons`, `learner_state` and `feedback_dwell_ms`.
+- **Watch:** time from verdict to Continue; Continue clicks during a hold (there should be none).
+- **Roll back:** off restores the verdict banner and the dwell note.
+
+### wrapup_v2 (Tutor redesign phase 4) — client-visible
+- **Changes:** the wrap-up leads with a headline built from what moved, lists the session's concepts once in the ladder's words (the plan's concepts it did not reach marked "Not reached today"), then the summary, "Next time", ONE primary next step (Review when reviews are due, else New session) and "More practice". The retention CTA and the "n of m stronger" card are gone. Frontend only.
+- **Before:** nothing; it reads the close record, the approved plan and the review count the session panel already shows.
+- **Watch:** clicks on the primary step against the secondary ones; sessions started from the wrap-up.
+- **Roll back:** off restores the wrap-up as before.
+
+### plan_v2 (Tutor redesign phase 4) — client-visible
+- **Changes:** the plan's kind words become the board's ("Quick review", "New", "Practice"), on the plan card, in the transcript's plan and under each name in the (pre-`session_v2`) session panel alike. After the check-in, one line from the tutor naming where the student is furthest along and what is new, then "Where you're starting" (each concept the check-in answered, on the skill ladder; one it never reached reads Not started), then "Today's plan" with one label per concept ("Quick review", "New", "New, after Hash tables" when a planned prerequisite comes first, "Practice") and Start this plan beside Change goal (the goal editor the header's Edit goal opened). The diagnosis details, the goal reasons and the separate "How these connect" list are folded in or gone. Frontend, plus the additive `starting` field on GET /plan (the planner's belief per measured concept).
+- **Before:** nothing; `starting` is sent whatever the flag says.
+- **Watch:** plan approvals against goal changes from the plan; time on the plan screen.
+- **Roll back:** off restores the plan card as before.
+
+### new_session_v2 (Tutor redesign phase 4) — client-visible
+- **Changes:** the Tutor home asks "What are we working on?" and offers one radio card per kind of session it can start (continue the open session, learn the suggested concept, the whole course, work toward a goal, review what's due), one start button named for the pick, and "This wraps up your open session, …" only when the pick starts a new one. The pills, the hero mark and the pull quote are gone. Frontend only; the board's "Just ask a question" (no ungraded session exists) and "Prepare for Midterm 2" (no milestones yet) are not offered.
+- **Before:** nothing.
+- **Watch:** which choice students start from; sessions continued against new ones started.
+- **Roll back:** off restores the Tutor home as before.
+
+### session_v2 (Tutor redesign phase 4) — client-visible
+- **Changes:** the session panel is headed "Plan" and lists each planned concept once with its level word and a bar (the one being taught marked, the ones before it dimmed), then "See on your map". The separate Skill meters, the "How these connect" list, the kind line under each name, the due box and the map with its key are gone from the panel; Review with the queue's count moves to the foot of the Tutor sidebar. Frontend only; the board's "Saved" tab (no saved artifacts) and milestone link (no milestones) are not built.
+- **Before:** nothing.
+- **Watch:** Tree visits from the session; Review clicks from the sidebar against the old due box.
+- **Roll back:** off restores the panel as before.
+
+### course_page_v2 (Tutor redesign phase 4) — client-visible
+- **Changes:** the Tutor's course page shows "Ready to learn" (up to five concepts below Proficient whose direct prerequisites are all Proficient, strongest first, each with its level and Learn, which starts a session on it), "Sessions" (the four latest, Open or their date), "Coming up" (the course's upcoming assignments from the calendar, soonest first, "Dec 2, in 6 days") and "Materials" (with Upload). One note on top: a retention check due in this course, else the reviews due (left to the sidebar's Review when `session_v2` is on). The "Your progress" meters and the file-count heading are gone. Frontend only; a Library section lists the course's study guides and its flashcard count (Study's reads; hidden while Study is). The board's practice exam and review minutes are not built.
+- **Before:** nothing; the calendar's upcoming read is already exempt from `hide_calendar` (the Dashboard calls it).
+- **Watch:** sessions started from Learn; Coming-up rows against assignments students have.
+- **Roll back:** off restores the course page as before.
+
+### review_v2 (Tutor redesign phase 4) — client-visible
+- **Changes:** the review queue and the retention check leave the top of the Study hub (where they pushed the course's readiness and Up Next down) for two compact rows in its rail, under Quick Reviews and in its style: "Review" with the queue's count (the Tutor's: due cards and checks, new cards aside) and "Retention check" ("Ready" when one is due; it still opens when none is). Each opens in the hub's modal; the `?retention-course=` deep link opens the check at once. Inside, the queue is headed "Review", with a chip per course and "All courses" (picked first; a pick serves that course's queue fresh) and the item's place ("3 of 9") in place of the "N min left" chip; the retention check says "Retention check ready for MA 242" when one is due for the course it shows. The rest of the hub is unchanged. Frontend only; the board's "Check answer" stays the shared card's "Submit answer".
+- **Before:** nothing; the review routes already take `course_id`.
+- **Watch:** reviews answered per visit, all courses against one course.
+- **Roll back:** off restores Due today as before.
+
+### milestones (Tutor redesign) — client-visible
+- **Changes:** milestones in the Tutor, from the data the Study hub already reads: a course's dated exams, quizzes and homework (the calendar's assignments) and the concepts each covers (the topic checklist's exam links). The Tutor sidebar lists each course's next two within 30 days with a countdown ("13 days"); a milestone's page (in the course view) says "Midterm 2 in 13 days", how many of its concepts are exam-ready (Proficient) with the count per level, what it covers (each concept's level and Learn), its sessions ("Prepare for Midterm 2") and the study guides saved for it, with ONE primary step, Prepare in a session (a goal on its concepts not ready yet, weakest first, up to 12). With `course_page_v2`, Coming up says "3 of 8 ready" and each row opens its milestone; with `new_session_v2`, New session offers "Prepare for Midterm 2" first. Frontend only; the board's practice exam is not built.
+- **Before:** students' exams have dates (Exams and Deadlines, or a syllabus) and the course outline links topics to them; without links a milestone says "No topics are linked to Midterm 2 yet." and Prepare waits.
+- **Watch:** Prepare sessions started; milestones with nothing linked.
+- **Roll back:** off removes milestones from the Tutor.
+
+### just_ask (Tutor redesign) — client-visible
+- **Changes:** New session offers "Just ask a question" ("Talk it through. Nothing is graded."): a loop session with origin `just_ask` (backend `services/just_ask.py`) that starts teaching at once on no planned concept, with a template opener ("Ask me anything about this course. Nothing here is graded."; no model run) so the student asks first. It grades nothing: no teach turn poses a check, "Check me" is hidden (GET /status says `ungraded`) and /check/next and the answer routes refuse it (409), and no teach turn ends on an open question whose reply would get a verdict (A121). What the tutor reveals of a check item is still recorded by the served-text scan.
+- **Before:** nothing. The backend refuses the origin (422) while the flag is off for the student.
+- **Watch:** sessions started per choice; tutor cost per just-ask session (every message is a model turn).
+- **Roll back:** off removes the choice and refuses new just-ask starts; open ones stay ungraded.
+
+### saved_items (Tutor redesign) — client-visible
+- **Changes:** a "Save" under each settled tutor reply keeps it (its first line as the title, the reply as the text) in the new `tutor_saved_items` table (migration 20261126055016; title and text are 🔒 columns sealed to the row; RLS bucket A; wiped and bundled with the account; cascades with its session). With `session_v2`, the session panel's head becomes two tabs, Plan and Saved (n), the Saved list opening each item and removing it; with `milestones`, a milestone's page lists what was saved in the sessions that prepared for it. `/api/learn/saved` (list, save, delete) 404s while the flag is off; a session holds at most 50.
+- **Before:** the migration is applied.
+- **Watch:** saves per session; items removed.
+- **Roll back:** off hides Save and the tab and 404s the routes; the saved rows stay.
+
+### course_setup (Tutor redesign) — client-visible
+- **Changes:** with `course_page_v2`, the course page's Coming up offers "Set up from syllabus": a four-step setup (Course, Syllabus, Review, Done). The student uploads the syllabus (the same upload the gradebook's syllabus flow uses, which already writes its dated work to the calendar) or skips to review what is there; Review lists the course's exams and assignments, each a milestone with its date (fix it, remove it, add one) and the course's concepts, each ticked. Confirm writes only the changes through the calendar's routes, then sends the unticked concepts to `POST /api/learn/setup/exclude-concepts` (`services/course_setup.py`): each one the student has not started (no evidence) is recorded in the new `course_concept_exclusions` table (migration 20261126060659; plaintext normalized names; RLS bucket A; wiped and bundled with the account) and its graph node deleted; `apply_graph_update` then never re-creates a recorded concept for that student and course, so a later upload does not bring it back. A started concept cannot be unticked (and the route keeps it).
+- **Before:** the migration is applied; `course_page_v2` is on (the setup opens from its Coming up).
+- **Watch:** setups finished; concepts removed per setup; uploads whose concepts were dropped as excluded.
+- **Roll back:** off hides the setup and 404s the route; recorded exclusions stay but stop being applied, so a later upload may bring a removed concept back.
+
+### item_reports (A113, A123) — client-visible
+- **Changes:** students can report a check question. Two reports hold it from the whole course until staff approve or retire it in the admin check-items queue.
+- **Before:** someone on staff owns the review queue (`/api/admin/check-items`) and checks it daily.
+- **Watch:** queue length and how long items stay held; a held item reduces the course's servable pool.
+
+### crisis_support — safety
+- **Changes:** a message stating suicidal ideation, self-harm or acute danger gets a fixed resources card (988, Crisis Text Line, campus counseling, 911) instead of a model reply, on every tutor, learning-loop and notes AI surface.
+- **Before:** the owner reviews the copy in `services/crisis_support_copy.py` against `docs/safety/crisis-support.md`, including the campus counseling details for each school served.
+- **Watch:** card count per day; read a sample for false positives (with privacy care).
+- **Roll back:** off returns the normal model reply path.
+
+### loop_tutor_v2 (A121)
+- **Changes:** the tutor opens with a plain verdict on the student's reply, labels only new content "Key idea:", and names the plan's current concept and why.
+- **Before:** `loop_tutor` and `misconception_confront` re-recorded live under `LOOP_EVAL_VARIANT=v2` (their own cassettes), every served gate passing. **Not met on 2026-11-24:** see the paragraph above. Once a v2 namespace is recorded, `run_all.py` (and CI) replays it beside the default one, so a later edit to a v2 prompt line fails like any regression.
+- **Watch:** `zpd.leak` events, tutor turn retries, session wrap-up ratings.
+
+### segment_prequestion (A138)
+- **Changes:** each new concept opens with one ungraded guess at a vetted question; the answer and an explanation follow at once.
+- **Before:** the prequestion explaining path recorded live and passing: `teach_explains_prequestion` in the `loop_tutor` flag-path datasets (`<slot>__flags`; `LOOP_EVAL_FLAGS=1 SAPLING_EVAL_MODE=record python tests/evals/loop_tutor.py`). They score the same served gates as the routing datasets but never decide which tier routes; `run_all.py` replays them once recorded.
+- **Watch:** `learn.prequestion` events (posed, skipped by reason, answered, superseded); a high `pool_for_checks` skip rate means courses need more items.
+
+### self_explanation_prompts (A139)
+- **Changes:** after a worked example, a shown solution or a first unaided correct answer, the turn's question becomes a "why does this follow?" prompt with its own reply box. Replies are stored encrypted and never graded.
+- **Before:** the acknowledging turn recorded live and passing: `teach_acknowledges_self_explanation` in the same `loop_tutor` flag-path datasets.
+- **Watch:** the admin report's `self_explanation` block: reply rate, and next-item success after a reply.
+
+### next_probe_hint (W2.4)
+- **Changes:** when the student's most recently graded check carries reason-before-submit text, activation may prefer an already-eligible check whose stem overlaps that text (deterministic keywords). Self-explain replies are not read. Never mastery.
+- **Before:** nothing eval-gated (no prompt change). Since W2.4b the call site in `services/loop/practice.py` opens the sealed reasoning on the student's most recently graded step (only while the flag is on; no reasoning on that step means no hint) and passes it in, so the flag acts once reason-before-submit text exists. See [w2-next-probe-hint.md](w2-next-probe-hint.md).
+- **Watch:** it emits no event of its own. Activation still respects exclusions / post-test reserves; no `apply_graph_update` from this path.
+- **Roll back:** off restores ordinary `select_item` preference.
+
+### quiz_planned_questions (A144)
+- **Changes:** the learner model sets each quiz question's difficulty and the misconception a distractor targets; the model only writes them.
+- **Before:** `quiz_generation_planned` recorded live and passing.
+- **Watch:** quiz generation latency and failures; distractor tag rate.
+
+### quiz_item_gates (A145)
+- **Changes:** every generated quiz question gets a concept check and a blind key solve on the `quiz_check` slot before it is served; only verified questions count as evidence.
+- **Before:** a live smoke of the checks on real quiz questions (`quiz_item_gates` eval) and a measured cost: it adds two to three model calls per quiz.
+- **Watch:** `quiz.items_gated` codes (dropped, practice, verified), and passes marked `unavailable` (the checks were down, or cut at their generation run's time bound: the run and its checks share `QUIZ_GENERATION_TIMEOUT_SEC`); top-up rate; cost per quiz.
+
+### quiz_misconceptions (A146)
+- **Changes:** a "Sure" wrong answer on a verified quiz question whose option embodies a known misconception records it; a later correct, unassisted answer closes it.
+- **Before:** `quiz_planned_questions` and `quiz_item_gates` both on for the same students (it acts only on questions generated with both).
+- **Watch:** misconceptions recorded and closed per day from the `quiz` surface.
+
+### varied_isomorphs (A140)
+- **Changes:** uploads draft each concept's items with varied scenarios and representations; picks prefer a surface the student hasn't met.
+- **Before:** `check_items_varied` (`tests/evals/check_item_gates.py`: the varied drafter on a three-concept call and the varied top-up) recorded live and passing. Takes effect per uploader on new uploads.
+- **Watch:** drafting failures; `backend/scripts/project_varied_practice_cost.py` for the cost.
+
+### multi_concept_items (A141)
+- **Changes:** uploads also draft items combining a concept with its direct prerequisites; a proficient student gets one per session.
+- **Before:** `check_items_combo` (`tests/evals/check_item_gates.py`: the combination drafter and its component check) recorded live and passing.
+- **Watch:** `learn.multi_concept_served`; drafting cost.
+
+### upload_prereq_edges (A118)
+- **Changes:** uploads extract prerequisite relations and write them as graph edges, so propagation, prerequisite bands, wheelspin repair and plan order start acting on them.
+- **Before:** `concept_extraction__relations` (`CONCEPT_EVAL_RELATIONS=1 python tests/evals/concept_extraction.py`: the relations variant, scored on the edges code would write) recorded live and passing; a manual look at the edges written for a few real uploads.
+- **Watch:** cycles broken and edges dropped per document (logged by `concept_prereqs.resolve_prerequisites`); plan order complaints.
+- **Roll back:** off stops new edges; edges already written stay. It acts only while the learning loop is on for the uploader, so the `LEARNING_LOOP_ENABLED` kill switch (or the uploader's `learning_loop` flag off) stops it too.
+
+### probe_matched_pretest (A130) — measurement protocol
+- **Changes:** a concept's first probe question is matched in form to its delayed post-test items, so pre/post pairs compare like with like.
+- **Before:** a trial boundary: switching mid-trial mixes two protocols in one analysis.
+
+### retention_due_badge (A126) — measurement protocol, client-visible
+- **Changes:** a badge on Study and the Dashboard says a retention check is due (push instead of pull).
+- **Before:** a trial boundary: it changes who takes the post-test and when.
+- **Watch:** the learning-gain funnel (`posttest_funnel`): answered vs expired windows.
+
+### help_gate_strict (A134)
+- **Changes:** a hint unlocks only after the band's independent time (45 s; 90 s for a novice) with the latest hint, and only for a novel attempt that isn't a paste of the question.
+- **Before:** a baseline from the admin help-abuse report (`help_abuse.by_gate`) with the flag off; a trial boundary if a trial is running.
+- **Watch:** the same report with it on: bottom-outs, earnest-blocked steps, and session abandonment.

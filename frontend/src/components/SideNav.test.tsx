@@ -20,7 +20,7 @@
 
 import React from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, cleanup, act, within } from "@testing-library/react";
+import { render, screen, cleanup, act, within, fireEvent } from "@testing-library/react";
 
 vi.mock("next/navigation", () => ({
   usePathname: vi.fn(() => "/dashboard"),
@@ -53,6 +53,20 @@ vi.mock("./Icon", () => ({
 }));
 
 import { SideNav, SIDE_NAV_EXPANDED, SIDE_NAV_COLLAPSED } from "./SideNav";
+import styles from "./SideNav.module.css";
+import fs from "node:fs";
+import path from "node:path";
+
+/* The rail's static styling (every rule but the collapse geometry) lives in
+   SideNav.module.css, which jsdom does not apply: assert the class an element
+   carries and what that class's rule declares. */
+const MODULE_CSS = fs.readFileSync(path.join(__dirname, "SideNav.module.css"), "utf8");
+function ruleFor(selector: string): string {
+  const at = MODULE_CSS.indexOf(`\n${selector} {`);
+  if (at < 0) throw new Error(`no rule for ${selector} in SideNav.module.css`);
+  return MODULE_CSS.slice(at, MODULE_CSS.indexOf("}", at));
+}
+const hasClass = (el: Element, name: string) => el.classList.contains(styles[name]);
 import { usePathname } from "next/navigation";
 import { twStyle } from "@/test-utils/twStyle";
 
@@ -206,12 +220,19 @@ describe("SideNav — the account footer", () => {
   it("opens the account footer with one full-width rule", () => {
     const rail = renderRail();
     const footer = footerOf(rail);
-    expect(footer).toHaveTwStyle({ borderTop: "1px solid var(--border)" });
+    expect(hasClass(footer, "footer")).toBe(true);
+    expect(ruleFor(".footer")).toMatch(/border-top: 1px solid var\(--border\)/);
 
-    // The profile block (the one holding the avatar) owns no rule of its own.
-    let node: HTMLElement | null = screen.getByTestId("avatar").closest("div");
+    // The profile block (the one holding the avatar) owns no rule of its own:
+    // nothing between the avatar and the footer draws a top border.
+    const ruled = MODULE_CSS.split("}")
+      .filter((r) => /border-top:/.test(r))
+      .map((r) => r.split("{")[0].split("*/").pop()!.trim());
+    expect(ruled).toEqual([".footer"]);
+    let node: HTMLElement | null = screen.getByTestId("avatar").parentElement;
     while (node && node !== footer) {
-      expect(twStyle(node).borderTopWidth).toBe("");
+      expect(twStyle(node).borderTop).toBe("");
+      expect(hasClass(node, "footer")).toBe(false);
       node = node.parentElement;
     }
     expect(node).toBe(footer);
@@ -243,10 +264,12 @@ describe("SideNav — the account footer", () => {
 
   it("pins the footer and scrolls only the destinations, scrollbar hidden", () => {
     const rail = renderRail();
-    expect(rail).toHaveTwStyle({ overflow: "hidden" });
+    expect(hasClass(rail, "rail")).toBe(true);
+    expect(ruleFor(".rail")).toMatch(/overflow: hidden/);
     const scroller = rail.querySelector<HTMLElement>("[data-sidenav-scroll]")!;
-    expect(scroller).toHaveTwStyle({ overflowY: "auto" });
-    expect(twStyle(scroller).cssText || "").toMatch(/scrollbar-width:\s*none/);
+    expect(hasClass(scroller, "scroll")).toBe(true);
+    expect(ruleFor(".scroll")).toMatch(/overflow-y: auto/);
+    expect(ruleFor(".scroll")).toMatch(/scrollbar-width: none/);
     expect(scroller.contains(screen.getByText("Tutor"))).toBe(true);
     expect(scroller.contains(footerOf(rail))).toBe(false);
   });
@@ -262,10 +285,14 @@ describe("SideNav — active vs inactive", () => {
     // The selected row is a plain neutral fill in the ink scale; an unselected one
     // has no background at all. Asserting the TOKEN rather than a computed
     // colour keeps this honest if the scale is retuned.
-    expect(twStyle(study).cssText || "").toMatch(/font-weight:\s*600/);
-    expect(twStyle(study).cssText || "").toMatch(/--bg-soft/);
-    expect(twStyle(tree).cssText || "").toMatch(/font-weight:\s*400/);
-    expect(twStyle(tree).cssText || "").not.toMatch(/--bg-soft/);
+    expect(study).toHaveAttribute("data-active", "true");
+    expect(tree).toHaveAttribute("data-active", "false");
+    const activeRule = ruleFor('.row[data-active="true"]');
+    expect(activeRule).toMatch(/font-weight: 600/);
+    expect(activeRule).toMatch(/background: var\(--sidenav-active-bg\)/);
+    expect(ruleFor(".rail")).toMatch(/--sidenav-active-bg: var\(--bg-soft\)/);
+    expect(ruleFor(".row")).toMatch(/font-weight: 400/);
+    expect(ruleFor(".row")).toMatch(/background: transparent/);
   });
 
   it.each(["/flashcards", "/flashcards/deck-1", "/study/guide"])(
@@ -274,8 +301,7 @@ describe("SideNav — active vs inactive", () => {
       mockedUsePathname.mockReturnValue(path);
       renderRail();
       const study = screen.getByText("Study").closest("a")!;
-      expect(twStyle(study).cssText || "").toMatch(/font-weight:\s*600/);
-      expect(twStyle(study).cssText || "").toMatch(/--bg-soft/);
+      expect(study).toHaveAttribute("data-active", "true");
     },
   );
 
@@ -283,7 +309,7 @@ describe("SideNav — active vs inactive", () => {
     mockedUsePathname.mockReturnValue("/");
     renderRail();
     const dashboard = screen.getByText("Dashboard").closest("a")!;
-    expect(twStyle(dashboard).cssText || "").toMatch(/font-weight:\s*600/);
+    expect(dashboard).toHaveAttribute("data-active", "true");
   });
 });
 
@@ -297,7 +323,7 @@ describe("SideNav — collapsed state", () => {
       expect(twStyle(r).justifyContent).toBe("");
       expect(r).toHaveTwStyle({ marginLeft: "0px" });
       expect(r).toHaveTwStyle({ paddingLeft: "12px" });
-      expect(twStyle(r).transition).toMatch(/padding/);
+      expect(hasClass(r, "row")).toBe(true);
     }
     cleanup();
     renderRail(true);
@@ -324,7 +350,7 @@ describe("SideNav — collapsed state", () => {
     const rules = Array.from(rail.querySelectorAll<HTMLElement>("[data-sidenav-group-rule]"));
     expect(rules).toHaveLength(3);
     for (const r of rules) expect(r).toHaveTwStyle({ opacity: "1" });
-    expect(rail.querySelector<HTMLElement>("[data-sidenav-footer]")!).toHaveTwStyle({ borderTop: "1px solid var(--border)" });
+    expect(hasClass(rail.querySelector<HTMLElement>("[data-sidenav-footer]")!, "footer")).toBe(true);
 
     expect(screen.getByRole("button", { name: "Expand sidebar" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Collapse sidebar" })).toBeNull();
@@ -336,5 +362,50 @@ describe("SideNav — collapsed state", () => {
     renderRail(false);
     expect(screen.getByRole("button", { name: "Collapse sidebar" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Expand sidebar" })).toBeNull();
+  });
+});
+
+describe("SideNav — on the Tutor the rail gives its width to the chat", () => {
+  const slot = () => document.querySelector("[data-app-sidenav-slot]") as HTMLElement;
+
+  it("shows the narrow rail on /learn even when the stored preference is expanded", () => {
+    mockedUsePathname.mockReturnValue("/learn");
+    const rail = renderRail(false);
+    expect(twStyle(rail).width).toBe(`${SIDE_NAV_COLLAPSED}px`);
+    // The fixed slot holds the page's layout width; the rail floats in it.
+    expect(twStyle(slot()).width).toBe(`${SIDE_NAV_COLLAPSED}px`);
+    expect(hasClass(rail, "railFloating")).toBe(true);
+    expect(ruleFor(".railFloating")).toMatch(/position: absolute/);
+    // The rail manages itself here: no Collapse control.
+    expect(screen.queryByRole("button", { name: /collapse sidebar|expand sidebar/i })).toBeNull();
+  });
+
+  it("opens over the page on hover and closes when the pointer leaves", () => {
+    mockedUsePathname.mockReturnValue("/learn");
+    const rail = renderRail(false);
+    act(() => { fireEvent.mouseEnter(slot()); });
+    expect(twStyle(rail).width).toBe(`${SIDE_NAV_EXPANDED}px`);
+    // Still the 64px slot underneath: the chat never moves.
+    expect(twStyle(slot()).width).toBe(`${SIDE_NAV_COLLAPSED}px`);
+    act(() => { fireEvent.mouseLeave(slot()); });
+    expect(twStyle(rail).width).toBe(`${SIDE_NAV_COLLAPSED}px`);
+  });
+
+  it("opens for keyboard focus and closes when focus leaves the rail", () => {
+    mockedUsePathname.mockReturnValue("/learn");
+    const rail = renderRail(false);
+    const tutor = screen.getByRole("link", { name: /tutor/i });
+    act(() => { tutor.focus(); });
+    expect(twStyle(rail).width).toBe(`${SIDE_NAV_EXPANDED}px`);
+    act(() => { fireEvent.blur(slot(), { relatedTarget: document.body }); });
+    expect(twStyle(rail).width).toBe(`${SIDE_NAV_COLLAPSED}px`);
+  });
+
+  it("keeps the stored preference everywhere else", () => {
+    mockedUsePathname.mockReturnValue("/dashboard");
+    const rail = renderRail(false);
+    expect(twStyle(rail).width).toBe(`${SIDE_NAV_EXPANDED}px`);
+    expect(slot()).toBeNull();
+    expect(screen.getByRole("button", { name: /collapse sidebar/i })).toBeTruthy();
   });
 });

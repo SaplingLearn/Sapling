@@ -1,0 +1,10 @@
+{
+  "judge_model": "claude-opus-5-5",
+  "judge_prompt_hash": "220273a0d8a4471a3c514f90e817f93963e2e35c86d733d68628017419773edf",
+  "output": {
+    "evidence": "A recursive chain only ends when some input is handled directly, without making another call.",
+    "reveals_final_answer": false,
+    "rung": 2
+  },
+  "served_sha256": "85805817f0e6342cd1af88a1e56552366a7bf39ba620645f35326b2b30c8e876"
+}

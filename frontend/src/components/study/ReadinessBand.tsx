@@ -16,36 +16,36 @@
  */
 import React from "react";
 import { StatusDot } from "./hubUi";
+import r from "./ReadinessBand.module.css";
 import s from "./StudyHub.module.css";
-import { ST_LABEL, STATUS_ORDER, TC, squaresOrder, type Concept, type Status } from "./studyModel";
+import { STATUS_ORDER, TC, squaresOrder, stLabel, type Concept, type Status } from "./studyModel";
 import { useCountTo } from "./useCountTo";
-import { cn } from "@/lib/cn";
 
 function Trend({ points }: { points: number }) {
   if (points === 0) return null;
   const up = points > 0;
   return (
-    <span key={points} className={cn(`chip ${up ? "chip--accent" : "chip--err"}`, "self-start")} data-flip={`trend:${points}`} data-flip-how="fade">
+    <span key={points} data-flip={`trend:${points}`} data-flip-how="fade" className={`chip ${up ? "chip--accent" : "chip--err"} ${r.trend}`}>
       {up ? "+" : "−"}{Math.abs(points)}% this week
     </span>
   );
 }
 
 function Square({ concept, selected, faded, onToggle }: { concept: Concept; selected: boolean; faded: boolean; onToggle: () => void }) {
-  const label = `${concept.name} · ${ST_LABEL[concept.st]}`;
+  const label = `${concept.name} · ${stLabel(concept.st, concept.ladder)}`;
   return (
-    <button className={cn(s.hoverSeg, "w-3.5 h-3.5 shrink-0 p-0 border-0 rounded-xs cursor-pointer", faded ? "opacity-30" : "opacity-100", selected ? "[box-shadow:0_0_0_1.5px_var(--bg),_0_0_0_3px_var(--brand-forest)]" : "shadow-none")} onClick={onToggle} title={label} aria-label={label} data-flip={`square:${concept.id}`} data-flip-how="fade"
+    <button className={`${r.square} ${s.hoverSeg}${faded ? ` ${r.squareFaded}` : ""}${selected ? ` ${r.squareSelected}` : ""}`} onClick={onToggle} title={label} aria-label={label} aria-pressed={selected} data-flip={`square:${concept.id}`} data-flip-how="fade"
       style={{ background: TC[concept.st] }} />
   );
 }
 
 /** One legend entry, the Dashboard mastery legend's: a round dot, the count, the state. */
-function LegendChip({ status, count, on, onToggle }: { status: Status; count: number; on: boolean; onToggle: () => void }) {
+function LegendChip({ status, count, on, ladder, onToggle }: { status: Status; count: number; on: boolean; ladder: boolean; onToggle: () => void }) {
   return (
     // Positioned: its count is placed (and crossfaded) inside it.
-    <button aria-pressed={on} className={cn(on ? undefined : s.hoverLegend, "relative inline-flex items-center gap-[5px] h-5.5 pt-0 pr-2 pb-0 pl-1.5 border-0 rounded-[var(--r-full)] [font-family:inherit] [font-weight:inherit] [font-style:inherit] [line-height:inherit] text-xs cursor-pointer", on ? "[background:var(--sap-100)]" : "[background:transparent]", on ? "text-text" : "text-text-muted")} onClick={onToggle} title="Highlight these on the roadmap" data-flip={`legend:${status}`}>
+    <button aria-pressed={on} className={on ? `${r.chip} ${r.chipOn}` : `${r.chip} ${s.hoverLegend}`} onClick={onToggle} title="Highlight these on the roadmap" data-flip={`legend:${status}`}>
       <StatusDot st={status} size={7} />
-      <span><span key={count} data-flip={`count:${status}:${count}`} data-flip-how="fade">{count}</span> {ST_LABEL[status]}</span>
+      <span><span key={count} data-flip={`count:${status}:${count}`} data-flip-how="fade">{count}</span> {stLabel(status, ladder)}</span>
     </button>
   );
 }
@@ -69,18 +69,21 @@ type BandProps = {
 };
 
 /** A square per concept, and the legend that filters the roadmap by status. */
-function ConceptKey({ concepts, ready, selectedId, level, onSelect, onLevel }: BandProps) {
+function ConceptKey({ concepts, selectedId, level, onSelect, onLevel }: BandProps) {
   return (
-    <div className="flex flex-col gap-2.5">
-      <div role="img" aria-label={`Overall mastery ${ready.pct} percent`} className="flex flex-wrap gap-1">
+    <div className={r.key}>
+      {/* A group of buttons, not an image: an image's content is one picture
+          to assistive tech, so the squares inside it could not be reached
+          (axe nested-interactive). The percentage is the figure above, in text. */}
+      <div role="group" aria-label="Concepts" className={r.squares}>
         {squaresOrder(concepts).map(t => (
           <Square key={t.id} concept={t} selected={t.id === selectedId} faded={!!level && t.st !== level}
             onToggle={() => onSelect(t.id === selectedId ? null : t.id)} />
         ))}
       </div>
-      <div className="flex flex-wrap gap-y-0.5 gap-x-1 -ml-1.5">
+      <div className={r.legend}>
         {STATUS_ORDER.map(k => (
-          <LegendChip key={k} status={k} count={concepts.filter(t => t.st === k).length} on={level === k}
+          <LegendChip key={k} status={k} count={concepts.filter(t => t.st === k).length} on={level === k} ladder={concepts.some(t => t.ladder)}
             onToggle={() => onLevel(level === k ? null : k)} />
         ))}
       </div>
@@ -97,15 +100,15 @@ export function ReadinessBand(props: BandProps) {
     // Centred against the Up Next block beside it. Nothing here changes height
     // with the selected concept, so centring never makes the figure jump. A
     // concept's missing prerequisite is marked on its roadmap tile.
-    <div data-flip="band" className="relative self-stretch flex flex-col justify-center gap-3.5 min-w-0">
+    <div data-flip="band" className={r.band}>
       {/* Centred, not bottom-aligned: the label and trend are a 51px stack
           beside a 72px figure, and sharing a baseline with the digits left
           that stack sitting ~5px below the figure's middle. */}
-      <div className="flex items-center gap-3.5">
-        <span data-testid="readiness-pct" data-flip="pct" className="font-display text-[72px] font-semibold leading-none tracking-[-0.02em]">{measured ? `${pct}%` : "–"}</span>
-        <div className="flex flex-col gap-[3px]">
-          <span key={label} data-flip={`label:${label}`} data-flip-how="fade" className="text-base leading-[1.3] font-semibold">{label}</span>
-          {measured && props.note && <span key={props.note} data-testid="readiness-unlinked-note" data-flip={`note:${props.note}`} data-flip-how="fade" className="text-sm leading-[1.3] text-text-muted">{props.note}</span>}
+      <div className={r.figureRow}>
+        <span data-testid="readiness-pct" data-flip="pct" className={r.pct}>{measured ? `${pct}%` : "–"}</span>
+        <div className={r.labels}>
+          <span key={label} data-flip={`label:${label}`} data-flip-how="fade" className={r.label}>{label}</span>
+          {measured && props.note && <span key={props.note} data-testid="readiness-unlinked-note" data-flip={`note:${props.note}`} data-flip-how="fade" className={r.note}>{props.note}</span>}
           <Trend points={ready.trend} />
         </div>
       </div>

@@ -26,10 +26,13 @@ import type { EnrolledCourse } from "@/lib/api";
 import type { GraphEdge, GraphNode } from "@/lib/types";
 import {
   alternativesOf,
+  dueFromPlan,
   dueSet,
   groupByCourse,
   primaryOf,
+  queueFor,
   rankCandidates,
+  rankFromPlan,
 } from "@/lib/quiz/proposals";
 import { QUEUE_COUNT } from "@/lib/quiz/session";
 import type { EntryRequest } from "@/lib/quiz/source";
@@ -40,6 +43,7 @@ import type {
   AttemptDetail,
   AttemptSummary,
   QuizConfig,
+  QuizPlan,
   QuizSession,
   WireQuestion,
 } from "@/lib/quiz/types";
@@ -160,6 +164,7 @@ function session(over: Partial<QuizSession> = {}): QuizSession {
     deliveredShort: false,
     sourceAttemptId: null,
     reserved: null,
+    prereq: null,
     ...over,
   };
 }
@@ -213,6 +218,8 @@ function buildHome(over: Partial<QuizHomeData> = {}): QuizHomeData {
     primary,
     alternatives: alternativesOf(candidates, primary),
     due: dueSet(nodes),
+    dueQueue: queueFor("due", nodes),
+    planned: false,
     byCourse: groupByCourse(nodes, courses),
     resumable: null,
     // A2 fix round 5: the hook now describes the concept the CARD shows, which a
@@ -735,6 +742,72 @@ describe("QuizHome — the live neighbourhood", () => {
   });
 });
 
+describe("QuizHome — List | Map browse (W7.10)", () => {
+  it("defaults to List with the topic list and neighbourhood", () => {
+    mount();
+    expect(screen.getByTestId("quiz-browse")).toBeInTheDocument();
+    expect(screen.getByTestId("quiz-browse-list")).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByTestId("quiz-pick-list")).toBeInTheDocument();
+    expect(screen.getByTestId("quiz-neighbourhood")).toBeInTheDocument();
+    expect(screen.queryByTestId("quiz-launcher-map")).toBeNull();
+  });
+
+  it("Map replaces the topic list, hides the neighbourhood, and keeps the same lead Start", () => {
+    const { actions } = mount();
+    fireEvent.click(screen.getByTestId("quiz-browse-map"));
+
+    expect(screen.getByTestId("quiz-browse-map")).toHaveAttribute("aria-checked", "true");
+    expect(screen.queryByTestId("quiz-pick-list")).toBeNull();
+    expect(screen.queryByTestId("quiz-topic-search")).toBeNull();
+    expect(screen.queryByTestId("quiz-neighbourhood")).toBeNull();
+    expect(screen.getByTestId("quiz-launcher-map")).toBeInTheDocument();
+    expect(screen.getByTestId("quiz-proposal-name")).toHaveTextContent("Recursion");
+    expect(screen.getByTestId("quiz-start")).toBeInTheDocument();
+
+    // Start still owns generation — Map mode does not auto-start.
+    expect(actions.start).not.toHaveBeenCalled();
+  });
+
+  it("Map node click chooses the lead concept and does not start", () => {
+    const { actions, onPickedChange } = mount();
+    fireEvent.click(screen.getByTestId("quiz-browse-map"));
+
+    const map = screen.getByTestId("quiz-launcher-map");
+    const activate = (id: string) =>
+      map.querySelector(`[data-node-id='${id}'] [data-testid='graph-node-activate']`) as HTMLElement;
+    fireEvent.click(activate("determinants"));
+
+    expect(screen.getByTestId("quiz-proposal-name")).toHaveTextContent("Determinants");
+    expect(screen.getByTestId("quiz-pick-reset")).toBeInTheDocument();
+    expect(onPickedChange).toHaveBeenLastCalledWith("determinants");
+    expect(actions.start).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByTestId("quiz-start"));
+    expect(actions.start).toHaveBeenCalledWith(
+      {
+        intent: "practice",
+        scope: { kind: "concept", conceptId: "determinants" },
+        conceptId: "determinants",
+        courseId: "c-math",
+      },
+      SESSION_CONFIG,
+    );
+  });
+
+  it("course pills still filter the Map to real student nodes", () => {
+    mount();
+    fireEvent.click(screen.getByTestId("quiz-browse-map"));
+    fireEvent.click(screen.getByTestId("quiz-course-c-math"));
+
+    const map = screen.getByTestId("quiz-launcher-map");
+    const ids = Array.from(map.querySelectorAll("[data-testid='graph-node-item']")).map(li =>
+      li.getAttribute("data-node-id"),
+    );
+    expect(ids).toEqual(expect.arrayContaining(["eigenvalues", "matrices", "determinants"]));
+    expect(ids).not.toEqual(expect.arrayContaining(["recursion", "base-cases"]));
+  });
+});
+
 describe("QuizHome — the adjust dialog", () => {
   it("marks the link active while open and writes the choices back on Done", () => {
     const { actions } = mount();
@@ -928,7 +1001,7 @@ describe("QuizHome — arrival", () => {
 
     const proposal = screen.getByTestId("quiz-proposal");
     expect(proposal).toHaveTextContent("Practice CS101");
-    expect(proposal).toHaveTextContent("4 concepts due");
+    expect(proposal).toHaveTextContent("4 concepts to practice");
     expect(proposal).toHaveTextContent(`${QUEUE_COUNT} questions each, gentle`);
 
     fireEvent.click(screen.getByTestId("quiz-start"));
@@ -946,7 +1019,7 @@ describe("QuizHome — arrival", () => {
 
     const proposal = screen.getByTestId("quiz-proposal");
     expect(proposal).toHaveTextContent("Review everything due");
-    expect(proposal).toHaveTextContent("7 concepts across 2 courses · starting with the 5 weakest");
+    expect(proposal).toHaveTextContent("7 concepts across 2 courses, starting with the 5 weakest");
     // The card already is the due set, so the list does not offer it again.
     expect(screen.getByTestId("quiz-proposal-name")).toHaveTextContent("Review everything due");
     expect(screen.queryByTestId("quiz-review-due")).toBeNull();
@@ -1023,10 +1096,16 @@ describe("QuizHome — the states with no proposal", () => {
 
 function homeDom(): string {
   // A string edit rather than a clone: jsdom cannot clone some inline styles.
+  // Strip KnowledgeGraph2D output (neighbourhood + launcher Map) — simulation
+  // layout is not this screen's contract.
   return screen
     .getByTestId("quiz-home")
     .outerHTML.replace(
       /(data-testid="quiz-neighbourhood">)[\s\S]*?(<\/div><div class="quiz-home__actions">)/,
+      "$1$2",
+    )
+    .replace(
+      /(data-testid="quiz-launcher-map"[^>]*>)[\s\S]*?(<\/div><\/section>)/,
       "$1$2",
     );
 }
@@ -1235,6 +1314,36 @@ describe("QuizHome — characterization: behaviour", () => {
     }
   });
 
+  it("scrolls when the laid-out grid is one column, whatever the viewport says", () => {
+    // the columns stack by the page column's width (a container query), so a
+    // wide window with the side nav open can still be stacked
+    const scroll = vi.fn();
+    Element.prototype.scrollIntoView = scroll;
+    try {
+      mount();
+      (document.querySelector(".quiz-home__grid") as HTMLElement).style.gridTemplateColumns = "846px";
+      fireEvent.click(screen.getByTestId("quiz-pick-determinants"));
+      expect(scroll).toHaveBeenCalledTimes(1);
+    } finally {
+      delete (Element.prototype as Partial<Element>).scrollIntoView;
+    }
+  });
+
+  it("does not scroll when the laid-out grid has its two columns, whatever the viewport says", () => {
+    const restore = withMatchMedia(q => q.includes("max-width"));
+    const scroll = vi.fn();
+    Element.prototype.scrollIntoView = scroll;
+    try {
+      mount();
+      (document.querySelector(".quiz-home__grid") as HTMLElement).style.gridTemplateColumns = "500px 1px 340px";
+      fireEvent.click(screen.getByTestId("quiz-pick-determinants"));
+      expect(scroll).not.toHaveBeenCalled();
+    } finally {
+      restore();
+      delete (Element.prototype as Partial<Element>).scrollIntoView;
+    }
+  });
+
   it("does not scroll on a wide screen", () => {
     const scroll = vi.fn();
     Element.prototype.scrollIntoView = scroll;
@@ -1298,6 +1407,7 @@ describe("QuizHome — characterization: behaviour", () => {
       count: 4,
       difficulty: "gentle",
       feedback: "at-end",
+      sessionMode: "practice",
     });
     expect(actions.configure).toHaveBeenLastCalledWith(false);
     expect(screen.queryByTestId("quiz-adjust-dialog")).toBeNull();
@@ -1314,11 +1424,12 @@ describe("QuizHome — characterization: behaviour", () => {
     mount({ session: session({ config: { ...SESSION_CONFIG, questionFormat: "multiple_choice" } }) });
     fireEvent.click(screen.getByTestId("quiz-adjust"));
     fireEvent.click(screen.getByTestId("quiz-adjust-start"));
-    // The dialog's draft re-seeds from the three scalar values only.
+    // The dialog's draft re-seeds from the scalar Adjust edits only (not Format).
     expect(JSON.parse(window.localStorage.getItem("sapling_quiz_prefs") ?? "null")).toEqual({
       count: 2,
       difficulty: "gentle",
       feedback: "at-end",
+      sessionMode: "practice",
     });
   });
 
@@ -1437,6 +1548,157 @@ describe("QuizHome — characterization: behaviour", () => {
   });
 });
 
+// ── Learning-loop spec §13 A143: the learner model's plan ───────────────────
+
+describe("QuizHome with the learner model's plan (quiz_concept_plan)", () => {
+  const PLAN: QuizPlan = {
+    concepts: [
+      { node_id: "matrices", concept_name: "Matrices", course_id: "c-math", reason: "due", p_known: 0.91, band: "profic", due_at: null, open_misconceptions: 0 },
+      { node_id: "base-cases", concept_name: "Base cases", course_id: "c-cs", reason: "misconception", p_known: 0.47, band: "develop", due_at: null, open_misconceptions: 1 },
+    ],
+  };
+
+  function planned(): Partial<QuizHomeData> {
+    const candidates = rankFromPlan(PLAN, NODES, COURSES, []);
+    const due = dueFromPlan(PLAN, NODES);
+    return {
+      candidates,
+      primary: candidates[0],
+      alternatives: alternativesOf(candidates, candidates[0]),
+      due,
+      dueQueue: due.conceptIds,
+      planned: true,
+      cardConceptId: "matrices",
+    };
+  }
+
+  it("proposes the plan's first concept and says why, with its skill meter", () => {
+    mount({ home: planned() });
+    expect(screen.getByTestId("quiz-proposal-name")).toHaveTextContent("Matrices");
+    expect(screen.getByTestId("quiz-plan-reason")).toHaveTextContent(
+      "Due for review — bring it back before it fades. Skill meter: 91%.",
+    );
+  });
+
+  it("states one measure on the card: the plan's skill meter, never the graph's score beside it", () => {
+    mount({ home: planned() });
+    const meta = document.querySelector(".quiz-home__meta");
+    // the plan line says "Skill meter: 91%"; the meta keeps the band, no second number
+    expect(meta?.textContent).toMatch(/^proficient · last studied /);
+    expect(meta?.textContent).not.toMatch(/%/);
+    expect(screen.getByTestId("quiz-proposal").textContent).not.toMatch(/44%|struggling/);
+  });
+
+  it("a picked concept the plan proposes reads its skill meter, the same number as its row", () => {
+    mount({ home: planned() });
+    const row = screen.getByTestId("quiz-pick-base-cases");
+    expect(row.textContent).toMatch(/47% · developing · last studied /);
+    fireEvent.click(row);
+    expect(screen.queryByTestId("quiz-plan-reason")).toBeNull();
+    expect(document.querySelector(".quiz-home__meta")?.textContent).toMatch(/^47% · developing · last studied /);
+  });
+
+  it("a concept the plan does not propose keeps the graph's score and tier", () => {
+    mount({ home: planned() });
+    expect(screen.getByTestId("quiz-pick-recursion").textContent).toMatch(/29% · struggling · last studied /);
+  });
+
+  it("orders a course's rows by the measure they show", () => {
+    mount({ home: planned() });
+    const rows = [...screen.getByTestId("quiz-pick-list").querySelectorAll("[data-testid^='quiz-pick-']")]
+      .map(el => el.getAttribute("data-testid"));
+    // c-cs: tail 12%, recursion 29%, stack 30%, base-cases skill 47% (graph 52%)
+    expect(rows.indexOf("quiz-pick-base-cases")).toBeGreaterThan(rows.indexOf("quiz-pick-stack-frames"));
+    // c-math: matrices is the card (hidden); eigenvalues 31% after determinants 5%
+    expect(rows.indexOf("quiz-pick-eigenvalues")).toBeGreaterThan(rows.indexOf("quiz-pick-determinants"));
+  });
+
+  it("calls the due queue's order the most overdue", () => {
+    mount({ home: planned(), entry: entry({ scope: "due" }) });
+    expect(screen.getByTestId("quiz-proposal-name")).toHaveTextContent("Review everything due");
+    expect(screen.getByText(/starting with the 1 most overdue/)).toBeInTheDocument();
+  });
+
+  it("Start generates on the plan's first concept, not the tier primary", () => {
+    // Tier primary would be determinants (mastery 0.05); the plan leads with matrices.
+    const { actions } = mount({ home: planned() });
+    fireEvent.click(screen.getByTestId("quiz-start"));
+    expect(actions.start).toHaveBeenCalledWith(
+      {
+        intent: "practice",
+        scope: { kind: "concept", conceptId: "matrices" },
+        conceptId: "matrices",
+        courseId: "c-math",
+      },
+      SESSION_CONFIG,
+    );
+  });
+
+  it("Adjust Start keeps the plan's concept and only changes session config", () => {
+    const { actions } = mount({ home: planned() });
+    fireEvent.click(screen.getByTestId("quiz-adjust"));
+    expect(screen.getByTestId("quiz-adjust-dialog")).toHaveTextContent("Matrices · MATH210");
+    fireEvent.click(within(screen.getByTestId("quiz-adjust-dialog")).getByTestId("quiz-seg-count-4"));
+    fireEvent.click(screen.getByTestId("quiz-adjust-start"));
+    expect(actions.start).toHaveBeenCalledWith(
+      {
+        intent: "practice",
+        scope: { kind: "concept", conceptId: "matrices" },
+        conceptId: "matrices",
+        courseId: "c-math",
+      },
+      { count: 4, difficulty: "gentle", feedback: "at-end" },
+    );
+  });
+
+  it("Start on a planned ?course= queues the course in plan order", () => {
+    // Tier weakest-first for c-cs is tail → recursion → stack → base-cases;
+    // the plan for this course is base-cases first (misconception).
+    const candidates = rankFromPlan(PLAN, NODES, COURSES, []);
+    const { actions } = mount({
+      home: {
+        ...planned(),
+        courseCandidates: candidates.filter(c => c.node.course_id === "c-cs"),
+        cardConceptId: "base-cases",
+      },
+      entry: entry({ course: "c-cs", source: { kind: "dashboard" } }),
+    });
+    fireEvent.click(screen.getByTestId("quiz-start"));
+    expect(actions.start).toHaveBeenCalledWith(
+      {
+        intent: "practice",
+        scope: { kind: "course", courseId: "c-cs", queue: ["base-cases"] },
+        conceptId: "base-cases",
+        courseId: "c-cs",
+      },
+      { ...SESSION_CONFIG, count: QUEUE_COUNT },
+    );
+  });
+
+  it("Adjust Start on a planned due queue keeps overdue-first order", () => {
+    const { actions } = mount({
+      home: planned(),
+      entry: entry({ scope: "due", source: { kind: "dashboard" } }),
+    });
+    fireEvent.click(screen.getByTestId("quiz-adjust"));
+    fireEvent.click(screen.getByTestId("quiz-adjust-start"));
+    expect(actions.start).toHaveBeenCalledWith(
+      {
+        intent: "review",
+        scope: { kind: "due", queue: ["matrices"] },
+        conceptId: "matrices",
+        courseId: "c-math",
+      },
+      { ...SESSION_CONFIG, count: QUEUE_COUNT },
+    );
+  });
+
+  it("explains nothing on the tier ranking's card", () => {
+    mount();
+    expect(screen.queryByTestId("quiz-plan-reason")).toBeNull();
+  });
+});
+
 describe("QuizHome — arriving to start (`?start=1`)", () => {
   const startCalls = (actions: QuizActions) => (actions.start as ReturnType<typeof vi.fn>).mock.calls;
   // The page reads the live URL too (a remounted home must not restart), so
@@ -1471,6 +1733,27 @@ describe("QuizHome — arriving to start (`?start=1`)", () => {
     expect(startCalls(actions)).toHaveLength(1);
     const [request, config] = startCalls(actions)[0];
     expect(request.scope.kind).toBe("course");
+    expect(config.count).toBe(QUEUE_COUNT);
+  });
+
+  it("starts a scope=due Practice cue stream with the entry queue (W3.3c)", () => {
+    window.history.replaceState(null, "", "/quiz?scope=due&queue=determinants,recursion&from=link&start=1");
+    const { actions } = mount({
+      entry: entry({
+        scope: "due",
+        queue: ["determinants", "recursion"],
+        start: true,
+        source: { kind: "link", returnTo: "/study?course=c-math" },
+      }),
+    });
+    expect(startCalls(actions)).toHaveLength(1);
+    const [request, config] = startCalls(actions)[0];
+    expect(request).toEqual({
+      intent: "review",
+      scope: { kind: "due", queue: ["determinants", "recursion"] },
+      conceptId: "determinants",
+      courseId: "c-math",
+    });
     expect(config.count).toBe(QUEUE_COUNT);
   });
 

@@ -1,0 +1,60 @@
+{
+  "output": {
+    "items": [
+      {
+        "answer_kind": "free",
+        "canonical_answer": "",
+        "chunk_ids": [
+          "eval-doc-2:c1",
+          "eval-doc-2:c2"
+        ],
+        "concept": "Recursion",
+        "difficulty": 1,
+        "final_answer": "A function that calls itself on a smaller subproblem",
+        "format": "mc_reason",
+        "options": [
+          {
+            "is_correct": true,
+            "misconception_key": null,
+            "misconception_text": null,
+            "text": "A function that calls itself on a smaller subproblem"
+          },
+          {
+            "is_correct": false,
+            "misconception_key": "confuses_recursion_with_iteration",
+            "misconception_text": "Treats recursion as the same thing as looping over data without self-calls.",
+            "text": "A function that repeats a loop over a fixed list"
+          },
+          {
+            "is_correct": false,
+            "misconception_key": "larger_subproblem",
+            "misconception_text": "Believes each recursive call enlarges the problem instead of shrinking it.",
+            "text": "A function that calls itself on a larger problem"
+          },
+          {
+            "is_correct": false,
+            "misconception_key": "ignores_self_call",
+            "misconception_text": "Thinks recursion means calling any other function, not the function itself.",
+            "text": "A function that calls another function with no end"
+          }
+        ],
+        "prompt": "Which description best defines a recursive function? Pick one option and give the reason for your choice.",
+        "reference_answer": "Recursion solves a problem by having a function call itself on a smaller subproblem, repeating until it reaches a base case that stops the calls. Shrinking the problem and the base case are what distinguish it from a loop or an ordinary call to another function. Final answer: A function that calls itself on a smaller subproblem.",
+        "rubric": [
+          "States that the function calls itself",
+          "Mentions that each call works on a smaller subproblem or that a base case ends the calls"
+        ],
+        "stepwise": false,
+        "tolerance": "",
+        "wrong_keys": [],
+        "wrong_texts": []
+      }
+    ]
+  },
+  "recorded_under": {
+    "input_sha256": "801bbcc49bf16045ebe89531ea08b25de59af0856ac5fc106bc992efd702f98a",
+    "model": "claude-sonnet-5-5",
+    "prompt_hash": "8c4d6fdcc602",
+    "schema_hash": "d4d6bdaf562d"
+  }
+}

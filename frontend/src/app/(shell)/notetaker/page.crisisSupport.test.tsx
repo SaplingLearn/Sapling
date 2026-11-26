@@ -167,6 +167,18 @@ describe("notetaker — crisis support", () => {
     expect(takeNoteCardShown("n1")).toBe(false); // no card was shown
   });
 
+  it("Send to tutor of a note with linked concepts names them, so the loop's session is on them (#866 K05)", async () => {
+    vi.mocked(listNoteConcepts).mockResolvedValue({ concepts: [
+      { id: "k1", concept_name: "Recursion", mastery_tier: "learning", mastery_score: 0.4, course_id: "c1" },
+      { id: "k2", concept_name: "Base case", mastery_tier: "learning", mastery_score: 0.5, course_id: "c1" },
+    ] });
+    vi.mocked(sendNoteToTutor).mockResolvedValueOnce({ topic: "Week 3", course_id: "c1", preface: "" });
+    await renderPage();
+    await screen.findByText("Base case");
+    fireEvent.click(screen.getByRole("button", { name: "Send to tutor" }));
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/learn?topic=Week%203&course=c1&note=n1&concept=k1%2Ck2"));
+  });
+
   it("the notes chat on a note that matched shows the card AND the reply", async () => {
     vi.mocked(noteChat).mockResolvedValueOnce({ reply: "A base case stops the recursion.", ...ALONGSIDE });
     await renderPage();

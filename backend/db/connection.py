@@ -60,6 +60,14 @@ def _merge(headers: Optional[dict], scoped: Optional[dict]) -> Optional[dict]:
     return {**(headers or {}), **scoped}
 
 
+def conflict_op(ignore_duplicates: bool) -> str:
+    """What an INSERT ... ON CONFLICT is reported as to the scope seam and a
+    refusal (db/scope.py::note_shadow_write, report_denied): DO NOTHING needs
+    only the INSERT grant/policy, so it is an "insert"; DO UPDATE an "upsert".
+    A denial must never send an operator looking for the wrong grant."""
+    return "insert" if ignore_duplicates else "upsert"
+
+
 def _raise_for_status(r, scoped: Optional[dict], target: str, op: str) -> None:
     """`raise_for_status()`, plus the enforce-only mapping of PostgREST's two
     user-scope refusals: 401 (the minted token was rejected: key/kid mismatch)
@@ -304,6 +312,13 @@ class SupabaseTable(_aconn.AsyncTableMixin):
         _raise_for_status(r, scoped, self.name, "insert")
         return r.json()
 
+    def insert_ignore_duplicates(self, data, on_conflict: str = "id") -> list:
+        """INSERT … ON CONFLICT (on_conflict) DO NOTHING (PostgREST
+        `resolution=ignore-duplicates`): never overwrites an existing row, unlike
+        `upsert`. Returns the rows actually inserted ([] when one existed).
+        The same request as `upsert(..., ignore_duplicates=True)`."""
+        return self.upsert(data, on_conflict, ignore_duplicates=True)
+
     def update(self, data: dict, filters: dict, *, prefer_return_minimal: bool = False) -> list:
         """PATCH matching rows; returns the updated rows.
 
@@ -338,13 +353,14 @@ class SupabaseTable(_aconn.AsyncTableMixin):
         `columns` projects the returned representation (PostgREST `select=`),
         the same column list a select() takes; omitted, every column comes back."""
         resolution = "ignore-duplicates" if ignore_duplicates else "merge-duplicates"
+        op = conflict_op(ignore_duplicates)
         headers = {"Prefer": f"return=representation,resolution={resolution}"}
         params = {"on_conflict": on_conflict}
         if columns:
             params["select"] = columns
-        scoped = _scope_headers(self.name, "upsert", data=data)
+        scoped = _scope_headers(self.name, op, data=data)
         r = _client.post(self.url, headers=_merge(headers, scoped), params=params, json=data)
-        _raise_for_status(r, scoped, self.name, "upsert")
+        _raise_for_status(r, scoped, self.name, op)
         return r.json()
 
     def delete(self, filters: dict) -> list:
@@ -355,6 +371,26 @@ class SupabaseTable(_aconn.AsyncTableMixin):
             r = _client.delete(self.url, params=filters, headers=scoped)
         _raise_for_status(r, scoped, self.name, "delete")
         return r.json()
+
+
+#: PostgREST's "table not in the schema cache" and Postgres' undefined_table:
+#: the relation does not exist (a deploy ahead of its migration).
+MISSING_RELATION_CODES = frozenset({"PGRST205", "42P01"})
+
+
+def is_missing_relation(exc: BaseException) -> bool:
+    """Whether a `table()` call failed because its TABLE does not exist —
+    read off the PostgREST error body (`raise_for_status`'s message omits it).
+    Any other failure, and anything unreadable, is False: callers keep failing
+    closed on everything but this one exactly-known case."""
+    response = getattr(exc, "response", None)
+    if response is None:
+        return False
+    try:
+        body = response.json()
+    except Exception:
+        return False
+    return isinstance(body, dict) and body.get("code") in MISSING_RELATION_CODES
 
 
 def pg_quote_value(value: str) -> str:

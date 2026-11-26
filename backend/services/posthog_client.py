@@ -40,8 +40,10 @@ Uses:
   no second taxonomy. Routes never call PostHog directly.
 * **LLM analytics** — ``capture_ai_generation``, called only from
   ``agents/usage.py::record_agent_usage`` (the chokepoint every agent run
-  already reports through): a ``$ai_generation`` with model, provider,
-  tokens, cost and trace id — never ``$ai_input`` / ``$ai_output``.
+  already reports through) and, for the topic checklist's receipt (a row its
+  reconcile writes itself), ``events_service.note_written_llm_usage``: a
+  ``$ai_generation`` with model, provider, tokens, cost and trace id — never
+  ``$ai_input`` / ``$ai_output``.
 * **Exceptions** — ``capture_exception`` from main.py's 500 handler. No
   local variables, and ``_scrub_event`` redacts exception messages before
   the SDK queues anything.
@@ -649,8 +651,10 @@ def capture_ai_generation(
     """Queue a privacy-mode ``$ai_generation`` for PostHog LLM analytics.
 
     Called only from ``events_service.log_llm_usage`` (which every agent run
-    reaches through ``agents/usage.py::record_agent_usage``), with the same
-    values as the ``llm_usage`` row. Carries ONLY model, provider (as
+    reaches through ``agents/usage.py::record_agent_usage``) and, for a row its
+    writer committed itself (the topic checklist's receipt), from
+    ``events_service.note_written_llm_usage``, with the same values as the
+    ``llm_usage`` row. Carries ONLY model, provider (as
     recorded; derived from the model name only when missing), token counts,
     cost, the request id as trace id, and the feature/task name — never
     ``$ai_input`` / ``$ai_output`` or any other content. Same queue and

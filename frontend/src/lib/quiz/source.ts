@@ -13,6 +13,7 @@
  */
 
 import { START_PARAM } from "@/lib/toolHrefs";
+import { QUEUE_MAX } from "./session";
 import type { QuizSource, SourceKind } from "./types";
 
 export interface EntryRequest {
@@ -24,12 +25,40 @@ export interface EntryRequest {
   course?: string;
   /** The only scope value: "review everything due". */
   scope?: "due";
+  /**
+   * W3.3c: explicit concept ids for a `scope=due` cue stream (Practice what's
+   * due). Cap `QUEUE_MAX`. When set, the home uses this queue instead of the
+   * semester-wide due set. Ignored unless `scope` is `"due"`.
+   */
+  queue?: string[];
   /** An attempt id to resume. */
   attempt?: string;
-  /** `?start=1`: start the named concept / course queue on arrival rather
+  /** `?start=1`: start the named concept / course / due queue on arrival rather
    *  than offering it on the home (the Study hub's Quiz buttons). */
   start?: boolean;
   source: QuizSource;
+}
+
+/**
+ * Trim, dedupe, and cap concept ids for a due Practice queue (R-4 `QUEUE_MAX`).
+ * Shared by href builders and `parseEntry`.
+ */
+export function practiceDueQueue(ids: readonly string[] | null | undefined): string[] {
+  if (!ids?.length) return [];
+  const out: string[] = [];
+  for (const raw of ids) {
+    const id = raw.trim();
+    if (!id || out.includes(id)) continue;
+    out.push(id);
+    if (out.length >= QUEUE_MAX) break;
+  }
+  return out;
+}
+
+/** `?queue=id1,id2` — empty / whitespace tokens dropped. */
+function queueFromParam(value: string | null | undefined): string[] {
+  if (!value?.trim()) return [];
+  return practiceDueQueue(value.split(","));
 }
 
 const SOURCE_KINDS: readonly SourceKind[] = [
@@ -106,21 +135,40 @@ export function parseEntry(params: URLSearchParams): EntryRequest {
   const target = entryTarget(params);
   const entry: EntryRequest = { source: entrySource(params, target), ...target };
   if (trimmed(params, START_PARAM) === "1") entry.start = true;
+  // Explicit due cue-stream ids (W3.3c) — only with `scope=due`.
+  if (entry.scope === "due") {
+    const queue = queueFromParam(params.get("queue"));
+    if (queue.length > 0) entry.queue = queue;
+  }
   return entry;
 }
 
 /** The href every inbound caller links to (§6). Exactly one target field is
- *  meaningful; the rest are ignored in the order below. */
+ *  meaningful; the rest are ignored in the order below. `topic` is a concept
+ *  NAME (fuzzy resolve); prefer `concept` (node id) when the caller has one.
+ *  `queue` is ancillary to `scope=due` (Practice cue stream), not a target. */
 export function buildQuizHref(
-  target: { concept?: string; course?: string; scope?: "due"; attempt?: string },
+  target: {
+    concept?: string;
+    topic?: string;
+    course?: string;
+    scope?: "due";
+    /** With `scope: "due"`: multi-concept Practice queue (learner_next due[]). */
+    queue?: readonly string[];
+    attempt?: string;
+  },
   source: QuizSource,
   opts: { start?: boolean } = {},
 ): string {
   const params = new URLSearchParams();
   if (target.concept) params.set("concept", target.concept);
+  else if (target.topic) params.set("topic", target.topic);
   else if (target.course) params.set("course", target.course);
-  else if (target.scope) params.set("scope", target.scope);
-  else if (target.attempt) params.set("attempt", target.attempt);
+  else if (target.scope) {
+    params.set("scope", target.scope);
+    const queue = practiceDueQueue(target.queue);
+    if (queue.length > 0) params.set("queue", queue.join(","));
+  } else if (target.attempt) params.set("attempt", target.attempt);
 
   params.set("from", source.kind);
   if (isSafeReturnPath(source.returnTo)) params.set("return", source.returnTo);

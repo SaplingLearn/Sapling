@@ -1,0 +1,32 @@
+{
+  "decision": "match_wrong_reason",
+  "provenance": "synthetic",
+  "note": "Authored for PKG-05b; mirrors tests/evals/grader.py. Synthetic only (A24): no stored student answer.",
+  "base_state": {
+    "question": "Why does every recursive function need a base case?",
+    "wrong": {
+      "w_loop": "treats recursion as a loop that ends on its own",
+      "w_speed": "says the base case is only for speed"
+    }
+  },
+  "cases": [
+    {
+      "name": "speed",
+      "state": {
+        "answer": "The base case only makes it run faster; it would still work without one."
+      },
+      "gold": {
+        "choice": "w_speed"
+      }
+    },
+    {
+      "name": "correct_answer_matches_none",
+      "state": {
+        "answer": "The base case stops the calls; without it the stack overflows."
+      },
+      "gold": {
+        "choice": "none"
+      }
+    }
+  ]
+}

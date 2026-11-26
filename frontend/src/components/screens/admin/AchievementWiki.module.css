@@ -1,0 +1,242 @@
+@layer components {
+/* Admin > Achievements (AchievementWiki.tsx): the catalog of badge cards, the
+   grant panel and the XP rules. Layout widths that are not design tokens are
+   named here, once. */
+
+.root {
+  /* Reading widths for the summary line and the drafts note. */
+  --summary-max: 780px;
+  --note-max: 640px;
+  /* The search box's flexible width. */
+  --search-min: 200px;
+  --search-max: 320px;
+  /* A badge card's narrowest column, and the grant panel's column. */
+  --card-min: 340px;
+  --grant-min: 260px;
+  --grant-max: 340px;
+  /* Between catalog sections: between --sp-16 and --sp-20, kept as drawn. */
+  --section-gap: 36px;
+  /* Section headings: between --fs-xl and --fs-2xl, kept as drawn. */
+  --heading-size: 20px;
+  /* The admin inputs' vertical inset (adminStyles.ts fieldStyle uses the
+     same 7px; rounding it would change every field's height by 2px). */
+  --field-pad-y: 7px;
+  /* Numeric inputs: a trigger threshold, an XP amount. */
+  --threshold-w: 80px;
+  --xp-w: 90px;
+}
+
+/* ── header: counts and filters ───────────────────────────────────────────── */
+
+.summary {
+  font-size: var(--fs-base);
+  margin-bottom: var(--sp-9);
+  color: var(--text-dim);
+  max-width: var(--summary-max);
+}
+.summaryLive { color: var(--text); }
+.summaryDrafts { color: var(--text-muted); }
+
+.filters {
+  padding: var(--sp-6) var(--sp-8);
+  margin-bottom: var(--sp-12);
+  display: flex;
+  gap: var(--sp-6);
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.search {
+  position: relative;
+  flex: 1;
+  min-width: var(--search-min);
+  max-width: var(--search-max);
+}
+.searchIcon {
+  position: absolute;
+  left: var(--sp-5);
+  top: var(--sp-4);
+  color: var(--text-muted);
+}
+
+/* ── catalog sections ──────────────────────────────────────────────────────── */
+
+.section { margin-bottom: var(--section-gap); }
+.sectionHead {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-5);
+  margin-bottom: var(--sp-3);
+}
+.sectionTitle {
+  margin: 0;
+  font-size: var(--heading-size);
+  font-weight: 600;
+}
+.sectionNote {
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+  margin-bottom: var(--sp-8);
+  max-width: var(--note-max);
+}
+.empty { padding: var(--sp-4) 0; }
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(var(--card-min), 1fr));
+  gap: var(--sp-7);
+}
+
+/* The motion wrapper around each card: a one-cell grid, so the card still
+   stretches to its row's height as it did as the grid's direct child. */
+.gridItem { display: grid; }
+
+.panels {
+  display: grid;
+  grid-template-columns: minmax(var(--grant-min), var(--grant-max)) 1fr;
+  gap: var(--sp-10);
+  align-items: start;
+}
+
+/* ── one achievement card ──────────────────────────────────────────────────── */
+
+.card { padding: var(--sp-8); }
+.cardTop { display: flex; gap: var(--sp-7); align-items: flex-start; }
+.cardArt { flex-shrink: 0; }
+.cardBody { flex: 1; min-width: 0; }
+.cardTitleRow { display: flex; align-items: center; gap: var(--sp-4); flex-wrap: wrap; }
+.cardName { font-weight: 600; font-size: var(--fs-base); }
+.tag { font-size: var(--fs-sm); }
+/* Labels are sentence case now (#928): kept only until the TSX stops naming it. */
+.tagUpper { }
+.cardDescription {
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+  margin-top: var(--sp-2);
+  line-height: 1.45;
+}
+.dim { color: var(--text-muted); }
+.cardMeta { font-size: var(--fs-xs); color: var(--text-muted); margin-top: var(--sp-3); }
+
+.cardActions {
+  display: flex;
+  gap: var(--sp-4);
+  margin-top: var(--sp-6);
+  flex-wrap: wrap;
+  align-items: center;
+}
+.hint { font-size: var(--fs-xs); color: var(--text-muted); }
+
+/* The armed "Click again to unpublish" state eases in rather than snapping. */
+.unpublish {
+  transition:
+    background-color var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+.armed {
+  background: var(--err-soft);
+  color: var(--err);
+}
+
+/* ── the edit region (expands under the card) ──────────────────────────────── */
+
+.editor {
+  margin-top: var(--sp-8);
+  padding-top: var(--sp-8);
+  border-top: 1px dashed var(--border);
+  display: grid;
+  gap: var(--sp-8);
+}
+.editorFields { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-6); }
+.secretCell { display: flex; align-items: flex-end; padding-bottom: var(--sp-4); }
+.saveButton { justify-self: start; }
+
+.blockLabel { margin-bottom: var(--sp-3); }
+.hiddenInput { display: none; }
+
+.dropzone {
+  border: 1px dashed var(--border);
+  border-radius: var(--r-md);
+  padding: var(--sp-7);
+  text-align: center;
+  cursor: pointer;
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+  transition:
+    border-color var(--dur-fast) var(--ease-out),
+    background-color var(--dur-fast) var(--ease-out),
+    opacity var(--dur) var(--ease-out);
+}
+.dropzone:hover { border-color: var(--accent-border); background: var(--bg-subtle); }
+.dropzoneBusy { cursor: default; opacity: 0.7; }
+.dropzoneBusy:hover { border-color: var(--border); background: transparent; }
+
+.none { font-size: var(--fs-sm); color: var(--text-muted); }
+
+.row { display: flex; gap: var(--sp-3); align-items: center; margin-bottom: var(--sp-3); }
+.addRow { display: flex; gap: var(--sp-3); align-items: center; margin-top: var(--sp-3); }
+
+/* ── fields (mirrors adminStyles.ts fieldStyle) ───────────────────────────── */
+
+.field {
+  width: 100%;
+  padding: var(--field-pad-y) var(--sp-5);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  font-size: var(--fs-md);
+  background: var(--bg-input);
+  font-family: inherit;
+  transition: border-color var(--dur-fast) var(--ease-out);
+}
+.searchField { padding: var(--field-pad-y) var(--sp-6) var(--field-pad-y) var(--sp-16); }
+.grow { flex: 1; }
+.thresholdField { width: var(--threshold-w); }
+.xpField { width: var(--xp-w); }
+.cosmeticName { display: flex; align-items: center; gap: var(--sp-4); }
+.cosmeticMeta { font-size: var(--fs-sm); color: var(--text-muted); }
+
+.checkLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-3);
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+}
+
+.labeled { margin-bottom: var(--sp-5); }
+.labeledLabel { margin-bottom: var(--sp-2); }
+
+/* ── grant panel ───────────────────────────────────────────────────────────── */
+
+.grant { padding: var(--pad-lg); }
+.grantTitle { margin-bottom: var(--sp-5); }
+.grantNote {
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+  /* Pulls the note up under the field above it. */
+  margin-top: calc(-1 * var(--sp-2));
+  margin-bottom: var(--sp-5);
+}
+.grantButton { width: 100%; }
+
+/* ── XP rules ──────────────────────────────────────────────────────────────── */
+
+.rules { padding: 0; }
+.rulesHead { padding: var(--sp-6) var(--sp-8); border-bottom: 1px solid var(--border); }
+.rulesEmpty {
+  padding: var(--sp-14);
+  text-align: center;
+  color: var(--text-muted);
+  font-size: var(--fs-md);
+}
+.rule {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-6);
+  padding: var(--sp-5) var(--sp-8);
+  border-top: 1px solid var(--border);
+  font-size: var(--fs-md);
+}
+.ruleLabel { flex: 1; font-weight: 500; }
+
+}

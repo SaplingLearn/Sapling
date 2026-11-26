@@ -1,0 +1,239 @@
+@layer components {
+.screen {
+  min-width: 0;
+}
+
+.screen textarea {
+  min-width: 0;
+}
+
+.retention {
+  margin: var(--sp-7) var(--sp-8) 0;
+  padding: var(--sp-7);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-5);
+  flex-shrink: 0;
+  min-width: 0;
+  /* A tall retention card scrolls inside itself rather than pushing the chat off screen. */
+  --retention-max-h: 420px;
+  max-height: var(--retention-max-h);
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 767px) {
+  /* Keep course selection, map and End session reachable on narrow screens. */
+  .screen > div > header {
+    flex-wrap: wrap;
+    gap: var(--sp-6);
+    padding: var(--sp-8) !important;
+    flex-shrink: 0;
+  }
+
+  .screen > div > header > div {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .screen > div > header > div:last-child {
+    flex-wrap: wrap;
+  }
+
+  .screen > div > header h1 {
+    overflow-wrap: anywhere;
+  }
+
+  .planItem {
+    flex-wrap: wrap;
+  }
+
+  .sessionStrip {
+    flex-shrink: 0;
+    padding: var(--sp-5) var(--sp-8) !important;
+  }
+}
+
+.scopeEditor {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--sp-10) var(--sp-16) var(--sp-16);
+}
+
+.scopeCard {
+  --scope-card-measure: 640px;
+  max-width: var(--scope-card-measure);
+  margin: 0 auto;
+  padding: var(--pad-xl);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-7);
+}
+
+.scopeFieldset {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+
+.scopeFieldset legend {
+  font-size: var(--fs-base);
+  font-weight: 600;
+}
+
+.scopeOption {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-4);
+  font-size: var(--fs-base);
+  padding: var(--sp-3) 0;
+  overflow-wrap: anywhere;
+}
+
+.scopeOption input {
+  flex-shrink: 0;
+  /* Sits the box on the label's first line. */
+  --scope-check-nudge: 3px;
+  margin-top: var(--scope-check-nudge);
+}
+
+.scopeOptions {
+  --scope-options-max-h: 260px;
+  max-height: var(--scope-options-max-h);
+  overflow-y: auto;
+}
+
+.scopeText {
+  width: 100%;
+  box-sizing: border-box;
+  padding: var(--sp-5) var(--sp-6);
+  font: inherit;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+}
+
+.scopeActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-4);
+}
+
+.scopeSummary {
+  padding: var(--sp-5) clamp(var(--sp-12), 4vw, var(--sp-28));
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--border);
+  font-size: var(--fs-md);
+  overflow-wrap: anywhere;
+}
+
+.diagnosis {
+  padding: var(--sp-5) var(--sp-6);
+  background: var(--bg-soft);
+  border-radius: var(--r-md);
+  overflow-wrap: anywhere;
+}
+
+.diagnosisList {
+  margin: var(--sp-4) 0 0;
+  padding-left: var(--sp-9);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-5);
+  font-size: var(--fs-sm);
+}
+
+@media (max-width: 767px) {
+  .scopeEditor { padding: var(--sp-8); }
+  .scopeCard { padding: var(--sp-8); }
+  .scopeSummary { padding: var(--sp-4) var(--sp-8); }
+}
+
+/* ── The loop's own pieces (moved out of LoopLearn.tsx's inline styles) ── */
+.selfCenter {
+  align-self: center;
+}
+
+/* A column that takes the rest of its column: the conversation, a phase's body. */
+.fill {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.chatHeader {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-5);
+}
+
+/* A status line under the check card (a close that must wait, a saved
+   explanation): it arrives with a short fade, as it is announced. */
+.statusNote {
+  font-size: var(--fs-md);
+  color: var(--text-muted);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .statusNote {
+    animation: loop-note-in var(--dur) var(--ease-out);
+  }
+}
+
+@keyframes loop-note-in {
+  from { opacity: 0; }
+}
+
+/* A centred card's heading and copy (an error, no course, the saved-grade recovery). */
+.cardTitle {
+  /* Between the scale's 18 and 22: the stand-in card's own heading size. */
+  --card-title-size: 20px;
+  margin: 0 0 var(--sp-3);
+  font-size: var(--card-title-size);
+}
+
+.cardTitleLg {
+  margin-bottom: var(--sp-4);
+  font-size: var(--fs-2xl);
+}
+
+.cardText {
+  color: var(--text-dim);
+  font-size: var(--fs-base);
+  margin: 0 0 var(--sp-8);
+}
+
+.cardTextLoose {
+  line-height: 1.5;
+}
+
+.flush {
+  margin: 0;
+}
+
+.loading {
+  padding: var(--sp-20);
+  color: var(--text-dim);
+}
+
+/* The recovery button wraps its label and keeps a touch target's height. */
+.recoverBtn {
+  --tap-min: 44px;
+  min-height: var(--tap-min);
+  max-width: 100%;
+  white-space: normal;
+}
+
+.railEmpty {
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+
+/* The learner chip above the conversation when the session panel is hidden,
+   aligned with the conversation's text. */
+
+}

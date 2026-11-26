@@ -137,7 +137,7 @@ def reads(monkeypatch):
     seen = {"scope": [], "mastery": []}
     state = {
         "scope": Scope(kind="exam", id="exam-1", title="Midterm 1 (moved)", due_date="2026-11-20"),
-        "scores": {"Loops": 0.2, "recursion": 0.9, "Unrelated": 0.5},
+        "scores": {"Loops": 0.2, "recursion": 0.98, "Unrelated": 0.5},
     }
 
     async def acards(user_id, guides):
