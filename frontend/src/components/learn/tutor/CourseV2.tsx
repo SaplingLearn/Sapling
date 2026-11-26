@@ -17,13 +17,15 @@ import Link from "next/link";
 import { HandoffLink } from "@/components/ui/HandoffLink";
 import { useUser } from "@/context/UserContext";
 import { retentionHref } from "@/context/RetentionDueContext";
-import { getUpcomingAssignments, type Assignment, type EnrolledCourse } from "@/lib/api";
+import { getUpcomingAssignments, type Assignment, type EnrolledCourse, type LoopGoal } from "@/lib/api";
 import type { GraphEdge, GraphNode } from "@/lib/data";
 import { LEARNING_COPY } from "@/lib/learningCopy";
 import { carriesSkill, tierWord } from "@/lib/levels";
 import { Icon } from "../../Icon";
 import { useFlag } from "@/context/FlagsContext";
 import { LoadFailed, TutorCourse, masteryTone, meterTier } from "./TutorPages";
+import { MilestonePage } from "./MilestonePage";
+import { coveredConcepts, readinessOf, useMilestoneConcepts, useMilestones } from "./milestones";
 import { sessionTitle, shortWhen, type TutorSessionRow } from "./sessions";
 import tutorStyles from "./tutor.module.css";
 import styles from "./CourseV2.module.css";
@@ -115,7 +117,7 @@ type Material = { id: string; file_name: string; category?: string | null };
 
 export function CourseV2({
   course, sessions, concepts, edges, materials, retentionDue, dueCount, dueHref, reviewInSidebar, libraryHref,
-  onRetrySessions, onRetryMaterials, onRetryConcepts, onOpen, onAll, onLearn,
+  onRetrySessions, onRetryMaterials, onRetryConcepts, onOpen, onAll, onLearn, onMilestone, readyFor,
 }: {
   course: EnrolledCourse;
   sessions: TutorSessionRow[];
@@ -136,6 +138,10 @@ export function CourseV2({
   onOpen: (row: TutorSessionRow) => void;
   onAll: () => void;
   onLearn: (concept: { id: string; name: string }) => void;
+  /** `milestones`: a Coming-up row opens that milestone's page. */
+  onMilestone?: (id: string) => void;
+  /** `milestones`: "3 of 8 ready" per milestone with concepts linked to it. */
+  readyFor?: ReadonlyMap<string, string | null> | null;
 }) {
   // spec §13 A135: the page replaces what was on screen, so its first heading takes focus.
   const heading = useRef<HTMLHeadingElement>(null);
@@ -217,12 +223,23 @@ export function CourseV2({
               {upcoming.failed ? <LoadFailed testId="tutor-course-upcoming-error" what="what's coming up" onRetry={upcoming.retry} />
                 : upcoming.items === null ? null : upcoming.items.length > 0 ? (
                   <ul className={styles.box}>
-                    {upcoming.items.map((a) => (
-                      <li key={a.id} className={styles.dueRow} data-testid={`tutor-course-due-${a.id}`}>
-                        <span className={styles.name}>{a.title}</span>
-                        <span className={styles.dim}>{dueWhen(a.due_date)}</span>
-                      </li>
-                    ))}
+                    {upcoming.items.map((a) => {
+                      const ready = readyFor?.get(a.id) ?? null;
+                      const body = (
+                        <>
+                          <span className={styles.name}>{a.title}</span>
+                          {ready && <span className={styles.dim} data-testid={`tutor-course-due-ready-${a.id}`}>{ready}</span>}
+                          <span className={styles.dim}>{dueWhen(a.due_date)}</span>
+                        </>
+                      );
+                      return onMilestone ? (
+                        <li key={a.id} data-testid={`tutor-course-due-${a.id}`}>
+                          <button type="button" className={styles.sessionRow} onClick={() => onMilestone(a.id)}>{body}</button>
+                        </li>
+                      ) : (
+                        <li key={a.id} className={styles.dueRow} data-testid={`tutor-course-due-${a.id}`}>{body}</li>
+                      );
+                    })}
                   </ul>
                 ) : <p className={styles.sub}>{COURSE_COPY.nothingUp}</p>}
             </section>
@@ -251,10 +268,34 @@ export function CourseV2({
 
 /** The course view: the rebuilt page with `course_page_v2` on, else the page
  *  as before (the flag reads live here, out of LoopLearn). */
-export function CourseSlot(props: React.ComponentProps<typeof CourseV2>) {
+export function CourseSlot({ milestoneId = null, onMilestone, onStartGoal, ...props }: React.ComponentProps<typeof CourseV2> & {
+  /** `milestones`: the milestone on screen, else the course page. */
+  milestoneId?: string | null;
+  onMilestone?: (id: string | null) => void;
+  onStartGoal?: (topic: string, goal: LoopGoal) => void;
+}) {
   const v2 = useFlag("course_page_v2") === "on";
   const reviewInSidebar = useFlag("session_v2") === "on";
-  if (v2) return <CourseV2 {...props} reviewInSidebar={reviewInSidebar} />;
-  const { edges: _e, retentionDue: _r, dueCount: _d, reviewInSidebar: _s, onLearn: _l, ...old } = props;
+  const milestonesOn = useFlag("milestones") === "on";
+  const ms = useMilestones(milestonesOn);
+  const conceptsBy = useMilestoneConcepts(props.course.course_id, ms.items, milestonesOn);
+  if (milestonesOn && milestoneId && onMilestone && onStartGoal) {
+    const current = ms.items?.find((m) => m.id === milestoneId && m.courseId === props.course.course_id);
+    if (current) {
+      return <MilestonePage course={props.course} milestone={current} conceptIds={conceptsBy?.get(current.id) ?? null}
+        nodes={props.concepts} sessions={props.sessions} onBack={() => onMilestone(null)} onOpen={props.onOpen}
+        onLearn={props.onLearn} onStartGoal={onStartGoal} />;
+    }
+    if (ms.items === null && !ms.failed) return <div className={styles.page} aria-busy="true" data-testid="tutor-milestone-pending" />;
+  }
+  const readyFor = milestonesOn && conceptsBy ? new Map([...conceptsBy].map(([id, ids]) => {
+    const r = readinessOf(coveredConcepts(ids, props.concepts));
+    return [id, r.total ? `${r.ready} of ${r.total} ready` : null] as const;
+  })) : null;
+  if (v2) {
+    return <CourseV2 {...props} reviewInSidebar={reviewInSidebar} readyFor={readyFor}
+      onMilestone={milestonesOn && onMilestone ? (id) => onMilestone(id) : undefined} />;
+  }
+  const { edges: _e, retentionDue: _r, dueCount: _d, reviewInSidebar: _s, onLearn: _l, readyFor: _f, ...old } = props;
   return <TutorCourse {...old} />;
 }

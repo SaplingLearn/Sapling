@@ -36,7 +36,7 @@ Several flags change a prompt or an output schema, so their eval datasets must b
 
 ## Recommended order
 
-1. **Read-only, no eval needed:** `quiz_concept_plan`, `quiz_results_routing`, `item_reports`, `skill_ladder`, `hint_ladder`, `verdict_v2`, `wrapup_v2`, `plan_v2`, `new_session_v2`, `session_v2`, `course_page_v2`, `review_v2`.
+1. **Read-only, no eval needed:** `quiz_concept_plan`, `quiz_results_routing`, `item_reports`, `skill_ladder`, `hint_ladder`, `verdict_v2`, `wrapup_v2`, `plan_v2`, `new_session_v2`, `session_v2`, `course_page_v2`, `review_v2`, `milestones`.
 2. **Safety, after copy review:** `crisis_support`.
 3. **Prompt changes, after their evals:** `loop_tutor_v2`, `segment_prequestion`, `self_explanation_prompts`, `quiz_planned_questions`, `quiz_item_gates`, then `quiz_misconceptions`.
 4. **Drafting changes, after their evals:** `varied_isomorphs`, `multi_concept_items`, `upload_prereq_edges`.
@@ -108,6 +108,12 @@ Several flags change a prompt or an output schema, so their eval datasets must b
 - **Before:** nothing; the review routes already take `course_id`.
 - **Watch:** reviews answered per visit, all courses against one course.
 - **Roll back:** off restores Due today as before.
+
+### milestones (Tutor redesign) — client-visible
+- **Changes:** milestones in the Tutor, from the data the Study hub already reads: a course's dated exams, quizzes and homework (the calendar's assignments) and the concepts each covers (the topic checklist's exam links). The Tutor sidebar lists each course's next two within 30 days with a countdown ("13 days"); a milestone's page (in the course view) says "Midterm 2 in 13 days", how many of its concepts are exam-ready (Proficient) with the count per level, what it covers (each concept's level and Learn), its sessions ("Prepare for Midterm 2") and the study guides saved for it, with ONE primary step, Prepare in a session (a goal on its concepts not ready yet, weakest first, up to 12). With `course_page_v2`, Coming up says "3 of 8 ready" and each row opens its milestone; with `new_session_v2`, New session offers "Prepare for Midterm 2" first. Frontend only; the board's practice exam is not built.
+- **Before:** students' exams have dates (Exams and Deadlines, or a syllabus) and the course outline links topics to them; without links a milestone says "No topics are linked to Midterm 2 yet." and Prepare waits.
+- **Watch:** Prepare sessions started; milestones with nothing linked.
+- **Roll back:** off removes milestones from the Tutor.
 
 ### item_reports (A113, A123) — client-visible
 - **Changes:** students can report a check question. Two reports hold it from the whole course until staff approve or retire it in the admin check-items queue.

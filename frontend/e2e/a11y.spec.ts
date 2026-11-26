@@ -45,7 +45,7 @@
 import type { Browser, Page, Route } from "@playwright/test";
 
 import { expectAccessible } from "./support/a11y";
-import { seedTeachPromptItems, setUserFlag } from "./support/db";
+import { queryRaw, seedTeachPromptItems, setUserFlag } from "./support/db";
 import { expect, test } from "./support/fixtures";
 import { loopOffLane } from "./support/lane";
 import { learningParams } from "./support/params";
@@ -643,6 +643,57 @@ test("learning loop: the rebuilt New session, plan, session panel, hint ladder, 
     await expect(page.getByTestId("tutor-course-v2")).toBeVisible();
     await expect(page.getByRole("heading", { name: "Ready to learn" })).toBeFocused();
     await expectAccessible(page, "learn loop: the rebuilt course page");
+  } finally {
+    await context.close();
+  }
+});
+
+// Milestones in the Tutor (`milestones`): the sidebar's countdown, a
+// milestone's page and New session's "Prepare for <exam>". The seed links no
+// topic to an exam (its checklist content is encrypted at rest), so the exam
+// and its links are the server's own answers with one routed in: the scans
+// check the markup, and nothing is written.
+test("learning loop: milestones in the Tutor (milestones, course_page_v2, new_session_v2 on)", async ({ browser }) => {
+  test.skip(loopOffLane, "loop path: default lane only");
+  test.setTimeout(LOOP_TIMEOUT_MS);
+  for (const flag of ["milestones", "course_page_v2", "new_session_v2"]) await setUserFlag(flag, USER_LOOP, "on");
+  const nodes = (await queryRaw(
+    `SELECT id, course_id FROM graph_nodes WHERE user_id = $1 AND course_id IS NOT NULL ORDER BY id`,
+    [USER_LOOP],
+  )) as { id: string; course_id: string }[];
+  expect(nodes.length, "the loop student has concepts").toBeGreaterThan(0);
+  const courseId = nodes[0].course_id;
+  const inDays = (n: number) => new Date(Date.now() + n * 86_400_000).toISOString().slice(0, 10);
+  const exam = { id: "a11y-midterm", user_id: USER_LOOP, title: "Midterm 2", due_date: inDays(13), assignment_type: "exam", course_id: courseId };
+  const { context, page } = await signIn(browser, USER_LOOP, "Lou Loop");
+  try {
+    await page.route(`**/api/calendar/all/**`, (route) => route.fulfill({ json: { assignments: [exam] } }));
+    await page.route(`**/api/calendar/upcoming/**`, (route) => route.fulfill({ json: { assignments: [exam] } }));
+    await page.route(`**/api/topic-checklist/**/courses/**`, (route) => route.fulfill({ json: {
+      course_id: courseId, semester: "", generated_at: null, needs_refresh: false, assessments: [], warnings: [], review_after_days: 7,
+      topics: nodes.filter((n) => n.course_id === courseId).map((n, i) => ({
+        id: `a11y-topic-${i}`, name: n.id, description: "", importance: 0.5, parent_id: null, prerequisite_ids: [], prerequisite_gaps: [],
+        status: "not_started", checked: false, mastery_score: null, last_studied_at: null, review_reasons: [], priority: "normal",
+        assessments: [], assessment_ids: [exam.id], sources: [], node_id: n.id,
+      })),
+    } }));
+    await page.goto("/learn");
+    // New session offers the exam first
+    await expect(page.getByTestId("tutor-new-intent-prepare")).toBeVisible();
+    await expect(page.getByTestId("loop-start-guided")).toHaveAttribute("data-intent", "prepare");
+    await expectAccessible(page, "milestones: New session's Prepare for the exam");
+    // the sidebar's countdown opens the milestone's page
+    const row = page.getByTestId(`tutor-milestone-${exam.id}`);
+    await expect(row).toContainText("13 days");
+    await row.click();
+    await expect(page.getByTestId("tutor-milestone")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Midterm 2 in 13 days" })).toBeFocused();
+    await expect(page.getByTestId("tutor-milestone-prepare")).toBeEnabled();
+    await expectAccessible(page, "milestones: a milestone's page");
+    // back on the course page, Coming up says how ready
+    await page.getByTestId("tutor-milestone-back").click();
+    await expect(page.getByTestId(`tutor-course-due-ready-${exam.id}`)).toContainText("ready");
+    await expectAccessible(page, "milestones: the course page's Coming up");
   } finally {
     await context.close();
   }

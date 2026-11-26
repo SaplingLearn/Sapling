@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Milestone: CS 112 Midterm 2</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Aleo:wght@400;600;700&amp;family=SUSE:wght@400;500;600;700&amp;display=swap">
+<style>
+body{margin:0}
+a{color:#445D22;text-decoration:none}a:hover{color:#384E19}
+</style>
+</helmet>
+<div style="min-height: 980px; display: flex; flex-wrap: wrap; background: #faf8f3; font-family: 'SUSE', system-ui, sans-serif; color: #1a1814;">
+  <dc-import name="Sidebar" active="milestone" hint-size="264px,980px"></dc-import>
+  <main style="flex: 999 1 560px; min-width: 0; padding: 48px 56px; box-sizing: border-box;">
+    <div style="max-width: 1040px; margin: 0 auto; display: flex; flex-direction: column; gap: 32px;">
+      <header style="display: flex; flex-direction: column; gap: 18px;">
+        <nav aria-label="Breadcrumb" style="font-size: 14px;"><a href="Course.dc.html">CS 112</a></nav>
+        <div style="display: flex; align-items: center; gap: 16px; flex-wrap: wrap;">
+          <h1 style="margin: 0; flex: 1; min-width: 0; font-family: 'Aleo', Georgia, serif; font-size: 30px; font-weight: 600;">Midterm 2 <span style="font-weight: 400; color: #3f3b31;">in 13 days</span></h1>
+          <a href="Milestone.dc.html" style="height: 44px; padding: 0 18px; border-radius: 10px; border: 1px solid rgba(42,39,31,0.18); background: #fdfcf9; color: #1a1814; font-size: 15px; font-weight: 500; display: inline-flex; align-items: center;">Practice exam</a>
+          <a href="Plan.dc.html" style="height: 44px; padding: 0 22px; border-radius: 10px; background: #445D22; color: #ffffff; font-size: 15px; font-weight: 600; display: inline-flex; align-items: center;">Prepare in a session</a>
+        </div>
+      </header>
+
+      <section aria-labelledby="ready-h" style="display: flex; flex-direction: column; gap: 16px; padding: 24px 28px; border-radius: 16px; background: #fdfcf9; border: 1px solid rgba(42,39,31,0.10);">
+        <h2 id="ready-h" style="margin: 0; font-family: 'Aleo', Georgia, serif; font-size: 22px; font-weight: 600;">3 of 8 concepts are exam-ready</h2>
+        <div style="display: flex; gap: 4px; height: 10px;" aria-hidden="true">
+          <span style="flex: 3; border-radius: 5px; background: #445D22;"></span>
+          <span style="flex: 3; border-radius: 5px; background: #a1bc83;"></span>
+          <span style="flex: 2; border-radius: 5px; background: #ddd6c6;"></span>
+        </div>
+        <div style="display: flex; gap: 24px; font-size: 14px; color: #3f3b31; flex-wrap: wrap;">
+          <span style="display: inline-flex; align-items: center; gap: 8px;"><span style="width: 10px; height: 10px; border-radius: 3px; background: #445D22;"></span>3 proficient</span>
+          <span style="display: inline-flex; align-items: center; gap: 8px;"><span style="width: 10px; height: 10px; border-radius: 3px; background: #a1bc83;"></span>3 developing</span>
+          <span style="display: inline-flex; align-items: center; gap: 8px;"><span style="width: 10px; height: 10px; border-radius: 3px; background: #ddd6c6;"></span>2 getting started</span>
+        </div>
+      </section>
+
+      <div style="display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 32px; align-items: start;">
+        <section aria-labelledby="concepts-h" style="display: flex; flex-direction: column; gap: 12px;">
+          <h2 id="concepts-h" style="margin: 0; font-family: 'Aleo', Georgia, serif; font-size: 22px; font-weight: 600;">What it covers</h2>
+          <div style="border-radius: 16px; background: #fdfcf9; border: 1px solid rgba(42,39,31,0.10);">
+            <sc-for list="{{concepts}}" as="c" hint-placeholder-count="8">
+              <div style="display: grid; grid-template-columns: minmax(0, 1fr) 110px 116px 56px; align-items: center; gap: 14px; padding: 13px 20px; border-bottom: 1px solid rgba(42,39,31,0.08);">
+                <span style="font-size: 15px;">{{c.name}}</span>
+                <span style="height: 6px; border-radius: 3px; background: #ebe6dc;"><span style="{{c.barStyle}}"></span></span>
+                <span style="font-size: 14px; color: #3f3b31;">{{c.level}}</span>
+                <sc-if value="{{c.learn}}" hint-placeholder-val="{{ true }}"><a href="Plan.dc.html" style="font-size: 14px; font-weight: 600; text-align: right;">Learn</a></sc-if>
+              </div>
+            </sc-for>
+          </div>
+          <p style="margin: 0; font-size: 14px; color: #3f3b31;">Reviews for these concepts come up more often as the exam gets closer.</p>
+        </section>
+
+        <div style="display: flex; flex-direction: column; gap: 32px;">
+          <section aria-labelledby="ms-sessions-h" style="display: flex; flex-direction: column; gap: 12px;">
+            <h2 id="ms-sessions-h" style="margin: 0; font-family: 'Aleo', Georgia, serif; font-size: 22px; font-weight: 600;">Sessions for Midterm 2</h2>
+            <div style="border-radius: 16px; background: #fdfcf9; border: 1px solid rgba(42,39,31,0.10);">
+              <a href="Session.dc.html" style="display: flex; justify-content: space-between; padding: 14px 20px; border-bottom: 1px solid rgba(42,39,31,0.10); color: #1a1814; font-size: 15px;"><span>Hash tables and 2 more</span><span style="font-size: 14px; color: #3f3b31;">Today</span></a>
+              <a href="Session.dc.html" style="display: flex; justify-content: space-between; padding: 14px 20px; color: #1a1814; font-size: 15px;"><span>Linked lists</span><span style="font-size: 14px; color: #3f3b31;">Nov 24</span></a>
+            </div>
+          </section>
+          <section aria-labelledby="ms-lib-h" style="display: flex; flex-direction: column; gap: 12px;">
+            <h2 id="ms-lib-h" style="margin: 0; font-family: 'Aleo', Georgia, serif; font-size: 22px; font-weight: 600;">Saved for Midterm 2</h2>
+            <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px;">
+              <a href="Milestone.dc.html" style="display: flex; flex-direction: column; gap: 6px; padding: 14px; border-radius: 12px; background: #fdfcf9; border: 1px solid rgba(42,39,31,0.10); color: #1a1814; font-size: 14px;"><span style="font-weight: 600;">Study guide</span><span style="color: #3f3b31;">Updated Nov 24</span></a>
+              <a href="Milestone.dc.html" style="display: flex; flex-direction: column; gap: 6px; padding: 14px; border-radius: 12px; background: #fdfcf9; border: 1px solid rgba(42,39,31,0.10); color: #1a1814; font-size: 14px;"><span style="font-weight: 600;">Worked example</span><span style="color: #3f3b31;">Linear probing</span></a>
+            </div>
+          </section>
+          <p style="margin: 0; font-size: 14px; color: #3f3b31;">Practice exams are timed with no hints. They show a score and don't change your skill levels.</p>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":980}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const color = { 'Proficient': '#445D22', 'Developing': '#60842c', 'Getting started': '#a1bc83' };
+    const rows = [
+      ['Hash tables', 22, 'Getting started'], ['Collision resolution', 12, 'Getting started'],
+      ['Queues', 31, 'Developing'], ['Stacks', 44, 'Developing'], ['Binary search trees', 58, 'Developing'],
+      ['Linked lists', 86, 'Proficient'], ['Arrays', 91, 'Proficient'], ['Big-O notation', 88, 'Proficient']
+    ];
+    return {
+      concepts: rows.map(([name, pct, level]) => ({
+        name, level, learn: level !== 'Proficient',
+        barStyle: 'display: block; height: 6px; border-radius: 3px; width: ' + pct + '%; background: ' + color[level] + ';'
+      }))
+    };
+  }
+}
+</script>
+</body>
+</html>

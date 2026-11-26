@@ -201,6 +201,7 @@ EXPECTED_LOOP_FLAGS = {
     "session_v2",  # a loop UI flag: the session panel only renders with the loop on
     "course_page_v2",  # a loop UI flag: the Tutor course page only renders with the loop on
     "review_v2",  # a loop UI flag: the review queue only renders with the loop on
+    "milestones",  # a loop UI flag: the Tutor only renders with the loop on
 }
 
 

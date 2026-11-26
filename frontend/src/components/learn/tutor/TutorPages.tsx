@@ -3,7 +3,7 @@ import { LEVEL_TIER, carriesSkill, levelFor, tierWord } from "@/lib/levels";
 import { HandoffLink } from "@/components/ui/HandoffLink";
 import React, { useLayoutEffect, useRef } from "react";
 import Link from "next/link";
-import type { EnrolledCourse } from "@/lib/api";
+import type { EnrolledCourse, LoopGoal } from "@/lib/api";
 import type { GraphNode } from "@/lib/data";
 import { LEARNING_COPY } from "@/lib/learningCopy";
 import { MASTERY_PALETTE, tierFor, type MasteryTier } from "@/lib/graph/nodeStyle";
@@ -78,7 +78,14 @@ export function TutorHome({
   onStart,
   onStartWith,
   onGoal,
+  courseId = null,
+  nodes = [],
+  onStartGoal,
 }: {
+  /** `milestones` (New session's "Prepare for <exam>"): the course, its concepts, and a goal session's start. */
+  courseId?: string | null;
+  nodes?: GraphNode[];
+  onStartGoal?: (topic: string, goal: LoopGoal) => void;
   courseName: string | null;
   /** The course's open session, offered as "Continue". */
   continueRow: TutorSessionRow | null;
@@ -106,7 +113,8 @@ export function TutorHome({
     return (
       <NewSessionV2 courseName={courseName} continueTitle={continueRow ? continueTitle ?? sessionTitle(continueRow) : null}
         startWith={startWith} dueCount={dueCount} dueHref={dueHref} busy={busy} starting={starting} closesCurrent={closesCurrent}
-        onContinue={onContinue} onStart={onStart} onStartWith={onStartWith} onGoal={onGoal} />
+        onContinue={onContinue} onStart={onStart} onStartWith={onStartWith} onGoal={onGoal}
+        courseId={courseId} nodes={nodes} onStartGoal={onStartGoal} />
     );
   }
   return (

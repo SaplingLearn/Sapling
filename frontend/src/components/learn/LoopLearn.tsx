@@ -257,6 +257,7 @@ export function LoopLearn() {
   // the tutor sidebar, the session panel, and the sessions they list.
   const [view, setView] = useState<TutorView>("session");
   const [courseView, setCourseView] = useState<string | null>(null);
+  const [milestoneId, setMilestoneId] = useState<string | null>(null); // `milestones`: the course view's milestone
   const [sideQuery, setSideQuery] = useState("");
   const [allQuery, setAllQuery] = useState("");
   const [allFilter, setAllFilter] = useState<SessionFilter>("all");
@@ -1056,12 +1057,8 @@ export function LoopLearn() {
   };
   const { closeDrawer } = layout;
   const showHome = () => { setView("home"); closeDrawer(); };
-  const showCourse = (id: string) => {
-    switchCourse(id);
-    setCourseView(id);
-    setView("course");
-    closeDrawer();
-  };
+  /** A course's page, or (`milestones`) one of its milestones' pages. */
+  const showCourse = (id: string, milestone: string | null = null) => { switchCourse(id); setCourseView(id); setMilestoneId(milestone); setView("course"); closeDrawer(); };
   const showAll = () => { setView("all"); closeDrawer(); };
   /** A listed session: an open one resumes; a wrapped-up one opens read-only (T14). */
   const openRow = (row: TutorSessionRow) => {
@@ -2338,7 +2335,7 @@ export function LoopLearn() {
           onContinue={() => { if (openHere) openRow(openHere); }}
           onStart={() => void startGuided()}
           onStartWith={(c) => void startGuided({ topic: c.name, goal: conceptGoal(c.id) })}
-          onGoal={showStartGoal}
+          onGoal={showStartGoal} courseId={courseId} nodes={railGraph.nodes} onStartGoal={(topic, goal) => void startGuided({ topic, goal })}
         />
       </div>
     );
@@ -2356,6 +2353,7 @@ export function LoopLearn() {
         onRetryMaterials={lists.retryMaterials} onRetryConcepts={graphError ? () => void refreshGraph() : null}
         onOpen={openRow}
         onAll={showAll} onLearn={(k) => void startGuided({ topic: k.name, goal: conceptGoal(k.id) })}
+        milestoneId={milestoneId} onMilestone={(m) => showCourse(c.course_id, m)} onStartGoal={(topic, goal) => void startGuided({ topic, goal })}
       />
     </div>
   );
@@ -2423,7 +2421,7 @@ export function LoopLearn() {
       onOpen={openRow}
       onAll={showAll}
       onHide={layout.hideSide}
-      onRetryRecent={lists.retryRecent} dueCount={lists.dueReviews} dueHref={dueHref}
+      onRetryRecent={lists.retryRecent} dueCount={lists.dueReviews} dueHref={dueHref} onMilestone={showCourse}
     />
   );
 

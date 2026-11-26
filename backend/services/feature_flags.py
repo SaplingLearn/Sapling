@@ -373,6 +373,17 @@ REGISTRY: dict[str, FlagDef] = _registry(
             "course and All courses, the item's place (3 of 9) in place of the "
             "minutes chip, and a retention check that names the course it is "
             "ready for. Off: Due today as before.", True),
+    # Tutor redesign (milestones): a course's dated exams, quizzes and homework
+    # in the Tutor, with the concepts each covers and how ready the student is,
+    # from the Study hub's own reads (the calendar's assignments, the topic
+    # checklist's exam links). Frontend only. A loop flag.
+    FlagDef("milestones", ("off", "on"),
+            "Milestones in the Tutor: each course's next dated work with its "
+            "countdown in the Tutor sidebar, a milestone page (how many of its "
+            "concepts are exam-ready, what it covers, its sessions and saved "
+            "study guides, Prepare in a session), readiness on the course "
+            "page's Coming up, and Prepare for <exam> in New session. Off: no "
+            "milestones in the Tutor.", True),
     FlagDef("skill_ladder", ("off", "on"),
             "One skill measure on the graph: each concept's score, tier and words "
             "come from the learner model's decayed skill (Not started / Getting "

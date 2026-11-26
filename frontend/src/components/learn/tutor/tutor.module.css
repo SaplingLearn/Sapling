@@ -175,6 +175,19 @@
   color: var(--text);
 }
 
+/* milestones: a course's next dated work, indented under it, with its countdown. */
+.sideMilestone {
+  padding-left: var(--sp-14);
+}
+
+.sideDays {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
 /* session_v2: Review at the sidebar's foot, with the queue's count. */
 .sideReview {
   margin-top: auto;

@@ -8,9 +8,13 @@ import styles from "./tutor.module.css";
 import { HandoffLink } from "@/components/ui/HandoffLink";
 import { useFlag } from "@/context/FlagsContext";
 import { LEARNING_COPY } from "@/lib/learningCopy";
+import { countdown, useMilestones } from "./milestones";
 
 /** How many recents the sidebar shows before "View all sessions". */
 const RECENTS_LIMIT = 12;
+/** `milestones`: how far ahead, and how many per course, the sidebar lists. */
+const MILESTONE_DAYS = 30;
+const MILESTONES_SHOWN = 2;
 
 /**
  * The Tutor's own sidebar (wireframe "AI tutor structure layout V2", B):
@@ -36,6 +40,7 @@ export function TutorSidebar({
   onRetryRecent,
   dueCount = null,
   dueHref = null,
+  onMilestone,
 }: {
   courses: EnrolledCourse[] | null;
   courseId: string | null;
@@ -59,7 +64,11 @@ export function TutorSidebar({
   dueCount?: number | null;
   /** Where Review goes; null while `hide_study` hides Study. */
   dueHref?: string | null;
+  /** `milestones`: opens a milestone's page (its course, then it). */
+  onMilestone?: (courseId: string, milestoneId: string) => void;
 }) {
+  const milestonesOn = useFlag("milestones") === "on" && !!onMilestone;
+  const { items: milestones } = useMilestones(milestonesOn);
   const reviewHere = useFlag("session_v2") === "on" && !!dueHref;
   const byId = useMemo(() => new Map((courses ?? []).map((c, i) => [c.course_id, { c, i }])), [courses]);
   const q = query.trim().toLowerCase();
@@ -116,7 +125,18 @@ export function TutorSidebar({
                 {c.course_code && <span className={styles.code}>{c.course_code}</span>}
                 <span className={styles.rowText}>{c.nickname || c.course_name}</span>
               </button>
-            ))}
+            )).flatMap((row, i) => {
+              // `milestones`: the course's next dated work within a month, under it
+              const c = courses[i];
+              const mine = (milestones ?? []).filter((m) => m.courseId === c.course_id && m.days <= MILESTONE_DAYS).slice(0, MILESTONES_SHOWN);
+              return [row, ...mine.map((m) => (
+                <button key={`m:${m.id}`} type="button" className={`${styles.sideRow} ${styles.sideMilestone}`}
+                  data-testid={`tutor-milestone-${m.id}`} onClick={() => onMilestone?.(c.course_id, m.id)}>
+                  <span className={styles.rowText}>{m.title}</span>
+                  <span className={styles.sideDays}>{countdown(m.days)}</span>
+                </button>
+              ))];
+            })}
           </div>
         )}
 
