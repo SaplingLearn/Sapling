@@ -171,6 +171,7 @@ def fallback_notes(doc: dict) -> str:
             "<p><br></p>"
             '<h2>Questions to Review</h2>'
             '<ul class="check"><li data-done="0">'
+            '<span class="box" contenteditable="false" data-act="check">✓</span>'
             "<span>What is the main idea of this document?</span></li></ul>"
         )
     return (
@@ -191,6 +192,117 @@ def _esc(s: str) -> str:
     )
 
 
+# ── Block chrome ──────────────────────────────────────────────────────────
+#
+# Every block the editor inserts carries three things besides its content: a
+# remove button, sometimes a mono-caps label, and the CONTROL that opens or
+# edits it. `frontend/src/lib/notes/blocks.ts` is the source of truth; the
+# strings below are its `X`, `H()` and action bars verbatim.
+#
+# A model writes a block's content reliably and its chrome unreliably, and the
+# chrome is what makes the block work. A `qa` written without its
+# `data-act="open"` button is the sharp case: `library-notes.css` styles
+# `.qa-a { display: none }` and reveals it only under `.blk[data-open="1"]`, so
+# the answer is generated, saved, and permanently invisible with nothing on
+# screen to reveal it. A `toggle` without its arrow cannot be collapsed, and a
+# `table` without its Edit button cannot gain or lose a row.
+#
+# Asking the prompt for the boilerplate does not fix this: it is a lot of exact
+# markup to reproduce on every block of every document, and a single slip
+# ships another half-dead block. So the prompt asks for the CONTENT shape and
+# the chrome is put back here, deterministically, where it cannot drift.
+_BLK_X = ('<button class="blk-x" contenteditable="false" data-act="del" '
+          'title="Remove" aria-label="Remove block">×</button>')
+_QA_BAR = ('<div class="tbl-bar" contenteditable="false">'
+           '<button class="sbtn" data-act="open">Show Answer</button></div>')
+_TG_ARROW = ('<button class="tg-arrow" contenteditable="false" data-act="open" '
+             'aria-label="Show or hide">▶</button>')
+_TBL_EDIT = ('<button class="tbl-edit" contenteditable="false" '
+             'data-act="tedit">Edit</button>')
+_TBL_BAR = ('<div class="tbl-bar" contenteditable="false">'
+            '<button class="sbtn" data-act="row">+ Row</button>'
+            '<button class="sbtn" data-act="col">+ Column</button>'
+            '<button class="sbtn" data-act="delrow">− Row</button>'
+            '<button class="sbtn" data-act="delcol">− Column</button>'
+            '<span style="flex:1"></span>'
+            '<button class="sbtn tbl-del" data-act="del">Delete table</button>'
+            '<button class="sbtn tbl-done" data-act="tedit">Done</button></div>')
+
+
+def _block_end(html: str, start: int) -> int:
+    """Index just past the ``</div>`` closing the ``<div>`` that opens at
+    ``start``, by depth count. Returns ``len(html)`` for an unclosed block."""
+    depth, i, n = 0, start, len(html)
+    while i < n:
+        if html.startswith("<div", i):
+            depth += 1
+            i += 4
+        elif html.startswith("</div>", i):
+            depth -= 1
+            i += 6
+            if depth == 0:
+                return i
+        else:
+            i += 1
+    return n
+
+
+def _insert_at(block: str, marker: str, fragment: str) -> str:
+    """``fragment`` immediately before ``marker``, or appended before the
+    block's own closing tag when the marker is missing."""
+    at = block.find(marker)
+    if at < 0:
+        return block[: block.rfind("</div>")] + fragment + block[block.rfind("</div>"):]
+    return block[:at] + fragment + block[at:]
+
+
+def _restore_chrome(block: str, kind: str) -> str:
+    """One block, with whatever chrome its kind requires put back."""
+    head = block.index(">") + 1  # just past the block's own opening tag
+    if 'class="blk-x"' not in block:
+        block = block[:head] + _BLK_X + block[head:]
+        head += len(_BLK_X)
+
+    if kind == "qa":
+        if 'class="blk-h"' not in block:
+            label = '<div class="blk-h" contenteditable="false">Practice Question</div>'
+            block = block[:head] + label + block[head:]
+        if 'data-act="open"' not in block:
+            block = _insert_at(block, '<div class="qa-a"', _QA_BAR)
+    elif kind == "toggle":
+        if 'data-act="open"' not in block:
+            block = _insert_at(block, '<div class="tg-title"', _TG_ARROW)
+    elif kind == "table":
+        if 'data-act="tedit"' not in block:
+            block = block[:head] + _TBL_EDIT + block[head:]
+        if 'data-act="row"' not in block and "</table>" in block:
+            block = block.replace("</table>", "</table>" + _TBL_BAR, 1)
+    return block
+
+
+#: The block kinds whose chrome is restored, and nothing else: a `math`,
+#: `check` or `code` block the model writes is already complete.
+_CHROME_KINDS = ("qa", "toggle", "table")
+
+
+def restore_block_chrome(html: str) -> str:
+    """Put the missing controls back into every generated block.
+
+    Idempotent: a block that already carries its chrome is returned untouched,
+    so this is safe over hand-written and round-tripped content too.
+    """
+    out = html
+    for kind in _CHROME_KINDS:
+        needle = f'<div class="blk" data-blk="{kind}"'
+        i = out.find(needle)
+        while i >= 0:
+            end = _block_end(out, i)
+            fixed = _restore_chrome(out[i:end], kind)
+            out = out[:i] + fixed + out[end:]
+            i = out.find(needle, i + len(fixed))
+    return out
+
+
 def clean_generated(html: str) -> str:
     """Strip what a model sometimes wraps generated HTML in: markdown fences,
     a stray document title, and leading/trailing prose."""
@@ -206,4 +318,4 @@ def clean_generated(html: str) -> str:
         if end < 0:
             break
         out = out[end + 5:].lstrip()
-    return out[:MAX_CONTENT]
+    return restore_block_chrome(out)[:MAX_CONTENT]
