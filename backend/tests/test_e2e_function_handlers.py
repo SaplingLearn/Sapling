@@ -800,7 +800,7 @@ def test_e2e_decision_answers_are_the_shared_fixture():
     from agents._decision_fixtures import DECISION_ANSWERS
 
     src = Path(__file__).resolve().parents[1] / "agents" / "function_handlers_e2e.py"
-    tree = ast.parse(src.read_text())
+    tree = ast.parse(src.read_text(encoding="utf-8"))
     (assign,) = [n for n in tree.body if isinstance(n, ast.Assign)
                  and any(getattr(t, "id", None) == "E2E_DECISION_ANSWERS" for t in n.targets)]
     assert isinstance(assign.value, ast.Name) and assign.value.id == "DECISION_ANSWERS", (

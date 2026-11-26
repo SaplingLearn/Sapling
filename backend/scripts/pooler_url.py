@@ -49,7 +49,7 @@ def pooler_host(prefix: str) -> str:
 
 
 def build(env_file: str, region: str) -> str:
-    lines = pathlib.Path(env_file).read_text().splitlines()
+    lines = pathlib.Path(env_file).read_text(encoding="utf-8").splitlines()
     matches = [ln for ln in lines if ln.startswith("SUPABASE_DB_URL=")]
     if not matches:
         raise SystemExit(f"{env_file}: no SUPABASE_DB_URL")

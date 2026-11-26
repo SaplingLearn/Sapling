@@ -225,7 +225,7 @@ def test_the_upkeep_functions_are_service_only(db_conn):
 def test_the_migration_is_safe_to_apply_again(db_conn):
     job_id = _enqueue(db_conn)
     with db_conn.transaction() as tx:
-        db_conn.execute(_MIGRATION.read_text())
+        db_conn.execute(_MIGRATION.read_text(encoding="utf-8"))
         assert _row(db_conn, job_id) is not None
         assert "jobs_queue_depth" in _metrics(db_conn)["totals"]
         raise psycopg.Rollback(tx)

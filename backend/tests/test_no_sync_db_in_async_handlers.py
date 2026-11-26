@@ -254,7 +254,7 @@ def _scanned_paths() -> list[Path]:
 
 
 def _all_offenders() -> set[tuple[str, str, str]]:
-    sources = {p.relative_to(BACKEND).as_posix(): p.read_text() for p in _scanned_paths()}
+    sources = {p.relative_to(BACKEND).as_posix(): p.read_text(encoding="utf-8") for p in _scanned_paths()}
     return _Universe(sources).offenders()
 
 

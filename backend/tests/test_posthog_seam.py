@@ -909,14 +909,14 @@ class TestSettingsContract:
         migrations = Path(__file__).resolve().parents[1] / "db" / "migrations"
         def sql_only(path):  # comments may name the column (or an old file)
             return "\n".join(
-                line for line in path.read_text().splitlines()
+                line for line in path.read_text(encoding="utf-8").splitlines()
                 if not line.lstrip().startswith("--")
             )
 
         hits = [p for p in migrations.glob("2*.sql") if "analytics_opt_out" in sql_only(p)]
         assert len(hits) == 1
         sql = " ".join(
-            line for line in hits[0].read_text().splitlines()
+            line for line in hits[0].read_text(encoding="utf-8").splitlines()
             if not line.lstrip().startswith("--")
         )
         sql = " ".join(sql.split()).lower()
@@ -1323,7 +1323,7 @@ class TestLaneSilence:
     def test_scripts_blank_the_project_token(self, script):
         from pathlib import Path
 
-        text = (Path(__file__).resolve().parents[2] / script).read_text()
+        text = (Path(__file__).resolve().parents[2] / script).read_text(encoding="utf-8")
         assert re.search(r"^\s*export POSTHOG_PROJECT_TOKEN=(\s|$)", text, re.M), script
         assert "POSTHOG_DISABLED" not in text
 
@@ -1835,7 +1835,7 @@ class TestErasureIsNotCapture:
     def test_lane_scripts_blank_the_personal_key(self, script):
         from pathlib import Path
 
-        text = (Path(__file__).resolve().parents[2] / script).read_text()
+        text = (Path(__file__).resolve().parents[2] / script).read_text(encoding="utf-8")
         assert re.search(r"^\s*export POSTHOG_PERSONAL_API_KEY=(\s|$)", text, re.M), script
 
 
@@ -1986,7 +1986,7 @@ class TestMigrationHeader:
         sql = (
             Path(__file__).resolve().parents[1]
             / "db" / "migrations" / "20261016064813_analytics_opt_out.sql"
-        ).read_text()
+        ).read_text(encoding="utf-8")
         assert "ai_observability" not in sql
         assert "posthog_client" in sql and "analytics_consent" in sql
 

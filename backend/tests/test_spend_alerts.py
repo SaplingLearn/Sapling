@@ -187,7 +187,7 @@ def test_flag_is_registered_off_first_and_seeded_on():
     assert fd.variants == ("off", "on") and fd.client_visible is False
     migrations = Path(__file__).resolve().parents[1] / "db" / "migrations"
     seeded = [p for p in migrations.glob("*_spend_alerts_flag.sql")
-              if "('spend_alerts', 'on')" in p.read_text()]
+              if "('spend_alerts', 'on')" in p.read_text(encoding="utf-8")]
     assert len(seeded) == 1
 
 

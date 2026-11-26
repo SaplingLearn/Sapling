@@ -122,7 +122,7 @@ def test_the_migration_is_safe_to_apply_again(db_conn):
     _flag_write(db_conn)
     v = _version(db_conn)
     with db_conn.transaction() as tx:
-        db_conn.execute(_MIGRATION.read_text())
+        db_conn.execute(_MIGRATION.read_text(encoding="utf-8"))
         assert _version(db_conn) == v  # the seed never resets a live counter
         assert _claim(db_conn, "w8t:again")["hit_id"]
         raise psycopg.Rollback(tx)

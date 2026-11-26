@@ -104,7 +104,7 @@ def _env_reads() -> dict[str, set[str]]:
         paths = sorted(BACKEND.glob(pattern))
         assert paths, f"{pattern} matches nothing: update WORKER_PATH_MODULES"
         for path in paths:
-            text = path.read_text()
+            text = path.read_text(encoding="utf-8")
             for rx in _READS:
                 for name in rx.findall(text):
                     out.setdefault(name, set()).add(str(path.relative_to(BACKEND)))
@@ -113,7 +113,7 @@ def _env_reads() -> dict[str, set[str]]:
 
 def _shared() -> set[str]:
     """The names railway.ts references, evaluated the way the file builds them."""
-    ts = RAILWAY_TS.read_text()
+    ts = RAILWAY_TS.read_text(encoding="utf-8")
 
     def array(name: str) -> list[str]:
         m = re.search(rf"const {name}(?:: string\[\])? = \[(.*?)\]", ts, re.S)
@@ -177,6 +177,6 @@ def test_the_api_ships_at_one_replica():
     second replica before the cut-over flags are on. API_REPLICAS goes to 2
     only as the last step of docs/deploy/railway.md "Two API replicas"; that
     change updates this pin in the same commit, on purpose."""
-    src = RAILWAY_TS.read_text()
+    src = RAILWAY_TS.read_text(encoding="utf-8")
     assert re.search(r"^const API_REPLICAS = 1;$", src, re.MULTILINE)
     assert "replicas: API_REPLICAS" in src

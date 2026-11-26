@@ -12,6 +12,7 @@ network, no docker.
 
 import json
 import os
+import pathlib
 import re
 import shlex
 
@@ -447,16 +448,25 @@ def test_an_unknown_image_target_fails_the_build_with_a_clear_message():
     # Its shell logic, run for real: empty and unset mean full; others fail.
     import subprocess
     script = re.search(r"RUN (target=.*?esac)", check, re.S).group(1).replace("\\\n", "\n")
+    # The script writes the resolved target to a file, so the test gives it a
+    # real one and reads it back. It used to substitute `/dev/stdout` and read
+    # the pipe, which the `sh` on a Windows box cannot open as a path
+    # ("No such file or directory"); a temp file is what the stage actually
+    # does anyway, and it asserts the same thing on every platform.
+    import tempfile
     for value, ok, written in [("", True, "full"), ("worker", True, "worker"),
                                ("api", True, "api"), ("ful", False, None)]:
-        r = subprocess.run(["sh", "-c", script.replace("/sapling-image-target", "/dev/stdout")],
-                           env={"SAPLING_IMAGE_TARGET": value, "PATH": "/usr/bin:/bin"},
-                           capture_output=True, text=True)
-        assert (r.returncode == 0) is ok, (value, r.stderr)
-        if ok:
-            assert r.stdout.strip() == written
-        else:
-            assert "use api, worker or full" in r.stderr
+        with tempfile.TemporaryDirectory() as tmp:
+            out = pathlib.Path(tmp, "sapling-image-target")
+            r = subprocess.run(
+                ["sh", "-c", script.replace("/sapling-image-target", out.as_posix())],
+                env={"SAPLING_IMAGE_TARGET": value, "PATH": "/usr/bin:/bin"},
+                capture_output=True, text=True)
+            assert (r.returncode == 0) is ok, (value, r.stderr)
+            if ok:
+                assert out.read_text(encoding="utf-8").strip() == written
+            else:
+                assert "use api, worker or full" in r.stderr
 
 
 def test_the_api_image_has_no_torch_ocr_or_chromium():

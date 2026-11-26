@@ -605,7 +605,7 @@ def test_the_builtin_default_matches_the_sql_fallback():
     import routes.admin_llm as admin_llm
 
     sql = (Path(__file__).resolve().parents[1] / "db" / "migrations"
-           / "20261108213311_llm_budgets_and_cost_signal.sql").read_text()
+           / "20261108213311_llm_budgets_and_cost_signal.sql").read_text(encoding="utf-8")
     assert f"SELECT {admin_llm.BUILTIN_DEFAULT_TOKENS}::bigint, 'default:builtin'" in sql
 
 

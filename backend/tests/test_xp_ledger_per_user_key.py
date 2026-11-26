@@ -52,7 +52,7 @@ def declared_unique_keys() -> dict[str, tuple[str, ...]]:
     """
     keys: dict[str, tuple[str, ...]] = {}
     for path in sorted(MIG_DIR.glob("*.sql")):
-        sql = _strip_sql_comments(path.read_text())
+        sql = _strip_sql_comments(path.read_text(encoding="utf-8"))
         if "xp_events" not in sql:
             continue
         create = re.search(
@@ -143,7 +143,7 @@ class TestDeclaredConstraintsKeyTheLedgerPerStudent:
         """frontend/e2e/support/db.ts ports award_xp with ON CONFLICT; Postgres
         rejects an ON CONFLICT target that matches no unique constraint."""
         target = re.search(
-            r"INSERT INTO xp_events.*?ON CONFLICT \(([^)]*)\)", E2E_DB_HELPER.read_text(), re.S,
+            r"INSERT INTO xp_events.*?ON CONFLICT \(([^)]*)\)", E2E_DB_HELPER.read_text(encoding="utf-8"), re.S,
         )
         assert target, "awardXp's ON CONFLICT clause moved — update this test"
         assert _cols(target.group(1)) in declared_unique_keys().values()

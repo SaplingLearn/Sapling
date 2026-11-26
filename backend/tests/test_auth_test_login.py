@@ -323,7 +323,7 @@ class TestUnifiedMintSession:
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
 
-        source = path.read_text()
+        source = path.read_text(encoding="utf-8")
         assert "session_tokens" in source, "integration conftest must delegate, not re-implement"
         assert "hmac.new(" not in source, "integration conftest still re-implements the HMAC mint"
 
@@ -334,7 +334,7 @@ class TestUnifiedMintSession:
     def test_routes_auth_redirect_token_uses_the_canonical_minter(self):
         """The OAuth-callback redirect handoff token is the same wire format; it
         must not keep a fourth inline copy of the HMAC code."""
-        source = Path(auth_module.__file__).read_text()
+        source = Path(auth_module.__file__).read_text(encoding="utf-8")
         redirect_block = source[source.index("One-shot HMAC token"):]
         assert "hmac.new(" not in redirect_block
         assert "_hmac.new(" not in redirect_block
