@@ -1,0 +1,135 @@
+/* New session, rebuilt (NewSessionV2.tsx), after the Claude Design board:
+   one centred column, the question, a two-up grid of radio cards, and one
+   start button with the wrap-up line under it. */
+
+.root {
+  min-height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--sp-16) var(--sp-11);
+}
+
+.col {
+  width: 100%;
+  max-width: 760px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-10);
+}
+
+/* Visually hidden, still read: the choices' legend. */
+.srOnly {
+  --sr-px: 1px;
+  position: absolute; width: var(--sr-px); height: var(--sr-px); padding: 0; margin: calc(-1 * var(--sr-px));
+  overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}
+
+.title {
+  margin: 0;
+  text-align: center;
+  font-size: var(--fs-4xl);
+  font-weight: 600;
+}
+
+.title:focus {
+  outline: none;
+}
+
+.intents {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--sp-6);
+}
+
+.intent {
+  display: flex;
+  gap: var(--sp-6);
+  align-items: flex-start;
+  padding: var(--sp-9);
+  border-radius: var(--r-lg);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  transition:
+    background-color var(--dur) var(--ease),
+    border-color var(--dur) var(--ease);
+}
+
+.intent[data-picked="true"] {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.intent:has(input:focus-visible) {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.intent input {
+  margin: var(--sp-1) 0 0;
+  accent-color: var(--accent);
+  flex-shrink: 0;
+}
+
+fieldset:disabled .intent {
+  cursor: default;
+}
+
+.text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.intentTitle {
+  font-size: var(--fs-base);
+  font-weight: 600;
+}
+
+.line {
+  font-size: var(--fs-md);
+  color: var(--text-dim);
+}
+
+.go {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sp-5);
+}
+
+.start {
+  min-height: 48px;
+  padding-inline: var(--sp-16);
+}
+
+.note {
+  margin: 0;
+  font-size: var(--fs-md);
+  color: var(--text-dim);
+  text-align: center;
+}
+
+@media (max-width: 640px) {
+  .root {
+    padding: var(--sp-10) var(--sp-6);
+  }
+
+  .intents {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .intent {
+    transition: none;
+  }
+}

@@ -11,6 +11,8 @@ import { Icon } from "../../Icon";
 import { ChevRight } from "./TutorIcons";
 import { courseColor, dotColor, sessionTitle, shortWhen, type TutorSessionRow } from "./sessions";
 import { ManagedSessionRow } from "./ManagedSessionRow";
+import { NewSessionV2 } from "./NewSessionV2";
+import { useFlag } from "@/context/FlagsContext";
 import styles from "./tutor.module.css";
 import { sentenceCase } from "@/lib/sentenceCase";
 
@@ -100,6 +102,13 @@ export function TutorHome({
   onGoal: () => void;
 }) {
   const heading = useFocusHeading<HTMLHeadingElement>();
+  if (useFlag("new_session_v2") === "on") { // Tutor redesign phase 4
+    return (
+      <NewSessionV2 courseName={courseName} continueTitle={continueRow ? continueTitle ?? sessionTitle(continueRow) : null}
+        startWith={startWith} dueCount={dueCount} dueHref={dueHref} busy={busy} starting={starting} closesCurrent={closesCurrent}
+        onContinue={onContinue} onStart={onStart} onStartWith={onStartWith} onGoal={onGoal} />
+    );
+  }
   return (
     <div className={styles.home} data-testid="tutor-home">
       <span className={styles.heroMark} aria-hidden>

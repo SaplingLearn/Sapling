@@ -577,17 +577,23 @@ test("learning loop: check-in, plan, teaching, a check with hints, feedback, a m
 
 // Tutor redesign phase 4: the rebuilt surfaces are student surfaces too (spec
 // §13 A135), scanned in their own states with their flags on for this student.
-test("learning loop: the rebuilt plan, the hint ladder, the rebuilt verdict and wrap-up (plan_v2, hint_ladder, verdict_v2, wrapup_v2 on)", async ({ browser }) => {
+test("learning loop: the rebuilt New session, plan, hint ladder, verdict and wrap-up (new_session_v2, plan_v2, hint_ladder, verdict_v2, wrapup_v2 on)", async ({ browser }) => {
   test.skip(loopOffLane, "loop path: default lane only");
   test.setTimeout(LOOP_TIMEOUT_MS);
   await setUserFlag("hint_ladder", USER_LOOP, "on");
   await setUserFlag("verdict_v2", USER_LOOP, "on");
   await setUserFlag("wrapup_v2", USER_LOOP, "on");
   await setUserFlag("plan_v2", USER_LOOP, "on");
+  await setUserFlag("new_session_v2", USER_LOOP, "on");
   const P = await learningParams(["PROBE_SESSION_CAP"]);
   const { context, page } = await signIn(browser, USER_LOOP, "Lou Loop");
   try {
     await page.goto("/learn");
+    await expect(page.getByTestId("tutor-new-session-v2")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "What are we working on?" })).toBeFocused();
+    await expectAccessible(page, "learn loop: the rebuilt New session");
+    // the whole-course session is picked first, as the old home's one CTA
+    await expect(page.getByTestId("loop-start-guided")).toHaveAttribute("data-intent", "course");
     await page.getByTestId("loop-start-guided").click();
     // the walker scans the plan it lands on: here the rebuilt one
     await walkCheckInAndPlan(page, Number(P.PROBE_SESSION_CAP), { approve: false });

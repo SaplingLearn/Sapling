@@ -337,6 +337,15 @@ REGISTRY: dict[str, FlagDef] = _registry(
             "Where you're starting (each concept the check-in measured, in the "
             "ladder's words), Today's plan with one label per concept, and Start "
             "this plan beside Change goal. Off: the plan card as before.", True),
+    # Tutor redesign phase 4 (New session): "What are we working on?" with one
+    # radio card per kind of session the Tutor can start and one start button
+    # named for the pick. Frontend only. A loop flag.
+    FlagDef("new_session_v2", ("off", "on"),
+            "The rebuilt New session: What are we working on?, one radio card "
+            "per kind of session (continue, learn a concept, the whole course, "
+            "a goal, review what's due), one start button named for the pick, "
+            "and one line when it wraps up the open session. Off: the Tutor "
+            "home as before.", True),
     FlagDef("skill_ladder", ("off", "on"),
             "One skill measure on the graph: each concept's score, tier and words "
             "come from the learner model's decayed skill (Not started / Getting "

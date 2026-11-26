@@ -800,6 +800,19 @@ describe("Z64 — one open session per course, from the read-only view too", () 
     fireEvent.click(screen.getAllByTestId("loop-new-session")[0]);
     expect((await screen.findByTestId("tutor-home")).textContent).toContain("Starting wraps up “Sorting” first.");
   });
+
+  it("new_session_v2: the rebuilt home says it too, and Continue picks the open session up", async () => {
+    flags.new_session_v2 = "on";
+    await resumedTeach("Sorting");
+    fireEvent.click(screen.getAllByTestId("loop-new-session")[0]);
+    await screen.findByTestId("tutor-new-session-v2");
+    expect(screen.getByTestId("tutor-new-wraps-up").textContent).toBe("This wraps up your open session, Sorting.");
+    expect(screen.getByRole("radio", { name: /Continue Sorting/ })).toBeTruthy();
+    fireEvent.click(screen.getByRole("radio", { name: /Continue Sorting/ }));
+    fireEvent.click(screen.getByTestId("loop-start-guided"));
+    await waitFor(() => expect(screen.getByTestId("loop-phase").getAttribute("data-session-id")).toBe("s2"));
+    expect(api.startLoopSession).not.toHaveBeenCalled();
+  });
 });
 
 describe("Z63 — a failed map read says so, with a retry, never an empty map", () => {

@@ -36,7 +36,7 @@ Several flags change a prompt or an output schema, so their eval datasets must b
 
 ## Recommended order
 
-1. **Read-only, no eval needed:** `quiz_concept_plan`, `quiz_results_routing`, `item_reports`, `skill_ladder`, `hint_ladder`, `verdict_v2`, `wrapup_v2`, `plan_v2`.
+1. **Read-only, no eval needed:** `quiz_concept_plan`, `quiz_results_routing`, `item_reports`, `skill_ladder`, `hint_ladder`, `verdict_v2`, `wrapup_v2`, `plan_v2`, `new_session_v2`.
 2. **Safety, after copy review:** `crisis_support`.
 3. **Prompt changes, after their evals:** `loop_tutor_v2`, `segment_prequestion`, `self_explanation_prompts`, `quiz_planned_questions`, `quiz_item_gates`, then `quiz_misconceptions`.
 4. **Drafting changes, after their evals:** `varied_isomorphs`, `multi_concept_items`, `upload_prereq_edges`.
@@ -84,6 +84,12 @@ Several flags change a prompt or an output schema, so their eval datasets must b
 - **Before:** nothing; `starting` is sent whatever the flag says.
 - **Watch:** plan approvals against goal changes from the plan; time on the plan screen.
 - **Roll back:** off restores the plan card as before.
+
+### new_session_v2 (Tutor redesign phase 4) — client-visible
+- **Changes:** the Tutor home asks "What are we working on?" and offers one radio card per kind of session it can start (continue the open session, learn the suggested concept, the whole course, work toward a goal, review what's due), one start button named for the pick, and "This wraps up your open session, …" only when the pick starts a new one. The pills, the hero mark and the pull quote are gone. Frontend only; the board's "Just ask a question" (no ungraded session exists) and "Prepare for Midterm 2" (no milestones yet) are not offered.
+- **Before:** nothing.
+- **Watch:** which choice students start from; sessions continued against new ones started.
+- **Roll back:** off restores the Tutor home as before.
 
 ### item_reports (A113, A123) — client-visible
 - **Changes:** students can report a check question. Two reports hold it from the whole course until staff approve or retire it in the admin check-items queue.
