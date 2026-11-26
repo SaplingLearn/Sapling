@@ -57,3 +57,18 @@ describe("#866 K21 — a skill meter colours mastery as the map does", () => {
     expect(screen.getByRole("meter", { name: "Recursion skill" }).getAttribute("aria-valuetext")).toBe("80%, Learning");
   });
 });
+
+describe("Tutor redesign phase 2 — a meter on the skill ladder (the loop's graph)", () => {
+  it("uses the ladder's cuts and words: 85% is Proficient, never Mastered or Learning", () => {
+    render(<Meter label="Loops" score={0.85} testId="l" ladder />);
+    expect(screen.getByTestId("l").getAttribute("data-tier")).toBe("mastered"); // the top colour
+    expect(screen.getByRole("meter", { name: "Loops skill" }).getAttribute("aria-valuetext")).toBe("85%, Proficient");
+  });
+
+  it("no score is Not started", () => {
+    render(<Meter label="Sets" score={null} testId="s" ladder />);
+    expect(screen.getByRole("meter", { name: "Sets skill" }).getAttribute("aria-valuetext")).toBe("No score, Not started");
+    expect(meterTier(null, true)).toBe("unexplored");
+    expect(meterTier(0.79, true)).toBe("learning");
+  });
+});

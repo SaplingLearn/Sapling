@@ -294,6 +294,17 @@ REGISTRY: dict[str, FlagDef] = _registry(
     # A143: the quiz home's proposals and its "due" queue come from the learner
     # model (GET /api/quiz/plan, 404 while off). Client-visible: the home asks
     # for the plan only when it is on. Reads only, no model call.
+    # Tutor redesign phase 2 (one measure): with the loop on, GET /api/graph
+    # gives each concept the learner model's decayed skill, and the frontend
+    # reads the whole graph on the skill ladder (frontend/src/lib/levels.ts).
+    # Gated by learning_loop too (learning/gate.py::LOOP_FLAGS; the graph
+    # route reads it after the loop's gate). Reads only.
+    FlagDef("skill_ladder", ("off", "on"),
+            "One skill measure on the graph: each concept's score, tier and words "
+            "come from the learner model's decayed skill (Not started / Getting "
+            "started / Developing / Proficient; Mastered only as a badge) on the "
+            "Tree, Study, the Dashboard, the Quiz home and the Tutor. Off: the "
+            "map's stored score and four tiers, as before.", False),
     FlagDef("quiz_concept_plan", ("off", "on"),
             "Quiz concept plan (A143): the quiz home proposes concepts from the "
             "learner model — reviews due by their FSRS date first, then concepts "

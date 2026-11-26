@@ -4,13 +4,16 @@ import uuid
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request, Query
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field, ValidationError
 from typing import Optional
 from pydantic_ai.exceptions import AgentRunError
 
+from learning.gate import learning_loop_for_request
 from services import abuse_limits, cache, llm_budget
 from services.academics import require_course_enrollment
 from services.auth_guard import guard_off_loop, require_self
+from services.feature_flags import flag_on
 from services.flashcards.concept_topic import topic_is_graph_concept
 from services.request_limits import enforce_abuse_limit
 from services.graph_service import (
@@ -36,6 +39,9 @@ DESCRIBE_FAILED_DETAIL = "Couldn't describe this concept right now. Try again in
 
 router = APIRouter()
 
+#: One skill measure on the graph (services/feature_flags.py).
+SKILL_LADDER_FLAG = "skill_ladder"
+
 # #117 (docs/design/async-db-client.md §4.1 wave 1): the read handlers are
 # `async def` over the graph_service `a*` twins; the write and LLM handlers
 # stay plain `def` (FastAPI runs them in the threadpool) until their service
@@ -45,7 +51,18 @@ router = APIRouter()
 @router.get("/{user_id}")
 async def get_user_graph(user_id: str, request: Request, semester: str | None = Query(None)):
     await guard_off_loop(require_self, user_id, request)
-    return await aget_graph(user_id, semester)
+    # ONCE at entry and off the event loop (owner decision 00): with the loop
+    # and the student's skill_ladder flag on, each concept also carries the
+    # learner model's skill; else (the kill switch reads nothing) the graph
+    # as it was.
+    skill = await run_in_threadpool(_skill_ladder_for, user_id)
+    return await aget_graph(user_id, semester, skill=skill)
+
+
+def _skill_ladder_for(user_id: str) -> bool:
+    """The learning loop's route-entry gate, then the student's `skill_ladder`
+    flag (it is one of the loop's flags, learning/gate.py::LOOP_FLAGS)."""
+    return learning_loop_for_request(user_id) and flag_on(SKILL_LADDER_FLAG, user_id)
 
 
 @router.get("/{user_id}/recommendations")

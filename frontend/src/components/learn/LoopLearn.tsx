@@ -11,6 +11,7 @@
 // never as a chat turn (A16). Spec:
 // docs/superpowers/specs/2026-09-26-learning-loop-design.md §9, §11.3; routes:
 // backend/routes/learn_loop.py.
+import { graphUsesSkill } from "@/lib/levels";
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
@@ -2272,7 +2273,8 @@ export function LoopLearn() {
   const body = renderBody();
 
   /** Skill per concept in today's plan (else the concept being taught): the
-   *  loop's own estimate when it has one, else the map's mastery. */
+   *  session's latest estimate when it has one, else the graph's — with the
+   *  loop on, the learner model's skill too (`lib/levels.ts::applySkill`). */
   const panelSkills = (): PanelConcept[] => {
     const ids = panelPlan && panelPlan.length > 0 ? panelPlan.map((c) => c.node_id) : mapNodeId ? [mapNodeId] : [];
     return ids.map((id) => {
@@ -2293,6 +2295,7 @@ export function LoopLearn() {
       names={conceptNames}
       currentNodeId={teaching ? currentNodeId : null}
       skills={panelSkills()}
+      skillWords={graphUsesSkill(railGraph.nodes)}
       dueCount={lists.dueReviews}
       dueHref={dueHref}
       treeHref={treeHref}

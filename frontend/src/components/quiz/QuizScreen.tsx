@@ -18,6 +18,7 @@
  * `quiz.css` hide SideNav / TopNav. Home and results keep the ordinary shell.
  */
 
+import { carriesSkill } from "@/lib/levels";
 import React, { useMemo, useState } from "react";
 import type { CSSProperties } from "react";
 import { useSearchParams } from "next/navigation";
@@ -109,6 +110,7 @@ export function QuizScreen() {
       color: accent ?? "",
       tier: activeNode?.mastery_tier ?? "unexplored",
       mastery: activeNode?.mastery_score ?? 0,
+      ladder: !!activeNode && carriesSkill(activeNode),
       timesStudied: activeNode?.times_studied ?? 0,
       lastStudiedAt: activeNode?.last_studied_at ?? null,
     }),

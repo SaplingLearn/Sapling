@@ -21,7 +21,7 @@ import { FOCUS_ARC, chipsThatFit, focusCardsLabel } from "./hubModel";
 import { Glyph, StatusDot, WarnIcon, shownTools, type GlyphName } from "./hubUi";
 import f from "./FocusCard.module.css";
 import s from "./StudyHub.module.css";
-import { ST_LABEL, ring, type Concept } from "./studyModel";
+import { ring, stLabel, type Concept } from "./studyModel";
 import { type ToolKey, type ToolNav } from "./useToolNav";
 
 /* Every word on the block is --sidenav-fg (white, 4.85:1 on the olive), its
@@ -121,7 +121,7 @@ function Prereqs({ prereqs, gapOn }: { prereqs: Concept[]; gapOn: Concept | null
             row clips, and a hard cut mid-word reads as a rendering bug. The
             title carries the full name either way. */}
         {prereqs.slice(0, fit).map(t => (
-          <span key={t.id} title={`${t.name} · ${ST_LABEL[t.st]}`} className={`${f.chip} ${f.chipPrereq}`}>
+          <span key={t.id} title={`${t.name} · ${stLabel(t.st, t.ladder)}`} className={`${f.chip} ${f.chipPrereq}`}>
             <StatusDot st={t.st} size={7} />
             <span className={f.clipText}>{t.name}</span>
           </span>

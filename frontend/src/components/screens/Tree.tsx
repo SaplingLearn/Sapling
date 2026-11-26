@@ -1,4 +1,5 @@
 "use client";
+import { graphUsesSkill, tierWord } from "@/lib/levels";
 import React from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { TopBar } from "../TopBar";
@@ -56,11 +57,12 @@ function attemptTime(a: AttemptSummary): number {
   return Number.isNaN(t) ? 0 : t;
 }
 
-const TIER_META: Record<Exclude<Tier, "all">, { label: string; color: string }> = {
-  mastered: { label: "Mastered", color: "var(--state-mastery)" },
-  learning: { label: "Learning", color: "var(--state-progress)" },
-  struggling: { label: "Struggling", color: "var(--state-struggle)" },
-  unexplored: { label: "Unexplored", color: "var(--state-neutral)" },
+// The filter's colours; its words are `tierWord`'s (the ladder's on a skill graph).
+const TIER_META: Record<Exclude<Tier, "all">, { color: string }> = {
+  mastered: { color: "var(--state-mastery)" },
+  learning: { color: "var(--state-progress)" },
+  struggling: { color: "var(--state-struggle)" },
+  unexplored: { color: "var(--state-neutral)" },
 };
 
 export function Tree() {
@@ -92,6 +94,8 @@ export function Tree() {
   const [ref, size] = useGraphSize<HTMLDivElement>({ w: 900, h: 600 });
 
   const [nodes, setNodes] = React.useState<GraphNode[]>([]);
+  // On a skill graph (the loop on) the filter names the ladder's levels.
+  const skillWords = graphUsesSkill(nodes);
   const [edges, setEdges] = React.useState<GraphEdge[]>([]);
   const [courses, setCourses] = React.useState<EnrolledCourse[]>([]);
   const [sessions, setSessions] = React.useState<Session[]>([]);
@@ -399,7 +403,7 @@ export function Tree() {
               { value: "all" as Tier, label: "All" },
               ...(Object.keys(TIER_META) as Array<Exclude<Tier, "all">>).map((t) => ({
                 value: t as Tier,
-                label: TIER_META[t].label,
+                label: tierWord(t, skillWords),
                 color: TIER_META[t].color,
               })),
             ]}

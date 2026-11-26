@@ -16,6 +16,7 @@ import type {
   PublicRoom,
   GamificationMe, LeaderboardRow, ActivityData, Friend,
 } from '@/lib/types';
+import { applySkill } from "./levels";
 import { statusOf } from '@/lib/errorMessage';
 import type { WithCrisisSupport } from '@/lib/crisisSupport';
 import type { AdminFlag, FlagRule } from '@/lib/adminFlags';
@@ -172,10 +173,9 @@ export const joinWaitlistFromPending = (token: string) =>
   });
 
 // Graph
-export const getGraph = (userId: string, semester?: string) =>
-  fetchJSON<{ nodes: any[]; edges: any[]; stats: any }>(
-    `/api/graph/${userId}${semester ? `?semester=${encodeURIComponent(semester)}` : ""}`,
-  );
+export const getGraph = (userId: string, semester?: string) => // the loop on: each concept's score and tier are its skill (lib/levels.ts)
+  fetchJSON<{ nodes: any[]; edges: any[]; stats: any }>(`/api/graph/${userId}${semester ? `?semester=${encodeURIComponent(semester)}` : ""}`)
+    .then(applySkill);
 
 export const getRecommendations = (userId: string, semester?: string) =>
   fetchJSON<{ recommendations: any[] }>(

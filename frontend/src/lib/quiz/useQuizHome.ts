@@ -17,6 +17,7 @@
  * has one behaviour across every surface that reads the graph.
  */
 
+import { nodeStateWord } from "@/lib/levels";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useFlag } from "@/context/FlagsContext";
 import { getCourses, getGraph, type EnrolledCourse } from "@/lib/api";
@@ -131,7 +132,7 @@ export function fallbackDefinition(candidate: Candidate | null, connected: numbe
   if (!candidate) return "";
   const course = candidate.course?.course_code ?? candidate.node.subject ?? "Your tree";
   const plural = connected === 1 ? "concept" : "concepts";
-  const state = candidate.plan ? BAND_WORDS[candidate.plan.band] : candidate.node.mastery_tier;
+  const state = candidate.plan ? BAND_WORDS[candidate.plan.band] : nodeStateWord(candidate.node);
   return `${course} · ${state} · ${connected} connected ${plural}`;
 }
 

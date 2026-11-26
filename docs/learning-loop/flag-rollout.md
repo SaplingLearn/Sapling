@@ -36,7 +36,7 @@ Several flags change a prompt or an output schema, so their eval datasets must b
 
 ## Recommended order
 
-1. **Read-only, no eval needed:** `quiz_concept_plan`, `quiz_results_routing`, `item_reports`.
+1. **Read-only, no eval needed:** `quiz_concept_plan`, `quiz_results_routing`, `item_reports`, `skill_ladder`.
 2. **Safety, after copy review:** `crisis_support`.
 3. **Prompt changes, after their evals:** `loop_tutor_v2`, `segment_prequestion`, `self_explanation_prompts`, `quiz_planned_questions`, `quiz_item_gates`, then `quiz_misconceptions`.
 4. **Drafting changes, after their evals:** `varied_isomorphs`, `multi_concept_items`, `upload_prereq_edges`.
@@ -54,6 +54,12 @@ Several flags change a prompt or an output schema, so their eval datasets must b
 - **Changes:** quiz results show how each skill meter moved, what is due, and a next step (review queue, or Learn on the weakest ready concept).
 - **Before:** nothing; it only reads.
 - **Watch:** clicks on the next-step links; results-page errors.
+
+### skill_ladder (Tutor redesign phase 2)
+- **Changes:** `GET /api/graph` gives each concept the learner model's decayed skill (`skill`, null until the concept has a graded answer of its own; `skill_mastered`, the backend's mastered rule). The frontend (`frontend/src/lib/levels.ts::applySkill`) then makes that skill each concept's score and tier, so the Tree, Study, the Dashboard, the Quiz home and the Tutor colour, sort, count and name concepts on one ladder: Not started, Getting started (<30%), Developing (30–79%), Proficient (80%+). "Mastered" is never a level.
+- **Before:** check a seeded student's `learner_state`: a concept with no graded answer reads **Not started**, even where the map's stored score is high (history from before the loop). Students whose mastery predates the loop see that drop until they answer again. E2E: the lanes run the loop on but this flag off; turning it on in a lane needs `learner_state` seeded and the Tree / Dashboard / Study / quiz-home specs moved to the ladder.
+- **Watch:** Tree and Study page errors; graph read latency (one extra batched `learner_state` read).
+- **Roll back:** off restores the map's stored score and four tiers everywhere, with no data change.
 
 ### item_reports (A113, A123) — client-visible
 - **Changes:** students can report a check question. Two reports hold it from the whole course until staff approve or retire it in the admin check-items queue.

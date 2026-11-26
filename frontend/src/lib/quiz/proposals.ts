@@ -28,6 +28,7 @@
  * ordering itself is untouched.
  */
 
+import { nodeStateWord } from "@/lib/levels";
 import { levelPhrase } from "@/lib/levels";
 import { paletteFor } from "@/lib/data";
 import { resolveInitialSelection, type QuizConcept } from "@/lib/quizSelection";
@@ -136,7 +137,7 @@ function studiedPhrase(node: GraphNode, now: Date): string {
 export function metaLine(node: GraphNode, now: Date = new Date(), plan?: CandidatePlan): string {
   const when = studiedPhrase(node, now);
   if (plan) return `${skillPercent(plan.pKnown)} · ${BAND_WORDS[plan.band]} · ${when}`;
-  return `${pct(node.mastery_score)}% · ${node.mastery_tier} · ${when}`;
+  return `${pct(node.mastery_score)}% · ${nodeStateWord(node)} · ${when}`;
 }
 
 /** `metaLine` without its number, for a card whose plan line already states

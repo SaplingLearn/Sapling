@@ -24,12 +24,12 @@
  * root error page.
  */
 
+import { graphUsesSkill, tierWord } from "@/lib/levels";
 import React from "react";
 import type { GraphEdge, GraphNode } from "@/lib/data";
 import styles from "./graph.module.css";
 import {
   MASTERY_PALETTE,
-  TIER_LABEL,
   TIER_OPACITY,
   type GraphColorMode,
   type MasteryTier,
@@ -166,6 +166,8 @@ export function KnowledgeGraph(props: Props) {
   const fixed = props.colorMode !== undefined;
   const colorMode = props.colorMode ?? storedMode;
   const mastery = colorMode === "mastery";
+  // On a skill graph (the loop on) the tiers are the ladder's (lib/levels.ts).
+  const skillWords = graphUsesSkill(props.nodes);
   // The key fades in when the student flips the colours, not on first paint.
   const [switched, setSwitched] = React.useState(false);
   return (
@@ -212,7 +214,7 @@ export function KnowledgeGraph(props: Props) {
                   opacity: mastery ? 1 : TIER_OPACITY[t],
                 }}
               />
-              {TIER_LABEL[t]}
+              {tierWord(t, skillWords)}
             </li>
           ))}
         </ul>

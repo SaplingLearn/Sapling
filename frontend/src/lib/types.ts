@@ -13,6 +13,15 @@ export interface GraphNode {
   course_color?: string | null;
   color?: string | null;
   is_subject_root?: boolean;
+  /** The learner model's decayed skill once the concept has a graded answer
+   *  (null: not started); present only with the learning loop on, when it
+   *  is also this node's mastery_score (`lib/levels.ts::applySkill`). */
+  skill?: number | null;
+  /** The Mastered badge: the backend's rule (≥ 98% and three strong answers). */
+  skill_mastered?: boolean;
+  /** The map's own stored score and tier, kept beside a skill graph's. */
+  map_mastery_score?: number;
+  map_mastery_tier?: GraphNode["mastery_tier"];
   x?: number;
   y?: number;
 }

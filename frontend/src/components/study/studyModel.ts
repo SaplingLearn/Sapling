@@ -33,6 +33,7 @@
  *    percentage points.
  */
 
+import { LEVEL_WORDS, carriesSkill, type SkillLevel } from "@/lib/levels";
 import { handoffPracticeDueHref } from "@/lib/learningHandoffs";
 
 /** One day, in ms. */
@@ -56,6 +57,8 @@ export interface Concept {
   gap: string;
   /** Mastery change over the last 7 days, 0..1 units. */
   weekDelta: number;
+  /** From a skill graph (the loop on): its status words are the ladder's. */
+  ladder?: boolean;
 }
 
 export interface Assessment {
@@ -74,6 +77,9 @@ export const ST_LABEL: Record<Status, string> = {
   review: "Struggling",
   new: "Not Started",
 };
+const ST_LEVEL: Record<Status, SkillLevel> = { mastered: "profic", progress: "develop", review: "novice", new: "not_started" };
+/** A status's word: the ladder's on a skill graph (`lib/levels.ts`), else ST_LABEL. */
+export const stLabel = (st: Status, ladder = false): string => (ladder ? LEVEL_WORDS[ST_LEVEL[st]] : ST_LABEL[st]);
 /** Status fill colors (squares, rings, bars). */
 export const TC: Record<Status, string> = {
   // The app's mastery-state tokens (globals.css), the same four the
@@ -267,6 +273,7 @@ export function conceptsForCourse(
       group: "",
       gap: "",
       weekDelta: weekDeltaOf(n, weekAgo),
+      ...(carriesSkill(n) ? { ladder: true } : {}),
     };
   });
   const byId = new Map(base.map(c => [c.id, c]));

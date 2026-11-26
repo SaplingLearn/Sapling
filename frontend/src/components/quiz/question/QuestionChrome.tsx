@@ -2,6 +2,8 @@
 // The question screen's chrome (moved out of QuizQuestion.tsx): the session
 // top bar and its Exam Twin countdown, the meta row, the prerequisite banner,
 // the pager, the action bar and the generating status.
+import { tierWord } from "@/lib/levels";
+import type { MasteryTier } from "@/lib/graph/nodeStyle";
 import { LEARNING_COPY } from "@/lib/learningCopy";
 import { HandoffLink } from "@/components/ui/HandoffLink";
 import React, { useEffect, useState } from "react";
@@ -43,6 +45,8 @@ export interface QuizConceptSummary {
   color: string;
   tier: string;
   mastery: number;
+  /** From a skill graph (the loop on): the tier chip says the ladder's word. */
+  ladder?: boolean;
   /** Graph study history — feeds Returning + exam-distance (w7-meta-chips.md). */
   timesStudied?: number;
   lastStudiedAt?: string | null;
@@ -204,7 +208,9 @@ export function QuestionHeader({
   // A blank accent would reach `shadeFor` as an unparseable colour and pass
   // straight through; the CSS variable degrades to the app accent instead.
   const accent = concept.color || "var(--quiz-accent, var(--accent))";
-  const tierLabel = TIER_CHIP[concept.tier];
+  const tierLabel = concept.ladder && concept.tier in TIER_CHIP
+    ? tierWord(concept.tier as MasteryTier, true)
+    : TIER_CHIP[concept.tier];
   const skill = skillChipLabel({
     type: format,
     difficulty: difficulty.toLowerCase(),

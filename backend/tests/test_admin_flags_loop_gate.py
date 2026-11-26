@@ -192,6 +192,7 @@ EXPECTED_LOOP_FLAGS = {
     "next_probe_hint",
     "varied_isomorphs", "multi_concept_items", "quiz_concept_plan", "quiz_planned_questions",
     "quiz_item_gates", "quiz_misconceptions", "quiz_results_routing",
+    "skill_ladder",  # the graph route reads it after the loop's gate (routes/graph.py)
 }
 
 

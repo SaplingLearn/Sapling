@@ -2,6 +2,9 @@ import type { GraphStats } from "@/lib/types";
 import type { GraphNode } from "@/lib/data";
 
 /** The dashboard's graph counters (the wire's `total_nodes` is `total`). */
+/** A tier's word on the Dashboard: the ladder's on a skill graph (`lib/levels.ts`). */
+export { tierWord } from "@/lib/levels";
+
 export type DashboardStats = {
   streak: number;
   mastered: number;
@@ -9,6 +12,8 @@ export type DashboardStats = {
   learning: number;
   struggling: number;
   unexplored: number;
+  /** The counts are the skill ladder's levels (the loop's graph, `lib/levels.ts`). */
+  skill?: boolean;
 };
 
 /** The /api/graph `stats` block as the dashboard reads it; every missing
@@ -21,6 +26,8 @@ export function statsFromGraph(stats: Partial<GraphStats> | null | undefined): D
     learning: stats?.learning ?? 0,
     struggling: stats?.struggling ?? 0,
     unexplored: stats?.unexplored ?? 0,
+    // Only a skill graph says so, so a loop-off block reads exactly as before.
+    ...((stats as { skill?: boolean } | null | undefined)?.skill ? { skill: true } : {}),
   };
 }
 

@@ -55,6 +55,14 @@ describe("KnowledgeGraph", () => {
     expect(queryByTestId("graph-mode-toggle")).toBeNull();
   });
 
+  it("on a skill graph (the loop on) the legend names the ladder's levels", () => {
+    const node = { id: "a", name: "Loops", subject: "CS", color: "#123456", mastery_tier: "mastered" as const,
+      mastery_score: 0.85, course_id: "c1", skill: 0.85, skill_mastered: false };
+    const { getByTestId } = render(<KnowledgeGraph nodes={[node]} edges={[]} />);
+    fireEvent.click(getByTestId("graph-color-toggle"));
+    expect(getByTestId("graph-color-legend").textContent).toBe("ProficientDevelopingGetting startedNot started");
+  });
+
   it("defaults to course colours with the toggle off and no legend", () => {
     const { getByTestId, queryByTestId } = render(<KnowledgeGraph nodes={[]} edges={[]} />);
     expect(getByTestId("mock-2d").getAttribute("data-color-mode")).toBe("course");

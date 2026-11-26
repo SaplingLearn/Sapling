@@ -22,7 +22,7 @@ from learning.evidence import (
     evidence_weight,
     planning_observation,
 )
-from learning.learner_state import LearnerState, state_row, unmeasured_state
+from learning.learner_state import LearnerState, read_states, state_row, unmeasured_state
 from learning.params import (
     EDGE_PREREQ_SOURCE_IS_PREREQ,
     FSRS_RETENTION_DEFAULT,
@@ -333,7 +333,44 @@ def _week_deltas(event_rows: list | None, cutoff: datetime) -> dict[str, float] 
 _STREAK_SELECT = "streak_count,last_active_date"
 
 
-def get_graph(user_id: str, semester: str | None = None) -> dict:
+#: Digits of a skill on the wire: the quiz plan's and study-next's rounding
+#: (`services/quiz_learning.py::P_KNOWN_WIRE_DIGITS`), so one concept reads
+#: the same number on every surface.
+SKILL_WIRE_DIGITS = 4
+
+
+def _attach_skill(nodes: list[dict], states: dict[str, LearnerState]) -> None:
+    """The learner model's skill on each concept (Tutor redesign phase 2: one
+    measure, `frontend/src/lib/levels.ts`), beside the map's stored score.
+
+    `skill` is the decayed belief (`learner_state.read_states` decays it to
+    now) once the concept has a graded answer of its own (`opps > 0`, the
+    loop's `_measured`); a concept with no row, or one moved only by a
+    neighbour's propagation, is `None`: Not started, never the prior.
+    `skill_mastered` is `bkt.is_mastered` on that decayed belief (≥ 98% and
+    three strong unassisted answers): the Mastered badge, never a level.
+    Subject roots carry neither."""
+    for node in nodes:
+        if node.get("is_subject_root"):
+            continue
+        node_id = node.get("id")
+        state = states.get(node_id) if isinstance(node_id, str) else None
+        if state is None or state.opps <= 0:
+            node["skill"] = None
+            node["skill_mastered"] = False
+            continue
+        node["skill"] = round(state.p_known, SKILL_WIRE_DIGITS)
+        node["skill_mastered"] = bkt.is_mastered(state.p_known, state.n_strong_unassisted)
+
+
+def _skill_node_ids(graph: dict) -> list[str]:
+    return [n["id"] for n in graph["nodes"] if not n.get("is_subject_root") and n.get("id")]
+
+
+def get_graph(user_id: str, semester: str | None = None, *, skill: bool = False) -> dict:
+    """The student's graph. `skill` (the route's learning-loop gate, resolved
+    once at entry; owner decision 00) adds each concept's skill; off, the
+    response is the pre-loop one, byte for byte."""
     ensure_user_exists(user_id)
     enrolled_courses = _user_enrolled_courses(user_id)
     allowed_course_ids = _semester_course_ids(user_id, semester)
@@ -345,11 +382,14 @@ def get_graph(user_id: str, semester: str | None = None) -> dict:
     event_rows = _node_events(nodes, user_id)
     week_deltas = _week_deltas(event_rows, _week_cutoff())
     user_rows = table("users").select(_STREAK_SELECT, filters={"id": f"eq.{user_id}"})
-    return _assemble_graph(
+    graph = _assemble_graph(
         user_id, enrolled_courses, allowed_course_ids, nodes, edges_raw, event_rows or [],
         user_rows,
         week_deltas=week_deltas,
     )
+    if skill:
+        _attach_skill(graph["nodes"], read_states(user_id, _skill_node_ids(graph)))
+    return graph
 
 
 async def _none() -> None:
@@ -357,7 +397,7 @@ async def _none() -> None:
     return None
 
 
-async def aget_graph(user_id: str, semester: str | None = None) -> dict:
+async def aget_graph(user_id: str, semester: str | None = None, *, skill: bool = False) -> dict:
     """Async twin of :func:`get_graph` (#117): the same reads through the
     ``a*`` seam, the academics term lookup hopped off the loop. The user row
     is ensured first (the streak read depends on it); the five independent
@@ -374,11 +414,16 @@ async def aget_graph(user_id: str, semester: str | None = None) -> dict:
     nodes = _scope_nodes(nodes_raw, allowed_course_ids)
     event_rows = await _anode_events(nodes, user_id)
     week_deltas = _week_deltas(event_rows, _week_cutoff())
-    return _assemble_graph(
+    graph = _assemble_graph(
         user_id, enrolled_courses, allowed_course_ids, nodes, edges_raw, event_rows or [],
         user_rows,
         week_deltas=week_deltas,
     )
+    if skill:
+        # read_states is sync (service-only learner_state): off the event loop.
+        states = await run_in_threadpool(read_states, user_id, _skill_node_ids(graph))
+        _attach_skill(graph["nodes"], states)
+    return graph
 
 
 def _assemble_graph(

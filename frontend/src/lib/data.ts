@@ -59,6 +59,9 @@ export type GraphNode = {
   course_id: string;
   description?: string;
   last_studied_at?: string;
+  /** Present only on a skill graph (the loop on): `lib/levels.ts`. */
+  skill?: number | null;
+  skill_mastered?: boolean;
 };
 
 export type GraphEdge = {
@@ -136,6 +139,9 @@ export function apiToGraphNode(n: ApiNode, courses: EnrolledCourse[]): GraphNode
     course_id: n.course_id || course?.course_id || "",
     description: n.description || undefined,
     last_studied_at: n.last_studied_at || undefined,
+    // Only a skill graph carries the key (`carriesSkill`), so its absence
+    // keeps a loop-off node exactly as it was.
+    ...(n.skill !== undefined ? { skill: n.skill, skill_mastered: !!n.skill_mastered } : {}),
   };
 }
 

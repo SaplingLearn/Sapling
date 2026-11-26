@@ -14,7 +14,7 @@ import { tileActionsHint, tileCardsLabel, type RoadmapTile as Tile, type TileRel
 import { Glyph, TOOL, WarnIcon, shownTools } from "./hubUi";
 import rm from "./Roadmap.module.css";
 import s from "./StudyHub.module.css";
-import { SC, ST_LABEL, TC, ring, type Concept } from "./studyModel";
+import { SC, TC, ring, stLabel, type Concept } from "./studyModel";
 import type { SetHub } from "./useHubState";
 import type { ToolKey, ToolNav } from "./useToolNav";
 
@@ -136,7 +136,7 @@ const tileClass = (isSel: boolean, isNext: boolean, dim: boolean) => {
   return isNext ? `${s.tile} ${s.tileNext}${dimmed}` : `${s.tile}${dimmed}`;
 };
 
-const statusLine = (t: Concept) => (t.st === "new" ? "Not Started" : `${ST_LABEL[t.st]} · ${t.m}%`);
+const statusLine = (t: Concept) => (t.st === "new" ? stLabel("new", t.ladder) : `${stLabel(t.st, t.ladder)} · ${t.m}%`);
 
 export function RoadmapTile({ tile, menuOpen, cardCount, quizShown, nav, set, closeTileMenu }: {
   tile: Tile;

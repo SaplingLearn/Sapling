@@ -1,9 +1,10 @@
 "use client";
+import { tierWord } from "@/lib/levels";
 import { HandoffLink } from "@/components/ui/HandoffLink";
 import React from "react";
 import type { LoopPanelConcept, LoopPlanPrereqEdge } from "@/lib/api";
 import { LEARNING_COPY } from "@/lib/learningCopy";
-import { MASTERY_PALETTE, TIER_LABEL, type MasteryTier } from "@/lib/graph/nodeStyle";
+import { MASTERY_PALETTE, type MasteryTier } from "@/lib/graph/nodeStyle";
 import { PlanDeps } from "../PlanDeps";
 import { planKind } from "../planLabels";
 import { SidebarGlyph } from "./TutorIcons";
@@ -37,6 +38,7 @@ export function SessionPanel({
   names,
   currentNodeId,
   skills,
+  skillWords = false,
   dueCount,
   dueHref,
   map,
@@ -51,6 +53,9 @@ export function SessionPanel({
   names?: Map<string, string>;
   currentNodeId: string | null;
   skills: PanelConcept[];
+  /** The map and its meters are on the skill ladder (the loop's graph carries
+   *  skill, `lib/levels.ts`): the key and the meters say its words. */
+  skillWords?: boolean;
   /** Reviews due now in every course (the review queue's count); null: unknown. */
   dueCount: number | null;
   /** Where "Due on Study" goes; null while `hide_study` hides Study. */
@@ -102,7 +107,7 @@ export function SessionPanel({
         {skills.length > 0 && (
           <section className={styles.panelSec} aria-labelledby="tutor-panel-skill">
             <span id="tutor-panel-skill" className="label-micro">Skill</span>
-            {skills.map((s) => <Meter key={s.nodeId} label={s.name} score={s.score} />)}
+            {skills.map((s) => <Meter key={s.nodeId} label={s.name} score={s.score} ladder={skillWords} />)}
           </section>
         )}
         {dueHref && (
@@ -129,7 +134,7 @@ export function SessionPanel({
           </div>
           {map}
           <ul className={styles.legend} aria-label="Map key" data-testid="tutor-map-key">
-            {MAP_TIERS.map((t) => <li key={t}><i style={swatch(MASTERY_PALETTE[t])} />{TIER_LABEL[t]}</li>)}
+            {MAP_TIERS.map((t) => <li key={t}><i style={swatch(MASTERY_PALETTE[t])} />{tierWord(t, skillWords)}</li>)}
             <li data-testid="tutor-map-key-practiced">
               <i className={styles.legendOutline} aria-hidden />
               Practiced

@@ -18,7 +18,7 @@ import React from "react";
 import { StatusDot } from "./hubUi";
 import r from "./ReadinessBand.module.css";
 import s from "./StudyHub.module.css";
-import { ST_LABEL, STATUS_ORDER, TC, squaresOrder, type Concept, type Status } from "./studyModel";
+import { STATUS_ORDER, TC, squaresOrder, stLabel, type Concept, type Status } from "./studyModel";
 import { useCountTo } from "./useCountTo";
 
 function Trend({ points }: { points: number }) {
@@ -32,7 +32,7 @@ function Trend({ points }: { points: number }) {
 }
 
 function Square({ concept, selected, faded, onToggle }: { concept: Concept; selected: boolean; faded: boolean; onToggle: () => void }) {
-  const label = `${concept.name} · ${ST_LABEL[concept.st]}`;
+  const label = `${concept.name} · ${stLabel(concept.st, concept.ladder)}`;
   return (
     <button className={`${r.square} ${s.hoverSeg}${faded ? ` ${r.squareFaded}` : ""}${selected ? ` ${r.squareSelected}` : ""}`} onClick={onToggle} title={label} aria-label={label} aria-pressed={selected} data-flip={`square:${concept.id}`} data-flip-how="fade"
       style={{ background: TC[concept.st] }} />
@@ -40,12 +40,12 @@ function Square({ concept, selected, faded, onToggle }: { concept: Concept; sele
 }
 
 /** One legend entry, the Dashboard mastery legend's: a round dot, the count, the state. */
-function LegendChip({ status, count, on, onToggle }: { status: Status; count: number; on: boolean; onToggle: () => void }) {
+function LegendChip({ status, count, on, ladder, onToggle }: { status: Status; count: number; on: boolean; ladder: boolean; onToggle: () => void }) {
   return (
     // Positioned: its count is placed (and crossfaded) inside it.
     <button aria-pressed={on} className={on ? `${r.chip} ${r.chipOn}` : `${r.chip} ${s.hoverLegend}`} onClick={onToggle} title="Highlight these on the roadmap" data-flip={`legend:${status}`}>
       <StatusDot st={status} size={7} />
-      <span><span key={count} data-flip={`count:${status}:${count}`} data-flip-how="fade">{count}</span> {ST_LABEL[status]}</span>
+      <span><span key={count} data-flip={`count:${status}:${count}`} data-flip-how="fade">{count}</span> {stLabel(status, ladder)}</span>
     </button>
   );
 }
@@ -83,7 +83,7 @@ function ConceptKey({ concepts, selectedId, level, onSelect, onLevel }: BandProp
       </div>
       <div className={r.legend}>
         {STATUS_ORDER.map(k => (
-          <LegendChip key={k} status={k} count={concepts.filter(t => t.st === k).length} on={level === k}
+          <LegendChip key={k} status={k} count={concepts.filter(t => t.st === k).length} on={level === k} ladder={concepts.some(t => t.ladder)}
             onToggle={() => onLevel(level === k ? null : k)} />
         ))}
       </div>

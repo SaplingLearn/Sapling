@@ -40,7 +40,7 @@ import { fetchLearnNext, type LearnNext } from "../dashboard/learnNext";
 import {
   activeDaysFrom,
   assignmentUrgency,
-  statsFromGraph,
+  statsFromGraph, tierWord,
   streakMarkState,
   type DashboardStats,
 } from "../dashboard/dashboardModel";
@@ -1001,14 +1001,14 @@ function renderLegacyRightPanel({
 
       <div className={`card ${styles.statsCard}`}>
         <MiniStat
-          label="Mastered"
+          label={tierWord("mastered", !!stats.skill)}
           value={<AnimatedNumber value={stats.mastered} />}
           sub={stats.total ? `of ${stats.total} concepts` : undefined}
         />
         <MiniStat
-          label="Learning"
+          label={stats.skill ? "In progress" : "Learning"}
           value={<AnimatedNumber value={stats.learning + stats.struggling} />}
-          sub={`${stats.unexplored} unexplored`}
+          sub={`${stats.unexplored} ${tierWord("unexplored", !!stats.skill).toLowerCase()}`}
         />
       </div>
 
@@ -1090,14 +1090,14 @@ function CourseProgressRow({
   /** Space below the row. false when the parent spaces its rows itself. */
   spaced?: boolean;
 }) {
-  const { course, mastered, learning, struggling, unexplored, total, progress } = entry;
+  const { course, mastered, learning, struggling, unexplored, total, progress, skill } = entry;
   const pct = Math.round(progress * 100);
   const baseColor = course.color || "var(--accent)";
   const segments = [
-    { key: "mastered",   count: mastered,   color: baseColor, opacity: 1,    label: "Mastered" },
-    { key: "learning",   count: learning,   color: baseColor, opacity: 0.78, label: "Learning" },
-    { key: "struggling", count: struggling, color: baseColor, opacity: 0.55, label: "Struggling" },
-    { key: "unexplored", count: unexplored, color: "var(--bg-soft)", opacity: 1, label: "Unexplored" },
+    { key: "mastered",   count: mastered,   color: baseColor, opacity: 1,    label: tierWord("mastered", skill) },
+    { key: "learning",   count: learning,   color: baseColor, opacity: 0.78, label: tierWord("learning", skill) },
+    { key: "struggling", count: struggling, color: baseColor, opacity: 0.55, label: tierWord("struggling", skill) },
+    { key: "unexplored", count: unexplored, color: "var(--bg-soft)", opacity: 1, label: tierWord("unexplored", skill) },
   ];
 
   return (

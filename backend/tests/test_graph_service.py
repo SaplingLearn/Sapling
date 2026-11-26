@@ -1273,7 +1273,7 @@ def test_graph_route_passes_semester_through():
 
     captured = {}
 
-    async def fake_get_graph(user_id, semester=None):
+    async def fake_get_graph(user_id, semester=None, *, skill=False):
         captured["user_id"] = user_id
         captured["semester"] = semester
         return {"nodes": [], "edges": [], "stats": {}}
@@ -1463,6 +1463,25 @@ class TestAsyncReadTwins:
             extra_patches=patches)
         assert asynced == sync
         assert {n["id"] for n in asynced["nodes"]} == {"n2", "subject_root__c2"}
+
+    def test_aget_graph_with_skill_matches_get_graph(self):
+        from learning.learner_state import LearnerState
+        states = {
+            "n1": LearnerState(user_id="u1", node_id="n1", p_known=0.81234, opps=3, n_strong_unassisted=1),
+            # moved only by a neighbour's propagation: a prior, not a measurement
+            "n2": LearnerState(user_id="u1", node_id="n2", p_known=0.6, opps=0),
+        }
+        patches = (lambda: patch("services.graph_service.read_states", return_value=states),)
+        (sync, _), (asynced, _) = self._both(
+            lambda *a: gs.get_graph(*a, skill=True), lambda *a: gs.aget_graph(*a, skill=True),
+            _PARITY_GRAPHS["full"], "u1", extra_patches=patches)
+        assert asynced == sync
+        by_id = {n["id"]: n for n in asynced["nodes"]}
+        assert (by_id["n1"]["skill"], by_id["n1"]["skill_mastered"]) == (0.8123, False)
+        assert (by_id["n2"]["skill"], by_id["n2"]["skill_mastered"]) == (None, False)
+        assert all("skill" not in n for n in asynced["nodes"] if n.get("is_subject_root"))
+        # the map's own score and tier stay beside it
+        assert (by_id["n1"]["mastery_score"], by_id["n1"]["mastery_tier"]) == (0.5, "learning")
 
     def test_aget_graph_inserts_a_missing_user_like_the_sync_one(self):
         data = {"users": [], "graph_nodes": [], "graph_edges": [], "enrollments": []}

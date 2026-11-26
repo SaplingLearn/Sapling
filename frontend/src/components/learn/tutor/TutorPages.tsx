@@ -1,11 +1,12 @@
 "use client";
+import { LEVEL_TIER, carriesSkill, levelFor, tierWord } from "@/lib/levels";
 import { HandoffLink } from "@/components/ui/HandoffLink";
 import React, { useLayoutEffect, useRef } from "react";
 import Link from "next/link";
 import type { EnrolledCourse } from "@/lib/api";
 import type { GraphNode } from "@/lib/data";
 import { LEARNING_COPY } from "@/lib/learningCopy";
-import { MASTERY_PALETTE, TIER_LABEL, tierFor, type MasteryTier } from "@/lib/graph/nodeStyle";
+import { MASTERY_PALETTE, tierFor, type MasteryTier } from "@/lib/graph/nodeStyle";
 import { Icon } from "../../Icon";
 import { ChevRight } from "./TutorIcons";
 import { courseColor, dotColor, sessionTitle, shortWhen, type TutorSessionRow } from "./sessions";
@@ -16,30 +17,34 @@ import { sentenceCase } from "@/lib/sentenceCase";
 /** The mastery tier a meter shows (#866 K21): the map's own tiers (`tierFor`, the
  *  backend's cuts), so a meter, the map and its key never disagree. No score
  *  reads as unexplored. */
-export function meterTier(score: number | null | undefined): MasteryTier {
+export function meterTier(score: number | null | undefined, ladder = false): MasteryTier {
+  // On a skill graph (the loop on) the score is the learner model's skill:
+  // the ladder's cuts and words (lib/levels.ts), as the map beside it.
+  if (ladder) return LEVEL_TIER[levelFor(score)];
   return score == null ? "unexplored" : tierFor(score);
 }
 
 /** Mastery as the map colours it: its tier's colour from the map's palette. */
-export function masteryTone(score: number | null | undefined): string {
-  return MASTERY_PALETTE[meterTier(score)];
+export function masteryTone(score: number | null | undefined, ladder = false): string {
+  return MASTERY_PALETTE[meterTier(score, ladder)];
 }
 
-export function Meter({ label, score, testId }: { label: string; score: number | null; testId?: string }) {
+export function Meter({ label, score, testId, ladder = false }: { label: string; score: number | null; testId?: string; ladder?: boolean }) {
+  const tier = meterTier(score, ladder);
   const pct = score == null ? 0 : Math.round(Math.max(0, Math.min(1, score)) * 100);
   return (
-    <div className={styles.meter} data-testid={testId} data-tier={meterTier(score)}>
+    <div className={styles.meter} data-testid={testId} data-tier={tier}>
       <span title={label}>{label}</span>
       <span
         className={styles.bar}
         role="meter"
         aria-label={`${label} skill`}
-        aria-valuetext={`${score == null ? "No score" : `${pct}%`}, ${TIER_LABEL[meterTier(score)]}`}
+        aria-valuetext={`${score == null ? "No score" : `${pct}%`}, ${tierWord(tier, ladder)}`}
         aria-valuemin={0}
         aria-valuemax={100}
         aria-valuenow={pct}
       >
-        <i style={{ "--fill": `${pct}%`, "--tone": masteryTone(score) } as React.CSSProperties} />
+        <i style={{ "--fill": `${pct}%`, "--tone": masteryTone(score, ladder) } as React.CSSProperties} />
       </span>
       <span className={styles.pct}>{score == null ? "—" : `${pct}%`}</span>
     </div>
@@ -240,10 +245,10 @@ export function TutorCourse({
           </div>
           <div className={styles.cardPad}>
             {progress.length > 0
-              ? progress.map((n) => <Meter key={n.id} label={n.name} score={n.mastery_tier === "unexplored" ? null : n.mastery_score} />)
+              ? progress.map((n) => <Meter key={n.id} label={n.name} score={n.mastery_tier === "unexplored" ? null : n.mastery_score} ladder={carriesSkill(n)} />)
               : !onRetryConcepts && <p className={`${styles.ls} ${styles.flush}`}>Concepts appear here as you learn.</p>}
             {onRetryConcepts && <LoadFailed testId="tutor-course-concepts-error" what="your concepts" onRetry={onRetryConcepts} />}
-            {dueHref && <Link href={dueHref} className={`btn btn--sm ${styles.start}`}>Review what&apos;s due</Link>}
+            {dueHref && <HandoffLink size="sm" href={dueHref} className={styles.start}>{LEARNING_COPY.review}</HandoffLink>}
           </div>
         </section>
       </div>
