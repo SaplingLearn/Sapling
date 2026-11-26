@@ -19,17 +19,32 @@ a{color:#445D22;text-decoration:none}a:hover{color:#2f4115}
   <main style="flex: 1; min-width: 0; padding: 36px 48px; box-sizing: border-box; display: flex; flex-direction: column; gap: 22px;">
 
     <header style="display: flex; align-items: flex-end; gap: 14px; flex-wrap: wrap;">
-      <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px;">
-        <h1 style="margin: 0; font-family: 'Aleo', Georgia, serif; font-size: 34px; font-weight: 600;">Week by week</h1>
-        <p style="margin: 0; font-size: 15px; color: #4a4538;">Each course on its own line, so heavy weeks show before you reach them.</p>
-      </div>
+      <h1 style="flex: 1; min-width: 0; margin: 0; font-family: 'Aleo', Georgia, serif; font-size: 34px; font-weight: 600;">Calendar</h1>
       <div role="group" aria-label="View" style="display: flex; padding: 4px; gap: 2px; border-radius: 12px; background: #efebe1;">
         <sc-for list="{{views}}" as="v" hint-placeholder-count="4">
           <button type="button" aria-pressed="{{v.on}}" style="{{v.style}}">{{v.label}}</button>
         </sc-for>
       </div>
+      <button type="button" aria-expanded="false" style="height: 40px; padding: 0 12px 0 14px; border-radius: 10px; border: 1px solid rgba(42,39,31,0.18); background: #fdfcf9; font: inherit; font-size: 14px; font-weight: 600; color: #1a1814; display: inline-flex; align-items: center; gap: 8px;">All courses<svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#1a1814" stroke-width="1.8" stroke-linecap="round"><path d="M3.5 6 8 10.5 12.5 6"/></svg></button>
       <button type="button" style="height: 44px; padding: 0 18px; border-radius: 10px; border: 0; background: #445D22; color: #ffffff; font: inherit; font-size: 15px; font-weight: 600;">Import syllabus</button>
     </header>
+
+    <div style="display: flex; align-items: center; gap: 18px; flex-wrap: wrap;">
+      <h2 style="margin: 0; font-family: 'Aleo', Georgia, serif; font-size: 24px; font-weight: 600;">Mar 2 – Apr 26</h2>
+      <div style="display: flex; align-items: center; gap: 6px;">
+        <button type="button" aria-label="Earlier weeks" style="width: 40px; height: 40px; border-radius: 10px; border: 1px solid rgba(42,39,31,0.18); background: #fdfcf9; display: inline-flex; align-items: center; justify-content: center;"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#1a1814" stroke-width="1.8" stroke-linecap="round"><path d="M10 3.5 5.5 8l4.5 4.5"/></svg></button>
+        <button type="button" style="height: 40px; padding: 0 14px; border-radius: 10px; border: 1px solid rgba(42,39,31,0.18); background: #fdfcf9; font: inherit; font-size: 14px; font-weight: 600; color: #1a1814;">Today</button>
+        <button type="button" aria-label="Later weeks" style="width: 40px; height: 40px; border-radius: 10px; border: 1px solid rgba(42,39,31,0.18); background: #fdfcf9; display: inline-flex; align-items: center; justify-content: center;"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#1a1814" stroke-width="1.8" stroke-linecap="round"><path d="M6 3.5 10.5 8 6 12.5"/></svg></button>
+      </div>
+      <div style="margin-left: auto; display: flex; align-items: center; gap: 18px;">
+        <div style="display: flex; gap: 14px; align-items: center; font-size: 13px; color: #4a4538;">
+          <span style="display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; border-radius: 6px; background: #f7e6d8; color: #7a4220; font-weight: 600; font-size: 12px;"><span aria-hidden="true" style="width: 7px; height: 7px; background: #a34c26; transform: rotate(45deg); display: inline-block;"></span>Exam</span>
+          <span style="display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; border-radius: 6px; background: #dfe9ef; color: #3a6984; font-weight: 600; font-size: 12px;"><span aria-hidden="true" style="width: 9px; height: 9px; box-sizing: border-box; border: 2px solid #3a6984; border-radius: 999px; display: inline-block;"></span>Quiz</span>
+          <span style="display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; border-radius: 6px; background: #efebe1; color: #1a1814; font-weight: 600; font-size: 12px;"><span aria-hidden="true" style="width: 7px; height: 7px; border-radius: 999px; background: #4a4538; display: inline-block;"></span>Homework</span>
+        </div>
+        
+      </div>
+    </div>
 
     <div role="table" aria-label="Week by week" style="border-radius: 16px; border: 1px solid rgba(42,39,31,0.10); background: #fdfcf9; overflow: hidden; display: flex; flex-direction: column;">
       <div role="row" style="display: grid; grid-template-columns: 120px repeat(8, minmax(0, 1fr));">
@@ -65,22 +80,11 @@ a{color:#445D22;text-decoration:none}a:hover{color:#2f4115}
       </sc-for>
     </div>
 
-    <div style="display: flex; gap: 20px; align-items: stretch;">
-      <section aria-labelledby="crunch-h" style="flex: 1; padding: 18px 20px; border-radius: 16px; background: #f7e6d8; border: 1px solid #a34c26; display: flex; flex-direction: column; gap: 8px;">
+    <section aria-labelledby="crunch-h" style="padding: 18px 20px; border-radius: 16px; background: #f7e6d8; border: 1px solid #a34c26; display: flex; flex-direction: column; gap: 8px;">
         <h2 id="crunch-h" style="margin: 0; font-family: 'Aleo', Georgia, serif; font-size: 18px; font-weight: 600;">Busiest week: Mar 30 – Apr 5</h2>
-        <p style="margin: 0; font-size: 14px; line-height: 1.5; color: #4a4538;">3 due, 2 of them exams. Starting early leaves room for the rest.</p>
+        <p style="margin: 0; font-size: 14px; line-height: 1.5; color: #4a4538;">3 due, 2 of them exams.</p>
         <a href="#" style="font-size: 14px; font-weight: 600;">Prepare for MA 123 Midterm</a>
-      </section>
-      <section aria-labelledby="legend-h" style="flex: 1; padding: 18px 20px; border-radius: 16px; border: 1px solid rgba(42,39,31,0.10); background: #fdfcf9; display: flex; flex-direction: column; gap: 10px;">
-        <h2 id="legend-h" style="margin: 0; font-family: 'Aleo', Georgia, serif; font-size: 18px; font-weight: 600;">Key</h2>
-        <div style="display: flex; gap: 12px; flex-wrap: wrap; font-size: 12px;">
-          <span style="display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; border-radius: 6px; background: #f7e6d8; color: #7a4220; font-weight: 600;"><span aria-hidden="true" style="width: 7px; height: 7px; background: #a34c26; transform: rotate(45deg); display: inline-block;"></span>Exam</span>
-          <span style="display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; border-radius: 6px; background: #dfe9ef; color: #3a6984; font-weight: 600;"><span aria-hidden="true" style="width: 9px; height: 9px; box-sizing: border-box; border: 2px solid #3a6984; border-radius: 999px; display: inline-block;"></span>Quiz</span>
-          <span style="display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; border-radius: 6px; background: #efebe1; color: #1a1814; font-weight: 600;"><span aria-hidden="true" style="width: 7px; height: 7px; border-radius: 999px; background: #4a4538; display: inline-block;"></span>Homework</span>
-        </div>
-        <p style="margin: 0; font-size: 14px; color: #4a4538;">The bar under each week: how much is due that week.</p>
-      </section>
-    </div>
+    </section>
   </main>
 </div>
 </x-dc>

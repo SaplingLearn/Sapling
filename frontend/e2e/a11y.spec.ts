@@ -886,6 +886,142 @@ test("calendar redesign: every view, an item opened, empty and phone (calendar_v
   }
 });
 
+// The redesigned calendar, every control clicked once, with motion ON (the
+// other journeys run reduced): the course dropdown, the period header (its
+// name first, then the arrows and Today) in each view, a day in the
+// mini month, every way into the item panel, Add a date, Edit + Save, Delete,
+// and the More menu. The writes are answered here; what is asserted is the
+// request each control sends.
+test("calendar redesign: every control, with motion on (calendar_v2 on)", async ({ browser }) => {
+  test.skip(loopOffLane, "loop path: default lane only");
+  test.setTimeout(LOOP_TIMEOUT_MS);
+  await setUserFlag("calendar_v2", USER_LOOP, "on");
+  const [{ course_id: courseId }] = (await queryRaw(
+    `SELECT o.course_id FROM enrollments e JOIN course_offerings o ON o.id = e.offering_id WHERE e.user_id = $1 ORDER BY o.course_id LIMIT 1`,
+    [USER_LOOP],
+  )) as { course_id: string }[];
+  const row = (id: string, title: string, due: string, type: string) =>
+    ({ id, user_id: USER_LOOP, title, due_date: due, assignment_type: type, course_id: courseId, notes: "" });
+  const dates = [
+    row("cal-mid1", "Midterm Exam", "2026-03-02", "exam"), row("cal-hw7", "HW 7", "2026-03-12", "homework"),
+    row("cal-q4", "Quiz 4", "2026-03-13", "quiz"), row("cal-mid2", "Midterm 2", "2026-03-20", "exam"),
+    row("cal-mid3", "Midterm", "2026-03-30", "exam"),
+  ];
+  const writes: { method: string; url: string; body: string | null }[] = [];
+  // motion explicitly on: headless Chromium can report reduced motion by default
+  const context = await browser.newContext({ storageState: await mintStorageState(USER_LOOP, "Lou Loop"), reducedMotion: "no-preference" });
+  await context.addInitScript(() => { window.localStorage.setItem("sapling_disclaimer_ack", "true"); });
+  const page = await context.newPage();
+  try {
+    await page.route(/\/api\/calendar\/all\//, (route) => route.fulfill({ json: { assignments: dates } }));
+    await page.route(/\/api\/calendar\/(save|assignments\/)/, (route) => {
+      const r = route.request();
+      writes.push({ method: r.method(), url: r.url(), body: r.postData() });
+      return route.fulfill({ json: { saved_count: 1, updated: true, deleted: true } });
+    });
+    await page.goto("/calendar");
+    const cal = page.getByTestId("calendar-v2");
+    await expect(cal).toHaveAttribute("data-view", "agenda");
+
+    // motion is on: a view arrives with its enter animation and settles opaque
+    const view = cal.locator("[class*=viewEnter]");
+    await expect.poll(() => view.evaluate((el) => getComputedStyle(el).animationName)).toContain("viewIn");
+    await expect.poll(() => view.evaluate((el) => getComputedStyle(el).opacity)).toBe("1");
+
+    // the course dropdown: untick hides, All courses restores, Escape closes and hands focus back
+    const courses = page.getByTestId("calendar-courses");
+    await expect(courses).toHaveText("All courses");
+    await courses.click();
+    const menu = page.getByTestId("calendar-courses-menu");
+    await expect(menu).toBeVisible();
+    await expect.poll(() => menu.evaluate((el) => getComputedStyle(el).animationName)).toContain("menuIn");
+    await page.getByTestId(`calendar-course-${courseId}`).uncheck();
+    await expect(page.getByTestId("calendar-item-cal-hw7")).toHaveCount(0);
+    await expect(courses).toHaveText(/0 of 1 courses/);
+    await page.getByTestId("calendar-course-all").click();
+    await expect(page.getByTestId("calendar-item-cal-hw7")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(menu).toHaveCount(0);
+    await expect(courses).toBeFocused();
+
+    // the earlier dates, then a day in the mini month opens its week (the
+    // week strip does the same on a phone; it is hidden at this width)
+    await page.getByTestId("calendar-earlier").click();
+    await expect(page.getByTestId("calendar-item-cal-mid1")).toBeVisible();
+    await page.getByTestId("calendar-mini").getByRole("button", { name: /Fri Mar 13/ }).click();
+    await expect(cal).toHaveAttribute("data-view", "week");
+    await expect(page.getByTestId("calendar-period")).toHaveText("Mar 9 – 15");
+
+    // each view's header: the period's name first, then ‹ Today ›
+    const order = async () => page.evaluate(() => ["calendar-period", "calendar-prev", "calendar-today", "calendar-next"]
+      .map((id) => document.querySelector(`[data-testid="${id}"]`)!.getBoundingClientRect().left));
+    for (const [v, start, back, ahead] of [
+      ["week", "Mar 9 – 15", "Mar 2 – 8", "Mar 16 – 22"],
+      ["month", "March 2026", "February 2026", "April 2026"],
+      ["semester", "Mar 2 – Apr 26", "Feb 2 – Mar 29", "Mar 30 – May 24"],
+    ] as const) {
+      await page.getByTestId(`calendar-view-${v}`).click();
+      await expect(cal).toHaveAttribute("data-view", v);
+      const period = page.getByTestId("calendar-period");
+      await expect(period).toHaveText(start);
+      const xs = await order();
+      expect(xs, `${v}: name, then ‹ Today ›`).toEqual([...xs].sort((a, b) => a - b));
+      await page.getByTestId("calendar-prev").click();
+      await expect(period).toHaveText(back);
+      await page.getByTestId("calendar-today").click();
+      await expect(period).toHaveText(start);
+      await page.getByTestId("calendar-next").click();
+      await expect(period).toHaveText(ahead);
+      await page.getByTestId("calendar-today").click();
+    }
+
+    // every way into the panel: a semester mark, a month pill, a week pill, an agenda row
+    const panel = page.getByTestId("calendar-panel");
+    const opens = [
+      ["semester", page.getByTestId("calendar-mark-cal-mid2")],
+      ["month", page.getByTestId("calendar-pill-cal-q4")],
+      ["week", page.getByTestId("calendar-pill-cal-hw7")],
+    ] as const;
+    for (const [v, opener] of opens) {
+      await page.getByTestId(`calendar-view-${v}`).click();
+      await opener.click();
+      await expect(panel).toBeVisible();
+      await expect.poll(() => panel.evaluate((el) => getComputedStyle(el).animationName)).toContain("panelIn");
+      await page.getByTestId("calendar-panel-close").click();
+      await expect(panel).toHaveCount(0);
+      await expect(opener).toBeFocused();
+    }
+
+    // Edit + Save sends a PATCH; Delete asks once, then sends a DELETE
+    await page.getByTestId("calendar-view-agenda").click();
+    await page.getByTestId("calendar-item-cal-mid2").getByRole("button", { name: /Midterm 2/ }).click();
+    await page.getByTestId("calendar-panel-edit").click();
+    await page.getByTestId("calendar-field-title").fill("Midterm 2 (room 101)");
+    await page.getByTestId("calendar-panel-save").click();
+    await expect.poll(() => writes.find((w) => w.method === "PATCH")?.body ?? "").toContain("Midterm 2 (room 101)");
+    const del = page.getByTestId("calendar-panel-delete");
+    await del.click();
+    await expect(del).toHaveText("Click again to delete");
+    await del.click();
+    await expect.poll(() => writes.some((w) => w.method === "DELETE" && w.url.includes("cal-mid2"))).toBe(true);
+    await expect(panel).toHaveCount(0);
+
+    // More: Add a date sends a POST; the menu's other items are there
+    await page.getByTestId("calendar-more").click();
+    await expect(page.getByTestId("calendar-more-menu")).toContainText("Export as CSV");
+    await page.getByTestId("calendar-add-date").click();
+    await expect(page.getByRole("heading", { level: 2, name: "Add a date" })).toBeFocused();
+    await page.getByTestId("calendar-field-title").fill("Reading quiz");
+    await page.getByTestId("calendar-field-date").fill("2026-03-18");
+    await page.getByTestId("calendar-panel-save").click();
+    await expect.poll(() => writes.find((w) => w.method === "POST")?.body ?? "").toContain("Reading quiz");
+    await expect(panel).toHaveCount(0);
+  } finally {
+    await context.close();
+    await setUserFlag("calendar_v2", USER_LOOP, "off");
+  }
+});
+
 test("learning loop: a segment's ungraded guess and a self-explanation prompt (A138, A139 on)", async ({ browser }) => {
   test.skip(loopOffLane, "loop path: default lane only");
   test.setTimeout(LOOP_TIMEOUT_MS);

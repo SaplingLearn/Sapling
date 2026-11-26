@@ -94,10 +94,10 @@ afterEach(() => {
 describe("the boards", () => {
   it.each([
     ["agenda", [VIEWS_COPY.earlier(1, { title: "Midterm Exam", day: new Date(2026, 2, 2) } as never), VIEWS_COPY.prepare,
-      "Wednesday, March 11 · ", "2 due this week", "the next one tomorrow", CALENDAR_COPY.importSyllabus, CALENDAR_COPY.googleOff,
+      CALENDAR_COPY.allCourses, CALENDAR_COPY.importSyllabus, CALENDAR_COPY.googleOff,
       CALENDAR_COPY.busiestText(3, 2), CALENDAR_COPY.prepareFor("MA 123 Midterm"), ...Object.values(CALENDAR_COPY.views)]],
-    ["month", ["10 due in March, 2 of them exams · 11 in all", CALENDAR_COPY.today, CALENDAR_COPY.prev.month, CALENDAR_COPY.next.month]],
-    ["semester", [CALENDAR_COPY.semesterTitle, CALENDAR_COPY.semesterSub, CALENDAR_COPY.busiest("Mar 30 – Apr 5"), VIEWS_COPY.keyNote, VIEWS_COPY.thisWeek, VIEWS_COPY.busiest, VIEWS_COPY.course, "Nothing due"]],
+    ["month", ["March 2026", CALENDAR_COPY.today, CALENDAR_COPY.prev.month, CALENDAR_COPY.next.month, CALENDAR_COPY.allCourses, VIEWS_COPY.exam]],
+    ["semester", ["Mar 2 – Apr 26", CALENDAR_COPY.prev.semester, CALENDAR_COPY.next.semester, CALENDAR_COPY.busiest("Mar 30 – Apr 5"), VIEWS_COPY.thisWeek, VIEWS_COPY.busiest, VIEWS_COPY.course, "Nothing due"]],
     ["detail", [PANEL_COPY.fromOutline, PANEL_COPY.prepare, PANEL_COPY.studyGuide, PANEL_COPY.details, PANEL_COPY.edit, PANEL_COPY.google, PANEL_COPY.delete, "5 of 8 concepts ready"]],
     ["empty", [CALENDAR_COPY.emptyTitle, CALENDAR_COPY.emptyText, CALENDAR_COPY.emptyImport, CALENDAR_COPY.emptyAdd, CALENDAR_COPY.emptyGoogle, ...CALENDAR_COPY.emptySteps.flat()]],
     ["phone", ["Tomorrow", "In 2 days", "This week", "Next week"]],
@@ -132,13 +132,30 @@ describe("Agenda (the default)", () => {
     expect(within(row).getByTestId("calendar-prepare-mid2").getAttribute("href")).toBe("/learn?course=cs&milestone=mid2");
   });
 
-  it("the course filter hides a course and All brings it back", () => {
+  it("the course filter is one dropdown: untick a course to hide it, All courses brings it back, Escape closes it", () => {
     renderCalendar();
-    fireEvent.click(screen.getByTestId("calendar-course-ma"));
-    expect(screen.getByTestId("calendar-course-ma").getAttribute("aria-pressed")).toBe("false");
+    const button = screen.getByTestId("calendar-courses");
+    expect(button.textContent).toBe(CALENDAR_COPY.allCourses);
+    expect(screen.queryByTestId("calendar-courses-menu")).toBeNull();
+    fireEvent.click(button);
+    expect(button.getAttribute("aria-expanded")).toBe("true");
+    const ma = screen.getByTestId("calendar-course-ma") as HTMLInputElement;
+    expect(ma.checked).toBe(true);
+    fireEvent.click(ma);
+    expect(ma.checked).toBe(false);
     expect(screen.queryByTestId("calendar-item-q4")).toBeNull();
+    expect(button.textContent).toBe("CS 112"); // one course left: its name
     fireEvent.click(screen.getByTestId("calendar-course-all"));
     expect(screen.getByTestId("calendar-item-q4")).toBeTruthy();
+    expect(button.textContent).toBe(CALENDAR_COPY.allCourses);
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByTestId("calendar-courses-menu")).toBeNull();
+    expect(document.activeElement).toBe(button);
+  });
+
+  it("no subtitle under the title", () => {
+    renderCalendar();
+    expect(screen.queryByText(/due this week/)).toBeNull();
   });
 });
 
@@ -147,6 +164,11 @@ describe("Month, Week and Semester", () => {
     renderCalendar();
     fireEvent.click(screen.getByTestId("calendar-view-month"));
     expect(screen.getByTestId("calendar-period").textContent).toBe("March 2026");
+    // the month's name leads; the arrows and Today follow it
+    const order = ["calendar-period", "calendar-prev", "calendar-today", "calendar-next"].map((id) => screen.getByTestId(id));
+    for (let i = 1; i < order.length; i++) {
+      expect(order[i - 1].compareDocumentPosition(order[i]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    }
     expect(screen.getByTestId("calendar-day-2026-03-11").getAttribute("aria-current")).toBe("date");
     fireEvent.click(screen.getByTestId("calendar-prev"));
     expect(screen.getByTestId("calendar-period").textContent).toBe("February 2026");

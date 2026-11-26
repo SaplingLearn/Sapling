@@ -26,7 +26,6 @@ export const VIEWS_COPY = {
   more: (n: number) => `+${n} more`,
   today: "Today",
   key: "Key",
-  keyNote: "The bar under each week: how much is due that week.",
   thisWeek: "This week",
   busiest: "Busiest",
   course: "Course",
@@ -265,19 +264,5 @@ export function SemesterView({ weeks, loads, lanes, today, heavyStart, onOpen }:
         ))}
       </div>
     </div>
-  );
-}
-
-export function SemesterKey() {
-  return (
-    <section aria-labelledby="calendar-key-h" className={styles.card}>
-      <h2 id="calendar-key-h" className={styles.cardTitle}>{VIEWS_COPY.key}</h2>
-      <div className={styles.keyRow}>
-        <KindLabel kind="Exam" />
-        <KindLabel kind="Quiz" />
-        <KindLabel kind="Homework" />
-      </div>
-      <p className={styles.cardText}>{VIEWS_COPY.keyNote}</p>
-    </section>
   );
 }

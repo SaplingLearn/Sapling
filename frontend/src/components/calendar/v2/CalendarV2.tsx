@@ -12,11 +12,11 @@ import { studyGuideHref } from "@/lib/toolHrefs";
 import { TopBar } from "../../TopBar";
 import { Toggle } from "@/components/ui";
 import {
-  addDays, agendaOf, busiestWeek, coursesOf, daysBetween, longDate, monthCells, monthLine, monthTitle, rangeText,
-  semesterLanes, semesterStart, shortDate, startOfWeek, toItems, weekCells, weekLine, weekLoads, weekdayShort, WEEKDAYS,
+  addDays, agendaOf, busiestWeek, coursesOf, daysBetween, monthCells, monthTitle, rangeText,
+  semesterLanes, semesterStart, shortDate, startOfWeek, toItems, weekCells, weekLoads, weekdayShort, WEEKDAYS,
   type CalItem,
 } from "./calendarModel";
-import { AgendaView, KindKey, MonthView, SemesterKey, SemesterView, Swatch, WeekView } from "./CalendarViews";
+import { AgendaView, KindKey, MonthView, SemesterView, Swatch, WeekView } from "./CalendarViews";
 import { ItemPanel } from "./ItemPanel";
 import { useExamReadiness } from "./useExamReadiness";
 import styles from "./CalendarV2.module.css";
@@ -36,22 +36,21 @@ export const CALENDAR_COPY = {
   confirmDisconnect: "Click again to disconnect",
   allCourses: "All courses",
   coursesShown: "Courses shown",
+  someCourses: (shown: number, total: number) => `${shown} of ${total} courses`,
   prev: { month: "Previous month", week: "Previous week", semester: "Earlier weeks" },
   next: { month: "Next month", week: "Next week", semester: "Later weeks" },
   today: "Today",
-  semesterTitle: "Week by week",
-  semesterSub: "Each course on its own line, so heavy weeks show before you reach them.",
   busiest: (range: string) => `Busiest week: ${range}`,
   busiestText: (count: number, exams: number) =>
-    `${count} due${exams ? `, ${exams === 1 ? "1 of them an exam" : `${exams} of them exams`}` : ""}. Starting early leaves room for the rest.`,
+    `${count} due${exams ? `, ${exams === 1 ? "1 of them an exam" : `${exams} of them exams`}` : ""}.`,
   prepareFor: (title: string) => `Prepare for ${title}`,
   google: "Google Calendar",
-  googleOff: "Not connected. Connect to see your classes beside these dates, or send them there.",
-  googleOn: "Connected. Sync sends your dates there.",
+  googleOff: "See your classes beside these dates.",
+  googleOn: "Connected.",
   connect: "Connect",
   sync: "Sync",
   emptyTitle: "Add your semester's dates",
-  emptyText: "Import a syllabus and Sapling finds its exams, quizzes and homework. You can fix any date afterwards, and each exam gets a countdown and a way to prepare for it.",
+  emptyText: "Import a syllabus and Sapling finds its exams, quizzes and homework. You can fix any date afterwards.",
   emptySteps: [
     ["Upload the syllabus", "A PDF, Word or PowerPoint file from any of your courses."],
     ["Check what we found", "Fix a date, remove one, add one we missed."],
@@ -83,29 +82,39 @@ export interface CalendarV2Props {
   onReload: () => void;
 }
 
-function Chevron({ dir }: { dir: "left" | "right" }) {
+const CHEVRON = { left: "M10 3.5 5.5 8l4.5 4.5", right: "M6 3.5 10.5 8 6 12.5", down: "M3.5 6 8 10.5 12.5 6" } as const;
+
+function Chevron({ dir }: { dir: keyof typeof CHEVRON }) {
   return (
     <svg aria-hidden width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
-      <path d={dir === "left" ? "M10 3.5 5.5 8l4.5 4.5" : "M6 3.5 10.5 8 6 12.5"} />
+      <path d={CHEVRON[dir]} />
     </svg>
   );
 }
 
-function MoreMenu(p: Pick<CalendarV2Props, "googleConnected" | "importingGoogle" | "disconnectArmed" | "onConnectGoogle" | "onSyncGoogle" | "onViewGoogleEvents" | "onDisconnectGoogle" | "onExportCsv"> & { onAdd: () => void }) {
+/** A popover's open state: a click outside closes it, and Escape closes it
+ *  and hands focus back to the button that opened it. */
+function usePopover() {
   const [open, setOpen] = React.useState(false);
   const ref = React.useRef<HTMLDivElement>(null);
+  const button = React.useRef<HTMLButtonElement>(null);
   React.useEffect(() => {
     if (!open) return;
     const off = (e: MouseEvent) => { if (!ref.current?.contains(e.target as Node)) setOpen(false); };
-    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") { setOpen(false); button.current?.focus(); } };
     document.addEventListener("mousedown", off);
     document.addEventListener("keydown", esc);
     return () => { document.removeEventListener("mousedown", off); document.removeEventListener("keydown", esc); };
   }, [open]);
+  return { open, setOpen, ref, button };
+}
+
+function MoreMenu(p: Pick<CalendarV2Props, "googleConnected" | "importingGoogle" | "disconnectArmed" | "onConnectGoogle" | "onSyncGoogle" | "onViewGoogleEvents" | "onDisconnectGoogle" | "onExportCsv"> & { onAdd: () => void }) {
+  const { open, setOpen, ref, button } = usePopover();
   const run = (fn: () => void, keepOpen = false) => () => { fn(); if (!keepOpen) setOpen(false); };
   return (
     <div className={styles.more} ref={ref}>
-      <button type="button" className={styles.iconBtn} aria-label={CALENDAR_COPY.more} aria-expanded={open}
+      <button ref={button} type="button" className={styles.iconBtn} aria-label={CALENDAR_COPY.more} aria-expanded={open}
         aria-controls="calendar-more-menu" onClick={() => setOpen((o) => !o)} data-testid="calendar-more">
         <svg aria-hidden width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><circle cx="3.5" cy="8" r="1.4" /><circle cx="8" cy="8" r="1.4" /><circle cx="12.5" cy="8" r="1.4" /></svg>
       </button>
@@ -124,6 +133,37 @@ function MoreMenu(p: Pick<CalendarV2Props, "googleConnected" | "importingGoogle"
           ) : (
             <button type="button" className={styles.menuItem} onClick={run(p.onConnectGoogle)}>{CALENDAR_COPY.connectGoogle}</button>
           )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CourseFilter({ courses, hidden, onToggle }: {
+  courses: ReturnType<typeof coursesOf>; hidden: ReadonlySet<string>; onToggle: (id: string | null) => void;
+}) {
+  const { open, setOpen, ref, button } = usePopover();
+  const shown = courses.filter((c) => !hidden.has(c.id));
+  const label = shown.length === courses.length ? CALENDAR_COPY.allCourses
+    : shown.length === 1 ? shown[0].label : CALENDAR_COPY.someCourses(shown.length, courses.length);
+  return (
+    <div className={styles.more} ref={ref}>
+      <button ref={button} type="button" className={styles.filterBtn} aria-expanded={open} aria-controls="calendar-courses-menu"
+        onClick={() => setOpen((o) => !o)} data-testid="calendar-courses">
+        {shown.length === 1 && courses.length > 1 && <Swatch color={shown[0].color} />}
+        {label}
+        <Chevron dir="down" />
+      </button>
+      {open && (
+        <div id="calendar-courses-menu" className={styles.menu} role="group" aria-label={CALENDAR_COPY.coursesShown} data-testid="calendar-courses-menu">
+          <button type="button" className={styles.menuItem} aria-pressed={hidden.size === 0}
+            onClick={() => onToggle(null)} data-testid="calendar-course-all">{CALENDAR_COPY.allCourses}</button>
+          {courses.map((c) => (
+            <label key={c.id} className={styles.menuCheck}>
+              <input type="checkbox" checked={!hidden.has(c.id)} onChange={() => onToggle(c.id)} data-testid={`calendar-course-${c.id}`} />
+              <Swatch color={c.color} />{c.label}
+            </label>
+          ))}
         </div>
       )}
     </div>
@@ -216,12 +256,18 @@ function EmptyCalendar({ onImport, onAdd, onConnect, googleConnected }: { onImpo
 }
 
 function usePeriod(view: View, today: Date) {
-  const [cursor, setCursor] = React.useState(today);
-  const step = (dir: 1 | -1) => setCursor((c) => {
-    if (view === "month") return new Date(c.getFullYear(), c.getMonth() + dir, 1);
-    return addDays(c, dir * (view === "semester" ? 28 : 7));
-  });
-  return { cursor, setCursor, step };
+  const [cursor, setCursorState] = React.useState(today);
+  // which way the last move went, so the new period slides in from that side
+  const [dir, setDir] = React.useState<1 | -1 | 0>(0);
+  const step = (d: 1 | -1) => {
+    setDir(d);
+    setCursorState((c) => {
+      if (view === "month") return new Date(c.getFullYear(), c.getMonth() + d, 1);
+      return addDays(c, d * (view === "semester" ? 28 : 7));
+    });
+  };
+  const setCursor = (c: Date) => { setDir(0); setCursorState(c); };
+  return { cursor, setCursor, step, dir };
 }
 
 function periodTitle(view: View, cursor: Date): string {
@@ -261,11 +307,8 @@ export function CalendarV2(props: CalendarV2Props) {
   const pickDay = (d: Date) => { period.setCursor(d); setView("week"); };
 
   const agenda = agendaOf(items, today);
-  const subtitle = view === "agenda" ? `${longDate(today)} · ${weekLine(items, today)}`
-    : view === "month" ? `${monthLine(period.cursor, items)} · ${all.length} in all`
-      : view === "semester" ? CALENDAR_COPY.semesterSub : `${weekLine(items, today)}`;
   const semStart = semesterStart(period.cursor);
-  const courseChips = coursesOf(all);
+  const title = periodTitle(view, period.cursor);
   const itemProps = { today, readiness, prepareHref, onOpen: (i: CalItem, el: HTMLElement) => openItem(i, el) };
 
   const actions = (
@@ -273,6 +316,7 @@ export function CalendarV2(props: CalendarV2Props) {
       <span id="calendar-view-label" className={styles.srOnly}>{CALENDAR_COPY.viewLabel}</span>
       <Toggle options={(Object.keys(CALENDAR_COPY.views) as View[]).map((v) => ({ value: v, label: CALENDAR_COPY.views[v] }))}
         value={view} onChange={setView} size="sm" testid="calendar-view" labelledBy="calendar-view-label" />
+      {all.length > 0 && <CourseFilter courses={coursesOf(all)} hidden={hidden} onToggle={toggleCourse} />}
       <button type="button" className="btn btn--sm btn--primary" onClick={props.onImportSyllabus} data-testid="calendar-import-syllabus">
         {CALENDAR_COPY.importSyllabus}
       </button>
@@ -282,61 +326,53 @@ export function CalendarV2(props: CalendarV2Props) {
 
   return (
     <>
-      <TopBar title={view === "semester" ? CALENDAR_COPY.semesterTitle : CALENDAR_COPY.title} subtitle={subtitle} actions={actions} />
+      <TopBar title={CALENDAR_COPY.title} actions={actions} />
       <div className={styles.page} data-testid="calendar-v2" data-view={view}>
         {all.length === 0 ? (
           <EmptyCalendar onImport={props.onImportSyllabus} onAdd={() => openItem(null)} onConnect={props.onConnectGoogle} googleConnected={props.googleConnected} />
         ) : (
           <>
-            <div className={styles.toolbar}>
-              {view !== "agenda" && (
+            {view !== "agenda" && (
+              <div className={styles.toolbar}>
                 <div className={styles.period}>
-                  <button type="button" className={styles.iconBtn} aria-label={CALENDAR_COPY.prev[view]} onClick={() => period.step(-1)} data-testid="calendar-prev"><Chevron dir="left" /></button>
-                  <button type="button" className={styles.iconBtn} aria-label={CALENDAR_COPY.next[view]} onClick={() => period.step(1)} data-testid="calendar-next"><Chevron dir="right" /></button>
-                  <h2 className={styles.periodTitle} aria-live="polite" data-testid="calendar-period">{periodTitle(view, period.cursor)}</h2>
-                  <button type="button" className="btn btn--sm" onClick={() => period.setCursor(today)}>{CALENDAR_COPY.today}</button>
+                  <h2 className={styles.periodTitle} aria-live="polite" data-testid="calendar-period">{title}</h2>
+                  <div className={styles.stepper}>
+                    <button type="button" className={styles.iconBtn} aria-label={CALENDAR_COPY.prev[view]} onClick={() => period.step(-1)} data-testid="calendar-prev"><Chevron dir="left" /></button>
+                    <button type="button" className="btn btn--sm" onClick={() => period.setCursor(today)} data-testid="calendar-today">{CALENDAR_COPY.today}</button>
+                    <button type="button" className={styles.iconBtn} aria-label={CALENDAR_COPY.next[view]} onClick={() => period.step(1)} data-testid="calendar-next"><Chevron dir="right" /></button>
+                  </div>
                 </div>
-              )}
-              {view === "month" && <KindKey />}
-              <div className={styles.chips} role="group" aria-label={CALENDAR_COPY.coursesShown}>
-                <button type="button" className={`${styles.chip} ${styles.chipAll}`} aria-pressed={hidden.size === 0}
-                  onClick={() => toggleCourse(null)} data-testid="calendar-course-all">{CALENDAR_COPY.allCourses}</button>
-                {courseChips.map((c) => (
-                  <button key={c.id} type="button" className={styles.chip} aria-pressed={!hidden.has(c.id)}
-                    onClick={() => toggleCourse(c.id)} data-testid={`calendar-course-${c.id}`}>
-                    <Swatch color={c.color} />{c.label}
-                  </button>
-                ))}
+                <div className={styles.toolbarEnd}><KindKey /></div>
               </div>
-            </div>
+            )}
 
-            {view === "agenda" && (
-              <>
-                <WeekStrip today={today} items={items} onPick={pickDay} />
-                <div className={styles.agendaLayout}>
-                  <AgendaView earlier={agenda.earlier} groups={agenda.groups} {...itemProps} />
-                  <aside className={styles.rail} aria-label="At a glance">
-                    <MiniMonth today={today} items={items} onPick={pickDay} />
-                    <BusiestCard items={items} today={today} prepareHref={prepareHref} />
-                    <GoogleCard connected={props.googleConnected} onConnect={props.onConnectGoogle} onSync={props.onSyncGoogle} />
-                  </aside>
-                </div>
-              </>
-            )}
-            {view === "month" && (
-              <MonthView cells={monthCells(period.cursor, items, today)} today={today} onOpen={itemProps.onOpen} onMore={pickDay} />
-            )}
-            {view === "week" && <WeekView cells={weekCells(period.cursor, items, today)} today={today} onOpen={itemProps.onOpen} />}
-            {view === "semester" && (
-              <>
-                <SemesterView weeks={SEMESTER_WEEKS} loads={weekLoads(semStart, SEMESTER_WEEKS, items)}
-                  lanes={semesterLanes(items, semStart, SEMESTER_WEEKS)} today={today} heavyStart={busiestWeek(items, today)?.start ?? null} onOpen={itemProps.onOpen} />
-                <div className={styles.belowTimeline}>
+            <div key={view === "agenda" ? view : `${view}:${title}`} className={styles.viewEnter}
+              style={{ "--enter-x": `${period.dir * 12}px` } as React.CSSProperties}>
+              {view === "agenda" && (
+                <>
+                  <WeekStrip today={today} items={items} onPick={pickDay} />
+                  <div className={styles.agendaLayout}>
+                    <AgendaView earlier={agenda.earlier} groups={agenda.groups} {...itemProps} />
+                    <aside className={styles.rail} aria-label="At a glance">
+                      <MiniMonth today={today} items={items} onPick={pickDay} />
+                      <BusiestCard items={items} today={today} prepareHref={prepareHref} />
+                      <GoogleCard connected={props.googleConnected} onConnect={props.onConnectGoogle} onSync={props.onSyncGoogle} />
+                    </aside>
+                  </div>
+                </>
+              )}
+              {view === "month" && (
+                <MonthView cells={monthCells(period.cursor, items, today)} today={today} onOpen={itemProps.onOpen} onMore={pickDay} />
+              )}
+              {view === "week" && <WeekView cells={weekCells(period.cursor, items, today)} today={today} onOpen={itemProps.onOpen} />}
+              {view === "semester" && (
+                <>
+                  <SemesterView weeks={SEMESTER_WEEKS} loads={weekLoads(semStart, SEMESTER_WEEKS, items)}
+                    lanes={semesterLanes(items, semStart, SEMESTER_WEEKS)} today={today} heavyStart={busiestWeek(items, today)?.start ?? null} onOpen={itemProps.onOpen} />
                   <BusiestCard items={items} today={today} prepareHref={prepareHref} />
-                  <SemesterKey />
-                </div>
-              </>
-            )}
+                </>
+              )}
+            </div>
           </>
         )}
       </div>

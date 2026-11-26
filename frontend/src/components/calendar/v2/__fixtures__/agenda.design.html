@@ -19,28 +19,18 @@ a{color:#445D22;text-decoration:none}a:hover{color:#2f4115}
   <main style="flex: 1; min-width: 0; padding: 36px 48px; box-sizing: border-box; display: flex; flex-direction: column; gap: 22px;">
 
     <header style="display: flex; align-items: flex-end; gap: 20px; flex-wrap: wrap;">
-      <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px;">
-        <h1 style="margin: 0; font-family: 'Aleo', Georgia, serif; font-size: 34px; font-weight: 600;">Calendar</h1>
-        <p style="margin: 0; font-size: 15px; color: #4a4538;">Wednesday, March 11 · <strong style="color: #1a1814;">2 due this week</strong>, the next one tomorrow</p>
-      </div>
+      <h1 style="flex: 1; min-width: 0; margin: 0; font-family: 'Aleo', Georgia, serif; font-size: 34px; font-weight: 600;">Calendar</h1>
       <div role="group" aria-label="View" style="display: flex; padding: 4px; gap: 2px; border-radius: 12px; background: #efebe1;">
         <sc-for list="{{views}}" as="v" hint-placeholder-count="4">
           <button type="button" aria-pressed="{{v.on}}" style="{{v.style}}">{{v.label}}</button>
         </sc-for>
       </div>
+      <button type="button" aria-expanded="false" style="height: 40px; padding: 0 12px 0 14px; border-radius: 10px; border: 1px solid rgba(42,39,31,0.18); background: #fdfcf9; font: inherit; font-size: 14px; font-weight: 600; color: #1a1814; display: inline-flex; align-items: center; gap: 8px;">All courses<svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#1a1814" stroke-width="1.8" stroke-linecap="round"><path d="M3.5 6 8 10.5 12.5 6"/></svg></button>
       <button type="button" style="height: 44px; padding: 0 18px; border-radius: 10px; border: 0; background: #445D22; color: #ffffff; font: inherit; font-size: 15px; font-weight: 600; display: inline-flex; align-items: center; gap: 8px;">
         <svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 11V3M4.5 6.5 8 3l3.5 3.5M3 13h10"/></svg>
         Import syllabus
       </button>
     </header>
-
-    <div role="group" aria-label="Courses shown" style="display: flex; gap: 8px; flex-wrap: wrap; align-items: center;">
-      <sc-for list="{{courses}}" as="c" hint-placeholder-count="5">
-        <button type="button" aria-pressed="{{c.on}}" style="{{c.style}}">
-          <span aria-hidden="true" style="{{c.swatch}}"></span>{{c.label}}
-        </button>
-      </sc-for>
-    </div>
 
     <div style="flex: 1; min-height: 0; display: flex; gap: 32px;">
       <section aria-label="Agenda" style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 18px; overflow: hidden;">
@@ -108,13 +98,13 @@ a{color:#445D22;text-decoration:none}a:hover{color:#2f4115}
 
         <section aria-labelledby="busy-h" style="padding: 18px; border-radius: 16px; background: #fbf3e9; border: 1px solid #ecd6bd; display: flex; flex-direction: column; gap: 8px;">
           <h2 id="busy-h" style="margin: 0; font-family: 'Aleo', Georgia, serif; font-size: 18px; font-weight: 600;">Busiest week: Mar 30 – Apr 5</h2>
-          <p style="margin: 0; font-size: 14px; line-height: 1.5; color: #4a4538;">3 due, 2 of them exams. Starting early leaves room for the rest.</p>
+          <p style="margin: 0; font-size: 14px; line-height: 1.5; color: #4a4538;">3 due, 2 of them exams.</p>
           <a href="#" style="font-size: 14px; font-weight: 600;">Prepare for MA 123 Midterm</a>
         </section>
 
         <section aria-labelledby="g-h" style="padding: 18px; border-radius: 16px; border: 1px dashed rgba(42,39,31,0.22); display: flex; flex-direction: column; gap: 8px;">
           <h2 id="g-h" style="margin: 0; font-size: 15px; font-weight: 600;">Google Calendar</h2>
-          <p style="margin: 0; font-size: 14px; line-height: 1.5; color: #4a4538;">Not connected. Connect to see your classes beside these dates, or send them there.</p>
+          <p style="margin: 0; font-size: 14px; line-height: 1.5; color: #4a4538;">See your classes beside these dates.</p>
           <button type="button" style="align-self: flex-start; height: 36px; padding: 0 14px; border-radius: 9px; border: 1px solid rgba(42,39,31,0.18); background: #fdfcf9; font: inherit; font-size: 14px; font-weight: 600; color: #1a1814;">Connect</button>
         </section>
       </aside>
@@ -131,12 +121,6 @@ class Component extends DCLogic {
     const views = ['Agenda', 'Month', 'Week', 'Semester'].map((label, i) => ({
       label, on: i === 0 ? 'true' : 'false',
       style: segBase + (i === 0 ? ' background: #ffffff; color: #1a1814; box-shadow: 0 1px 2px rgba(42,39,31,0.18);' : ' background: transparent; color: #4a4538;'),
-    }));
-    const chipBase = 'height: 36px; padding: 0 14px; border-radius: 999px; font: inherit; font-size: 14px; font-weight: 600; display: inline-flex; align-items: center; gap: 8px;';
-    const courses = [{ label: 'All courses', all: true }, ...Object.keys(COURSES).map((k) => ({ label: k }))].map((c, i) => ({
-      label: c.label, on: 'true',
-      style: chipBase + (i === 0 ? ' border: 1px solid #445D22; background: #445D22; color: #ffffff;' : ' border: 1px solid rgba(42,39,31,0.18); background: #fdfcf9; color: #1a1814;'),
-      swatch: c.all ? 'display: none;' : sw(c.label, 10),
     }));
     const TYPE = {
       Exam: 'display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; border-radius: 6px; background: #f7e6d8; color: #7a4220; font-weight: 600;',
@@ -186,7 +170,7 @@ class Component extends DCLogic {
           (today ? ' background: #445D22; color: #ffffff; font-weight: 700;' : inMonth ? ' color: #1a1814;' : ' color: #6e675a;'),
       });
     }
-    return { views, courses, groups, mini, dows: ['M', 'T', 'W', 'T', 'F', 'S', 'S'] };
+    return { views, groups, mini, dows: ['M', 'T', 'W', 'T', 'F', 'S', 'S'] };
   }
 }
 </script>
