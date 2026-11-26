@@ -200,7 +200,7 @@ describe("QuizQuestion — the question", () => {
     expect(screen.queryByRole("radiogroup")).not.toBeInTheDocument();
     view.rerender(<QuizQuestion session={session} actions={actions} config={null} concept={CONCEPT} userId="user-1" courseId="course-cs101" askConfidence />);
     expect(screen.queryByRole("radiogroup", { name: "Answer choices" })).not.toBeInTheDocument();
-    expect(screen.getByRole("radiogroup", { name: /How sure are you/ })).toBeInTheDocument();
+    expect(screen.getByRole("radiogroup", { name: /How sure/ })).toBeInTheDocument();
     expect(screen.getByTestId("quiz-submit-answer")).toBeDisabled();
     fireEvent.change(input, { target: { value: "2(x+1)" } });
     expect(actions.write).toHaveBeenCalledWith("2(x+1)");
@@ -473,7 +473,7 @@ describe("QuizQuestion — stated confidence (learning-loop spec §13 A132)", ()
     renderScreen(makeSession({ items: [make()] }), withConfidence(), true);
     const group = screen.getByTestId("quiz-confidence");
     expect(group).toHaveAttribute("role", "radiogroup");
-    expect(group).toHaveAccessibleName(/How sure are you\? \(optional\)/);
+    expect(group).toHaveAccessibleName(/^How sure\?$/);
     for (const level of ["guessing", "fairly_sure", "sure"]) {
       expect(screen.getByTestId(`quiz-confidence-${level}`)).toHaveAttribute("aria-checked", "false");
     }
@@ -595,7 +595,7 @@ describe("QuizQuestion — stated confidence (learning-loop spec §13 A132)", ()
     const actions = withConfidence();
     renderScreen(makeSession(), actions);
     expect(screen.queryByTestId("quiz-confidence")).not.toBeInTheDocument();
-    expect(screen.queryByRole("radiogroup", { name: /How sure are you/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("radiogroup", { name: /How sure/ })).not.toBeInTheDocument();
     fireEvent.keyDown(root(), { key: "b" });
     expect(actions.select).toHaveBeenCalledWith(1);
     expect(actions.setConfidence).not.toHaveBeenCalled();

@@ -50,7 +50,7 @@ const checked = () =>
 describe("ConfidenceControl", () => {
   it("is a radio group labelled by its question, with nothing chosen", () => {
     render(<Card />);
-    const group = screen.getByRole("radiogroup", { name: "How sure are you? (optional)" });
+    const group = screen.getByRole("radiogroup", { name: "How sure?" });
     expect(group.getAttribute("data-testid")).toBe("x-confidence");
     const radios = screen.getAllByRole("radio");
     expect(radios.map((r) => r.textContent)).toEqual(["Guessing", "Fairly sure", "Sure"]);

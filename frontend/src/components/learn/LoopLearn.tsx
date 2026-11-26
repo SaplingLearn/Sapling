@@ -56,6 +56,7 @@ import {
   type LoopGoal,
   type LoopGoalProgress,
   type LoopDiagnosis,
+  type LoopLearnerState,
   type LoopLearningScope,
   type LoopOpenSession,
   type LoopPendingGrade,
@@ -106,7 +107,6 @@ import { RatingPrompt } from "./RatingPrompt";
 import { claimWrapUpAsk, useWrapUpAsk } from "./WrapUpRating";
 import { checkMeFailure, checkMeNote, FEEDBACK_PENDING_COPY } from "./checkNote";
 import { TeachActions } from "./TeachActions";
-import { LearnerChip } from "./LearnerChip";
 import { SESSION_CLOSED_DETAIL, sessionRefusal } from "./sessionErrors";
 import { withPlanHistory } from "./loopHistory";
 import { dropInterruptedTurn } from "./chatRetry";
@@ -119,8 +119,8 @@ import { CheckCard } from "./CheckCard";
 import { LoopNotices } from "./LoopNotices";
 import { ReadOnlyTranscript } from "./ReadOnlyTranscript";
 import {
-  conceptAt, conceptGoal, currentConcept, dueLink, findRow, isOpenPhase, linkGoal, nextAfterVerdict, panelPlanOf, phaseText,
-  tutorTopSub, tutorTopTitle,
+  conceptAt, conceptGoal, currentConcept, dueLink, findRow, isOpenPhase, linkGoal, nextAfterVerdict, panelPlanOf, learnProgressOf,
+  tutorTopTitle,
   weakestConcept, type ApprovedPlan,
 } from "./tutor/sessionView";
 
@@ -223,6 +223,16 @@ type FocusAfter = "answered" | "turn" | "check-me" | "teaching" | "probe-answer"
 const anyOf = (...flags: boolean[]): boolean => flags.some(Boolean);
 /** True when every flag is set. */
 const allOf = (...flags: boolean[]): boolean => flags.every(Boolean);
+
+/** The current concept's belief as a state hook only (data-* for the E2E
+ *  lanes and tests, docs/frontend-testids.md): the redesign removed the
+ *  visible learner chip, which restated the concept and its band. */
+function LearnerStateHook({ learner }: { learner: LoopLearnerState | undefined }) {
+  return (
+    <span hidden data-testid="loop-learner-state" data-node-id={learner?.node_id ?? ""}
+      data-p-known={learner ? String(learner.p_known) : ""} data-band={learner?.band ?? ""} />
+  );
+}
 
 export function LoopLearn() {
   const { userId } = useUser();
@@ -1175,7 +1185,7 @@ export function LoopLearn() {
       requestAnimationFrame(() => { if (g === gen.current) goalButton.current?.focus(); });
     } catch (error) {
       if (g !== gen.current) return;
-      setGoalError(humanizeError(error, "Couldn't update your learning scope. Try again."));
+      setGoalError(humanizeError(error, "Couldn't save your goal. Try again."));
       if (extractErrorDetail(error).status === 409) {
         try {
           const latest = await getLoopSessionStatus(sid, userId);
@@ -1809,7 +1819,6 @@ export function LoopLearn() {
   // K08: the concept the session is on — the plan cursor the server moves
   const currentNodeId = currentConcept(approvedPlan, focusNodeId);
   const mapNodeId = currentNodeId ?? focusNodeId;
-  const learner = state.focusNodeId ? state.learnerState[state.focusNodeId] : undefined;
   const treeHref = mapNodeId ? `/tree?node=${encodeURIComponent(mapNodeId)}` : "/tree";
   const teaching = TEACHING.includes(state.phase);
   const streaming = streamingText !== null;
@@ -1891,14 +1900,10 @@ export function LoopLearn() {
   const inSession = view === "session";
   const sessionRow = findRow(sessionRows, sessionId);
   const panelPlan = panelPlanOf(state.phase, plan, approvedPlan);
-  /** The TopBar's line under the title: where the session is (no step pills). */
-  const phaseLine = (): string => {
-    if (readOnly) return "Wrapped up · read-only";
-    if (!sessionId) return starting ? "Starting…" : "";
-    return phaseText(state.phase, panelPlan, currentNodeId, conceptNames);
-  };
+  const learner = state.focusNodeId ? state.learnerState[state.focusNodeId] : undefined;
+  /** "2 of 4" beside the stepper's Learn step (the TopBar has no phase line). */
+  const learnProgress = learnProgressOf(state.phase, panelPlan, currentNodeId);
   const topTitle = () => tutorTopTitle(view, course, readOnly, sessionRow, sessionId);
-  const topSub = () => tutorTopSub(view, phaseLine);
   const showPanel = allOf(inSession, !isMobile, layout.panelOpen, !!sessionId, !readOnly, !sessionsError, !noCourses);
   // A phone has no sidebar or panel on screen: the map and New session sit here.
   const renderMobileActions = () => (
@@ -1963,15 +1968,12 @@ export function LoopLearn() {
       )}
       <div className={tutorStyles.topTitle}>
         {course && view === "session" ? (
-          <button type="button" className={`label-micro ${tutorStyles.crumb}`} data-testid="tutor-crumb-course"
+          <button type="button" className={tutorStyles.crumb} data-testid="tutor-crumb-course"
             onClick={() => showCourse(course.course_id)}>
-            {course.course_code ? `${course.course_code} · ` : ""}{course.nickname || course.course_name}
+            {course.nickname || course.course_name}
           </button>
-        ) : (
-          <div className={`label-micro ${tutorStyles.crumbStatic}`}>{view === "course" ? "Course" : "Tutor"}</div>
-        )}
+        ) : null}
         <h1 className="h-serif">{topTitle()}</h1>
-        <div className={tutorStyles.topSub} data-testid="tutor-phase-line">{topSub()}</div>
       </div>
       {renderTopActions()}
     </header>
@@ -2017,7 +2019,6 @@ export function LoopLearn() {
   );
   const notices = renderNotices();
 
-  const learnerChip = <LearnerChip learner={learner} names={conceptNames} />;
 
   /** Between checks: Continue (after feedback), Check me, the plan's first
    *  concept, and the check's status line. A render call, not a component. */
@@ -2099,7 +2100,7 @@ export function LoopLearn() {
       ) : (
         <>
           {state.phase === "feedback" && verdict && (
-            <VerdictBanner verdict={verdict.verdict} credit={verdict.credit} reasons={verdict.reasons} concept={conceptAt(conceptNames, verdict.nodeId, approvedPlan)}
+            <VerdictBanner verdict={verdict.verdict} credit={verdict.credit} reasons={verdict.reasons}
               next={nextAfterVerdict(approvedPlan, verdict.nodeId, conceptNames)} />
           )}
           {renderTeachActions(firstConcept)}
@@ -2289,8 +2290,6 @@ export function LoopLearn() {
       skills={panelSkills()}
       dueCount={lists.dueReviews}
       dueHref={dueHref}
-      learnerChip={learnerChip}
-      hasLearner={!!learner}
       treeHref={treeHref}
       showTreeLink={allOf(!isMobile, treeVisible)}
       onHide={layout.hidePanel}
@@ -2366,17 +2365,13 @@ export function LoopLearn() {
     return (
       <>
         {/* the conversation column's first row (design T4-T10, anatomy D) */}
-        {live && <PhaseStepper phase={state.phase} />}
+        {live && <PhaseStepper phase={state.phase} learnProgress={learnProgress} />}
+        {live && <LearnerStateHook learner={learner} />}
         {live && state.phase !== "close" && (
           <ScopeSummary error={scopeError} ready={scopeReady} goal={goal} names={conceptNames} onRetry={() => void retryLearningScope()} />
         )}
         {goalProgress && goal && <GoalProgressNote progress={goalProgress} names={conceptNames} />}
         {notices}
-        {allOf(!showPanel, live, !!learner) && (
-          <div className={styles.learnerRow}>
-            {learnerChip}
-          </div>
-        )}
         <ChangeFade changeKey={`step-${stepOf(state.phase)}`} className={styles.fill}>{body}</ChangeFade>
       </>
     );

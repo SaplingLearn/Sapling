@@ -131,10 +131,9 @@ export function ProbePanel({
             data-difficulty={item.difficulty}
             className={`card ${tutorStyles.qcard}`}
           >
-            <div className={tutorStyles.qhead}>
-              <h3 id={headingId} className={`label-micro ${tutorStyles.qlabel}`}>Check-in · Question {count + (reference === null ? 1 : 0)}</h3>
-              <span className="chip">No hints</span>
-            </div>
+            {/* The stepper says Check-in and the greeting says "no hints":
+                the card names only its question number. */}
+            <h3 id={headingId} className={tutorStyles.qmeta}>Question {count + (reference === null ? 1 : 0)}</h3>
             <p id={promptId} className={tutorStyles.q}>{item.prompt}</p>
             {reference === null ? (
               <>

@@ -87,7 +87,6 @@ export function WrapUpRating({ sessionId, topic }: { sessionId: string; topic?: 
 
   return (
     <section data-testid="loop-close-rating" aria-labelledby="loop-close-rating-h" className={`card fade-in ${styles.card}`}>
-      <span className="label-micro">Your feedback</span>
       <h3 id="loop-close-rating-h" className={`h-serif ${styles.heading}`}>How was that session?</h3>
       <SessionRatingScale value={rating} onSelect={setRating} disabled={locked} testIdPrefix="loop-close-rating" />
       {rating !== null && sent !== "sent" && (

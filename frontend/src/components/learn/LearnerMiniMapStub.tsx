@@ -83,13 +83,12 @@ export function LearnerMiniMapStub({
       aria-labelledby="loop-close-minimap-h"
     >
       <div>
-        <span className="label-micro">Connect these ideas</span>
         <h3 id="loop-close-minimap-h" className={`h-serif ${styles.title}`}>
           How do they link?
         </h3>
       </div>
       <p className={styles.lede}>
-        Tap one concept, then another to draw a link. Just for you — nothing is saved.
+        Tap two concepts to link them. Just for you. Nothing is saved.
       </p>
       <div
         data-testid="loop-close-minimap-chips"

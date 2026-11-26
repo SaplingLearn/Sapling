@@ -16,7 +16,7 @@ it("requires confirmation and keeps the thirteenth target out until one is remov
   expect((screen.getByRole("checkbox", { name: "Concept 12" }) as HTMLInputElement).disabled).toBe(true);
   fireEvent.click(screen.getByRole("checkbox", { name: "Concept 0" }));
   fireEvent.click(screen.getByRole("checkbox", { name: "Concept 12" }));
-  fireEvent.click(screen.getByRole("button", { name: "Use this scope" }));
+  fireEvent.click(screen.getByRole("button", { name: "Save goal" }));
   expect(save.mock.calls[0][0].target_node_ids).toHaveLength(12);
   expect(save.mock.calls[0][0].target_node_ids).not.toContain("n0");
   expect(save.mock.calls[0][0].target_node_ids).toContain("n12");
@@ -30,10 +30,11 @@ it("does not turn range, contradictory, or untested evidence into mastery claims
       independent_observations: 0, observations: 2, tested_difficulties: [], available_difficulties: [1, 2, 3], contradictory_difficulties: [],
     })),
   }} />);
-  fireEvent.click(screen.getByText("Evidence by concept (6)"));
-  expect(screen.getByTestId("loop-diagnosis-untested").textContent).toContain("Not assessed");
-  expect(screen.getByTestId("loop-diagnosis-inconsistent").textContent).toContain("Mixed evidence");
-  expect(screen.getByTestId("loop-diagnosis-above_range").textContent).toContain("upper limit was not found");
-  expect(screen.getByTestId("loop-diagnosis-below_range").textContent).toContain("independent success level was not found");
-  expect(screen.getByTestId("loop-diagnosis").textContent).toContain("could not bound every concept");
+  fireEvent.click(screen.getByText("By concept (6)"));
+  expect(screen.getByTestId("loop-diagnosis-untested").textContent).toContain("not checked yet");
+  expect(screen.getByTestId("loop-diagnosis-inconsistent").textContent).toContain("mixed results so far");
+  expect(screen.getByTestId("loop-diagnosis-above_range").textContent).toContain("right even on the hardest questions");
+  expect(screen.getByTestId("loop-diagnosis-below_range").textContent).toContain("starting with the basics");
+  expect(screen.getByTestId("loop-diagnosis").textContent).toContain("The check-in covered some concepts.");
+  expect(screen.getByTestId("loop-diagnosis").textContent).not.toMatch(/master|bound|independent|observation/i);
 });

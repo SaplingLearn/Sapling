@@ -85,5 +85,5 @@ export function tutorPauseMessage(resetAt: string | null, sessionCapped: boolean
  *  held (a novice-band concept, A20): say so beside the button. */
 export function checkPausedNote(pause: LoopBudgetPause): string {
   const until = pause.sessionCapped ? " for this session" : pause.resetAt ? ` until ${formatResetAt(pause.resetAt)}` : " for now";
-  return `Checks on this concept wait${until}: you're just starting it, and the AI budget is paused. Keep going with review on Study.`;
+  return `Checks on this concept wait${until}: you're just starting it, and AI features are paused. Keep going with review on Study.`;
 }

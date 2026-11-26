@@ -1,15 +1,14 @@
 // @vitest-environment jsdom
 /**
- * W4.4: calm "Key verified" chrome on the check card only when the pose
- * carries `key_verified` (server: check_items.canonical_verified). Never
- * invents trust chrome without that signal.
+ * The check card's chrome. W4.4's "Key verified" line was removed in the
+ * Tutor redesign's subtract pass (trust chrome that changed no decision);
+ * W4.1a's honest withheld-figure line stays.
  */
 import React, { useState } from "react";
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { LoopCheckItem } from "@/lib/api";
-import { KEY_VERIFIED_HINT, KEY_VERIFIED_LABEL } from "@/lib/loopTrustChrome";
 import { CheckCard } from "./CheckCard";
 import { type Draft } from "./loopShared";
 
@@ -54,14 +53,11 @@ function renderCard(item: LoopCheckItem) {
   return render(<Harness />);
 }
 
-describe("CheckCard W4.4 key-verified chrome", () => {
-  it("shows Key verified when the pose carries key_verified", () => {
+describe("CheckCard chrome", () => {
+  it("shows no Key verified line, even when the pose carries key_verified", () => {
     renderCard({ ...baseItem, key_verified: true });
-    const chrome = screen.getByTestId("loop-key-verified");
-    expect(chrome.textContent).toBe(KEY_VERIFIED_LABEL);
-    expect(chrome).toHaveAttribute("role", "status");
-    expect(chrome).toHaveAttribute("title", KEY_VERIFIED_HINT);
-    expect(chrome.getAttribute("aria-label")).toContain(KEY_VERIFIED_HINT);
+    expect(screen.queryByTestId("loop-key-verified")).toBeNull();
+    expect(screen.queryByText(/Key verified/)).toBeNull();
   });
 
   it("W4.1a: shows withheld figure slot when pose.figure.status is withheld", () => {

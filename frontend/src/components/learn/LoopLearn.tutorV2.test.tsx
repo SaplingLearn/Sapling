@@ -319,7 +319,7 @@ describe("F9 — the check-in's reason field is named by its visible label", () 
 
   it("the check card's fields are named by their visible labels too", async () => {
     await withCheckItem();
-    expect(screen.getByRole("textbox", { name: "Your answer — this is what gets checked" })).toBe(screen.getByTestId("loop-attempt-input"));
+    expect(screen.getByRole("textbox", { name: "Your answer" })).toBe(screen.getByTestId("loop-attempt-input"));
   });
 });
 
@@ -544,10 +544,10 @@ describe("U5 — the conversation keeps a readable width", () => {
   });
 });
 
-describe("U8 — the wrap-up's caption explains only a list that is there", () => {
+describe("U8 — the wrap-up has no caption under its list (subtract pass)", () => {
   it.each([
     ["nothing measured: no caption", [], false],
-    ["concepts measured: the caption", [{ node_id: "n1", p_before: 0.3, p_after: 0.6 }], true],
+    ["concepts measured: still no caption", [{ node_id: "n1", p_before: 0.3, p_after: 0.6 }], false],
   ] as const)("%s", async (_, concepts, shown) => {
     api.closeLoopSession.mockResolvedValue({ close: { ...closeRecord, concepts }, model_written: false, close_phase: "teach" });
     await resumedTeach();
@@ -762,10 +762,10 @@ describe("K08 — the current concept follows the plan cursor the server moved",
     fireEvent.change(screen.getByTestId("loop-attempt-input"), { target: { value: "n == 0" } });
     fireEvent.click(screen.getByTestId("loop-attempt-submit"));
     const banner = await screen.findByTestId("loop-verdict");
-    expect(banner.textContent).toContain("Recursion · check"); // the graded concept
+    expect(banner.textContent).not.toContain("· check"); // the verdict has no eyebrow (subtract pass)
     expect(banner.textContent).toContain("Next up: Stacks.");
     expect(banner.textContent).not.toContain("same idea");
-    expect(screen.getByTestId("tutor-phase-line").textContent).toBe("Stacks · concept 2 of 2");
+    expect(screen.getByTestId("tutor-learn-progress").textContent).toBe(" 2 of 2");
     const current = screen.getByTestId("loop-rail").querySelector('li[aria-current="step"]');
     expect(current?.textContent).toContain("Stacks");
     await waitFor(() => expect((screen.getByTestId("loop-check-me") as HTMLButtonElement).disabled).toBe(false));
@@ -781,7 +781,7 @@ describe("K08 — the current concept follows the plan cursor the server moved",
     await resumedTeach();
     fireEvent.click(await screen.findByTestId("loop-check-me"));
     expect((await screen.findByTestId("loop-check-prompt")).textContent).toContain("Stacks");
-    expect(screen.getByTestId("tutor-phase-line").textContent).toBe("Stacks · concept 2 of 2");
+    expect(screen.getByTestId("tutor-learn-progress").textContent).toBe(" 2 of 2");
   });
 
   it("a not-yet that stays on the concept still says to try another on the same idea", async () => {
@@ -797,7 +797,7 @@ describe("K08 — the current concept follows the plan cursor the server moved",
     fireEvent.change(screen.getByTestId("loop-attempt-input"), { target: { value: "n == 0" } });
     fireEvent.click(screen.getByTestId("loop-attempt-submit"));
     expect((await screen.findByTestId("loop-verdict")).textContent).toContain("Try another one on the same idea.");
-    expect(screen.getByTestId("tutor-phase-line").textContent).toBe("Recursion · concept 1 of 2");
+    expect(screen.getByTestId("tutor-learn-progress").textContent).toBe(" 1 of 2");
   });
 });
 
@@ -1153,5 +1153,76 @@ describe("K34 — the check's answer box stops at the grader's 4,000-character c
   it("the answer box carries the cap the server enforces", async () => {
     await withCheckItem();
     expect(screen.getByTestId("loop-attempt-input")).toHaveAttribute("maxLength", "4000");
+  });
+});
+
+describe("SUB — no model jargon on the Tutor's student surfaces (redesign subtract pass)", () => {
+  // The audit's banned-terms list: words that name the machinery, not the
+  // student's learning. Mastery may appear only on the badge, which these
+  // surfaces do not render.
+  const BANNED = /\b(probes?|rungs?|H[0-6]|p_known|BKT|FSRS|bounded|independent(ly)?|observations?|evidence|eligible|budget|scope|grader|checks drafting|mastery)\b/i;
+  const diagnosis = {
+    status: "limited", stop_reason: "coverage_limit", skills: [{
+      node_id: "n1", status: "partial", floor_difficulty: 1, ceiling_difficulty: null, independent_correct: 1, independent_incorrect: 1,
+      independent_observations: 2, observations: 2, tested_difficulties: [1], available_difficulties: [1, 2, 3], contradictory_difficulties: [],
+    }],
+  };
+  // Text node by text node, so adjacent elements' words never run together
+  // ("Save" + "Cancel" would hide a banned word from \b).
+  function visibleText(): string {
+    const copy = document.body.cloneNode(true) as HTMLElement;
+    copy.querySelectorAll("[hidden], script, style").forEach((el) => el.remove());
+    const walker = document.createTreeWalker(copy, NodeFilter.SHOW_TEXT);
+    const parts: string[] = [];
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) parts.push(node.textContent ?? "");
+    return parts.join(" ");
+  }
+  const expectClean = () => expect(visibleText()).not.toMatch(BANNED);
+
+  it("the check-in card", async () => {
+    api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "probe")]));
+    api.getLoopSessionStatus.mockResolvedValue(status({ loop_phase: "probe", phase: "probe" }));
+    api.nextLoopProbe.mockResolvedValue({ ...probeItem, format: "mc_reason", options: [{ letter: "A", text: "x" }, { letter: "B", text: "y" }] });
+    render(<LoopLearn />);
+    await screen.findByTestId("loop-probe-reason");
+    expectClean();
+  });
+
+  it("the goal editor", async () => {
+    api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "probe")]));
+    api.getLoopSessionStatus.mockResolvedValue(status({ loop_phase: "probe", phase: "probe" }));
+    api.nextLoopProbe.mockResolvedValue(probeItem);
+    api.getGraph.mockResolvedValue({ nodes: [{ id: "n1", name: "Recursion" }], edges: [], stats: {} });
+    render(<LoopLearn />);
+    const button = await screen.findByTestId("loop-set-goal");
+    await waitFor(() => expect((button as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(button);
+    await screen.findByRole("form", { name: "Learning goal" });
+    expectClean();
+  });
+
+  it("the plan card, with what the check-in showed opened", async () => {
+    api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "plan")]));
+    api.getLoopSessionStatus.mockResolvedValue(status({ loop_phase: "plan", phase: "plan", diagnosis }));
+    api.getLoopPlan.mockResolvedValue({ concepts: [{ node_id: "n1", concept_name: "Recursion", kind: "new", p_known: 0.3 }], order: [] });
+    render(<LoopLearn />);
+    await screen.findByTestId("loop-plan-approve");
+    fireEvent.click(await screen.findByText("By concept (1)"));
+    expectClean();
+  });
+
+  it("the lesson and its check card", async () => {
+    await withCheckItem();
+    expectClean();
+  });
+
+  it("the wrap-up", async () => {
+    api.closeLoopSession.mockResolvedValue({
+      close: { ...closeRecord, concepts: [{ node_id: "n1", p_before: 0.3, p_after: 0.6 }] }, model_written: false, close_phase: "teach",
+    });
+    await resumedTeach();
+    fireEvent.click(screen.getByTestId("loop-close-button"));
+    await screen.findByTestId("loop-close-done");
+    expectClean();
   });
 });

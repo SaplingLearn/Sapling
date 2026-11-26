@@ -7,8 +7,9 @@ import styles from "./VerdictBanner.module.css";
 
 const VERDICT_COPY: Record<string, { title: string; note: string }> = {
   correct: { title: "Correct", note: "That answer counts toward this concept." },
-  not_yet: { title: "Not yet", note: "The tutor's reply above shows what to fix." },
-  idk: { title: "Not yet", note: "No problem — the tutor's reply above walks through it." },
+  // The tutor's feedback turn explains a miss; the banner adds only where next.
+  not_yet: { title: "Not yet", note: "" },
+  idk: { title: "Not yet", note: "" },
 };
 
 /** #866 K07: what a correct answer earned (the server's `credit`, the weight
@@ -45,11 +46,11 @@ function notYetNext(next: string | null | undefined): string {
 /** Wireframe T9: the graded check's verdict, above the tutor's feedback.
  *  `next`: where the plan went after this grade — absent while the next check
  *  stays on this concept, the next concept's name, or null when none is left. */
-export function VerdictBanner({ verdict, concept, next, credit, reasons }: {
-  verdict: string; concept: string | null; next?: string | null; credit?: LoopCredit | null; reasons?: LoopCreditReason[];
+export function VerdictBanner({ verdict, next, credit, reasons }: {
+  verdict: string; next?: string | null; credit?: LoopCredit | null; reasons?: LoopCreditReason[];
 }) {
   const known = VERDICT_COPY[verdict];
-  const copy = known && verdict !== "not_yet" ? known : { ...VERDICT_COPY.not_yet, note: VERDICT_COPY.not_yet.note + notYetNext(next) };
+  const copy = known && verdict !== "not_yet" ? known : { ...VERDICT_COPY.not_yet, note: (VERDICT_COPY.not_yet.note + notYetNext(next)).trim() };
   const yes = verdict === "correct";
   const note = yes && (credit === "full" || credit === "partial" || credit === "none") ? creditNote(credit, reasons) : copy.note;
   // The banner rises into place (`fadeUp`); its title then confirms the grade:
@@ -60,9 +61,8 @@ export function VerdictBanner({ verdict, concept, next, credit, reasons }: {
   const pulse = yes ? m.pulse("correct") : verdict === "not_yet" ? m.pulse("wrong") : null;
   return (
     <motion.div {...m.fadeUp} data-testid="loop-verdict" data-verdict={verdict} data-credit={yes ? credit ?? undefined : undefined} className={yes ? tutorStyles.verdictYes : tutorStyles.verdictNo}>
-      {concept && <span className="label-micro">{concept} · check</span>}
       <motion.div key={verdict} {...pulse} className={yes ? `${styles.title} ${styles.titleYes}` : styles.title}>{copy.title}</motion.div>
-      <div className={styles.note}>{note}</div>
+      {note && <div className={styles.note}>{note}</div>}
     </motion.div>
   );
 }

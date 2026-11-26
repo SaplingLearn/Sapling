@@ -34,8 +34,6 @@ function panel(
       skills={[]}
       dueCount={0}
       dueHref="/study"
-      learnerChip={null}
-      hasLearner={false}
       map={<div data-testid="map-slot" />}
       treeHref="/tree"
       showTreeLink

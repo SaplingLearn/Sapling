@@ -12,7 +12,6 @@ import styles from "./CheckCard.module.css";
 import { modalOpen } from "./modalOpen";
 import { type Draft, FIELD_CLASS, type HintView, focusAnswerStart } from "./loopShared";
 import { LOOP_ANSWER_MAX } from "@/lib/inputLimits";
-import { KEY_VERIFIED_HINT, KEY_VERIFIED_LABEL } from "@/lib/loopTrustChrome";
 
 /** Plain-English lines for POST /hint's denial reasons (routes/learn_loop.py::hint). */
 const HINT_DENIED_COPY: Record<string, string> = {
@@ -82,26 +81,10 @@ export function CheckCard({
         data-format={item.format}
         className={styles.prompt}
       >
-        <div className={tutorStyles.qhead}>
-          <h2 id={headingId} className={`label-micro ${tutorStyles.qlabel}`}>Check your understanding</h2>
-          {conceptName && <span className="chip">{conceptName}</span>}
-        </div>
+        {/* One plain line names the card (the redesign's one-label rule: no
+            eyebrow, no chip); it stays the card's heading for screen readers. */}
+        <h2 id={headingId} className={tutorStyles.qmeta}>{conceptName || "Question"}</h2>
         <p id={promptId} className={tutorStyles.q}>{item.prompt}</p>
-        {/* W4.4: calm trust chrome only when the pose carries key_verified
-            (server: check_items.canonical_verified). Pairs with W4.3's
-            materials_grounded on teach turns — separate surfaces, no clutter.
-            Tooltip explains independent key check (not "trust the AI"). */}
-        {item.key_verified && (
-          <div
-            data-testid="loop-key-verified"
-            role="status"
-            title={KEY_VERIFIED_HINT}
-            aria-label={`${KEY_VERIFIED_LABEL}. ${KEY_VERIFIED_HINT}`}
-            className={styles.trustChrome}
-          >
-            {KEY_VERIFIED_LABEL}
-          </div>
-        )}
         {/* W4.1a: honest empty figure slot when the pose says the item is
             visual but no drawable asset is attached yet. Never invents SVG. */}
         {item.figure?.status === "withheld" && (
@@ -142,7 +125,7 @@ export function CheckCard({
         </>
       ) : (
         <>
-        <label className={`${tutorStyles.fl} ${styles.fieldLabel}`} htmlFor={`${ids}-answer`}>Your answer — this is what gets checked</label>
+        <label className={`${tutorStyles.fl} ${styles.fieldLabel}`} htmlFor={`${ids}-answer`}>Your answer</label>
         <textarea
           id={`${ids}-answer`}
           data-testid="loop-attempt-input"
@@ -163,14 +146,14 @@ export function CheckCard({
           }}
         />
         {/* W2.3: optional; never graded / never mastery — answer box above is what gets checked */}
-        <label className={`${tutorStyles.fl} ${styles.fieldLabel}`} htmlFor={`${ids}-reasoning`}>Your reasoning (optional)</label>
+        <label className={`${tutorStyles.fl} ${styles.fieldLabel}`} htmlFor={`${ids}-reasoning`}>Your reasoning, not graded</label>
         <textarea
           id={`${ids}-reasoning`}
           data-testid="loop-attempt-reasoning"
           maxLength={LOOP_ANSWER_MAX}
           className={FIELD_CLASS}
           rows={2}
-          placeholder="Show your thinking — not graded"
+          placeholder="Show your thinking…"
           value={draft.reasoning}
           disabled={busy}
           onChange={(e) => {

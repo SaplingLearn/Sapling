@@ -97,7 +97,7 @@ renders the element.
 | Admin analytics | `admin-analytics` | `frontend/src/components/screens/AdminAnalytics.tsx` (the `/admin/analytics` dashboard — range presets/inputs, cost group-by toggle, per-panel retry) — added with the #121 data layer |
 | Admin check-item review | `admin-items`, `admin-audit` | `frontend/src/components/screens/AdminCheckItems.tsx` (the `/admin/check-items` queue of learning-loop check items the item-flaw linter flagged, a key hold withdraws or students reported, with Approve / Retire — learning-loop spec §13 A113, A124 — one course's item statistics and its "Flagged by data" view — A131 — and its Key audit tab, a stratified sample of one course's keys with the key-error rate — A124) |
 | Report a question | passed in (`loop-check-report`, `review-report`) | `frontend/src/components/learn/ReportQuestion.tsx` (the shared "Report this question" control; the `loop` and `review` call sites write its prefix — spec §13 A113, GitHub #695) |
-| Stated confidence | passed in (`loop-check-confidence`, `loop-probe-confidence`, `review-confidence`, `quiz-confidence`) | `frontend/src/components/learn/ConfidenceControl.tsx` (the shared optional "How sure are you?" radio group — Guessing / Fairly sure / Sure — on the loop's check and probe cards, the review card and every quiz question, never the post-test; the call sites write its prefix — spec §13 A127, A132) |
+| Stated confidence | passed in (`loop-check-confidence`, `loop-probe-confidence`, `review-confidence`, `quiz-confidence`) | `frontend/src/components/learn/ConfidenceControl.tsx` (the shared optional "How sure?" radio group — Guessing / Fairly sure / Sure — on the loop's check and probe cards, the review card and every quiz question, never the post-test; the call sites write its prefix — spec §13 A127, A132) |
 | Landing knowledge graph demo | `landing-graph` | `frontend/src/components/marketing/graph/KnowledgeGraphDemo.tsx` (the pre-auth landing page's interactive course-picker + laid-out concept graph, wearing the `landing-surface` chrome with an inspector rail and mastery legend since #344 step 3) |
 | Landing feature bands | `landing-band` | `frontend/src/components/marketing/FeatureBand.tsx` (the three full-width bands below the graph; content + side-alternation in `featureBands.tsx`, #344 step 2) |
 | Landing surface bento | `landing-bento` | `frontend/src/components/marketing/SurfaceBento.tsx` (the four-tile grid of built product surfaces, #344 step 2) |
@@ -386,7 +386,7 @@ journeys keep anchoring: `quiz-panel`, `quiz-start`,
 | `quiz-material-context` | reports whether retrieved course material, catalog context, or general knowledge was supplied |
 | `quiz-seg-format` | question-format selector; each option uses `quiz-seg-format-{value}` |
 | `quiz-answer-option-{label}` | one answer choice (`ui/AnswerOption`), suffixed with its label (`A`…) |
-| `quiz-confidence` | the optional "How sure are you?" radio group under the answer, on multiple-choice and written questions alike (`learn/ConfidenceControl`; learning-loop spec §13 A132) — no request of its own, the level rides the question's `/answer`; shown only while the learning loop is on for the student (#866 K46) |
+| `quiz-confidence` | the optional "How sure?" radio group under the answer, on multiple-choice and written questions alike (`learn/ConfidenceControl`; learning-loop spec §13 A132) — no request of its own, the level rides the question's `/answer`; shown only while the learning loop is on for the student (#866 K46) |
 | `quiz-confidence-{level}` | one level in it: `quiz-confidence-guessing` / `-fairly_sure` / `-sure` (`aria-checked`) |
 | `quiz-confidence-clear` | its "Clear", present once a level is chosen — takes the choice back (nothing is sent) |
 | `quiz-submit-answer` | the footer's primary button while the answer is unrevealed |
@@ -1060,7 +1060,7 @@ loop active (`GET /api/learn/loop/review/active` 200 — a gate-only probe; the 
 | `review-answer-input` | free-response answer textarea (a `free` check) |
 | `review-option-{letter}` | one stored `mc_reason` option radio, suffixed with the option's own letter (stored order; correctness never marked, A22); the radio group is named by the question (spec §13 A135) |
 | `review-reason-input` | the one-sentence reason textarea of an `mc_reason` check |
-| `review-confidence` | the optional "How sure are you?" radio group on a check, never a flashcard (spec §13 A127; shared `ConfidenceControl`); hidden once the answer is graded |
+| `review-confidence` | the optional "How sure?" radio group on a check, never a flashcard (spec §13 A127; shared `ConfidenceControl`); hidden once the answer is graded |
 | `review-confidence-{guessing,fairly_sure,sure}` | one level; a chosen one rides `/review/answer` as `confidence` |
 | `review-confidence-clear` | "Clear" — takes the choice back |
 | `review-submit` | "Check" / "Try again" — sends a check answer |
@@ -1128,7 +1128,7 @@ inside `loop-messages` is `ChatPanel`, whose own `tutor-*` ids
 | `tutor-session-row-{sessionId}` | one session of every session's list: the button that opens it, then its Rename and Delete (#866 K31, as the legacy Learn screen's recent sessions) |
 | `tutor-session-rename-{sessionId}` / `tutor-session-name-{sessionId}` | Rename turns the row's name into the field `tutor-session-name-{sessionId}` (Enter or leaving it saves, Escape keeps the name) |
 | `tutor-session-delete-{sessionId}` | Delete, then "Confirm delete" within 3 s; the session leaves every list, and the screen lets go of it if it was on screen |
-| `tutor-phase-line` | the TopBar's line under the title: Check-in / Plan · N concepts / "<concept> · concept i of n" (the approved plan's cursor, which a turn or Check me that moves it reports) / Wrap-up / "Wrapped up · read-only" |
+| `tutor-learn-progress` | inside the stepper's current Learn step only: " i of n", the approved plan's cursor (a turn or Check me that moves it reports it); absent on a one-concept plan and in every other phase. It replaced the TopBar's `tutor-phase-line`, removed in the Tutor redesign's subtract pass (the stepper already said the phase) |
 | `tutor-phase-stepper` | the first row of the conversation column (`learn/tutor/PhaseStepper.tsx`): the ordered Check-in · Plan · Learn · Wrap-up list (`<ol aria-label="Session progress">`); each `li` has `data-state` = done / current / todo and the current one has `aria-current="step"` |
 | `tutor-turn` | a `ChatPanel` tutor turn drawn on the page (`turnStyle="page"`, `PageTurn`: the tutor's mark and name over the text, no bubble); `data-visually-hidden` while unpainted |
 | `tutor-session-map` | the session panel's knowledge map (`learn/tutor/SessionMap.tsx`): fixed mastery colours, no zoom buttons; it frames its nodes until the student zooms or pans it, and re-frames on a double-click or a new node set |
@@ -1165,14 +1165,14 @@ inside `loop-messages` is `ChatPanel`, whose own `tutor-*` ids
 | `loop-verdict` | wireframe T9: the graded check's verdict over the feedback; `data-verdict` = correct / not_yet / idk; a not_yet names the next concept ("Next up: …") when the grade moved the plan on. On a correct verdict `data-credit` = `full` / `partial` / `none`, the weight the answer's evidence was journaled at (#866 K07; absent from an older server); a partial one names what reduced it (the response's `credit_reasons`: a hint, a same-session re-check, a low-confidence grade, a multi-concept item) |
 | `loop-close-new-session` | the wrap-up's "Start a new session" (to the Tutor home) |
 | `tutor-attach` | the composer's "+" next to Send: opens the Library to add material |
-| `loop-learner-state` | the current concept's belief; `data-node-id`, `data-p-known`, `data-band` (present, empty, before any event) |
+| `loop-learner-state` | a hidden state hook (no visible chip since the Tutor redesign's subtract pass): the current concept's belief; `data-node-id`, `data-p-known`, `data-band` (present, empty, before any event) |
 | `loop-probe-greeting` | the session opener above the check-in (spec §13 A121: a template — a welcome and the check-in's intro, never teaching or a question) |
 | `loop-probe-item` | the current probe card; `data-question-hash` |
 | `loop-probe-input` | free/teachback probe answer textarea |
 | `loop-probe-options` | the options' radio group (`role="radiogroup"`, named by the question; spec §13 A135): one tab stop, the arrow keys move and choose, Home / End choose the ends |
 | `loop-probe-option-{letter}` | one served `mc_reason` option (stored order; never marked correct, A22); `role="radio"`, named "{letter}. {text}" |
 | `loop-probe-reason` | the one-sentence reason input (`mc_reason`) |
-| `loop-probe-confidence` | the optional "How sure are you?" radio group on the probe card (spec §13 A127; `role="radiogroup"`, labelled by its question): one tab stop, arrow keys move and choose; nothing chosen = nothing sent |
+| `loop-probe-confidence` | the optional "How sure?" radio group on the probe card (spec §13 A127; `role="radiogroup"`, labelled by its question): one tab stop, arrow keys move and choose; nothing chosen = nothing sent |
 | `loop-probe-confidence-{guessing,fairly_sure,sure}` | one level (`role="radio"`, `aria-checked`); a chosen one rides `/probe/answer` as `confidence` (never with an idk) |
 | `loop-probe-confidence-clear` | "Clear" — takes the choice back (shown only while one is chosen) |
 | `loop-probe-submit` | submit the probe answer (`/probe/answer`) |
@@ -1194,14 +1194,13 @@ inside `loop-messages` is `ChatPanel`, whose own `tutor-*` ids
 | `loop-check-me` | "Check me": posts `/check/next` when no item is current (A27) |
 | `loop-check-prompt` | the current check pose (`check.prompt`, A17/A27); `data-question-hash`, `data-format` |
 | `loop-materials-grounded` | W4.3: calm "Grounded in your materials" status under a teach/opener assistant turn when the server sent `materials_grounded: true` (passages in the prompt); `title` / `aria-label` explain course-material grounding (never a cite list) |
-| `loop-key-verified` | W4.4: calm "Key verified" status on the check card when the pose carries `key_verified: true` (`check_items.canonical_verified`); `title` / `aria-label` explain independent key check (not AI vouching); absent otherwise — never invented client-side |
 | `loop-figure-withheld` | W4.1a: honest empty figure slot when pose carries `figure.status === "withheld"` (visual surface, no drawable asset yet); never invents SVG client-side |
 | `loop-attempt-input` | free/teachback attempt textarea |
 | `loop-attempt-reasoning` | W2.3: optional "Your reasoning" textarea on free/teachback checks only (never graded / never mastery; sealed as `sessions.loop_state` `reasoning_encrypted`); absent on `mc_reason` |
 | `loop-attempt-options` | the attempt box's options radio group, as `loop-probe-options` |
 | `loop-attempt-option-{letter}` | one served `mc_reason` option in the attempt box |
 | `loop-attempt-reason` | the one-sentence reason input in the attempt box (`mc_reason`) |
-| `loop-check-confidence` | the optional "How sure are you?" radio group on the check card (spec §13 A127), as `loop-probe-confidence`; it never holds up `loop-attempt-submit` |
+| `loop-check-confidence` | the optional "How sure?" radio group on the check card (spec §13 A127), as `loop-probe-confidence`; it never holds up `loop-attempt-submit` |
 | `loop-check-confidence-{guessing,fairly_sure,sure}` | one level; a chosen one rides `/check/answer/stream` as `confidence` (never with an idk) |
 | `loop-check-confidence-clear` | "Clear" — takes the choice back |
 | `loop-attempt-submit` | submit the attempt to `/check/answer/stream` (never a chat turn, A16) |
@@ -1245,7 +1244,7 @@ inside `loop-messages` is `ChatPanel`, whose own `tutor-*` ids
 | `loop-close-rating-details` | the follow-ups a rating reveals on the same card (U9): `loop-close-rating-helpful-{i}` / `loop-close-rating-friction-{i}` chips (`aria-pressed`), `loop-close-rating-comment` |
 | `loop-close-rating-send` | sends the rating, chips and note as ONE session feedback row |
 | `loop-close-rating-sent` | the thanks line once the feedback is sent |
-| `loop-close-done` | the closed state ("Session closed." + a link to the review queue); also a session found closed elsewhere (a 409 `this session is closed`) whose stored close could not be read |
+| `loop-close-done` | the closed state (the wrap-up's next-step links); also a session found closed elsewhere (a 409 `this session is closed`) whose stored close could not be read |
 | `loop-close-study-link` | W3.4 "Due on Study" inside `loop-close-done` (`/study?course=` when known); omitted while `hide_study` |
 | `loop-close-practice-link` | W3.3c "Practice what's due" → Quiz `scope=due` + learner_next due[] queue (or course+`start=1`); omitted while `hide_quiz` or `hide_study` |
 | `loop-close-quiz-link` | W3.4 "Quiz this concept" on a wrap-up concept that went down (else the first); omitted while `hide_quiz` or with no concept id |

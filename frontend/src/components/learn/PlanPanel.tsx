@@ -42,11 +42,9 @@ export function PlanPanel({
         aria-labelledby="loop-plan-heading"
         className={`card ${tutorStyles.qcard}`}
       >
-        <div className={tutorStyles.qhead}>
-          <h2 id="loop-plan-heading" ref={headingRef} tabIndex={-1} className={`label-micro ${tutorStyles.qlabel}`}>
-            Today&apos;s plan
-          </h2>
-        </div>
+        <h2 id="loop-plan-heading" ref={headingRef} tabIndex={-1} className={tutorStyles.cardTitle}>
+          Today&apos;s plan
+        </h2>
         <DiagnosisSummary diagnosis={diagnosis} names={names} />
         {plan === null && !loadFailed && <div className={planStyles.status}>Building your plan…</div>}
         {plan === null && loadFailed && (

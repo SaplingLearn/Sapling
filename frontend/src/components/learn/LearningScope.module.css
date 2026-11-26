@@ -13,10 +13,6 @@
   color: var(--text-dim);
 }
 
-.muted {
-  color: var(--text-muted);
-}
-
 .hint {
   margin: var(--sp-2) 0 var(--sp-5);
   font-size: var(--fs-md);
@@ -51,7 +47,7 @@
   }
 }
 
-/* Check-in coverage. The heading was 15px, between --fs-base and --fs-lg:
+/* What the check-in showed. The heading was 15px, between --fs-base and --fs-lg:
    rounded up a px to --fs-lg. */
 .diagnosisTitle {
   margin: 0 0 var(--sp-3);

@@ -234,9 +234,3 @@
 
 /* The learner chip above the conversation when the session panel is hidden,
    aligned with the conversation's text. */
-.learnerRow {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-4);
-  padding: var(--sp-5) clamp(var(--sp-8), 4vw, var(--sp-28)) 0;
-}

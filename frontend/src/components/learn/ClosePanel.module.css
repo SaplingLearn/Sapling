@@ -54,12 +54,6 @@
   color: var(--warn);
 }
 
-.caption {
-  margin: 0;
-  font-size: var(--fs-sm);
-  color: var(--text-muted);
-}
-
 .quiet {
   margin: 0;
   font-size: var(--fs-md);
@@ -98,6 +92,11 @@
   border-color: var(--accent-border);
 }
 
+.planTitle {
+  margin: 0;
+  font-size: var(--fs-xl);
+}
+
 .planText {
   font-size: var(--fs-lg);
 }
@@ -109,13 +108,6 @@
   flex-wrap: wrap;
   font-size: var(--fs-base);
   color: var(--text-dim);
-}
-
-/* "Session closed." takes the row's slack; the buttons wrap under it on a narrow screen. */
-.closed {
-  --closed-min: 120px;
-  flex: 1;
-  min-width: var(--closed-min);
 }
 
 /* A press sinks the button a touch (the global .btn transition carries it). */

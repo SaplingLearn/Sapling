@@ -89,7 +89,6 @@ function MovedCard({ concepts, names }: { concepts: LoopCloseConcept[]; names: M
     <section className="card" aria-labelledby="loop-close-moved">
       <div className={tutorStyles.cardHead}>
         <div>
-          <span className="label-micro">What moved</span>
           <h3 id="loop-close-moved" className="h-serif">
             {concepts.length === 0 ? "Nothing measured yet" : `${up} of ${concepts.length} ${concepts.length === 1 ? "concept" : "concepts"} stronger`}
           </h3>
@@ -97,8 +96,7 @@ function MovedCard({ concepts, names }: { concepts: LoopCloseConcept[]; names: M
       </div>
       <div className={tutorStyles.cardPad}>
         {concepts.length > 0 ? (
-          <>
-            <ul className={tutorStyles.moved}>
+          <ul className={tutorStyles.moved}>
               {concepts.map((c) => {
                 const view = closeConceptView(c);
                 return (
@@ -117,9 +115,7 @@ function MovedCard({ concepts, names }: { concepts: LoopCloseConcept[]; names: M
                   </li>
                 );
               })}
-            </ul>
-            <p data-testid="loop-close-moved-caption" className={styles.caption}>Change from where you started this session.</p>
-          </>
+          </ul>
         ) : (
           <p className={styles.quiet}>Your tutor picks up from here next session.</p>
         )}
@@ -216,7 +212,6 @@ export function ClosePanel({
           <section className="card" aria-labelledby="loop-close-summary-h">
             <div className={tutorStyles.cardHead}>
               <div>
-                <span className="label-micro">Summary</span>
                 <h3 id="loop-close-summary-h" className="h-serif">What you covered</h3>
               </div>
             </div>
@@ -229,11 +224,8 @@ export function ClosePanel({
         </motion.div>
         {/* A60: the self-evaluation is a reflection prompt only — nothing is saved. */}
         <motion.section variants={item} data-testid="loop-close-self-eval" className={`card ${tutorStyles.cardPad} ${styles.tight}`}>
-          <span className="label-micro">Reflect</span>
           <div className={styles.reflection}>{rec.self_eval}</div>
-          <div className={styles.aside}>
-            Take a moment with it — it&apos;s just for you, nothing is saved.
-          </div>
+          <div className={styles.aside}>Just for you. Nothing is saved.</div>
         </motion.section>
         {/* W3.5a: generative mini-map — client edges only; never mastery / graph_edges. */}
         {/* Never null here (two or more concepts), so the wrapper is never an empty gap. */}
@@ -249,13 +241,12 @@ export function ClosePanel({
         )}
         {rec.if_then && (
           <motion.section variants={item} data-testid="loop-close-if-then" className={`card ${tutorStyles.cardPad} ${styles.tight} ${styles.plan}`}>
-            <span className="label-micro">Your plan for next time</span>
+            <h3 className={`h-serif ${styles.planTitle}`}>Next time</h3>
             <div className={styles.planText}>{rec.if_then}</div>
           </motion.section>
         )}
         {rating && <WrapUpRating key={rating.sessionId} sessionId={rating.sessionId} topic={rating.topic} />}
         <motion.div variants={item} data-testid="loop-close-done" className={styles.done}>
-          <span className={styles.closed}>Session closed.</span>
           {visibility.study && courseId && <Link data-testid="loop-close-retention-link" href={retentionHref([courseId])} className={`btn ${styles.press}`}>
             Check retention after time away
           </Link>}

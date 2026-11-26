@@ -13,10 +13,6 @@
   color: var(--text-muted);
 }
 
-.optional {
-  color: var(--text-dim);
-}
-
 .group {
   display: inline-flex;
   gap: var(--sp-3);

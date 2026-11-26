@@ -758,7 +758,7 @@ for (const width of [1440, 390]) {
         await expect(phase).toHaveAttribute("data-session-id", freshSession);
         await expect(page.getByTestId("loop-probe-item")).toBeVisible();
         await expect(button).toBeEnabled();
-        await expect(page.getByTestId("loop-goal-summary")).toHaveText("Scope: Explore the whole course");
+        await expect(page.getByTestId("loop-goal-summary")).toHaveCount(0); // the whole-course default says nothing
         expect(mutations).toEqual(["/api/learn/loop/close", "/api/learn/loop/start-session"]);
         expect(failures).toEqual([]);
         const sessions = await queryRaw(
@@ -1150,7 +1150,7 @@ test("spec §13 A139 (self_explanation_prompts on): the worked example asks why 
     await expect(prompt).toBeVisible();
     await expect(prompt).toHaveAttribute("data-juncture", "worked_example");
     await expect(page.getByTestId("loop-self-explain-prompt")).toHaveText(WORKED_EXAMPLE_PROMPT);
-    await expect(page.getByRole("region", { name: "Check your understanding" }).getByTestId("loop-self-explain")).toHaveCount(1);
+    await expect(page.locator("section", { has: page.getByTestId("loop-check-prompt") }).getByTestId("loop-self-explain")).toHaveCount(1);
 
     const sessionId = await page.getByTestId("loop-phase").getAttribute("data-session-id");
     expect(sessionId).toBeTruthy();
@@ -1429,7 +1429,7 @@ test("phone learner can check in, answer a check and reach wrap-up without horiz
     await expect(page.getByTestId("loop-hint-reply")).toBeVisible();
     await expect(page.getByTestId("loop-hint-button")).toBeEnabled();
   }
-  await page.getByRole("textbox", { name: "Your answer — this is what gets checked", exact: true }).fill(`working: ${GRADER_CORRECT_TOKEN}`);
+  await page.getByRole("textbox", { name: "Your answer", exact: true }).fill(`working: ${GRADER_CORRECT_TOKEN}`);
   await page.getByTestId("loop-attempt-submit").click();
   await expect(phase).toHaveAttribute("data-phase", "feedback");
   await expect(page.getByTestId("loop-messages")).toContainText(LOOP_FEEDBACK_BODY);
@@ -1528,7 +1528,7 @@ test("a phone learner confirms a goal, sees prerequisite planning and retains it
   await page.getByTestId("loop-set-goal").click();
   const editor = page.getByRole("form", { name: "Learning goal" });
   const objective = "Understand how bitwise operators use binary numbers";
-  await editor.getByRole("textbox", { name: /Your objective/ }).fill(objective);
+  await editor.getByRole("textbox", { name: /Your goal in your own words/ }).fill(objective);
   await expect(editor.getByTestId("loop-goal-save")).toBeDisabled(); // prose does not infer targets
   await editor.getByRole("checkbox", { name: "Bitwise Operators", exact: true }).check();
   const goalResponse = page.waitForResponse((response) => response.url().includes("/api/learn/loop/goal") && response.request().method() === "POST");
@@ -1553,7 +1553,7 @@ test("a phone learner confirms a goal, sees prerequisite planning and retains it
   }
   await expect(phase).toHaveAttribute("data-phase", "plan");
   await expect(page.getByTestId("loop-diagnosis")).toBeVisible();
-  await expect(page.getByTestId("loop-diagnosis")).toContainText(/could not bound|not been independently assessed/);
+  await expect(page.getByTestId("loop-diagnosis")).toContainText(/covered some concepts|hasn't covered these concepts/);
   const prerequisite = page.locator('[data-testid^="loop-plan-concept-"]').filter({ hasText: "Binary Numbers" });
   await expect(prerequisite).toContainText("Prerequisite for your goal");
   await expect(page.locator('[data-testid^="loop-plan-concept-"]').filter({ hasText: "Two's Complement" })).toHaveCount(0);
@@ -2255,7 +2255,7 @@ test("W1.3 close beat: the segment's last check is a generative item over a serv
 
 /** W2.3 (reason-before-submit; docs/learning-loop/w2-reason-before-submit.md).
  *  The seeded concept holds one free item (F) and one mc_reason item (M).
- *  Check 1 (F): "Your reasoning (optional)" is offered, neither required nor
+ *  Check 1 (F): "Your reasoning, not graded" is offered, neither required nor
  *  a substitute for the answer; it travels on the wire, lands sealed in
  *  sessions.loop_state (steps[F].reasoning_encrypted, nested AES-GCM bound to
  *  the session) and is never a grader input or evidence — the reasoning carries
@@ -2280,7 +2280,7 @@ test("W2.3 reason-before-submit: free reasoning is optional, sealed and never ev
     const submit = page.getByTestId("loop-attempt-submit");
     const box = page.getByTestId("loop-attempt-reasoning");
     await expect(box).toBeVisible();
-    await expect(page.getByLabel("Your reasoning (optional)")).toBeVisible();
+    await expect(page.getByLabel("Your reasoning, not graded")).toBeVisible();
     await expect(page.getByTestId("loop-attempt-reason")).toHaveCount(0);
     await expect(submit).toBeDisabled();
     await box.fill(reasoning);

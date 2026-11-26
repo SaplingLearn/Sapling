@@ -9,7 +9,9 @@ import styles from "./LoopLearn.module.css";
 import own from "./LearningScope.module.css";
 import { LOOP_GOAL_MAX_TARGETS, LOOP_GOAL_TEXT_MAX } from "./loopShared";
 
-/** The session's learning scope under the stepper: its goal, or the whole course. */
+/** The session's goal under the stepper. The whole-course default says
+ *  nothing (the redesign's "say each fact once": no goal is the normal case),
+ *  and neither does the load; only a goal or a failed read is shown. */
 export function ScopeSummary({ error, ready, goal, names, onRetry }: {
   error: boolean;
   ready: boolean;
@@ -17,13 +19,12 @@ export function ScopeSummary({ error, ready, goal, names, onRetry }: {
   names: Map<string, string>;
   onRetry: () => void;
 }) {
+  if (!error && (!ready || !goal)) return null;
   return (
     <div className={styles.scopeSummary} data-testid="loop-goal-summary">
-      {error ? <><span>Couldn&apos;t load this session&apos;s learning scope. </span>
-        <button type="button" data-testid="loop-goal-retry" className={`btn btn--sm ${own.press}`} onClick={onRetry}>Retry learning scope</button></>
-        : !ready ? "Loading learning scope…"
-          : goal ? <><strong>Goal: </strong>{goal.text || "Selected concepts"}<span> · {goal.target_node_ids.map((id) => names.get(id) ?? "Selected concept").join(", ")}</span></>
-            : "Scope: Explore the whole course"}
+      {error ? <><span>Couldn&apos;t load your goal. </span>
+        <button type="button" data-testid="loop-goal-retry" className={`btn btn--sm ${own.press}`} onClick={onRetry}>Try again</button></>
+        : goal && <><strong>Goal: </strong>{goal.text || goal.target_node_ids.map((id) => names.get(id) ?? "Selected concept").join(", ")}</>}
     </div>
   );
 }
@@ -71,14 +72,14 @@ export function GoalEditor({ goal, nodes, busy, error, onSave, onCancel, loading
       }}>
         <h2 className={`h-serif ${own.title}`}>What do you want to learn?</h2>
         <p className={own.lede}>
-          Describe your objective, then confirm the concepts it covers. The tutor will check those concepts and their prerequisites.
+          Say what you want to learn, then pick the concepts it covers. The tutor checks those and what they build on.
         </p>
-        <label htmlFor="loop-goal-text">Your objective <span className={own.muted}>(optional)</span></label>
+        <label htmlFor="loop-goal-text">Your goal in your own words</label>
         <textarea ref={firstField} id="loop-goal-text" data-testid="loop-goal-text" value={text} maxLength={LOOP_GOAL_TEXT_MAX} rows={3}
           disabled={busy || wholeCourse} className={styles.scopeText} onChange={(event) => setText(event.target.value)}
           placeholder="For example: explain how negative numbers are represented" />
         <fieldset disabled={busy} className={styles.scopeFieldset}>
-          <legend>Learning scope</legend>
+          <legend>What to cover</legend>
           <label className={styles.scopeOption}>
             <input type="radio" data-testid="loop-goal-whole-course" name="loop-goal-scope" checked={wholeCourse} onChange={() => setWholeCourse(true)} />
             <span>Explore the whole course</span>
@@ -93,9 +94,9 @@ export function GoalEditor({ goal, nodes, busy, error, onSave, onCancel, loading
         {!wholeCourse && (
           <motion.div key="targets" {...m.collapse}>
           <fieldset disabled={busy} className={styles.scopeFieldset}>
-            <legend>Confirm target concepts <span className={own.muted}>(1–{LOOP_GOAL_MAX_TARGETS})</span></legend>
+            <legend>Pick concepts</legend>
             <p className={own.hint}>
-              Only concepts from this course are listed. Your text does not select concepts automatically.
+              Only this course&apos;s concepts are listed. Your words above don&apos;t pick any.
             </p>
             {loadingNodes && <p role="status">Loading course concepts…</p>}
             {nodesError && <div role="alert"><p>Couldn&apos;t load this course&apos;s concepts.</p>
@@ -119,64 +120,63 @@ export function GoalEditor({ goal, nodes, busy, error, onSave, onCancel, loading
         </AnimatePresence>
         {error && <p role="alert" className={own.error}>{error}</p>}
         <div className={styles.scopeActions}>
-          <button type="submit" className={`btn btn--primary ${own.press}`} disabled={!canSave} data-testid="loop-goal-save">{busy ? "Updating check-in…" : "Use this scope"}</button>
+          <button type="submit" className={`btn btn--primary ${own.press}`} disabled={!canSave} data-testid="loop-goal-save">{busy ? "Saving…" : "Save goal"}</button>
           <button type="button" data-testid="loop-goal-cancel" className={`btn btn--ghost ${own.press}`} disabled={busy} onClick={onCancel}>Cancel</button>
         </div>
         <p className={own.footnote}>
-          Changing scope keeps your earlier evidence. A new check-in may be needed before you start learning.
+          Your earlier answers still count. You may get a short check-in before you start.
         </p>
       </form>
     </div>
   );
 }
 
+// Plain words for the check-in's result (the redesign's banned-terms rule: no
+// "bounded", "independent", "observations" or "assessed" in student copy).
 const STOP_COPY: Record<string, string> = {
   session_cap: "The check-in reached its question limit.",
-  per_skill_cap: "Some concepts reached their check-in question limit.",
+  per_skill_cap: "Some concepts reached their question limit.",
   session_limit: "The check-in reached its question limit.",
-  skill_limit: "Some concepts reached their check-in question limit.",
-  coverage_limit: "The check-in could not cover every concept.",
-  item_bank_exhausted: "Some concepts have no further available check questions.",
-  no_items: "Some concepts have no available check questions.",
-  no_check_items: "Some concepts have no available check questions.",
-  novice_floor: "The check-in found foundational work to start with.",
+  skill_limit: "Some concepts reached their question limit.",
+  coverage_limit: "The check-in couldn't cover every concept.",
+  item_bank_exhausted: "Some concepts ran out of questions.",
+  no_items: "Some concepts don't have questions yet.",
+  no_check_items: "Some concepts don't have questions yet.",
+  novice_floor: "We'll start with the basics.",
 };
 
 const STATUS_COPY: Record<string, string> = {
-  bracketed: "An initial level was bounded by independent answers. This is a starting estimate, not proof of mastery.",
-  limited: "The check-in could not bound every concept's level. Untested concepts remain unassessed.",
-  in_progress: "Check-in in progress. Independent answers help locate where to start.",
-  not_assessed: "These concepts have not been independently assessed in this check-in.",
+  bracketed: "Here's where you're starting. It's a first estimate and it changes as you practise.",
+  limited: "The check-in covered some concepts. The rest start from the beginning.",
+  in_progress: "The check-in is still going.",
+  not_assessed: "The check-in hasn't covered these concepts yet.",
 };
 const SKILL_COPY: Record<string, string> = {
-  bracketed: "Initial level bounded",
-  partial: "Level not yet bounded",
-  above_range: "Success at the highest available level; an upper limit was not found",
-  below_range: "Foundational practice needed; an independent success level was not found",
-  inconsistent: "Mixed evidence; the level is not yet clear",
-  untested: "Not assessed",
+  bracketed: "found your starting level",
+  partial: "still finding your level",
+  above_range: "right even on the hardest questions",
+  below_range: "starting with the basics",
+  inconsistent: "mixed results so far",
+  untested: "not checked yet",
 };
 
 export function DiagnosisSummary({ diagnosis, names }: { diagnosis: LoopDiagnosis | null; names: Map<string, string> }) {
   if (!diagnosis) return null;
   return (
-    <section aria-label="Check-in coverage" data-testid="loop-diagnosis" className={styles.diagnosis}>
-      <h3 className={own.diagnosisTitle}>Check-in coverage</h3>
-      <p className={own.status}>{STATUS_COPY[diagnosis.status] ?? "Check-in evidence is incomplete."}</p>
+    <section aria-label="What the check-in showed" data-testid="loop-diagnosis" className={styles.diagnosis}>
+      <h3 className={own.diagnosisTitle}>What the check-in showed</h3>
+      <p className={own.status}>{STATUS_COPY[diagnosis.status] ?? "The check-in is incomplete."}</p>
       {diagnosis.stop_reason && STOP_COPY[diagnosis.stop_reason] && <p className={own.stop}>{STOP_COPY[diagnosis.stop_reason]}</p>}
       {diagnosis.skills.length > 0 && (
         <details className={own.details}>
-          <summary>Evidence by concept ({diagnosis.skills.length})</summary>
+          <summary>By concept ({diagnosis.skills.length})</summary>
           <ul className={styles.diagnosisList}>
             {diagnosis.skills.map((skill) => (
               <li key={skill.node_id} data-testid={`loop-diagnosis-${skill.node_id}`}>
-                <strong>{names.get(skill.node_id) ?? "Concept"}</strong>: {SKILL_COPY[skill.status] ?? "Evidence incomplete"}
-                <div>{skill.independent_correct} independent correct · {skill.independent_incorrect} independent incorrect</div>
-                <div>{skill.independent_observations} independent {skill.independent_observations === 1 ? "answer" : "answers"} out of {skill.observations} observations</div>
-                <div>
-                  {skill.floor_difficulty !== null ? `Independent success at level ${skill.floor_difficulty}. ` : "No independent success level yet. "}
-                  {skill.ceiling_difficulty !== null ? `Independent error at level ${skill.ceiling_difficulty}.` : "No independent error level yet."}
-                </div>
+                <strong>{names.get(skill.node_id) ?? "Concept"}</strong>: {SKILL_COPY[skill.status] ?? "not clear yet"}
+                {skill.independent_observations > 0 && (
+                  <div>{skill.independent_correct} of {skill.independent_observations} right on your own</div>
+                )}
               </li>
             ))}
           </ul>

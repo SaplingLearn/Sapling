@@ -54,7 +54,7 @@ export function ConfidenceControl({
   const labelId = React.useId();
   const group = useRadioGroup(LEVELS, value, onChange);
   const levels = variant === "wager" ? WAGER_LEVELS : CONFIDENCE_LEVELS;
-  const prompt = variant === "wager" ? "Wager" : "How sure are you?";
+  const prompt = variant === "wager" ? "Wager" : "How sure?";
 
   return (
     <div
@@ -62,7 +62,7 @@ export function ConfidenceControl({
       data-variant={variant}
     >
       <span id={labelId} className={styles.label}>
-        {prompt} <span className={styles.optional}>(optional)</span>
+        {prompt}
       </span>
       <div role="radiogroup" aria-labelledby={labelId} data-testid={testIdPrefix} className={styles.group}>
         {levels.map((o, i) => (

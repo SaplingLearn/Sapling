@@ -1086,7 +1086,7 @@ sequenceDiagram
 
 What stays as it was: the farm guard (A94, A100), "Ask about this" (A99),
 the stated confidence and the lint gate (A132), and the integrity guard. The
-stated confidence ("How sure are you?") is asked, and kept, only while the
+stated confidence ("How sure?") is asked, and kept, only while the
 learning loop is on for the student (#866 K46): with the loop off the quiz
 question screen is the pre-loop one. The quiz reads that through
 `useLoopStatus` with `{ reuse: true }`: a probe answer Learn or Study got in

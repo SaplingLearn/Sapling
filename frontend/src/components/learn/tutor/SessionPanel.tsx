@@ -40,8 +40,6 @@ export function SessionPanel({
   skills,
   dueCount,
   dueHref,
-  learnerChip,
-  hasLearner,
   map,
   treeHref,
   showTreeLink,
@@ -58,9 +56,6 @@ export function SessionPanel({
   dueCount: number | null;
   /** Where "Due on Study" goes; null while `hide_study` hides Study. */
   dueHref: string | null;
-  learnerChip: React.ReactNode;
-  /** The chip has a concept to show (else it keeps its place off screen). */
-  hasLearner: boolean;
   map: React.ReactNode;
   treeHref: string;
   /** False on a phone, where the TopBar carries the map link. */
@@ -76,7 +71,6 @@ export function SessionPanel({
         </button>
       </div>
       <div className={styles.panelInner}>
-        <div hidden={!hasLearner}>{learnerChip}</div>
         {plan && plan.length > 0 && (
           <section className={styles.panelSec} aria-labelledby="tutor-panel-plan">
             <span id="tutor-panel-plan" className="label-micro">Plan</span>

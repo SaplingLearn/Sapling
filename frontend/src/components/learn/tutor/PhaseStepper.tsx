@@ -27,7 +27,12 @@ export function stepOf(phase: LoopPhase): number {
  * `aria-current="step"`; a passed step says "done" to a screen reader.
  * A step the loop skipped (an empty plan teaches at once) reads as passed.
  */
-export function PhaseStepper({ phase }: { phase: LoopPhase }) {
+export function PhaseStepper({ phase, learnProgress }: {
+  phase: LoopPhase;
+  /** "2 of 4": where the Learn step is in the approved plan (shown beside it
+   *  while it is current, in place of the TopBar's old phase line). */
+  learnProgress?: string | null;
+}) {
   const at = stepOf(phase);
   return (
     <ol className={styles.stepper} aria-label="Session progress" data-testid="tutor-phase-stepper">
@@ -43,7 +48,10 @@ export function PhaseStepper({ phase }: { phase: LoopPhase }) {
             <span className={styles.stepMark} aria-hidden>
               {state === "done" ? <Icon name="check" size={12} /> : i + 1}
             </span>
-            <span className={styles.stepLabel}>{step.label}</span>
+            <span className={styles.stepLabel}>
+              {step.label}
+              {state === "current" && i === 2 && learnProgress ? <span data-testid="tutor-learn-progress"> {learnProgress}</span> : null}
+            </span>
             {state === "done" && <span className={styles.sr}> (done)</span>}
           </li>
         );

@@ -52,18 +52,13 @@ export function findRow(rows: TutorSessionRow[], id: string | null): TutorSessio
   return id ? rows.find((r) => r.id === id) ?? null : null;
 }
 
-/** Where an open session is, in words: "Check-in", "Plan · 3 concepts",
- *  "Recursion · concept 2 of 3", "Wrap-up". */
-export function phaseText(phase: LoopPhase, plan: LoopPanelConcept[] | null, focus: string | null, names: Map<string, string>): string {
+/** Where the Learn step is in the approved plan ("2 of 4"), shown beside
+ *  the stepper's Learn step; null outside teaching or off the plan. */
+export function learnProgressOf(phase: LoopPhase, plan: LoopPanelConcept[] | null, focus: string | null): string | null {
+  if (phase === "probe" || phase === "plan" || phase === "close") return null;
   const n = plan?.length ?? 0;
-  if (phase === "probe") return "Check-in";
-  if (phase === "plan") return n ? `Plan · ${n} ${n === 1 ? "concept" : "concepts"}` : "Plan";
-  if (phase === "close") return "Wrap-up";
-  const name = focus ? names.get(focus) : undefined;
   const at = plan && focus ? plan.findIndex((c) => c.node_id === focus) : -1;
-  if (name && at >= 0) return `${name} · concept ${at + 1} of ${n}`;
-  // an approved plan with no current concept: its cursor is past the end
-  return name ?? (n > 0 ? "Plan complete" : "Learning");
+  return at >= 0 && n > 1 ? `${at + 1} of ${n}` : null;
 }
 
 /** The concept T1 offers as a first focus: the weakest one not yet mastered. */
@@ -105,11 +100,3 @@ export function tutorTopTitle(
   return sessionRow ? sessionTitle(sessionRow, course ?? undefined) : sessionId ? "Guided session" : "Tutor";
 }
 
-/** The TopBar's line under the title: the view's own, else where the session is. */
-export function tutorTopSub(view: string, phaseLine: () => string): string {
-  if (view === "home") return "Choose where to start.";
-  if (view === "goal") return "Choose what this session is for.";
-  if (view === "all") return "Newest first.";
-  if (view === "course") return "Sessions, material and progress.";
-  return phaseLine();
-}
