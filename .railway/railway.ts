@@ -174,6 +174,7 @@ const FLAG_KILL_SWITCHES = [
   "multi_concept_items",
   // the quiz in the learning system (A143-A147)
   "quiz_concept_plan",
+  "skill_ladder",
   "quiz_planned_questions",
   "quiz_item_gates",
   "quiz_misconceptions",
