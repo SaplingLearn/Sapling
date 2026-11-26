@@ -1057,6 +1057,56 @@ describe("K31 — Tutor V2 renames and deletes sessions, as the legacy Learn scr
   });
 });
 
+describe("Tutor redesign phase 4 — the rebuilt verdict (verdict_v2 on)", () => {
+  const plan2 = { concepts: [{ node_id: "n1", concept_name: "Recursion", kind: "new" }, { node_id: "n2", concept_name: "Stacks", kind: "new" }], cursor: 0 };
+  async function answer(result: object) {
+    flags.verdict_v2 = "on";
+    api.getLoopSessionStatus.mockResolvedValue(status({ approved_plan: plan2 }));
+    api.nextLoopCheck.mockResolvedValue({ phase: "check", check: pose });
+    api.streamLoopCheckAnswer.mockResolvedValue(turn({ reply: "Feedback.", phase: "feedback", graded: true, ...result }));
+    await resumedTeach();
+    fireEvent.click(await screen.findByTestId("loop-check-me"));
+    await screen.findByTestId("loop-check-prompt");
+    fireEvent.change(screen.getByTestId("loop-attempt-input"), { target: { value: "n == 0" } });
+    fireEvent.click(screen.getByTestId("loop-attempt-submit"));
+    return screen.findByTestId("loop-verdict");
+  }
+
+  it("a correct answer after a hint: half credit, one line, the skill change once", async () => {
+    const card = await answer({
+      verdict: "correct", credit: "partial", credit_reasons: ["hint"],
+      learner_state: [{ node_id: "n1", p_known: 0.42, band: "develop" }],
+    });
+    expect(card.querySelector("p")?.textContent).toBe("Correct, half credit");
+    expect(screen.getByTestId("loop-verdict-credit").textContent).toBe(
+      "You used a hint, so this counts half toward Recursion. Try the next one on your own.",
+    );
+    expect(screen.getByTestId("loop-verdict-skill").textContent).toBe("Recursion: Developing"); // its first measurement
+    expect(screen.getByTestId("loop-continue").textContent).toBe("Continue");
+  });
+
+  it("a confident miss: Not quite, why the next step waits, and Continue counts the hold down", async () => {
+    const card = await answer({
+      verdict: "not_yet", feedback_dwell_ms: 6000,
+      learner_state: [{ node_id: "n1", p_known: 0.2, band: "novice" }],
+    });
+    expect(card.querySelector("p")?.textContent).toBe("Not quite");
+    expect(screen.getByTestId("loop-verdict-sure").textContent).toBe("You were sure about this one, so take a moment with it.");
+    expect(screen.getByTestId("loop-continue").textContent).toMatch(/^Continue in 0:0[56]$/);
+    expect(screen.queryByTestId("loop-feedback-dwell")).toBeNull(); // the card says it, once
+  });
+
+  it("when the plan moves on, Continue names where it goes", async () => {
+    await answer({
+      verdict: "correct", credit: "full",
+      learner_state: [{ node_id: "n1", p_known: 0.85, band: "profic" }],
+      approved_plan: { ...plan2, cursor: 1 },
+    });
+    expect(screen.getByTestId("loop-continue").textContent).toBe("Next: Stacks");
+    expect(screen.queryByTestId("loop-verdict-credit")).toBeNull(); // full credit: the title says it
+  });
+});
+
 describe("K07 — the verdict says what a correct answer earned", () => {
   const plan1 = { concepts: [{ node_id: "n1", concept_name: "Recursion", kind: "new" }], cursor: 0 };
   async function answerCorrect(credit?: "full" | "partial" | "none", reasons?: string[]) {

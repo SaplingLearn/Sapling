@@ -11,6 +11,7 @@
 // never as a chat turn (A16). Spec:
 // docs/superpowers/specs/2026-09-26-learning-loop-design.md §9, §11.3; routes:
 // backend/routes/learn_loop.py.
+import { VerdictSlot, holdUntil, nextStepLabel, useVerdictSkill } from "./verdict/VerdictCard";
 import { useHintSteps } from "./question/HintLadder";
 import { graphUsesSkill } from "@/lib/levels";
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
@@ -113,7 +114,6 @@ import { withPlanHistory } from "./loopHistory";
 import { dropInterruptedTurn } from "./chatRetry";
 import { modalOpen } from "./modalOpen";
 import { LOOP_GOAL_MAX_TARGETS, LOOP_GOAL_TEXT_MAX, hintDenial, type Draft, type HintView } from "./loopShared";
-import { VerdictBanner } from "./VerdictBanner";
 import { ProbePanel } from "./ProbePanel";
 import { PlanPanel } from "./PlanPanel";
 import { CheckCard } from "./CheckCard";
@@ -351,7 +351,7 @@ export function LoopLearn() {
   // PKG-14: the session a graded check asked to rate (done.ask_rating); one click hides it
   const [askRating, setAskRating] = useState<string | null>(null);
   // Wireframe T9: the last graded check's verdict, shown over the feedback turn
-  const [verdict, setVerdict] = useState<{ verdict: string; nodeId: string | null; credit?: LoopTurnResult["credit"]; reasons?: LoopTurnResult["credit_reasons"] } | null>(null);
+  const [verdict, setVerdict] = useState<{ verdict: string; nodeId: string | null; credit?: LoopTurnResult["credit"]; reasons?: LoopTurnResult["credit_reasons"]; holdUntil?: number | null } | null>(null);
   // W2.5: ms Continue / probe Next holds after high-confidence wrong (server-scaled)
   const [feedbackDwellMs, setFeedbackDwellMs] = useState<DwellArm>(null);
   const hypercorrectionHold = useHypercorrectionDwell(feedbackDwellMs);
@@ -482,6 +482,8 @@ export function LoopLearn() {
   const paused = state.budgetPause;
   const item = state.item;
   const hintLadder = useHintSteps(item);
+  const verdictV2 = useFlag("verdict_v2") === "on"; // Tutor redesign phase 4
+  const verdictSkill = useVerdictSkill();
   const checkOpen = checkIsOpen(state);
   const exhaustedPracticeAttempt = practiceUnavailable.some((id) => goalProgress?.attempted_node_ids.includes(id));
 
@@ -1284,7 +1286,7 @@ export function LoopLearn() {
     if (res.replayed) return;
     if (res.approved_plan) setApprovedPlan(res.approved_plan); // K08: the server moved the plan's cursor
     if (submission && res.graded) {
-      setVerdict(res.verdict ? { verdict: res.verdict, nodeId: res.learner_state?.[0]?.node_id ?? state.focusNodeId, credit: res.credit, reasons: res.credit_reasons } : null);
+      setVerdict(res.verdict ? { verdict: res.verdict, nodeId: res.learner_state?.[0]?.node_id ?? state.focusNodeId, credit: res.credit, reasons: res.credit_reasons, holdUntil: holdUntil(res.feedback_dwell_ms) } : null);
       setFeedbackDwellMs(dwellArm(res.feedback_dwell_ms));
       setPendingGrade(null);
       // graded — correct, not yet, idk, or a refusal the server graded as idk:
@@ -1505,6 +1507,7 @@ export function LoopLearn() {
         ? `${attempt.option}${attempt.reason.trim() ? ` — ${attempt.reason.trim()}` : ""}`
         : attempt.answer;
     setMessages((prev) => [...prev, asMsg("user", shown)]);
+    verdictSkill.snapshot(state.learnerState); // the skill change's "before"
     setAttemptBusy(true);
     let checkClosed = false;
     const res = await runTurn(
@@ -1579,6 +1582,7 @@ export function LoopLearn() {
     const g = gen.current;
     focusAfter.current = saved.kind === "check" ? "answered" : "probe-answer";
     if (saved.kind === "check") {
+      verdictSkill.snapshot(state.learnerState);
       setAttemptBusy(true);
       let checkClosed = false;
       const result = await runTurn(
@@ -2034,6 +2038,7 @@ export function LoopLearn() {
       feedback={state.phase === "feedback"}
       feedbackPending={feedbackPending}
       hold={hypercorrectionHold}
+      next={verdictV2 && verdict ? { label: nextStepLabel(nextAfterVerdict(approvedPlan, verdict.nodeId, conceptNames)), holdUntil: verdict.holdUntil ?? null } : null}
       continueDisabled={anyOf(!!paused, streaming, starting, scopeLoading, hypercorrectionHold)}
       checkMeDisabled={anyOf(checkBusy, streaming, feedbackPending, starting, scopeLoading, hypercorrectionHold)}
       pendingNote={allOf(feedbackPending, !streaming, !checkNote)}
@@ -2107,10 +2112,8 @@ export function LoopLearn() {
         />
       ) : (
         <>
-          {state.phase === "feedback" && verdict && (
-            <VerdictBanner verdict={verdict.verdict} credit={verdict.credit} reasons={verdict.reasons}
-              next={nextAfterVerdict(approvedPlan, verdict.nodeId, conceptNames)} />
-          )}
+          {state.phase === "feedback" && verdict && <VerdictSlot v2={verdictV2} verdict={verdict} next={nextAfterVerdict(approvedPlan, verdict.nodeId, conceptNames)}
+            concept={conceptAt(conceptNames, verdict.nodeId, approvedPlan)} before={verdictSkill.before} after={state.learnerState} held={hypercorrectionHold} />}
           {renderTeachActions(firstConcept)}
         </>
       )}

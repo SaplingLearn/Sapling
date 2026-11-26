@@ -36,7 +36,7 @@ Several flags change a prompt or an output schema, so their eval datasets must b
 
 ## Recommended order
 
-1. **Read-only, no eval needed:** `quiz_concept_plan`, `quiz_results_routing`, `item_reports`, `skill_ladder`, `hint_ladder`.
+1. **Read-only, no eval needed:** `quiz_concept_plan`, `quiz_results_routing`, `item_reports`, `skill_ladder`, `hint_ladder`, `verdict_v2`.
 2. **Safety, after copy review:** `crisis_support`.
 3. **Prompt changes, after their evals:** `loop_tutor_v2`, `segment_prequestion`, `self_explanation_prompts`, `quiz_planned_questions`, `quiz_item_gates`, then `quiz_misconceptions`.
 4. **Drafting changes, after their evals:** `varied_isomorphs`, `multi_concept_items`, `upload_prereq_edges`.
@@ -66,6 +66,12 @@ Several flags change a prompt or an output schema, so their eval datasets must b
 - **Before:** nothing; it reads what `/hint` and `/step/attempt` already return.
 - **Watch:** hint requests per item and how often the worked steps are taken (`help_abuse` in the admin learning-loop report).
 - **Roll back:** off restores the one Hint button and the latest hint.
+
+### verdict_v2 (Tutor redesign phase 4) — client-visible
+- **Changes:** the graded check's verdict leads with a title ("Correct", "Correct, half credit", "Not quite"), at most one credit line, and the concept's skill change shown once (the learner model's level before the answer against after it); Continue names the plan's next concept and counts the confident-miss hold down on itself. Frontend only: grades, credit and the hold are the server's, unchanged.
+- **Before:** nothing; it reads the graded turn's `verdict`, `credit`, `credit_reasons`, `learner_state` and `feedback_dwell_ms`.
+- **Watch:** time from verdict to Continue; Continue clicks during a hold (there should be none).
+- **Roll back:** off restores the verdict banner and the dwell note.
 
 ### item_reports (A113, A123) — client-visible
 - **Changes:** students can report a check question. Two reports hold it from the whole course until staff approve or retire it in the admin check-items queue.

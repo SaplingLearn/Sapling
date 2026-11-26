@@ -308,6 +308,15 @@ REGISTRY: dict[str, FlagDef] = _registry(
             "stacked, the next step names its cost (hints count half, worked "
             "steps count nothing), and a locked hint says why, with a countdown. "
             "Off: one Hint button and the latest hint, as before.", True),
+    # Tutor redesign phase 4 (the verdict): the graded check's verdict leads
+    # with one title, at most one credit line and the concept's skill change
+    # shown once; Continue names the next step and counts down the confident-
+    # miss hold. Frontend only. A loop flag (learning/gate.py::LOOP_FLAGS).
+    FlagDef("verdict_v2", ("off", "on"),
+            "The rebuilt verdict: a title (Correct / Correct, half credit / Not "
+            "quite), one credit line, the concept's skill change shown once "
+            "(Getting started → Developing), and Continue naming the next step "
+            "with the hold as its countdown. Off: the verdict banner as before.", True),
     FlagDef("skill_ladder", ("off", "on"),
             "One skill measure on the graph: each concept's score, tier and words "
             "come from the learner model's decayed skill (Not started / Getting "

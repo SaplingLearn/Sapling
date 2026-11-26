@@ -194,6 +194,7 @@ EXPECTED_LOOP_FLAGS = {
     "quiz_item_gates", "quiz_misconceptions", "quiz_results_routing",
     "skill_ladder",  # the graph route reads it after the loop's gate (routes/graph.py)
     "hint_ladder",  # a loop UI flag: the check card only renders with the loop on
+    "verdict_v2",  # a loop UI flag: the verdict only renders with the loop on
 }
 
 
