@@ -450,8 +450,8 @@ describe("DocumentUploadModal inline course add (#186)", () => {
   /** Searches for NEW_COURSE and clicks its result row, waiting for the add to settle. */
   async function inlineAddCourse(user: ReturnType<typeof userEvent.setup>) {
     await user.type(screen.getByTestId("upload-modal-course-search"), "math");
-    // The search is debounced 200ms; findBy* polls past it (3s: CI runners are slow).
-    const resultBtn = await screen.findByTestId(`upload-modal-course-result-${NEW_COURSE.id}`, {}, { timeout: 3000 });
+    // The search is debounced 200ms; findBy* polls past it.
+    const resultBtn = await screen.findByTestId(`upload-modal-course-result-${NEW_COURSE.id}`);
     await user.click(resultBtn);
     await waitFor(() => {
       expect(mockedAddCourse).toHaveBeenCalledWith("u1", NEW_COURSE.id);
