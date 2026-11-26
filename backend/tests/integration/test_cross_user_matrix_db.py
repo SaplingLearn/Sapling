@@ -63,7 +63,7 @@ def _requires_function_mode():
 def matrix_world(_reset_between_tests, db_conn, seeded_user):
     """On top of the rich baseline: a private room A owns that B is not in
     (with one message by A), a public room A owns, a pending friend request
-    A -> C, a flashcard set and a Library folder of A's, and one private
+    A -> C, a flashcard set, a Library folder and a saved tutor reply of A's, and one private
     chunk of A's. Inserted with the service-role
     `table()`, like the seed; the autouse reset wipes them between tests.
     Returns A's id for every ID_SOURCES param, resolved over psycopg."""
@@ -114,6 +114,20 @@ def matrix_world(_reset_between_tests, db_conn, seeded_user):
         "id": m.FOLDER_ID, "user_id": m.USER_A, "course_id": m.COURSE_SHARED,
         "name": m.FOLDER_NAME,
     })
+    # A tutor reply A saved (the seed has none): what `saved_item_id` probes.
+    # Title and text are 🔒 columns, sealed to the row like the service does.
+    from services import encryption
+
+    def _sealed(column: str, text: str) -> str:
+        return encryption.encrypt_if_present(
+            text, bind=encryption.bind("tutor_saved_items", column, {"id": m.SAVED_ITEM_ID}),
+        )
+
+    table("tutor_saved_items").insert({
+        "id": m.SAVED_ITEM_ID, "user_id": m.USER_A, "session_id": a_session["id"],
+        "course_id": a_node["course_id"], "title": _sealed("title", "Saved reply"),
+        "content": _sealed("content", m.SAVED_ITEM_TEXT),
+    })
 
     codes = {cid: code for cid, code, *_ in seed._COURSES}
     table("course_chunks").insert({
@@ -158,6 +172,7 @@ _A_ROWS: dict[str, str] = {
     "flashcards": _OWN.format(table="flashcards", col="user_id"),
     "flashcard_sets": _OWN.format(table="flashcard_sets", col="user_id"),
     "document_folders": _OWN.format(table="document_folders", col="user_id"),
+    "tutor_saved_items": _OWN.format(table="tutor_saved_items", col="user_id"),
     "study_guides": _OWN.format(table="study_guides", col="user_id"),
     "graph_nodes": _OWN.format(table="graph_nodes", col="user_id"),
     "graph_edges": _OWN.format(table="graph_edges", col="user_id"),
