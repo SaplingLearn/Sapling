@@ -59,9 +59,10 @@ import { builtinRules } from "eslint/use-at-your-own-risk";
 export const FRONTEND = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 export const BASELINE_FILE = "complexity-baseline.json";
 // Exempt from the limit by decision (Trov #118 phase 4): eslint.config.mjs
-// switches `complexity` off for the same glob.
-export const EXEMPT_PREFIXES = ["src/lib/landing/engine/"];
-export const EXEMPT_GLOB = "src/lib/landing/engine/**";
+// switches `complexity` off for the same globs. The codemods are lookup
+// tables over CSS properties (one branch per property), not app logic.
+export const EXEMPT_PREFIXES = ["src/lib/landing/engine/", "scripts/codemods/"];
+export const EXEMPT_GLOB = ["src/lib/landing/engine/**", "scripts/codemods/**"];
 
 const RULE_ID = "complexity-ratchet/keyed";
 const BUILTIN = builtinRules.get("complexity");
@@ -265,7 +266,7 @@ export function measuringESLint(root, limit) {
     cache: false,
     ruleFilter: ({ ruleId }) => ruleId === "complexity" || ruleId === RULE_ID,
     overrideConfig: [
-      { ignores: [EXEMPT_GLOB] },
+      { ignores: EXEMPT_GLOB },
       {
         plugins: { "complexity-ratchet": { rules: { keyed: keyedComplexityRule } } },
         rules: { complexity: ["error", limit], [RULE_ID]: ["error", limit] },

@@ -104,7 +104,7 @@ describe("the frontend tree against complexity-baseline.json", () => {
     const engine = config.find((block) => block.name === "complexity/landing-engine-exempt");
     expect(engine).toEqual({
       name: "complexity/landing-engine-exempt",
-      files: [ratchet.EXEMPT_GLOB],
+      files: ratchet.EXEMPT_GLOB,
       rules: { complexity: "off" },
     });
   });

@@ -36,6 +36,37 @@ function promoteWarnings(block) {
   return { ...block, rules: Object.fromEntries(rules) };
 }
 
+// ── Design system (Tailwind migration) ──────────────────────────────────
+// Styling goes through Tailwind classes on the tokens in src/styles/theme.css
+// (bg-bg-panel, text-text-dim, text-md, rounded-md ...). These keep new code
+// from growing the patterns the migration removed. Code that predates the
+// rules is held by eslint-suppressions.json and only shrinks.
+const DESIGN_SYNTAX = [
+  {
+    // A literal in a style object is a value known at build time: a class.
+    // Inline style is for values computed at runtime (a position, a width
+    // from data, a course colour), or a CSS variable a class reads.
+    selector:
+      'JSXAttribute[name.name="style"] > JSXExpressionContainer > ObjectExpression > Property[key.name!=/^--/][key.value!=/^--/] > Literal',
+    message:
+      "Static inline style: use a Tailwind class (tokens in src/styles/theme.css). Keep `style` for values only known at runtime.",
+  },
+  {
+    selector: 'JSXAttribute[name.name="className"] Literal[value=/-\\[#[0-9a-fA-F]{3,8}\\]/]',
+    message:
+      "Raw hex colour in a class: use a colour token (bg-sap-100, text-moss-700 ...), or add one to src/styles/tokens.css and theme.css.",
+  },
+  {
+    selector: 'JSXAttribute[name.name="role"][value.value="menu"]',
+    message: "Hand-built menu: use Menu / MenuContent / MenuItem from @/components/ui/Menu.",
+  },
+  {
+    selector: 'JSXAttribute[name.name="className"] Literal[value=/(^|\\s)fixed\\s+inset-0(\\s|$)/]',
+    message:
+      "Hand-built overlay: use Dialog, Sheet or PanelModal, or useOverlayBehaviour for a custom panel (focus trap, Escape, scroll lock).",
+  },
+];
+
 // Next 16 removed `next lint`, so linting runs through the ESLint CLI (eslint 9
 // flat config). eslint-config-next 16 ships native flat-config arrays, spread
 // directly here (this replaces the old
@@ -99,7 +130,14 @@ const eslintConfig = [
       // optimizer configured, so next/image would not help and could break
       // them. Off rather than left as permanent warning noise.
       "@next/next/no-img-element": "off",
+      "no-restricted-syntax": ["error", ...DESIGN_SYNTAX],
     },
+  },
+  {
+    // The primitives themselves, and tests, are where those shapes belong.
+    name: "design-system/exempt",
+    files: ["src/components/ui/**", "src/components/Dialog.tsx", "**/*.test.tsx", "**/__fixtures__/**"],
+    rules: { "no-restricted-syntax": "off" },
   },
   {
     name: "max-lines/tests-exempt",
@@ -124,7 +162,7 @@ const eslintConfig = [
   // a split. The ratchet skips the same glob (EXEMPT_GLOB).
   {
     name: "complexity/landing-engine-exempt",
-    files: ["src/lib/landing/engine/**"],
+    files: ["src/lib/landing/engine/**", "scripts/codemods/**"],
     rules: { complexity: "off" },
   },
   // Generated from complexity-baseline.json at load: `complexity` is off for
@@ -273,6 +311,7 @@ const eslintConfig = [
           message:
             "E2E surface (#382): every <button>/<input>/<textarea> in this file needs a data-testid. See docs/frontend-testids.md for the naming convention.",
         },
+        ...DESIGN_SYNTAX,
       ],
     },
   },

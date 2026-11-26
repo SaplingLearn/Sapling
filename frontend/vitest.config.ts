@@ -16,6 +16,7 @@ export default defineConfig({
     // for tests that don't have a document, so node-env lib tests
     // (sse.test.ts, api.test.ts) aren't affected.
     setupFiles: ['./vitest.setup.ts'],
+    globalSetup: ['./vitest.global-setup.ts'],
     // `npm run test:coverage`: a local report only; no CI job runs it.
     coverage: {
       provider: 'v8',

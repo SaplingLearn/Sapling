@@ -1,0 +1,149 @@
+/* Tailwind theme for Sapling.
+ *
+ * Every utility resolves to a token from tokens.css, so classes and the
+ * remaining CSS read one set of values. Tailwind's default palette, type
+ * scale, radii and shadows are cleared: bg-blue-500 or Tailwind's 14px
+ * text-sm don't exist here, only Sapling's names do.
+ *
+ *   colors   bg-bg-panel  text-text-dim  border-border  bg-sap-100  text-err
+ *   type     text-2xs (10px) … text-md (13px, body) … text-5xl (32px)
+ *   radius   rounded-xs (4px) … rounded-xl (22px), rounded-full
+ *   shadow   shadow-sm  shadow-md  shadow-lg  shadow-inset
+ *   fonts    font-sans (SUSE, UI)  font-serif / font-display (Aleo/Gummi)  font-code
+ *   spacing  Tailwind's 4px step: p-3 = 12px, gap-1.5 = 6px
+ */
+
+@theme {
+  --color-*: initial;
+  --text-*: initial;
+  --radius-*: initial;
+  --shadow-*: initial;
+  --font-*: initial;
+}
+
+/* Values whose names Tailwind owns. static: always emitted, because plain
+   CSS and inline var() reads depend on them, not only utilities. */
+@theme static {
+  --font-display: var(--font-gummi), georgia, serif;
+  --font-serif: var(--font-aleo), 'Aleo', georgia, serif;
+  --font-sans: var(--font-suse), 'SUSE', system-ui, -apple-system, sans-serif;
+  --font-code: ui-monospace, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+  --shadow-sm: 0 1px 2px rgba(25, 37, 11, 0.04), 0 1px 1px rgba(25, 37, 11, 0.03);
+  --shadow-md: 0 4px 12px rgba(25, 37, 11, 0.06), 0 1px 2px rgba(25, 37, 11, 0.04);
+  --shadow-lg: 0 20px 48px rgba(25, 37, 11, 0.10), 0 4px 8px rgba(25, 37, 11, 0.04);
+  --shadow-inset: inset 0 1px 0 rgba(255,255,255,0.6), inset 0 -1px 0 rgba(42,39,31,0.04);
+}
+
+/* Aliases onto tokens.css. inline: utilities read the token directly. */
+@theme inline {
+  --color-white: #ffffff;
+  --color-black: #000000;
+  --color-brand-forest: var(--brand-forest);
+  --color-brand-forest-hover: var(--brand-forest-hover);
+  --color-brand-forest-bright: var(--brand-forest-bright);
+  --color-brand-forest-bright-hover: var(--brand-forest-bright-hover);
+  --color-sidenav-bg: var(--sidenav-bg);
+  --color-sap-50: var(--sap-50);
+  --color-sap-100: var(--sap-100);
+  --color-sap-200: var(--sap-200);
+  --color-sap-300: var(--sap-300);
+  --color-sap-400: var(--sap-400);
+  --color-sap-500: var(--sap-500);
+  --color-sap-600: var(--sap-600);
+  --color-sap-700: var(--sap-700);
+  --color-sap-800: var(--sap-800);
+  --color-sap-900: var(--sap-900);
+  --color-ink-0: var(--ink-0);
+  --color-ink-50: var(--ink-50);
+  --color-ink-100: var(--ink-100);
+  --color-ink-200: var(--ink-200);
+  --color-ink-300: var(--ink-300);
+  --color-ink-400: var(--ink-400);
+  --color-ink-500: var(--ink-500);
+  --color-ink-600: var(--ink-600);
+  --color-ink-700: var(--ink-700);
+  --color-ink-800: var(--ink-800);
+  --color-ink-900: var(--ink-900);
+  --color-bg: var(--bg);
+  --color-bg-panel: var(--bg-panel);
+  --color-bg-subtle: var(--bg-subtle);
+  --color-bg-soft: var(--bg-soft);
+  --color-bg-input: var(--bg-input);
+  --color-bg-inset: var(--bg-inset);
+  --color-bg-topbar: var(--bg-topbar);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-text: var(--text);
+  --color-text-dim: var(--text-dim);
+  --color-text-muted: var(--text-muted);
+  --color-accent: var(--accent);
+  --color-accent-fg: var(--accent-fg);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-border: var(--accent-border);
+  --color-warn: var(--warn);
+  --color-warn-soft: var(--warn-soft);
+  --color-err: var(--err);
+  --color-err-soft: var(--err-soft);
+  --color-info: var(--info);
+  --color-info-soft: var(--info-soft);
+  --color-positive: var(--positive);
+  --color-state-mastery: var(--state-mastery);
+  --color-state-progress: var(--state-progress);
+  --color-state-struggle: var(--state-struggle);
+  --color-state-neutral: var(--state-neutral);
+  --color-fallback-muted: var(--fallback-muted);
+  --color-alert-warn: var(--alert-warn);
+  --color-alert-err: var(--alert-err);
+  --color-c-crimson: var(--c-crimson);
+  --color-c-rust: var(--c-rust);
+  --color-c-amber: var(--c-amber);
+  --color-c-brown: var(--c-brown);
+  --color-c-sage: var(--c-sage);
+  --color-c-teal: var(--c-teal);
+  --color-c-sky: var(--c-sky);
+  --color-c-plum: var(--c-plum);
+  --color-c-magenta: var(--c-magenta);
+  --color-c-rose: var(--c-rose);
+  --color-c-ink: var(--c-ink);
+  --color-grade-a: var(--grade-a);
+  --color-grade-b: var(--grade-b);
+  --color-grade-c: var(--grade-c);
+  --color-grade-d: var(--grade-d);
+  --color-grade-f: var(--grade-f);
+
+  --color-moss-900: var(--moss-900);
+  --color-moss-700: var(--moss-700);
+  --color-moss-500: var(--moss-500);
+  --color-moss-400: var(--moss-400);
+  --color-moss-300: var(--moss-300);
+  --color-moss-200: var(--moss-200);
+  --color-moss-100: var(--moss-100);
+  --color-moss-75: var(--moss-75);
+  --color-moss-50: var(--moss-50);
+  --color-moss-25: var(--moss-25);
+  --color-leaf-800: var(--leaf-800);
+  --color-leaf-500: var(--leaf-500);
+  --color-leaf-100: var(--leaf-100);
+  --color-leaf-50: var(--leaf-50);
+  --color-paper-100: var(--paper-100);
+  --color-paper-200: var(--paper-200);
+  --color-paper-300: var(--paper-300);
+
+  --text-2xs: var(--fs-2xs);
+  --text-xs: var(--fs-xs);
+  --text-sm: var(--fs-sm);
+  --text-md: var(--fs-md);
+  --text-base: var(--fs-base);
+  --text-lg: var(--fs-lg);
+  --text-xl: var(--fs-xl);
+  --text-2xl: var(--fs-2xl);
+  --text-3xl: var(--fs-3xl);
+  --text-4xl: var(--fs-4xl);
+  --text-5xl: var(--fs-5xl);
+
+  --radius-xs: var(--r-xs);
+  --radius-sm: var(--r-sm);
+  --radius-md: var(--r-md);
+  --radius-lg: var(--r-lg);
+  --radius-xl: var(--r-xl);
+}

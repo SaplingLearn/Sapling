@@ -1,4 +1,29 @@
 {
+  "src/app/(public)/news/[slug]/page.tsx": {
+    "no-restricted-syntax": {
+      "count": 1
+    }
+  },
+  "src/app/(public)/page.tsx": {
+    "no-restricted-syntax": {
+      "count": 2
+    }
+  },
+  "src/app/(public)/wiki/WikiRail.tsx": {
+    "no-restricted-syntax": {
+      "count": 1
+    }
+  },
+  "src/app/(public)/wiki/WikiSearch.tsx": {
+    "no-restricted-syntax": {
+      "count": 1
+    }
+  },
+  "src/app/(public)/wiki/page.tsx": {
+    "no-restricted-syntax": {
+      "count": 2
+    }
+  },
   "src/components/CustomSelect.tsx": {
     "react-hooks/set-state-in-effect": {
       "count": 1
@@ -11,6 +36,11 @@
   },
   "src/components/DisclaimerModal.tsx": {
     "react-hooks/set-state-in-effect": {
+      "count": 1
+    }
+  },
+  "src/components/DocumentUploadModal.tsx": {
+    "no-restricted-syntax": {
       "count": 1
     }
   },
@@ -29,9 +59,29 @@
       "count": 12
     }
   },
+  "src/components/Gradebook/GradescopeSyncModal.tsx": {
+    "no-restricted-syntax": {
+      "count": 1
+    }
+  },
+  "src/components/ProfileView.tsx": {
+    "no-restricted-syntax": {
+      "count": 4
+    }
+  },
   "src/components/SessionFeedbackGlobal.tsx": {
     "react-hooks/set-state-in-effect": {
       "count": 1
+    }
+  },
+  "src/components/SideNav.tsx": {
+    "no-restricted-syntax": {
+      "count": 10
+    }
+  },
+  "src/components/Skeleton.tsx": {
+    "no-restricted-syntax": {
+      "count": 11
     }
   },
   "src/components/TopNav.test.tsx": {
@@ -45,8 +95,31 @@
     }
   },
   "src/components/chat/SharedContextToggle.tsx": {
+    "no-restricted-syntax": {
+      "count": 10
+    },
     "react-hooks/set-state-in-effect": {
       "count": 1
+    }
+  },
+  "src/components/companion/Lightbox.tsx": {
+    "no-restricted-syntax": {
+      "count": 4
+    }
+  },
+  "src/components/companion/ZoomableShot.tsx": {
+    "no-restricted-syntax": {
+      "count": 1
+    }
+  },
+  "src/components/flashcards/home/Decks.tsx": {
+    "no-restricted-syntax": {
+      "count": 1
+    }
+  },
+  "src/components/graph/CoursesKey.tsx": {
+    "no-restricted-syntax": {
+      "count": 4
     }
   },
   "src/components/graph/KnowledgeGraph2D.tsx": {
@@ -54,8 +127,131 @@
       "count": 1
     }
   },
+  "src/components/journal/ArticleArt.tsx": {
+    "no-restricted-syntax": {
+      "count": 1
+    }
+  },
+  "src/components/landing-v5/ActTutor.tsx": {
+    "no-restricted-syntax": {
+      "count": 3
+    }
+  },
+  "src/components/landing-v5/BetaModal.tsx": {
+    "no-restricted-syntax": {
+      "count": 29
+    }
+  },
+  "src/components/landing-v5/Closing.tsx": {
+    "no-restricted-syntax": {
+      "count": 5
+    }
+  },
+  "src/components/landing-v5/DragField.tsx": {
+    "no-restricted-syntax": {
+      "count": 4
+    }
+  },
+  "src/components/landing-v5/Faq.tsx": {
+    "no-restricted-syntax": {
+      "count": 3
+    }
+  },
+  "src/components/landing-v5/FeatureLab.tsx": {
+    "no-restricted-syntax": {
+      "count": 2
+    }
+  },
+  "src/components/landing-v5/Hero.tsx": {
+    "no-restricted-syntax": {
+      "count": 1
+    }
+  },
+  "src/components/landing-v5/IntroOverlay.tsx": {
+    "no-restricted-syntax": {
+      "count": 2
+    }
+  },
+  "src/components/landing-v5/Journal.tsx": {
+    "no-restricted-syntax": {
+      "count": 19
+    }
+  },
+  "src/components/landing-v5/Navbar.tsx": {
+    "no-restricted-syntax": {
+      "count": 1
+    }
+  },
+  "src/components/landing-v5/galleryMinis.tsx": {
+    "no-restricted-syntax": {
+      "count": 16
+    }
+  },
+  "src/components/landing-v5/lab/CardsDemo.tsx": {
+    "no-restricted-syntax": {
+      "count": 2
+    }
+  },
+  "src/components/landing-v5/lab/NotesDemo.tsx": {
+    "no-restricted-syntax": {
+      "count": 1
+    }
+  },
+  "src/components/landing-v5/lab/QuizDemo.tsx": {
+    "no-restricted-syntax": {
+      "count": 1
+    }
+  },
+  "src/components/legal/LegalDocumentPage.tsx": {
+    "no-restricted-syntax": {
+      "count": 1
+    }
+  },
+  "src/components/library/DocMenu.tsx": {
+    "no-restricted-syntax": {
+      "count": 2
+    }
+  },
+  "src/components/library/LibraryBits.tsx": {
+    "no-restricted-syntax": {
+      "count": 4
+    }
+  },
+  "src/components/library/LibraryHeader.tsx": {
+    "no-restricted-syntax": {
+      "count": 3
+    }
+  },
+  "src/components/library/LibraryPanel.tsx": {
+    "no-restricted-syntax": {
+      "count": 5
+    }
+  },
+  "src/components/library/LibraryScopeBar.tsx": {
+    "no-restricted-syntax": {
+      "count": 5
+    }
+  },
+  "src/components/library/LibrarySkeleton.tsx": {
+    "no-restricted-syntax": {
+      "count": 17
+    }
+  },
+  "src/components/library/primitives.tsx": {
+    "no-restricted-syntax": {
+      "count": 1
+    }
+  },
   "src/components/marketing/SignInModal.tsx": {
+    "no-restricted-syntax": {
+      "count": 10
+    },
     "react-hooks/set-state-in-effect": {
+      "count": 1
+    }
+  },
+  "src/components/safety/CrisisSupportCard.tsx": {
+    "no-restricted-syntax": {
       "count": 1
     }
   },
@@ -69,12 +265,12 @@
   },
   "src/components/screens/Calendar.tsx": {
     "no-restricted-syntax": {
-      "count": 19
+      "count": 18
     }
   },
   "src/components/screens/Dashboard.tsx": {
     "no-restricted-syntax": {
-      "count": 13
+      "count": 14
     },
     "react/no-unescaped-entities": {
       "count": 2
@@ -82,7 +278,7 @@
   },
   "src/components/screens/Gradebook/Course.tsx": {
     "no-restricted-syntax": {
-      "count": 9
+      "count": 10
     }
   },
   "src/components/screens/Learn.tsx": {
@@ -90,7 +286,7 @@
       "count": 2
     },
     "no-restricted-syntax": {
-      "count": 17
+      "count": 20
     }
   },
   "src/components/screens/Settings.tsx": {
@@ -101,6 +297,9 @@
   "src/components/screens/Social.tsx": {
     "@typescript-eslint/no-explicit-any": {
       "count": 9
+    },
+    "no-restricted-syntax": {
+      "count": 3
     }
   },
   "src/components/screens/Tree.tsx": {
@@ -108,7 +307,32 @@
       "count": 1
     },
     "no-restricted-syntax": {
+      "count": 9
+    }
+  },
+  "src/components/screens/achievements/BadgeModal.tsx": {
+    "no-restricted-syntax": {
+      "count": 1
+    }
+  },
+  "src/components/screens/admin/AccountToolsDialog.tsx": {
+    "no-restricted-syntax": {
       "count": 7
+    }
+  },
+  "src/components/study/CoursePicker.tsx": {
+    "no-restricted-syntax": {
+      "count": 1
+    }
+  },
+  "src/components/study/ExamTabs.tsx": {
+    "no-restricted-syntax": {
+      "count": 1
+    }
+  },
+  "src/components/study/RoadmapTile.tsx": {
+    "no-restricted-syntax": {
+      "count": 1
     }
   },
   "src/lib/api.test.ts": {
