@@ -104,7 +104,7 @@ Several flags change a prompt or an output schema, so their eval datasets must b
 - **Roll back:** off restores the course page as before.
 
 ### review_v2 (Tutor redesign phase 4) — client-visible
-- **Changes:** Study's review queue is headed "Review", with a chip per course and "All courses" (picked first; a pick serves that course's queue fresh) and the item's place ("3 of 9": answered this visit plus what today's budget still covers) in place of the "N min left" chip. The retention check beside it says "Retention check ready for MA 242" when one is due for the course it shows. Frontend only; the board's "Check answer" stays the shared card's "Submit answer".
+- **Changes:** the review queue and the retention check leave the top of the Study hub (where they pushed the course's readiness and Up Next down) for two compact rows in its rail, under Quick Reviews and in its style: "Review" with the queue's count (the Tutor's: due cards and checks, new cards aside) and "Retention check" ("Ready" when one is due; it still opens when none is). Each opens in the hub's modal; the `?retention-course=` deep link opens the check at once. Inside, the queue is headed "Review", with a chip per course and "All courses" (picked first; a pick serves that course's queue fresh) and the item's place ("3 of 9") in place of the "N min left" chip; the retention check says "Retention check ready for MA 242" when one is due for the course it shows. The rest of the hub is unchanged. Frontend only; the board's "Check answer" stays the shared card's "Submit answer".
 - **Before:** nothing; the review routes already take `course_id`.
 - **Watch:** reviews answered per visit, all courses against one course.
 - **Roll back:** off restores Due today as before.

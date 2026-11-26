@@ -64,9 +64,12 @@ export interface StudyHubProps {
    *  the page header across both columns, so they sit below the title and the
    *  course picker rather than above them. */
   reviews?: React.ReactNode;
+  /** `review_v2`: the same reviews as compact rows in the rail, under Quick
+   *  Reviews (each opens in a modal), so the hub keeps its layout. */
+  railReviews?: React.ReactNode;
 }
 
-export function StudyHub({ courses, coursesReady = true, semester, semesterReady, initialCourseId, isMobile, today: todayProp, reviews }: StudyHubProps) {
+export function StudyHub({ courses, coursesReady = true, semester, semesterReady, initialCourseId, isMobile, today: todayProp, reviews, railReviews }: StudyHubProps) {
   // hide_quiz (#620) hides Quiz everywhere it is offered:
   // shown only once the flags are in and it is not hidden.
   const { flags, ready: flagsReady } = useFlagMap();
@@ -92,14 +95,14 @@ export function StudyHub({ courses, coursesReady = true, semester, semesterReady
   // their concepts: without this it rendered the "Add a course" empty state,
   // then the chrome, then the roadmap, in three visible steps.
   if (!coursesReady || !semesterReady) return <StudyHubSkeleton isMobile={isMobile} />;
-  if (!course) return <NoCourses reviews={reviews} />;
+  if (!course) return <NoCourses reviews={reviews ?? railReviews} />;
   if (!graph) return <StudyHubSkeleton isMobile={isMobile} />;
 
   return (
     <HubPage courses={courses} course={course} onPickCourse={pickCourse} userId={userId} today={today} isMobile={isMobile} quizShown={quizShown}
       tutorShown={tutorShown}
       graph={graph} cards={cards} records={records} outline={outline} outlineReady={outlineReady} reloadOutline={reloadOutline}
-      learnerNext={learnerNext} st={st} set={set} closeTileMenu={closeTileMenu} reviews={reviews} />
+      learnerNext={learnerNext} st={st} set={set} closeTileMenu={closeTileMenu} reviews={reviews} railReviews={railReviews} />
   );
 }
 
@@ -143,6 +146,7 @@ function HubPage(props: {
   set: SetHub;
   closeTileMenu: (conceptId: string) => void;
   reviews?: React.ReactNode;
+  railReviews?: React.ReactNode;
 }) {
   const { course, userId, today, isMobile, quizShown, tutorShown, records, st, set } = props;
   const cid = course.course_id;
@@ -223,6 +227,7 @@ function HubPage(props: {
             <QuickReviews reviews={view.reviews} courseLabel={view.label} fsrsDue={view.reviewsFsrsDue}
               reviewHref={reviewsHref} quizHref={dueQuizHref} onNavigate={nav.leaveTo} />
           </section>
+          {props.railReviews}
           <RecentActivity rows={view.recent} onPickConcept={pickConcept} onShowAll={() => set({ recentOpen: true })} />
         </aside>
 

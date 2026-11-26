@@ -31,6 +31,8 @@ import { getCourses, type EnrolledCourse } from "@/lib/api";
 import { StudyHub } from "../study/StudyHub";
 import { studyGuideHref } from "@/lib/toolHrefs";
 import { ReviewSlot } from "../learn/review/ReviewSlot";
+import { RailReviews } from "../learn/review/RailReviews";
+import { useFlag } from "@/context/FlagsContext";
 import { RetentionCheck } from "../learn/RetentionCheck";
 import { useLoopStatus } from "../learn/useLoopStatus";
 import { useMotionPresets } from "@/lib/motion";
@@ -72,6 +74,7 @@ export function Study() {
   const [coursesReady, setCoursesReady] = React.useState(false);
   const [activeSemester, , semesterHydrated] = useActiveSemester();
 
+  const reviewV2 = useFlag("review_v2") === "on";
   const mode = searchParams.get("mode");
   const retentionCourse = searchParams.get(RETENTION_PARAM);
   const redirectTo = mode ? retiredModeHref(mode, searchParams.get("course"), retentionCourse) : null;
@@ -118,7 +121,10 @@ export function Study() {
       semesterReady={semesterHydrated}
       initialCourseId={searchParams.get("course")}
       isMobile={isMobile}
-      reviews={<LoopReviews courses={retentionCourses} retentionCourse={retentionCourse ?? ""} />}
+      // review_v2 (Tutor redesign): the reviews join the rail under Quick
+      // Reviews and open in a modal; off, they sit under the header as before.
+      reviews={reviewV2 ? undefined : <LoopReviews courses={retentionCourses} retentionCourse={retentionCourse ?? ""} />}
+      railReviews={reviewV2 ? <RailReviews courses={retentionCourses} retentionCourse={retentionCourse ?? ""} /> : undefined}
     />
   );
 }

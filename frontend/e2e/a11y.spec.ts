@@ -778,27 +778,34 @@ test("review queue: a flashcard, its answer, the rated result and a multiple-cho
   }
 });
 
-// Tutor redesign phase 4: Review in Study, rebuilt (review_v2): the title, a
-// chip per course and All courses, "n of m", and the scope picked by a chip.
-test("review queue, rebuilt: its course chips and progress (review_v2 on)", async ({ browser }) => {
+// Tutor redesign phase 4: Review in Study, rebuilt (review_v2): the queue and
+// the retention check leave the top of the hub for two rows in its rail, under
+// Quick Reviews; each opens in the hub's modal, with the rebuilt head (the
+// title, a chip per course and All courses, "n of m").
+test("review queue, rebuilt: the rail rows and the queue in its modal (review_v2 on)", async ({ browser }) => {
   test.skip(loopOffLane, "loop path: default lane only");
   await setUserFlag("review_v2", USER_CAPPED, "on");
   const { context, page } = await signIn(browser, USER_CAPPED, "Casey Cap");
   try {
     await page.goto("/study");
-    await expect(page.getByTestId("review-item")).toBeVisible();
-    const panel = page.getByTestId("review-due-panel");
-    await expect(panel.getByRole("heading", { name: "Review", exact: true })).toBeVisible();
-    await expect(page.getByTestId("review-budget")).toHaveCount(0);
-    await expect(page.getByTestId("review-progress")).toHaveText(/^1 of \d+$/);
-    await expectAccessible(page, "review, rebuilt: the queue over every course");
-    const chips = page.getByTestId("review-scope");
-    if (await chips.count()) {
-      await expect(chips.getByRole("radio", { name: "All courses" })).toBeChecked();
-      await chips.locator("label").first().click(); // the first course
-      await expect(chips.getByRole("radio", { name: "All courses" })).not.toBeChecked();
-      await expectAccessible(page, "review, rebuilt: one course");
-    }
+    const review = page.getByTestId("study-rail-review");
+    await expect(review).toBeVisible();
+    await expect(page.getByTestId("study-rail-retention")).toBeVisible();
+    await expect(page.getByTestId("review-due-panel")).toHaveCount(0); // nothing on top of the hub
+    await expectAccessible(page, "review, rebuilt: the hub with its rail rows");
+    await review.click();
+    const dialog = page.getByRole("dialog", { name: "Review" });
+    await expect(dialog.getByTestId("review-item")).toBeVisible();
+    await expect(dialog.getByRole("heading", { name: "Review", exact: true })).toBeVisible();
+    await expect(dialog.getByTestId("review-budget")).toHaveCount(0);
+    await expect(dialog.getByTestId("review-progress")).toHaveText(/^1 of \d+$/);
+    await expectAccessible(page, "review, rebuilt: the queue in its modal");
+    await page.keyboard.press("Escape");
+    await expect(dialog).toHaveCount(0);
+    await expect(review).toBeFocused(); // focus returns to the row
+    await page.getByTestId("study-rail-retention").click();
+    await expect(page.getByRole("dialog", { name: "Retention check" }).getByTestId("retention-open")).toBeVisible();
+    await expectAccessible(page, "review, rebuilt: the retention check in its modal");
   } finally {
     await context.close();
   }
