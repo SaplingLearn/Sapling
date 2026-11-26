@@ -76,6 +76,16 @@ if (typeof window !== "undefined") {
 import { expect as vitestExpect } from "vitest";
 import { cssValue, kebab, toClasses } from "./scripts/codemods/css-to-tailwind.mjs";
 import { twStyle } from "./src/test-utils/twStyle";
+import { readFileSync } from "node:fs";
+import { resolve as resolvePath } from "node:path";
+
+// Token values, so "var(--ink-800)" from a class can equal "rgb(26, 24, 20)"
+// written in a test.
+const TOKENS = Object.fromEntries(
+  [...readFileSync(resolvePath(__dirname, "src/styles/tokens.css"), "utf8").matchAll(/^\s*(--[a-z0-9-]+):\s*([^;]+);/gm)].map((m) => [m[1], m[2].trim()]),
+);
+const resolveVars = (v: string, depth = 0): string =>
+  depth > 8 ? v : v.replace(/var\((--[a-z0-9-]+)\)/g, (all, name: string) => (TOKENS[name] !== undefined ? resolveVars(TOKENS[name], depth + 1) : all));
 
 vitestExpect.extend({
   toHaveTwStyle(received: Element, expected: Record<string, string | number>) {
@@ -89,8 +99,15 @@ vitestExpect.extend({
       // Compare longhand by longhand: a shorthand like border-top only
       // reads back whole when every part was set the same way.
       const parts = probe.style.length ? Array.from({ length: probe.style.length }, (_, i) => probe.style[i]) : [name];
+      const same = (part: string) => {
+        const got = actual.getPropertyValue(part), want = probe.style.getPropertyValue(part);
+        if (got === want) return true;
+        const norm = document.createElement("div");
+        norm.style.setProperty(part, resolveVars(got));
+        return norm.style.getPropertyValue(part) === want;
+      };
       const partMisses = parts
-        .filter((part) => actual.getPropertyValue(part) !== probe.style.getPropertyValue(part))
+        .filter((part) => !same(part))
         .map((part) => `${part}: wanted "${probe.style.getPropertyValue(part)}", got "${actual.getPropertyValue(part)}"`);
       if (!partMisses.length) continue;
       // jsdom can't split a shorthand holding var() into longhands; accept

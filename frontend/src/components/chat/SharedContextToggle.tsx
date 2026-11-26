@@ -120,7 +120,7 @@ export function SharedContextToggle({
       {tooltip && (
         <div
           role="tooltip"
-          className="absolute top-[calc(100%_+_6px)]" style={{ ...(align === "left" ? { left: 0 } : { right: 0 }), zIndex: 60, width: 240, padding: 10, background: "var(--bg-panel)", border: "1px solid var(--border-strong)", borderRadius: "var(--r-md)", boxShadow: "var(--shadow-md)", fontSize: 11, color: "var(--text-dim)", lineHeight: 1.5 }}
+          className="absolute top-[calc(100%_+_6px)] z-60 w-60 p-2.5 [background:var(--bg-panel)] border border-border-strong rounded-md shadow-md text-xs text-text-dim leading-[1.5]" style={{ ...(align === "left" ? { left: 0 } : { right: 0 }) }}
         >
           <strong className="text-text block mb-1">
             Shared course context

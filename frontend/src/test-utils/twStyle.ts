@@ -31,9 +31,16 @@ export function twStyle(el: Element): CSSStyleDeclaration {
   }
   const inline = (el as HTMLElement).style;
   if (inline) {
-    for (let i = 0; i < inline.length; i++) {
-      const prop = inline[i];
-      probe.style.setProperty(prop, inline.getPropertyValue(prop));
+    const props = Array.from({ length: inline.length }, (_, i) => inline[i]);
+    const isShorthand = (prop: string) => props.some((p) => p !== prop && p.startsWith(`${prop}-`));
+    // Shorthands first, then longhands, so a longhand React set after its
+    // shorthand still wins. jsdom also lists a shorthand it composed from
+    // longhands; one holding var() can't be split again, so it is skipped
+    // and its longhands carry the values.
+    for (const prop of [...props.filter(isShorthand), ...props.filter((p) => !isShorthand(p))]) {
+      const value = inline.getPropertyValue(prop);
+      if (value === "" || (isShorthand(prop) && value.includes("var("))) continue;
+      probe.style.setProperty(prop, value);
     }
   }
   return probe.style;

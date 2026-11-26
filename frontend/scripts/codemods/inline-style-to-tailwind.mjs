@@ -206,6 +206,19 @@ function evalObjectRaw(e, depth) {
 function spreadKeys(e, depth = 0) {
   e = unwrap(e);
   if (!e || depth > 6) return null;
+  // `...(cond ? { top: 44 } : { bottom: 14 })`: either branch's keys
+  if (ts.isConditionalExpression(e) || (ts.isBinaryExpression(e) && e.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken)) {
+    const branches = ts.isConditionalExpression(e) ? [e.whenTrue, e.whenFalse] : [e.right];
+    const all = [];
+    for (const b of branches) {
+      const ub = unwrap(b);
+      if (ub.kind === ts.SyntaxKind.NullKeyword || (ts.isIdentifier(ub) && ub.text === "undefined") || ub.kind === ts.SyntaxKind.FalseKeyword) continue;
+      const k = spreadKeys(ub, depth + 1);
+      if (!k) return null;
+      all.push(...k);
+    }
+    return all;
+  }
   let obj = null;
   if (ts.isObjectLiteralExpression(e)) obj = e;
   else if (ts.isIdentifier(e)) {

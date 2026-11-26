@@ -26,6 +26,7 @@
  * it and select it.
  */
 import React from "react";
+import { cn } from "@/lib/cn";
 
 export interface ViewSwitcherOption<K extends string> {
   key: K;
@@ -120,12 +121,12 @@ export function ViewSwitcher<K extends string>({
               else tabRefs.current.delete(o.key);
             }}
             role="tab"
-            className="sapSwitchTab relative inline-flex items-center gap-[7px] border-0 py-0 px-3.5 rounded-[9px] [font-family:inherit] [font-style:inherit] [font-variant:inherit] [font-stretch:inherit] [line-height:inherit] text-base font-semibold cursor-pointer [background:transparent] shadow-none"
+            className={cn("sapSwitchTab relative inline-flex items-center gap-[7px] border-0 py-0 px-3.5 rounded-[9px] [font-family:inherit] [font-style:inherit] [font-variant:inherit] [font-stretch:inherit] [line-height:inherit] text-base font-semibold cursor-pointer [background:transparent] shadow-none", on ? "text-ink-800" : "text-text-muted")}
             data-testid={testIdPrefix ? `${testIdPrefix}-${o.key}` : undefined}
             aria-selected={on}
             tabIndex={on ? 0 : -1}
             onClick={() => onChange(o.key)}
-            style={{ ...(on && !measured ? PILL : null), color: on ? "#1A1814" : "#6F6857" }}
+            style={{ ...(on && !measured ? PILL : null) }}
           >
             {o.icon}
             {o.label}

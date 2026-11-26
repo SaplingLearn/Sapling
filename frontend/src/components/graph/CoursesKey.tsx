@@ -87,7 +87,7 @@ export function CoursesKey({
       data-testid={`${testIdPrefix}-courses-key`}
       role="group"
       aria-label="My courses"
-      className="absolute" style={{ ...(placement === "top-left" ? { top: 44, left: 12 } : { bottom: 14, right: 14 }), maxWidth: "min(220px, calc(100% - 28px))", padding: "6px 8px", zIndex: 2, fontSize: 12 }}
+      className="absolute max-w-[min(220px,_calc(100%_-_28px))] py-1.5 px-2 z-2 text-sm" style={{ ...(placement === "top-left" ? { top: 44, left: 12 } : { bottom: 14, right: 14 }) }}
     >
       <div className="flex flex-col gap-px">
         {courseProgress.map(({ course }) => {
