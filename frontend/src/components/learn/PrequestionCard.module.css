@@ -1,40 +1,5 @@
-/* The segment prequestion card (PrequestionCard). */
-
-.card {
-  padding: var(--sp-7) var(--sp-8);
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-5);
-}
-
-/* Over `.card`'s own border: the accent marks an ungraded guess. */
-:global(.card).card {
-  border-color: var(--accent-border);
-}
-
-.head {
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-2);
-}
-
-.heading {
-  margin: 0;
-  font-weight: 400;
-}
-
-.subline {
-  margin: 0;
-  font-size: var(--fs-md);
-  color: var(--text-dim);
-}
-
-.prompt {
-  margin: var(--sp-2) 0 0;
-  font-size: var(--fs-lg);
-  line-height: 1.5;
-  white-space: pre-wrap;
-}
+/* The prequestion's saved state (a resume after the guess was saved); the
+   card itself is the shared QuestionCard. */
 
 .saved {
   display: flex;
@@ -46,11 +11,4 @@
 .savedNote {
   font-size: var(--fs-base);
   color: var(--text-dim);
-}
-
-.actions {
-  display: flex;
-  gap: var(--sp-4);
-  align-items: center;
-  flex-wrap: wrap;
 }

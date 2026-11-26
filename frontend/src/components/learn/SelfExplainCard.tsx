@@ -11,17 +11,12 @@
 // Rendered inside the check card under a worked-example hint (the Hint button
 // keeps focus there), or in place of the Continue / Check me row after
 // feedback — where LoopLearn moves lost focus to `inputRef` (spec §13 A135).
-import React, { useEffect, useId, useState } from "react";
-import { motion } from "framer-motion";
-
+import React, { useEffect, useState } from "react";
 import type { LoopSelfExplain } from "@/lib/api";
-import { LOOP_ANSWER_MAX } from "@/lib/inputLimits";
-import { FIELD_CLASS } from "./loopShared";
-import { useMotionPresets } from "@/lib/motion";
-import styles from "./SelfExplainCard.module.css";
+import { AnswerField, NOT_GRADED, QuestionActions, QuestionCard } from "./question/QuestionCard";
 
-export const SELF_EXPLAIN_HEADING = "Explain it in your own words";
-export const SELF_EXPLAIN_SUBLINE = "Not scored — a sentence or two is plenty.";
+/** The card's one meta line (its heading): the reply is never graded. */
+export const SELF_EXPLAIN_HEADING = NOT_GRADED;
 
 export function SelfExplainCard({
   prompt,
@@ -53,63 +48,38 @@ export function SelfExplainCard({
   const hasText = reply.trim() !== "";
   useEffect(() => { onDraft?.(hasText); }, [hasText, onDraft]);
   useEffect(() => () => onDraft?.(false), [onDraft]);
-  const ids = useId();
-  const headingId = `${ids}-heading`;
-  const promptId = `${ids}-prompt`;
   const canSend = !busy && hasText;
   const send = () => {
     if (canSend) onSend(reply.trim());
   };
-  const Heading = nested ? "h3" : "h2";
-  const m = useMotionPresets();
-  // Keyed by the prompt: a new ask rises into place (`fadeUp`).
+  // Keyed by the prompt: a new ask rises into place.
   return (
-    <motion.section
+    <QuestionCard
       key={prompt.prompt_id}
-      {...m.fadeUp}
-      aria-labelledby={headingId}
-      data-testid="loop-self-explain"
-      data-juncture={prompt.juncture}
-      data-prompt-id={prompt.prompt_id}
-      className={nested ? `${styles.card} ${styles.nested}` : `card ${styles.card} ${styles.standalone}`}
+      graded={false}
+      nested={nested}
+      meta={SELF_EXPLAIN_HEADING}
+      prompt={prompt.prompt}
+      promptTestId="loop-self-explain-prompt"
+      testId="loop-self-explain"
+      data={{ "data-juncture": prompt.juncture, "data-prompt-id": prompt.prompt_id }}
     >
-      <div className={styles.head}>
-        <Heading id={headingId} className={`label-micro ${styles.heading}`}>{SELF_EXPLAIN_HEADING}</Heading>
-        <p className={styles.subline}>{SELF_EXPLAIN_SUBLINE}</p>
-        <p id={promptId} data-testid="loop-self-explain-prompt" className={styles.prompt}>
-          {prompt.prompt}
-        </p>
-      </div>
-      <textarea
-        ref={inputRef}
-        data-testid="loop-self-explain-input"
-        maxLength={LOOP_ANSWER_MAX}
-        aria-label="Your explanation"
-        aria-describedby={promptId}
-        className={FIELD_CLASS}
-        rows={2}
+      <AnswerField
+        label="Your explanation"
+        name="reply"
+        testId="loop-self-explain-input"
+        inputRef={inputRef}
         placeholder="Because…"
         value={reply}
         disabled={busy}
-        onChange={(e) => setReply(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) send();
-        }}
+        onChange={setReply}
+        onSubmit={send}
       />
-      <div className={styles.actions}>
-        <button
-          type="button"
-          data-testid="loop-self-explain-send"
-          className="btn btn--sm btn--primary"
-          disabled={!canSend}
-          onClick={send}
-        >
-          {saving ? "Saving…" : "Send"}
-        </button>
-        <button type="button" data-testid="loop-self-explain-skip" className="btn btn--sm btn--ghost" disabled={busy} onClick={onSkip}>
-          Skip
-        </button>
-      </div>
-    </motion.section>
+      <QuestionActions
+        size="sm"
+        submit={{ label: "Send", busyLabel: "Saving…", busy: saving, disabled: !canSend, onClick: send, testId: "loop-self-explain-send" }}
+        optOut={{ label: "Skip", disabled: busy, onClick: onSkip, testId: "loop-self-explain-skip" }}
+      />
+    </QuestionCard>
   );
 }

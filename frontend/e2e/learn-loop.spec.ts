@@ -1042,7 +1042,8 @@ test("spec §13 A138 (segment_prequestion on): a new segment opens on an ungrade
     await expect(card).toBeVisible();
     await expect(card).toHaveAttribute("data-format", "mc_reason");
     await expect(card).toHaveAttribute("data-answered", "false");
-    await expect(card).toContainText("isn't scored");
+    await expect(card).toContainText("Not graded");
+    await expect(card).toHaveAttribute("data-graded", "false");
     await expect(page.getByTestId("loop-teach-start")).toHaveCount(0);
     await expect(page.getByTestId("loop-prequestion-option-B")).toContainText(PREQUESTION_ANSWER);
     const guessHash = await card.getAttribute("data-question-hash");
@@ -1414,7 +1415,7 @@ test("phone learner can check in, answer a check and reach wrap-up without horiz
   await page.setViewportSize({ width: 320, height: 740 });
   await openLearn(page);
   const phase = page.getByTestId("loop-phase");
-  await expect(page.getByRole("textbox", { name: "Check-in answer" })).toBeVisible();
+  await expect(page.getByRole("textbox", { name: "Your answer" })).toBeVisible();
   await expect(page.getByTestId("loop-tree-link")).toBeVisible();
   await expect(page.getByTestId("loop-rail")).toHaveCount(0);
   expect(await phase.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);

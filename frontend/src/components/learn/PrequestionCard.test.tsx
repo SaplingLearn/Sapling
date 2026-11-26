@@ -48,7 +48,7 @@ describe("PrequestionCard (spec §13 A138)", () => {
     expect(screen.getByTestId("loop-prequestion-reason")).toHaveAttribute("maxLength", "4000");
   });
 
-  it("is a region named by its heading, says it is not scored, and carries the pose's attributes", () => {
+  it("is a region named by its heading, says it is not graded, and carries the pose's attributes", () => {
     renderCard(mc);
     const region = screen.getByRole("region", { name: PREQUESTION_HEADING });
     expect(region).toBe(screen.getByTestId("loop-prequestion"));
@@ -56,7 +56,8 @@ describe("PrequestionCard (spec §13 A138)", () => {
     expect(region).toHaveAttribute("data-format", "mc_reason");
     expect(region).toHaveAttribute("data-difficulty", "1");
     expect(region).toHaveAttribute("data-answered", "false");
-    expect(region.textContent).toContain("isn't scored");
+    expect(region.textContent).toContain("Not graded");
+    expect(region.getAttribute("data-graded")).toBe("false");
     expect(screen.getByTestId("loop-prequestion-prompt").textContent).toBe("Which option names the sentinel?");
   });
 
@@ -76,7 +77,7 @@ describe("PrequestionCard (spec §13 A138)", () => {
     expect(c).toHaveAttribute("aria-checked", "true");
     fireEvent.keyDown(c, { key: "Home" });
     expect(a).toHaveAttribute("aria-checked", "true");
-    fireEvent.change(screen.getByRole("textbox", { name: "Why you think so (optional)" }), { target: { value: "  it sounds right  " } });
+    fireEvent.change(screen.getByRole("textbox", { name: "Why you think so" }), { target: { value: "  it sounds right  " } });
     fireEvent.click(screen.getByTestId("loop-prequestion-submit"));
     expect(onGuess).toHaveBeenCalledExactlyOnceWith({ option: "A", reason: "it sounds right", no_idea: false });
   });

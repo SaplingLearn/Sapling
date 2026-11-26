@@ -1,11 +1,5 @@
 /* The loop's posed check (CheckCard): the styles its inline style objects held (#866). */
 
-.prompt {
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-5);
-}
-
 /* The calm trust chrome (W4.4 "Key verified", W4.1a withheld figure): the
    values of lib/loopTrustChrome.ts's TRUST_CHROME_STYLE, as tokens. */
 .trustChrome {
@@ -19,19 +13,6 @@
 .figureWithheld {
   border-style: dashed;
   opacity: 0.9;
-}
-
-/* A field label sits close to its box inside the card's gap. Doubled class:
-   outranks tutor's .fl margin whichever stylesheet loads last. */
-.fieldLabel.fieldLabel {
-  margin-bottom: calc(-1 * var(--sp-4));
-}
-
-.actions {
-  display: flex;
-  gap: var(--sp-4);
-  align-items: center;
-  flex-wrap: wrap;
 }
 
 /* aria-disabled, not disabled, while a hint loads: the button keeps focus. */

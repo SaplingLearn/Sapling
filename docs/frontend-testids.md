@@ -1168,7 +1168,7 @@ inside `loop-messages` is `ChatPanel`, whose own `tutor-*` ids
 | `loop-learner-state` | a hidden state hook (no visible chip since the Tutor redesign's subtract pass): the current concept's belief; `data-node-id`, `data-p-known`, `data-band` (present, empty, before any event) |
 | `loop-probe-greeting` | the session opener above the check-in (spec §13 A121: a template — a welcome and the check-in's intro, never teaching or a question) |
 | `loop-probe-item` | the current probe card; `data-question-hash` |
-| `loop-probe-input` | free/teachback probe answer textarea |
+| `loop-probe-input` | free/teachback probe answer textarea, labelled "Your answer" (the shared `learn/question/QuestionCard`) |
 | `loop-probe-options` | the options' radio group (`role="radiogroup"`, named by the question; spec §13 A135): one tab stop, the arrow keys move and choose, Home / End choose the ends |
 | `loop-probe-option-{letter}` | one served `mc_reason` option (stored order; never marked correct, A22); `role="radio"`, named "{letter}. {text}" |
 | `loop-probe-reason` | the one-sentence reason input (`mc_reason`) |
@@ -1213,12 +1213,12 @@ inside `loop-messages` is `ChatPanel`, whose own `tutor-*` ids
 | `loop-check-report-reason-{reason}` | one reason — `wrong_answer` / `unclear` / `not_from_my_course` — posts `/api/learn/loop/report` (`surface: loop`, the pose's `question_hash`); the card goes and "Check me" brings another |
 | `loop-check-report-cancel` | closes the reasons without reporting |
 | `loop-check-reported` | the status line after a report ("…won't be shown to you again. Use Check me for another."); cleared by the next check |
-| `loop-prequestion` | spec §13 A138 (`PrequestionCard.tsx`, the `segment_prequestion` flag): the ungraded guess that opens a teaching segment — "Take a guess first — this one isn't scored"; a region named by its heading, in place of the Continue / Check me row; `data-question-hash`, `data-format` (`mc_reason` / `free`), `data-difficulty`, `data-answered` (`true`: the guess is saved and its explanation is owed — a resume) |
+| `loop-prequestion` | spec §13 A138 (`PrequestionCard.tsx`, the `segment_prequestion` flag): the ungraded guess that opens a teaching segment — a `QuestionCard` with `data-graded="false"` whose meta line (its heading) is "Not graded"; a region named by its heading, in place of the Continue / Check me row; `data-question-hash`, `data-format` (`mc_reason` / `free`), `data-difficulty`, `data-answered` (`true`: the guess is saved and its explanation is owed — a resume) |
 | `loop-prequestion-prompt` | the guess's question (names the options' radio group, describes the guess box) |
 | `loop-prequestion-options` / `loop-prequestion-option-{letter}` | the multiple-choice guess: a radio group named by the question (spec §13 A135; never marked correct, A22) and one option, "{letter}. {text}" |
 | `loop-prequestion-reason` | the optional one-line "Why?" beside a multiple-choice guess |
 | `loop-prequestion-input` | the typed guess (a free item) |
-| `loop-prequestion-submit` | "Submit guess": posts `/prequestion/answer/stream` — the guess, then in the same stream the explanation turn (the answer first, from code); nothing is graded |
+| `loop-prequestion-submit` | "Save guess": posts `/prequestion/answer/stream` — the guess, then in the same stream the explanation turn (the answer first, from code); nothing is graded |
 | `loop-prequestion-no-idea` | "No idea": the same stream with `no_idea: true` and no guess — no penalty |
 | `loop-prequestion-explain` | "Show the explanation" in the `data-answered` state: the same stream again (the saved guess stands) |
 | `loop-self-explain` | spec §13 A139 (`SelfExplainCard.tsx`, the `self_explanation_prompts` flag): the "why does this follow?" prompt — inside the check card under a worked-example or solution hint, or in place of the Continue / Check me row after feedback; `data-juncture` (`worked_example` / `released_solution` / `first_correct`), `data-prompt-id` |

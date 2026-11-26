@@ -86,7 +86,7 @@ test("keyboard only: the check-in, the plan, and a check item answered wrong (ea
 
     // ── Check-in: each question takes focus and is answered from its box ──
     const probeItem = page.getByTestId("loop-probe-item");
-    const probeAnswer = page.getByRole("textbox", { name: "Check-in answer" });
+    const probeAnswer = page.getByRole("textbox", { name: "Your answer" });
     const reference = page.getByTestId("loop-probe-reference");
     await expect(probeItem).toBeVisible();
     let answered = 0;

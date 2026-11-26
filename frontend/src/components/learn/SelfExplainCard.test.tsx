@@ -30,13 +30,14 @@ function renderCard(over: { busy?: boolean; nested?: boolean; inputRef?: React.R
 }
 
 describe("SelfExplainCard (spec §13 A139)", () => {
-  it("is a region named by its heading, says it is not scored, and names its juncture and prompt", () => {
+  it("is a region named by its heading, says it is not graded, and names its juncture and prompt", () => {
     renderCard();
     const region = screen.getByRole("region", { name: SELF_EXPLAIN_HEADING });
     expect(region).toBe(screen.getByTestId("loop-self-explain"));
     expect(region).toHaveAttribute("data-juncture", "worked_example");
     expect(region).toHaveAttribute("data-prompt-id", "se-1");
-    expect(region.textContent).toContain("Not scored");
+    expect(region.textContent).toContain("Not graded");
+    expect(region.getAttribute("data-graded")).toBe("false");
     expect(screen.getByTestId("loop-self-explain-prompt").textContent).toBe(prompt.prompt);
     expect(screen.getByTestId("loop-self-explain-input")).toHaveAttribute("maxLength", String(LOOP_ANSWER_MAX)); // #866 K34
     expect(screen.getByRole("heading", { name: SELF_EXPLAIN_HEADING }).tagName).toBe("H2");

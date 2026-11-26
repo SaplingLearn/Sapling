@@ -12,20 +12,16 @@
 // takes focus (its answer box, described by the question, or the options' tab
 // stop, named by it) in a layout effect, unless a modal dialog owns focus; the
 // options are a radio group (`OptionList` → `useRadioGroup`).
-import React, { useId, useLayoutEffect, useRef, useState } from "react";
-import { motion } from "framer-motion";
+import React, { useLayoutEffect, useRef, useState } from "react";
 
 import type { LoopPrequestion, LoopPrequestionGuess } from "@/lib/api";
 import { OptionList } from "./OptionList";
-import { LOOP_ANSWER_MAX } from "@/lib/inputLimits";
-import { FIELD_CLASS } from "./loopShared";
-import { useMotionPresets } from "@/lib/motion";
+import { modalOpen } from "./modalOpen";
+import { AnswerField, NOT_GRADED, QuestionActions, QuestionCard } from "./question/QuestionCard";
 import styles from "./PrequestionCard.module.css";
 
-export const PREQUESTION_HEADING = "Take a guess first — this one isn't scored";
-export const PREQUESTION_SUBLINE = "Guess before we start: the explanation comes right after.";
-
-const modalOpen = () => typeof document !== "undefined" && document.querySelector('[aria-modal="true"]') !== null;
+/** The card's one meta line (its heading): a guess is never graded. */
+export const PREQUESTION_HEADING = NOT_GRADED;
 
 /** The user row the log shows for a guess — the server saves the same words. */
 export function renderGuess(guess: LoopPrequestionGuess): string {
@@ -54,12 +50,8 @@ export function PrequestionCard({
   const [answer, setAnswer] = useState("");
   const [option, setOption] = useState("");
   const [reason, setReason] = useState("");
-  const ids = useId();
-  const headingId = `${ids}-heading`;
-  const promptId = `${ids}-prompt`;
   const cardRef = useRef<HTMLElement>(null);
   const canSubmit = !busy && (mc ? option !== "" : answer.trim() !== "");
-  const m = useMotionPresets();
 
   // A new question takes focus — its first answer control — so a screen reader
   // reads the question and the student can answer at once (spec §13 A135).
@@ -79,36 +71,32 @@ export function PrequestionCard({
     );
   };
 
-  // Keyed by the question: a new one rises into place (`fadeUp`), so the swap
-  // reads as a new question rather than the same card's text changing.
+  // Keyed by the question: a new one rises into place, so the swap reads as a
+  // new question rather than the same card's text changing.
   return (
-    <motion.section
+    <QuestionCard
       key={questionHash}
-      {...m.fadeUp}
-      ref={cardRef}
-      aria-labelledby={headingId}
-      data-testid="loop-prequestion"
-      data-question-hash={prequestion.question_hash}
-      data-format={prequestion.format}
-      data-difficulty={prequestion.difficulty}
-      data-answered={answered ? "true" : "false"}
-      className={`card ${styles.card}`}
+      graded={false}
+      meta={PREQUESTION_HEADING}
+      prompt={prequestion.prompt}
+      promptTestId="loop-prequestion-prompt"
+      testId="loop-prequestion"
+      sectionRef={cardRef}
+      data={{
+        "data-question-hash": prequestion.question_hash,
+        "data-format": prequestion.format,
+        "data-difficulty": prequestion.difficulty,
+        "data-answered": answered ? "true" : "false",
+      }}
     >
-      <div className={styles.head}>
-        <h2 id={headingId} className={`label-micro ${styles.heading}`}>{PREQUESTION_HEADING}</h2>
-        <p className={styles.subline}>{PREQUESTION_SUBLINE}</p>
-        <p id={promptId} data-testid="loop-prequestion-prompt" className={styles.prompt}>
-          {prequestion.prompt}
-        </p>
-      </div>
-      {answered ? (
+      {({ promptId }) => answered ? (
         <div className={styles.saved}>
           <span className={styles.savedNote}>Your guess is saved.</span>
           <button
             type="button"
             data-testid="loop-prequestion-explain"
             data-answer-start=""
-            className="btn btn--sm btn--primary"
+            className="btn btn--primary"
             disabled={busy}
             onClick={onExplain}
           >
@@ -127,60 +115,19 @@ export function PrequestionCard({
                 labelledBy={promptId}
                 disabled={busy}
               />
-              <input
-                data-testid="loop-prequestion-reason"
-                maxLength={LOOP_ANSWER_MAX}
-                aria-label="Why you think so (optional)"
-                className={FIELD_CLASS}
-                placeholder="Why? (optional)"
-                value={reason}
-                disabled={busy}
-                onChange={(e) => setReason(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) submit();
-                }}
-              />
+              <AnswerField label="Why you think so" name="reason" testId="loop-prequestion-reason" singleLine
+                value={reason} disabled={busy} onChange={setReason} onSubmit={submit} describedByPrompt={false} />
             </>
           ) : (
-            <textarea
-              data-testid="loop-prequestion-input"
-              maxLength={LOOP_ANSWER_MAX}
-              data-answer-start=""
-              aria-label="Your guess"
-              aria-describedby={promptId}
-              className={FIELD_CLASS}
-              rows={2}
-              placeholder="Your guess"
-              value={answer}
-              disabled={busy}
-              onChange={(e) => setAnswer(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) submit();
-              }}
-            />
+            <AnswerField label="Your guess" name="answer" testId="loop-prequestion-input" start
+              value={answer} disabled={busy} onChange={setAnswer} onSubmit={submit} />
           )}
-          <div className={styles.actions}>
-            <button
-              type="button"
-              data-testid="loop-prequestion-submit"
-              className="btn btn--sm btn--primary"
-              disabled={!canSubmit}
-              onClick={submit}
-            >
-              {busy ? "Sending…" : "Submit guess"}
-            </button>
-            <button
-              type="button"
-              data-testid="loop-prequestion-no-idea"
-              className="btn btn--sm btn--ghost"
-              disabled={busy}
-              onClick={() => onGuess({ no_idea: true })}
-            >
-              No idea
-            </button>
-          </div>
+          <QuestionActions
+            submit={{ label: "Save guess", busyLabel: "Saving…", busy, disabled: !canSubmit, onClick: submit, testId: "loop-prequestion-submit" }}
+            optOut={{ label: "No idea", disabled: busy, onClick: () => onGuess({ no_idea: true }), testId: "loop-prequestion-no-idea" }}
+          />
         </>
       )}
-    </motion.section>
+    </QuestionCard>
   );
 }

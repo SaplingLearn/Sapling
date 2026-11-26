@@ -1991,7 +1991,7 @@ describe("LoopLearn — session isolation and learning evidence", () => {
     api.nextLoopProbe.mockResolvedValue(probeItem);
     api.answerLoopProbe.mockResolvedValue({ graded: true, correct: false, probe_done: false, p_known: 0.2, reference_answer: "The stopping condition." });
     render(<LoopLearn />);
-    await screen.findByRole("textbox", { name: "Check-in answer" });
+    await screen.findByRole("textbox", { name: "Your answer" });
     await waitFor(() => expect(api.getGraph).toHaveBeenCalledTimes(1));
     fireEvent.click(screen.getByTestId("loop-probe-idk"));
     await screen.findByText("The stopping condition.");
@@ -2113,7 +2113,7 @@ describe("explicit goals and honest diagnostic coverage", () => {
     await waitFor(() => expect(api.setLoopGoal).toHaveBeenCalledWith("s2", "u1", objective));
     expect((await screen.findByTestId("loop-goal-summary")).textContent).toContain(objective.text);
     await screen.findByTestId("loop-probe-item");
-    fireEvent.change(screen.getByRole("textbox", { name: "Check-in answer" }), { target: { value: "independent reasoning" } });
+    fireEvent.change(screen.getByRole("textbox", { name: "Your answer" }), { target: { value: "independent reasoning" } });
     fireEvent.click(screen.getByTestId("loop-probe-submit"));
     expect((await screen.findByTestId("loop-plan-reason-n1")).textContent).toContain("Prerequisite for your goal");
     expect(screen.getByTestId("loop-plan-reason-n2").textContent).toContain("Your selected goal");
@@ -3115,7 +3115,7 @@ describe("LoopLearn — keyboard and screen reader (spec §13 A135)", () => {
       graded: true, correct: false, p_known: 0.3, probe_done: false, novice_floor: false, reference_answer: "A case that stops.",
     });
     render(<LoopLearn />);
-    const answer = await screen.findByRole("textbox", { name: "Check-in answer" });
+    const answer = await screen.findByRole("textbox", { name: "Your answer" });
     await waitFor(() => expect(answer).toHaveFocus());
     expect(answer).toHaveAccessibleDescription("What is a base case?");
     expect(screen.getByRole("region", { name: "Question 1" })).toContainElement(answer);
@@ -3126,9 +3126,9 @@ describe("LoopLearn — keyboard and screen reader (spec §13 A135)", () => {
     expect(reference.textContent).toContain("A case that stops.");
     fireEvent.click(screen.getByTestId("loop-probe-next"));
     await waitFor(() =>
-      expect(screen.getByRole("textbox", { name: "Check-in answer" })).toHaveAccessibleDescription("What is recursion?"),
+      expect(screen.getByRole("textbox", { name: "Your answer" })).toHaveAccessibleDescription("What is recursion?"),
     );
-    await waitFor(() => expect(screen.getByRole("textbox", { name: "Check-in answer" })).toHaveFocus());
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Your answer" })).toHaveFocus());
   });
 
   it("the plan's heading takes focus when the plan is shown", async () => {
@@ -3194,7 +3194,7 @@ describe("LoopLearn — cards that stand in for the screen (spec §13 A135)", ()
     await screen.findByTestId("loop-start-error");
     await waitFor(() => expect(screen.getByRole("heading", { name: "Couldn't start a session" })).toHaveFocus());
     fireEvent.click(screen.getByTestId("loop-start-retry"));
-    await waitFor(() => expect(screen.getByRole("textbox", { name: "Check-in answer" })).toHaveFocus());
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Your answer" })).toHaveFocus());
   });
 
   it("does not take focus a student is using elsewhere", async () => {

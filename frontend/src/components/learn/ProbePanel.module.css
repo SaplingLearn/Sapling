@@ -47,19 +47,6 @@
   gap: var(--sp-6);
 }
 
-/* The field label sits close over its input: the column's gap, less a step.
-   `label.` outranks tutor.module.css's `.fl` margin whatever the load order. */
-label.reasonLabel {
-  margin-bottom: calc(-1 * var(--sp-4));
-}
-
-.actions {
-  display: flex;
-  gap: var(--sp-4);
-  align-items: center;
-  flex-wrap: wrap;
-}
-
 .next {
   align-self: flex-start;
 }

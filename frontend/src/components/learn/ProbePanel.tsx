@@ -1,16 +1,14 @@
 "use client";
-import React, { useId, useLayoutEffect, useRef, useState } from "react";
-import { motion } from "framer-motion";
+import React, { useLayoutEffect, useRef, useState } from "react";
 import { type LoopProbeItem } from "@/lib/api";
 import { ConfidenceControl } from "./ConfidenceControl";
 import { OptionList } from "./OptionList";
 import tutorStyles from "./tutor/tutor.module.css";
 import { modalOpen } from "./modalOpen";
-import { type Draft, FIELD_CLASS, focusAnswerStart } from "./loopShared";
+import { type Draft, focusAnswerStart } from "./loopShared";
+import { AnswerField, QuestionActions, QuestionCard, REASON_LABEL } from "./question/QuestionCard";
 import { TutorTurn } from "./TutorTurn";
-import { LOOP_ANSWER_MAX } from "@/lib/inputLimits";
 import { HYPERCORRECTION_DWELL_COPY } from "@/lib/hypercorrectionDwell";
-import { useMotionPresets } from "@/lib/motion";
 import styles from "./ProbePanel.module.css";
 
 /** K02: an mc_reason answer needs its reason too (the grader judges it, never
@@ -61,9 +59,6 @@ export function ProbePanel({
 }) {
   const mc = item?.format === "mc_reason";
   const canSubmit = !!item && !busy && draftAnswered(mc, draft);
-  const ids = useId();
-  const promptId = `${ids}-prompt`;
-  const headingId = `${ids}-question`;
   const cardRef = useRef<HTMLElement>(null);
   const referenceRef = useRef<HTMLDivElement>(null);
   // spec §13 A135: a new question takes focus — its answer box, described by
@@ -81,7 +76,6 @@ export function ProbePanel({
   }, [reference]);
   // A new question rises into place (`fadeUp`, keyed by its hash); the one on
   // screen when the panel first paints does not move.
-  const m = useMotionPresets();
   const [firstHash] = useState(questionHash);
   const swapped = questionHash !== firstHash;
   const referenceBlock = (
@@ -100,7 +94,7 @@ export function ProbePanel({
       <div className={tutorStyles.col}>
         <h2 className={tutorStyles.sr}>Quick check-in</h2>
         <TutorTurn testId="loop-probe-greeting">
-          {greeting ?? "Let's start with a quick check-in so I know where you are. No hints here; it just shows me what to teach."}
+          {greeting ?? "Let's start with a quick check-in so I know where you are. These answers count, and there are no hints."}
         </TutorTurn>
         {/* The coverage summary reads the check-in's results: it shows on the plan,
             once there is something to summarise, not over the first question. */}
@@ -120,22 +114,19 @@ export function ProbePanel({
           </div>
         )}
         {item && (
-          <motion.section
+          <QuestionCard
             key={item.question_hash}
-            {...m.fadeUp}
-            initial={swapped ? m.fadeUp.initial : false}
-            ref={cardRef}
-            aria-labelledby={headingId}
-            data-testid="loop-probe-item"
-            data-question-hash={item.question_hash}
-            data-difficulty={item.difficulty}
-            className={`card ${tutorStyles.qcard}`}
+            graded
+            animateIn={swapped}
+            sectionRef={cardRef}
+            testId="loop-probe-item"
+            data={{ "data-question-hash": item.question_hash, "data-difficulty": item.difficulty }}
+            // The stepper says Check-in and the greeting says "no hints": the
+            // card names only its question number.
+            meta={`Question ${count + (reference === null ? 1 : 0)}`}
+            prompt={item.prompt}
           >
-            {/* The stepper says Check-in and the greeting says "no hints":
-                the card names only its question number. */}
-            <h3 id={headingId} className={tutorStyles.qmeta}>Question {count + (reference === null ? 1 : 0)}</h3>
-            <p id={promptId} className={tutorStyles.q}>{item.prompt}</p>
-            {reference === null ? (
+            {({ promptId }) => reference === null ? (
               <>
                 {mc ? (
                   <>
@@ -147,41 +138,16 @@ export function ProbePanel({
                       labelledBy={promptId}
                       disabled={busy}
                     />
-                    <label htmlFor={`${ids}-reason`} className={`${tutorStyles.fl} ${styles.reasonLabel}`}>In one sentence: why?</label>
-                    <input
-                      id={`${ids}-reason`}
-                      data-testid="loop-probe-reason"
-                      maxLength={LOOP_ANSWER_MAX}
-                      className={FIELD_CLASS}
-                      placeholder="Because…"
-                      value={draft.reason}
-                      disabled={busy}
-                      onChange={(e) => {
-                        const reason = e.target.value;
-                        setDraft((d) => ({ ...d, reason }));
-                      }}
-                    />
+                    <AnswerField label={REASON_LABEL} name="reason" testId="loop-probe-reason" singleLine describedByPrompt={false}
+                      placeholder="Because…" value={draft.reason} disabled={busy}
+                      onChange={(reason) => setDraft((d) => ({ ...d, reason }))} />
                   </>
                 ) : (
-                  <textarea
-                    data-testid="loop-probe-input"
-                    maxLength={LOOP_ANSWER_MAX}
-                    data-answer-start=""
-                    aria-label="Check-in answer"
-                    aria-describedby={promptId}
-                    className={FIELD_CLASS}
-                    rows={3}
-                    placeholder={item.format === "teachback" ? "Explain it in your own words" : "Your answer"}
-                    value={draft.answer}
-                    disabled={busy}
-                    onChange={(e) => {
-                      const answer = e.target.value;
-                      setDraft((d) => ({ ...d, answer }));
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && canSubmit) onSubmit();
-                    }}
-                  />
+                  <AnswerField label="Your answer" name="answer" testId="loop-probe-input" start rows={3}
+                    placeholder={item.format === "teachback" ? "Explain it in your own words" : undefined}
+                    value={draft.answer} disabled={busy}
+                    onChange={(answer) => setDraft((d) => ({ ...d, answer }))}
+                    onSubmit={() => { if (canSubmit) onSubmit(); }} />
                 )}
                 <ConfidenceControl
                   testIdPrefix="loop-probe-confidence"
@@ -189,14 +155,10 @@ export function ProbePanel({
                   onChange={(confidence) => setDraft((d) => ({ ...d, confidence }))}
                   disabled={busy}
                 />
-                <div className={styles.actions}>
-                  <button data-testid="loop-probe-submit" className="btn btn--primary" disabled={!canSubmit} onClick={onSubmit}>
-                    {busy ? "Checking…" : "Submit answer"}
-                  </button>
-                  <button data-testid="loop-probe-idk" className="btn btn--ghost" disabled={busy} onClick={onIdk}>
-                    I don&apos;t know
-                  </button>
-                </div>
+                <QuestionActions
+                  submit={{ label: "Submit answer", busyLabel: "Checking…", busy, disabled: !canSubmit, onClick: onSubmit, testId: "loop-probe-submit" }}
+                  optOut={{ label: "I don't know", disabled: busy, onClick: onIdk, testId: "loop-probe-idk" }}
+                />
               </>
             ) : (
               <>
@@ -204,7 +166,7 @@ export function ProbePanel({
                 <ProbeNext busy={busy} nextHeld={nextHeld} onNext={onNext} className={styles.next} />
               </>
             )}
-          </motion.section>
+          </QuestionCard>
         )}
         {note && <div role="status" className={styles.note}>{note}</div>}
       </div>
