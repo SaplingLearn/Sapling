@@ -394,8 +394,9 @@ test("loop user completes probe → plan → check (explicit submission) with a 
   // correct answer after H4–H6 is NO upward BKT evidence (weight 0, FSRS Again,
   // an isomorph re-asked) — the worked example came first, so this item earns
   // the concept nothing; the near-transfer item after it is where credit comes.
+  // A hidden state hook since the Tutor redesign's subtract pass (no visible chip).
   const learner = page.getByTestId("loop-learner-state");
-  await expect(learner).toBeVisible();
+  await expect(learner).toBeAttached();
   await expect(learner).toHaveAttribute("data-node-id", checkedNodeId);
   const afterCheckKnown = Number(await learner.getAttribute("data-p-known"));
   expect(afterCheckKnown).toBeCloseTo(beforeCheckKnown, 2); // read-time decay only
