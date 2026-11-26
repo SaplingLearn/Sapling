@@ -327,6 +327,16 @@ REGISTRY: dict[str, FlagDef] = _registry(
             "included), Next time, one next step chosen by state (Review when "
             "reviews are due, else New session) and More practice. Off: the "
             "wrap-up as before.", True),
+    # Tutor redesign phase 4 (the check-in result and plan): one line from the
+    # tutor, where the student starts on each concept the check-in measured
+    # (GET /plan's `starting`, on the ladder), today's plan with one label per
+    # concept ("New, after Hash tables" where a prerequisite comes first), and
+    # Start this plan beside Change goal. Frontend only. A loop flag.
+    FlagDef("plan_v2", ("off", "on"),
+            "The rebuilt check-in result and plan: one line from the tutor, "
+            "Where you're starting (each concept the check-in measured, in the "
+            "ladder's words), Today's plan with one label per concept, and Start "
+            "this plan beside Change goal. Off: the plan card as before.", True),
     FlagDef("skill_ladder", ("off", "on"),
             "One skill measure on the graph: each concept's score, tier and words "
             "come from the learner model's decayed skill (Not started / Getting "

@@ -1524,6 +1524,28 @@ def test_plan_get_exposes_prereq_edges_among_proposed_concepts(probe):
     assert {c["node_id"] for c in body["concepts"]} >= {"N1", "K"}
 
 
+def test_plan_get_gives_the_starting_belief_of_each_concept_the_check_in_measured(probe):
+    """Tutor redesign (`plan_v2`): GET /plan says where the student starts on
+    each concept the check-in answered, planned or not (K is not proposed), on
+    the planner's own belief; a concept the check-in never reached (X) is left
+    out, so the client never shows the prior as a measured level."""
+    _planning(probe)
+    probe.store["doc"]["probe"] = {
+        "skills": ["N1", "P", "X"],
+        "history": [
+            {"node_id": "N1", "question_hash": "h1", "difficulty": 1, "correct": False},
+            {"node_id": "P", "question_hash": "h2", "difficulty": 2, "correct": True},
+        ],
+        "current": None,
+    }
+    body = client.get(f"{LOOP}/plan", params=PLAN_Q).json()
+    assert body["starting"] == [
+        {"node_id": "N1", "p_known": pytest.approx(_BELOW)},
+        {"node_id": "P", "p_known": pytest.approx(_PROF)},
+    ]
+    assert "P" not in {c["node_id"] for c in body["concepts"]}
+
+
 def test_plan_get_gives_each_concept_one_kind_and_no_goal_reason_without_a_goal(probe):
     """U3 (PR #866 review): without a goal, `reason` is absent — the kind is
     the one thing the Tutor says about a concept, so a new concept can never

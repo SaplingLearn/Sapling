@@ -196,6 +196,7 @@ EXPECTED_LOOP_FLAGS = {
     "hint_ladder",  # a loop UI flag: the check card only renders with the loop on
     "verdict_v2",  # a loop UI flag: the verdict only renders with the loop on
     "wrapup_v2",  # a loop UI flag: the wrap-up only renders with the loop on
+    "plan_v2",  # a loop UI flag: the plan only renders with the loop on
 }
 
 

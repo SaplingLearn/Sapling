@@ -65,6 +65,7 @@ import {
   type LoopPhase,
   type LoopPlanConcept,
   type LoopPlanPrereqEdge,
+  type LoopPlanStarting,
   type LoopPrequestion,
   type LoopPrequestionGuess,
   type LoopProbeItem,
@@ -115,7 +116,7 @@ import { dropInterruptedTurn } from "./chatRetry";
 import { modalOpen } from "./modalOpen";
 import { LOOP_GOAL_MAX_TARGETS, LOOP_GOAL_TEXT_MAX, hintDenial, type Draft, type HintView } from "./loopShared";
 import { ProbePanel } from "./ProbePanel";
-import { PlanPanel } from "./PlanPanel";
+import { PlanSlot, goalLocked } from "./plan/PlanV2";
 import { CheckCard } from "./CheckCard";
 import { LoopNotices } from "./LoopNotices";
 import { ReadOnlyTranscript } from "./ReadOnlyTranscript";
@@ -329,6 +330,7 @@ export function LoopLearn() {
   const [plan, setPlan] = useState<LoopPlanConcept[] | null>(null);
   // W3.1: GET /plan prereq pairs — kept through approve for SessionPanel
   const [planPrereqEdges, setPlanPrereqEdges] = useState<LoopPlanPrereqEdge[]>([]);
+  const [planStarting, setPlanStarting] = useState<LoopPlanStarting[]>([]); // plan_v2
   const [planBusy, setPlanBusy] = useState(false);
   const [planLoading, setPlanLoading] = useState(false);
   const [planGoalVersion, setPlanGoalVersion] = useState<number | undefined>(undefined);
@@ -483,6 +485,7 @@ export function LoopLearn() {
   const item = state.item;
   const hintLadder = useHintSteps(item);
   const verdictV2 = useFlag("verdict_v2") === "on"; // Tutor redesign phase 4
+  const planV2 = useFlag("plan_v2") === "on"; // the plan's own Change goal replaces the header's
   const verdictSkill = useVerdictSkill();
   const checkOpen = checkIsOpen(state);
   const exhaustedPracticeAttempt = practiceUnavailable.some((id) => goalProgress?.attempted_node_ids.includes(id));
@@ -678,6 +681,7 @@ export function LoopLearn() {
     setLoadError(null);
     setPlan(null);
     setPlanPrereqEdges([]);
+    setPlanStarting([]);
     setPlanGoalVersion(undefined);
     try {
       const r = await getLoopPlan(sid, userId);
@@ -688,6 +692,7 @@ export function LoopLearn() {
       setPlanGoalVersion(r.goal_version);
       setPlan(r.concepts ?? []);
       setPlanPrereqEdges(r.prereq_edges ?? []);
+      setPlanStarting(r.starting ?? []);
       if (r.phase) dispatch({ type: "phase", phase: r.phase }); // an empty plan teaches at once
     } catch (err) {
       if (g !== gen.current) return;
@@ -1932,6 +1937,9 @@ export function LoopLearn() {
       </button>
     </>
   );
+  // The goal editor's opener: the header's Edit goal, or the rebuilt plan's Change goal (plan_v2).
+  const goalButtonDisabled = goalLocked([starting, probeBusy, planBusy, goalBusy, !scopeReady, !!pendingGrade]);
+  const openGoalEditor = () => { setGoalEditor(true); setGoalError(null); };
   const renderTopActions = () => (
     <div className={tutorStyles.topActs}>
       {view === "course" && (
@@ -1940,10 +1948,9 @@ export function LoopLearn() {
           <Icon name="sparkle" size={14} /> Start a session
         </button>
       )}
-      {inSession && sessionId && !readOnly && (state.phase === "probe" || state.phase === "plan") && (
+      {inSession && sessionId && !readOnly && (state.phase === "probe" || (state.phase === "plan" && !planV2)) && (
         <button ref={goalButton} type="button" className="btn btn--sm" data-testid="loop-set-goal"
-          disabled={starting || probeBusy || planBusy || goalBusy || !scopeReady || !!pendingGrade}
-          onClick={() => { setGoalEditor(true); setGoalError(null); }}>
+          disabled={goalButtonDisabled} onClick={openGoalEditor}>
           {goal ? "Edit goal" : "Set goal"}
         </button>
       )}
@@ -2236,7 +2243,7 @@ export function LoopLearn() {
       return <GoalEditor key={`${sessionId}:${courseId}`} goal={goal}
         nodes={railGraph.nodes.filter((node) => !node.is_subject_root)} busy={goalBusy} error={goalError}
         loadingNodes={graphLoading} nodesError={graphError} onRetryNodes={() => void refreshGraph()}
-        onSave={(next) => void saveGoal(next)} onCancel={() => { setGoalEditor(false); goalButton.current?.focus(); }} />;
+        onSave={(next) => void saveGoal(next)} onCancel={() => { setGoalEditor(false); requestAnimationFrame(() => goalButton.current?.focus()); }} />;
     } else if (state.phase === "probe") {
       return (
         <ProbePanel
@@ -2258,16 +2265,10 @@ export function LoopLearn() {
       );
     } else if (state.phase === "plan") {
       return (
-        <PlanPanel
-          diagnosis={diagnosis}
-          names={conceptNames}
-          plan={plan}
-          prereqEdges={planPrereqEdges}
-          busy={planBusy}
-          loadFailed={loadError === "plan"}
-          onApprove={() => void approvePlan()}
+        <PlanSlot diagnosis={diagnosis} names={conceptNames} plan={plan} prereqEdges={planPrereqEdges} starting={planStarting}
+          busy={planBusy} loadFailed={loadError === "plan"} onApprove={() => void approvePlan()}
           onRetry={() => { if (sessionId) void loadPlan(sessionId, gen.current); }}
-        />
+          goal={{ has: !!goal, disabled: goalButtonDisabled, open: openGoalEditor }} goalRef={goalButton} />
       );
     } else if (state.phase === "close") {
       return <ClosePanel close={close} note={closeNote} names={conceptNames} courseId={courseId} onNew={showHome}

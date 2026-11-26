@@ -36,7 +36,7 @@ Several flags change a prompt or an output schema, so their eval datasets must b
 
 ## Recommended order
 
-1. **Read-only, no eval needed:** `quiz_concept_plan`, `quiz_results_routing`, `item_reports`, `skill_ladder`, `hint_ladder`, `verdict_v2`, `wrapup_v2`.
+1. **Read-only, no eval needed:** `quiz_concept_plan`, `quiz_results_routing`, `item_reports`, `skill_ladder`, `hint_ladder`, `verdict_v2`, `wrapup_v2`, `plan_v2`.
 2. **Safety, after copy review:** `crisis_support`.
 3. **Prompt changes, after their evals:** `loop_tutor_v2`, `segment_prequestion`, `self_explanation_prompts`, `quiz_planned_questions`, `quiz_item_gates`, then `quiz_misconceptions`.
 4. **Drafting changes, after their evals:** `varied_isomorphs`, `multi_concept_items`, `upload_prereq_edges`.
@@ -78,6 +78,12 @@ Several flags change a prompt or an output schema, so their eval datasets must b
 - **Before:** nothing; it reads the close record, the approved plan and the review count the session panel already shows.
 - **Watch:** clicks on the primary step against the secondary ones; sessions started from the wrap-up.
 - **Roll back:** off restores the wrap-up as before.
+
+### plan_v2 (Tutor redesign phase 4) — client-visible
+- **Changes:** after the check-in, one line from the tutor naming where the student is furthest along and what is new, then "Where you're starting" (each concept the check-in answered, on the skill ladder; one it never reached reads Not started), then "Today's plan" with one label per concept ("Quick review", "New", "New, after Hash tables" when a planned prerequisite comes first, "Practice") and Start this plan beside Change goal (the goal editor the header's Edit goal opened). The diagnosis details, the goal reasons and the separate "How these connect" list are folded in or gone. Frontend, plus the additive `starting` field on GET /plan (the planner's belief per measured concept).
+- **Before:** nothing; `starting` is sent whatever the flag says.
+- **Watch:** plan approvals against goal changes from the plan; time on the plan screen.
+- **Roll back:** off restores the plan card as before.
 
 ### item_reports (A113, A123) — client-visible
 - **Changes:** students can report a check question. Two reports hold it from the whole course until staff approve or retire it in the admin check-items queue.

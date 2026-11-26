@@ -1242,19 +1242,17 @@ export interface LoopPlanConcept {
   target_node_ids?: string[];
 }
 /** W3.1: prereq pairs among today's plan proposal ∪ goal targets (GET /plan). */
-export interface LoopPlanPrereqEdge {
-  prerequisite: string;
-  dependent: string;
-}
+export interface LoopPlanPrereqEdge { prerequisite: string; dependent: string }
 export interface LoopPlan extends LoopLearningScope {
   concepts: LoopPlanConcept[];
   order: string[];
   /** Nothing to plan: the server moved the session straight to `teach`. */
   empty?: boolean;
   phase?: LoopPhase;
-  /** Planner-aligned prerequisite edges for PlanPanel dependency view (W3.1). */
-  prereq_edges?: LoopPlanPrereqEdge[];
+  /** W3.1 prerequisite edges; `starting`: the planner's belief per concept the check-in answered (`plan_v2`). */
+  prereq_edges?: LoopPlanPrereqEdge[]; starting?: LoopPlanStarting[];
 }
+export interface LoopPlanStarting { node_id: string; p_known: number }
 export interface LoopOpenSession { session_id: string; topic: string; started_at: string; phase: LoopPhase }
 export interface LoopStartResult extends LoopLearningScope, WithCrisisSupport {
   session_id: string;

@@ -577,19 +577,26 @@ test("learning loop: check-in, plan, teaching, a check with hints, feedback, a m
 
 // Tutor redesign phase 4: the rebuilt surfaces are student surfaces too (spec
 // §13 A135), scanned in their own states with their flags on for this student.
-test("learning loop: the hint ladder, the rebuilt verdict and wrap-up (hint_ladder, verdict_v2, wrapup_v2 on)", async ({ browser }) => {
+test("learning loop: the rebuilt plan, the hint ladder, the rebuilt verdict and wrap-up (plan_v2, hint_ladder, verdict_v2, wrapup_v2 on)", async ({ browser }) => {
   test.skip(loopOffLane, "loop path: default lane only");
   test.setTimeout(LOOP_TIMEOUT_MS);
   await setUserFlag("hint_ladder", USER_LOOP, "on");
   await setUserFlag("verdict_v2", USER_LOOP, "on");
   await setUserFlag("wrapup_v2", USER_LOOP, "on");
+  await setUserFlag("plan_v2", USER_LOOP, "on");
   const P = await learningParams(["PROBE_SESSION_CAP"]);
   const { context, page } = await signIn(browser, USER_LOOP, "Lou Loop");
   try {
     await page.goto("/learn");
     await page.getByTestId("loop-start-guided").click();
-    await walkCheckInAndPlan(page, Number(P.PROBE_SESSION_CAP));
+    // the walker scans the plan it lands on: here the rebuilt one
+    await walkCheckInAndPlan(page, Number(P.PROBE_SESSION_CAP), { approve: false });
+    await expect(page.getByTestId("loop-plan-v2")).toBeVisible();
+    await expect(page.getByTestId("loop-plan-intro")).toBeFocused();
+    await expect(page.getByTestId("loop-set-goal")).toHaveCount(1); // Change goal, in the plan
     const phase = page.getByTestId("loop-phase");
+    await page.getByTestId("loop-plan-approve").click();
+    await expect(phase).toHaveAttribute("data-phase", "teach");
     await page.getByTestId("loop-teach-start").click();
     await expect(page.getByTestId("tutor-stop")).toHaveCount(0, { timeout: 30_000 });
 

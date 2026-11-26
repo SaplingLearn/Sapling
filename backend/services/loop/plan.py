@@ -106,6 +106,7 @@ def plan_get(request: Request, user_id: str, session_id: str) -> dict:
             **_learning_scope_payload(saved, session_id),
         }
     names = _plan_node_names(user_id, ids)
+    scope_payload = _learning_scope_payload(saved, session_id)
     return {
         "concepts": [
             {
@@ -120,8 +121,23 @@ def plan_get(request: Request, user_id: str, session_id: str) -> dict:
         ],
         "order": list(PLAN_ORDER),
         "prereq_edges": prereq_edges,
-        **_learning_scope_payload(saved, session_id),
+        # Tutor redesign (`plan_v2`): where the student starts on each concept
+        # the check-in measured, on the planner's own belief (planned or not)
+        "starting": _starting(scope_payload.get("diagnosis"), view.states),
+        **scope_payload,
     }
+
+
+def _starting(diagnosis: dict | None, states: dict[str, float]) -> list[dict]:
+    """The planning belief of each concept the check-in answered at least once,
+    in the diagnosis's order. A concept it never reached is left out: the
+    client calls it Not started rather than show the prior as a level."""
+    skills = (diagnosis or {}).get("skills") or []
+    return [
+        {"node_id": s["node_id"], "p_known": states[s["node_id"]]}
+        for s in skills
+        if isinstance(s, dict) and s.get("observations") and s.get("node_id") in states
+    ]
 
 
 def plan_approve(body: PlanApproveBody, request: Request) -> dict:

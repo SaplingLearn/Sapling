@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Session: check-in result and plan</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Aleo:wght@400;600;700&amp;family=SUSE:wght@400;500;600;700&amp;display=swap">
+<style>
+body{margin:0}
+a{color:#445D22;text-decoration:none}a:hover{color:#384E19}
+</style>
+</helmet>
+<div style="min-height: 980px; display: flex; flex-wrap: wrap; background: #faf8f3; font-family: 'SUSE', system-ui, sans-serif; color: #1a1814;">
+  <dc-import name="Sidebar" active="session" hint-size="264px,980px"></dc-import>
+  <main style="flex: 999 1 560px; min-width: 0; display: flex; flex-direction: column;">
+    <header style="display: flex; align-items: center; gap: 24px; padding: 16px 40px; border-bottom: 1px solid rgba(42,39,31,0.10); flex-wrap: wrap;">
+      <h1 style="margin: 0; font-family: 'Aleo', Georgia, serif; font-size: 22px; font-weight: 600;">Prepare for Midterm 2</h1>
+      <ol aria-label="Session steps" style="margin: 0; padding: 0; list-style: none; display: flex; align-items: center; gap: 10px; font-size: 14px; color: #3f3b31;">
+        <li style="display: flex; align-items: center; gap: 6px;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#445D22" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5L20 7"></path></svg>Check-in</li>
+        <li aria-hidden="true" style="width: 24px; height: 1px; background: #b9b1a0;"></li>
+        <li aria-current="step" style="font-weight: 600; color: #1a1814;">Plan</li>
+        <li aria-hidden="true" style="width: 24px; height: 1px; background: #ddd6c6;"></li>
+        <li>Learn</li>
+        <li aria-hidden="true" style="width: 24px; height: 1px; background: #ddd6c6;"></li>
+        <li>Wrap up</li>
+      </ol>
+    </header>
+
+    <div style="flex: 1; overflow: auto; padding: 40px;">
+      <div style="max-width: 720px; margin: 0 auto; display: flex; flex-direction: column; gap: 24px;">
+        <p style="margin: 0; font-family: 'Aleo', Georgia, serif; font-size: 18px; line-height: 1.6;">Thanks. Stacks are mostly there, and hashing is new to you. Here's where you're starting and what I suggest for today.</p>
+
+        <section aria-labelledby="start-h" style="display: flex; flex-direction: column; gap: 8px;">
+          <h2 id="start-h" style="margin: 0 0 4px; font-family: 'Aleo', Georgia, serif; font-size: 22px; font-weight: 600;">Where you're starting</h2>
+          <div style="display: grid; grid-template-columns: minmax(0, 1fr) 120px 120px; gap: 12px; align-items: center; font-size: 15px;">
+            <span>Stacks</span><span style="height: 6px; border-radius: 3px; background: #ebe6dc;"><span style="display: block; width: 44%; height: 6px; border-radius: 3px; background: #60842c;"></span></span><span style="color: #3f3b31; font-size: 14px;">Developing</span>
+            <span>Hash tables</span><span style="height: 6px; border-radius: 3px; background: #ebe6dc;"><span style="display: block; width: 14%; height: 6px; border-radius: 3px; background: #a1bc83;"></span></span><span style="color: #3f3b31; font-size: 14px;">Getting started</span>
+            <span>Collision resolution</span><span style="height: 6px; border-radius: 3px; background: #ebe6dc;"></span><span style="color: #3f3b31; font-size: 14px;">Not started</span>
+          </div>
+        </section>
+
+        <section aria-labelledby="plan-h" style="display: flex; flex-direction: column; gap: 16px; padding: 24px; border-radius: 16px; background: #fdfcf9; border: 1px solid rgba(42,39,31,0.12);">
+          <h2 id="plan-h" style="margin: 0; font-family: 'Aleo', Georgia, serif; font-size: 22px; font-weight: 600;">Today's plan</h2>
+          <ol style="margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column;">
+            <li style="display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 12px 0; border-bottom: 1px solid rgba(42,39,31,0.08); font-size: 15px;"><span style="color: #3f3b31;">1</span><span>Stacks</span><span style="font-size: 14px; color: #3f3b31;">Quick review</span></li>
+            <li style="display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 12px 0; border-bottom: 1px solid rgba(42,39,31,0.08); font-size: 15px;"><span style="color: #3f3b31;">2</span><span>Hash tables</span><span style="font-size: 14px; color: #3f3b31;">New</span></li>
+            <li style="display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 12px 0; border-bottom: 1px solid rgba(42,39,31,0.08); font-size: 15px;"><span style="color: #3f3b31;">3</span><span>Collision resolution</span><span style="font-size: 14px; color: #3f3b31;">New, after hash tables</span></li>
+            <li style="display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 12px 0; font-size: 15px;"><span style="color: #3f3b31;">4</span><span>Queues</span><span style="font-size: 14px; color: #3f3b31;">Practice</span></li>
+          </ol>
+          <div style="display: flex; gap: 12px; align-items: center;">
+            <a href="Session.dc.html" style="height: 44px; padding: 0 22px; border-radius: 10px; background: #445D22; color: #ffffff; font-size: 15px; font-weight: 600; display: inline-flex; align-items: center;">Start this plan</a>
+            <a href="NewSession.dc.html" style="height: 44px; padding: 0 18px; border-radius: 10px; border: 1px solid rgba(42,39,31,0.18); background: #fdfcf9; color: #1a1814; font-size: 15px; font-weight: 500; display: inline-flex; align-items: center;">Change goal</a>
+          </div>
+        </section>
+      </div>
+    </div>
+  </main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":980}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

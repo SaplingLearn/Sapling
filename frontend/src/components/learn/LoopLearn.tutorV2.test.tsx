@@ -607,6 +607,35 @@ describe("Tutor redesign phase 4 — the rebuilt wrap-up (wrapup_v2 on)", () => 
   });
 });
 
+describe("Tutor redesign phase 4 — the rebuilt plan (plan_v2 on)", () => {
+  it("says where the student starts, labels each concept once, and Change goal opens the goal editor in place of Edit goal", async () => {
+    flags.plan_v2 = "on";
+    api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "plan")]));
+    api.getLoopSessionStatus.mockResolvedValue(status({ loop_phase: "plan", phase: "plan" }));
+    api.getLoopPlan.mockResolvedValue({
+      concepts: [{ node_id: "n1", concept_name: "Recursion", kind: "new", p_known: 0.35 }], order: [],
+      diagnosis: { status: "bracketed", stop_reason: null, skills: [{
+        node_id: "n1", status: "bracketed", floor_difficulty: 1, ceiling_difficulty: 2, independent_correct: 1, independent_incorrect: 1,
+        independent_observations: 2, observations: 2, tested_difficulties: [1, 2], available_difficulties: [1, 2], contradictory_difficulties: [],
+      }] },
+      starting: [{ node_id: "n1", p_known: 0.35 }],
+    });
+    api.getGraph.mockResolvedValue({ nodes: [{ id: "n1", name: "Recursion" }], edges: [], stats: {} });
+    render(<LoopLearn />);
+    const intro = await screen.findByTestId("loop-plan-intro");
+    expect(intro.textContent).toBe("Thanks. You have a head start on Recursion. Here's where you're starting and what I suggest for today.");
+    expect(screen.getByTestId("loop-plan-start-n1").getAttribute("data-level")).toBe("develop");
+    expect(screen.getByTestId("loop-plan-kind-n1").textContent).toBe("New");
+    const goals = screen.getAllByTestId("loop-set-goal");
+    expect(goals).toHaveLength(1); // the header's Edit goal steps aside
+    expect(goals[0].textContent).toBe("Set goal");
+    await waitFor(() => expect((goals[0] as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(goals[0]);
+    fireEvent.click(await screen.findByTestId("loop-goal-cancel"));
+    await waitFor(() => expect(screen.getByTestId("loop-set-goal")).toHaveFocus());
+  });
+});
+
 describe("U9 — How was that session? is asked on the wrap-up, with its ends labelled", () => {
   it("asks once per session (paced), never after the student has left", async () => {
     api.closeLoopSession.mockResolvedValue({ close: closeRecord, model_written: false, close_phase: "teach" });
@@ -1309,6 +1338,17 @@ describe("SUB — no model jargon on the Tutor's student surfaces (redesign subt
     render(<LoopLearn />);
     await screen.findByTestId("loop-plan-approve");
     fireEvent.click(await screen.findByText("By concept (1)"));
+    expectClean();
+  });
+
+  it("the rebuilt plan (plan_v2)", async () => {
+    flags.plan_v2 = "on";
+    api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "plan")]));
+    api.getLoopSessionStatus.mockResolvedValue(status({ loop_phase: "plan", phase: "plan", diagnosis }));
+    api.getLoopPlan.mockResolvedValue({ concepts: [{ node_id: "n1", concept_name: "Recursion", kind: "new", p_known: 0.3 }], order: [],
+      starting: [{ node_id: "n1", p_known: 0.3 }] });
+    render(<LoopLearn />);
+    await screen.findByTestId("loop-plan-starting");
     expectClean();
   });
 
