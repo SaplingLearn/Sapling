@@ -6,7 +6,7 @@ import {
   SORTS,
   dateText,
   guideDate,
-  libraryGuides,
+  savedGuides,
   searchGuides,
   sortGuides,
   sortLabel,
@@ -103,24 +103,11 @@ describe("statusText", () => {
   });
 });
 
-describe("libraryGuides", () => {
-  const savedA = { ...A, saved_at: "2026-11-11T00:00:00Z" };
-  const savedB = { ...B, saved_at: "2026-11-11T00:00:00Z" };
-  const all = [savedA, savedB, C];
-
-  it("keeps only the guides saved to the Library", () => {
-    expect(ids(libraryGuides(all, { category: "all", courseFilter: "all", query: "" }))).toEqual(["a", "b"]);
-  });
-
-  it("follows the course filter; a guide is never uncategorized", () => {
-    expect(ids(libraryGuides(all, { category: "all", courseFilter: "c2", query: "" }))).toEqual(["b"]);
-    expect(libraryGuides(all, { category: "all", courseFilter: "uncategorized", query: "" })).toEqual([]);
-    expect(ids(libraryGuides(all, { category: "study_guide", courseFilter: "all", query: "" }))).toEqual(["a", "b"]);
-    expect(libraryGuides(all, { category: "slides", courseFilter: "all", query: "" })).toEqual([]);
-  });
-
-  it("follows the search", () => {
-    expect(ids(libraryGuides(all, { category: "all", courseFilter: "all", query: "limits" }))).toEqual(["b"]);
-    expect(libraryGuides(all, { category: "all", courseFilter: "c1", query: "limits" })).toEqual([]);
+describe("savedGuides", () => {
+  it("keeps only the guides saved to the Library, in their order", () => {
+    const savedA = { ...A, saved_at: "2026-11-11T00:00:00Z" };
+    const savedB = { ...B, saved_at: "2026-11-11T00:00:00Z" };
+    expect(ids(savedGuides([savedB, C, savedA]))).toEqual(["b", "a"]);
+    expect(savedGuides([A, C])).toEqual([]);
   });
 });

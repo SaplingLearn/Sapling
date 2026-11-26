@@ -68,11 +68,21 @@ export function GuidesEmpty({ onNew }: { onNew: () => void }) {
   );
 }
 
-export function GuidesNoMatch({ query }: { query: string }) {
+export function GuidesNoMatch({ query, savedOnly }: { query: string; savedOnly: boolean }) {
   return (
     <p className={s.quiet} role="status" data-testid="guides-no-match">
-      No guide matches &ldquo;{query.trim()}&rdquo;.
+      No {savedOnly ? "saved " : ""}guide matches &ldquo;{query.trim()}&rdquo;.
     </p>
+  );
+}
+
+/** Saved is on and no guide is saved: how to save one, and the way back to all of them. */
+export function GuidesNoneSaved({ onShowAll }: { onShowAll: () => void }) {
+  return (
+    <div className={s.noneSaved} role="status" data-testid="guides-none-saved">
+      <p>No guide is saved to your Library yet. Open one and choose Save to Library from its menu.</p>
+      <Button data-testid="guides-none-saved-show-all" onClick={onShowAll}>Show all guides</Button>
+    </div>
   );
 }
 
