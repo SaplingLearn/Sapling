@@ -2288,14 +2288,18 @@ test("W2.3 reason-before-submit: a free check is the answer alone, client reason
     await expect(submit).toBeEnabled();
     const evidenceBefore = await evidenceCount(USER_LOOP);
     // A client that adds W2.3's reasoning: the server's contract still holds.
+    // The UI's own body is read here, before the route adds the field
+    // (the request submitGraded sees already carries it).
+    let uiBody: Record<string, unknown> | null = null;
     await page.route("**/api/learn/loop/check/answer/stream", async (route) => {
       const body = JSON.parse(route.request().postData() ?? "{}");
+      uiBody = body;
       await route.continue({ postData: JSON.stringify({ ...body, reasoning }) });
     });
-    const freeBody = await submitGraded(page);
+    await submitGraded(page);
     await page.unroute("**/api/learn/loop/check/answer/stream");
-    expect(freeBody).toMatchObject({ question_hash: F, answer: WORKING_ATTEMPT, idk: false });
-    expect(freeBody).not.toHaveProperty("reasoning"); // what the UI itself sent
+    expect(uiBody).toMatchObject({ question_hash: F, answer: WORKING_ATTEMPT, idk: false });
+    expect(uiBody).not.toHaveProperty("reasoning"); // what the UI itself sent
 
     // Not evidence: graded on the answer alone — the token in the reasoning credited nothing.
     expect(await evidenceOn(F)).toEqual([{ correct: false }]);

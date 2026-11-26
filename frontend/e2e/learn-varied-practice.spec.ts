@@ -62,11 +62,17 @@ async function uploadFixture(page: Page): Promise<string> {
   await page.goto("/library");
   const uploadButton = page.getByTestId("library-upload");
   await expect(uploadButton).toBeEnabled();
-  await uploadButton.click();
-  await page.getByTestId("upload-modal-file-input").setInputFiles(FIXTURE_PDF);
-  await expect(page.getByTestId("upload-modal-file-row-0")).toBeVisible();
-  await page.getByTestId("upload-modal-submit").click();
-  await expect(page.getByTestId("upload-modal-done")).toBeVisible({ timeout: 60_000 });
+  // The Upload button opens a menu whose "Upload files" clicks this hidden
+  // picker; setting its files directly is the same change event (upload.spec.ts).
+  await page.locator('input[type="file"][accept=".pdf,.pptx,.docx"]').setInputFiles(FIXTURE_PDF);
+  const where = page.getByTestId("library-upload-where");
+  await expect(where).toBeVisible();
+  const courses = where.getByRole("radiogroup", { name: "Course" });
+  if ((await courses.getByRole("radio", { checked: true }).count()) === 0) {
+    await courses.getByRole("radio").first().click();
+  }
+  await page.getByTestId("library-upload-confirm").click();
+  await expect(where).toContainText("Added to your library", { timeout: 60_000 });
   const docs = (await queryRaw(
     "SELECT id FROM documents WHERE file_name = $1 AND deleted_at IS NULL",
     [FIXTURE_NAME],
