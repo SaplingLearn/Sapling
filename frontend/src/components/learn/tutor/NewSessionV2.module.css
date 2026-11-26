@@ -60,14 +60,20 @@
     border-color var(--dur) var(--ease);
 }
 
+/* The pick's edge doubles: an outline drawn over the border, so nothing shifts. */
 .intent[data-picked="true"] {
   background: var(--accent-soft);
   border-color: var(--accent);
-  box-shadow: inset 0 0 0 1px var(--accent);
+  outline: 1px solid var(--accent);
+  outline-offset: -2px;
 }
 
 .intent:has(input:focus-visible) {
   outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.intent[data-picked="true"]:has(input:focus-visible) {
   outline-offset: 2px;
 }
 

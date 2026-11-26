@@ -23,7 +23,6 @@ export const NEW_SESSION_COPY = {
   courseLine: "Starts with a short check-in, then a plan.",
   goalTitle: "Work toward a goal",
   goalLine: "Say what you want to learn and pick its concepts.",
-  reviewTitle: "Review what's due",
   wrapsUp: (title: string) => `This wraps up your open session, ${title}.`,
 } as const;
 
@@ -41,10 +40,11 @@ export function intentsFor({ continueTitle, startWith, courseName, dueCount, due
 }): Intent[] {
   const out: Intent[] = [];
   if (continueTitle) out.push({ id: "continue", title: LEARNING_COPY.continueSession(continueTitle), line: NEW_SESSION_COPY.continueLine, label: "Continue", startsNew: false });
-  if (startWith) out.push({ id: "concept", title: `Learn ${startWith.name}`, line: NEW_SESSION_COPY.conceptLine, label: "Start learning", startsNew: true });
+  if (startWith) out.push({ id: "concept", title: LEARNING_COPY.learnConcept(startWith.name), line: NEW_SESSION_COPY.conceptLine, label: "Start learning", startsNew: true });
   out.push({ id: "course", title: NEW_SESSION_COPY.courseTitle(courseName), line: NEW_SESSION_COPY.courseLine, label: LEARNING_COPY.newSession, startsNew: true });
   out.push({ id: "goal", title: NEW_SESSION_COPY.goalTitle, line: NEW_SESSION_COPY.goalLine, label: "Choose a goal", startsNew: true });
-  if (dueHref && (dueCount ?? 0) > 0) out.push({ id: "review", title: NEW_SESSION_COPY.reviewTitle, line: `${LEARNING_COPY.reviewLink(dueCount)}.`, label: "Start review", startsNew: false });
+  // The glossary's words (lib/learningCopy.ts), not the board's retired "Review what's due" / "Start review".
+  if (dueHref && (dueCount ?? 0) > 0) out.push({ id: "review", title: LEARNING_COPY.review, line: `${LEARNING_COPY.reviewsDue(dueCount ?? 0)}.`, label: LEARNING_COPY.review, startsNew: false });
   return out;
 }
 

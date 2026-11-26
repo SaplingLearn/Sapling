@@ -47,7 +47,7 @@ describe("the choices", () => {
       ["concept", "Learn Hash tables", "Starts with a short check-in on it."],
       ["course", "Work through CS 112", "Starts with a short check-in, then a plan."],
       ["goal", "Work toward a goal", "Say what you want to learn and pick its concepts."],
-      ["review", "Review what's due", "7 reviews due."],
+      ["review", "Review", "7 reviews due."],
     ]);
     // nothing open, nothing suggested, nothing due (or Study hidden): two choices
     expect(intentsFor({ ...FULL, continueTitle: null, startWith: null, dueCount: 0 }).map((i) => i.id)).toEqual(["course", "goal"]);
@@ -56,7 +56,7 @@ describe("the choices", () => {
 });
 
 describe("parity with the design board", () => {
-  it.each([NEW_SESSION_COPY.title, NEW_SESSION_COPY.legend, "Review what's due", "Start learning", "Start review",
+  it.each([NEW_SESSION_COPY.title, NEW_SESSION_COPY.legend, "Start learning",
     NEW_SESSION_COPY.wrapsUp("Hash tables and 2 more")])("the board says %j", (text) => {
     expect(DESIGN).toContain(text);
   });
@@ -88,11 +88,11 @@ describe("parity with the design board", () => {
     fireEvent.click(screen.getByRole("radio", { name: /Continue Hash tables/ }));
     start();
     expect(on.onContinue).toHaveBeenCalledTimes(1);
-    fireEvent.click(screen.getByRole("radio", { name: /Review what's due/ }));
+    fireEvent.click(screen.getByRole("radio", { name: /^Review/ }));
     const review = screen.getByTestId("loop-start-guided");
     expect(review.tagName).toBe("A");
     expect(review.getAttribute("href")).toBe("/study?due=1");
-    expect(review.textContent).toBe("Start review");
+    expect(review.textContent).toBe("Review"); // the glossary's word, not the board's retired "Start review"
   });
 
   it("the wrap-up line shows only for a choice that starts a new session", () => {
