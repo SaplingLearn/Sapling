@@ -73,12 +73,5 @@ export function useToolNav(courseId: string): ToolNav {
   }), [leaving, leaveTo, courseId]);
 }
 
-/**
- * onClick for a real link that should leave through the hub's fade: a plain
- * click fades and navigates, a Cmd/Ctrl-click is left to the browser (new tab).
- */
-export const leaveOnClick = (leaveTo: (href: string) => void, href: string) => (e: React.MouseEvent) => {
-  if (e.metaKey || e.ctrlKey) return;
-  e.preventDefault();
-  leaveTo(href);
-};
+// A real link that leaves through the hub's fade is a HandoffLink with
+// `onNavigate={nav.leaveTo}` (components/ui/HandoffLink.tsx).

@@ -1,7 +1,7 @@
 "use client";
 
+import { CtaLink } from "@/components/ui/HandoffLink";
 import React, { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
-import Link from "next/link";
 import { motion } from "framer-motion";
 import { useMotionPresets } from "@/lib/motion";
 import { useRetentionDue } from "@/context/RetentionDueContext";
@@ -91,9 +91,7 @@ function renderHandoffs(links: readonly Handoff[], keyOf: (link: Handoff) => str
   return (
     <p className={own.handoffs}>
       {links.map((link) => (
-        <Link key={keyOf(link)} data-testid={testIdOf(link)} href={link.href} className={own.handoffLink}>
-          {link.label}
-        </Link>
+        <CtaLink key={keyOf(link)} cta={link} testId={testIdOf(link)} variant="plain" className={own.handoffLink} />
       ))}
     </p>
   );

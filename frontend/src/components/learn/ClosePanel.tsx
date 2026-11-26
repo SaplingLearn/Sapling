@@ -1,4 +1,5 @@
 "use client";
+import { CtaLink } from "@/components/ui/HandoffLink";
 import { LEARNING_COPY } from "@/lib/learningCopy";
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import Link from "next/link";
@@ -143,14 +144,7 @@ function CloseHandoffLinks({
   return (
     <>
       {links.map((link) => (
-        <Link
-          key={link.testId}
-          data-testid={link.testId}
-          href={link.href}
-          className={`btn ${styles.press}`}
-        >
-          {link.label}
-        </Link>
+        <CtaLink key={link.testId} cta={link} className={styles.press} />
       ))}
     </>
   );

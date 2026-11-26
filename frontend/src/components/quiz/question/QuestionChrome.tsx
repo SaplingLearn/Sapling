@@ -2,6 +2,8 @@
 // The question screen's chrome (moved out of QuizQuestion.tsx): the session
 // top bar and its Exam Twin countdown, the meta row, the prerequisite banner,
 // the pager, the action bar and the generating status.
+import { LEARNING_COPY } from "@/lib/learningCopy";
+import { HandoffLink } from "@/components/ui/HandoffLink";
 import React, { useEffect, useState } from "react";
 import { ChevronLeft, ChevronRight, Columns2, Gauge, GitCompareArrows, Hash, Highlighter, Layers, ListChecks, ListOrdered, MessagesSquare, PenLine, Puzzle, Sigma, Tag, TextAlignStart, Calculator, ArrowDownWideNarrow, X } from "lucide-react";
 import { Badge, Button, Chip, ProgressDots } from "@/components/ui";
@@ -310,14 +312,14 @@ export function PrereqBanner({ banner }: { banner: QuizPrereqBanner }) {
       {(learnHref || quizHref) && (
         <div className="quiz-prereq-banner__actions">
           {learnHref && (
-            <a className="btn btn--primary" href={learnHref} data-testid="quiz-prereq-learn">
-              Learn {banner.prereq_name}
-            </a>
+            <HandoffLink variant="primary" href={learnHref} testId="quiz-prereq-learn">
+              {LEARNING_COPY.learnConcept(banner.prereq_name)}
+            </HandoffLink>
           )}
           {quizHref && (
-            <a className="btn" href={quizHref} data-testid="quiz-prereq-quiz">
+            <HandoffLink href={quizHref} testId="quiz-prereq-quiz">
               Quiz {banner.prereq_name}
-            </a>
+            </HandoffLink>
           )}
         </div>
       )}

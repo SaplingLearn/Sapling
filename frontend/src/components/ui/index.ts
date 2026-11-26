@@ -11,3 +11,4 @@ export { ProgressDots, type ProgressDotsProps } from "./ProgressDots";
 export { InlineBanner, type InlineBannerProps } from "./InlineBanner";
 export { Sheet, type SheetProps } from "./Sheet";
 export { EmptyState, type EmptyStateProps } from "./EmptyState";
+export { HandoffLink, CtaLink, isPlainClick, type HandoffLinkProps } from "./HandoffLink";

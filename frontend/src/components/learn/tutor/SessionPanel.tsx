@@ -1,6 +1,6 @@
 "use client";
+import { HandoffLink } from "@/components/ui/HandoffLink";
 import React from "react";
-import Link from "next/link";
 import type { LoopPanelConcept, LoopPlanPrereqEdge } from "@/lib/api";
 import { LEARNING_COPY } from "@/lib/learningCopy";
 import { MASTERY_PALETTE, TIER_LABEL, type MasteryTier } from "@/lib/graph/nodeStyle";
@@ -112,9 +112,9 @@ export function SessionPanel({
               <span data-testid="tutor-panel-due-count" className={styles.note}>
                 {dueCountText(dueCount)}
               </span>
-              <Link href={dueHref} className={`btn btn--sm ${styles.start}`} data-testid="tutor-panel-review">
+              <HandoffLink size="sm" href={dueHref} className={styles.start} testId="tutor-panel-review">
                 {LEARNING_COPY.review}
-              </Link>
+              </HandoffLink>
             </div>
           </section>
         )}
@@ -122,9 +122,9 @@ export function SessionPanel({
           <div className={styles.secHead}>
             <span id="tutor-panel-map" className="label-micro">Knowledge map</span>
             {showTreeLink && (
-              <Link data-testid="loop-tree-link" href={treeHref} className={`${styles.textLink} ${styles.small}`}>
+              <HandoffLink variant="plain" testId="loop-tree-link" href={treeHref} className={`${styles.textLink} ${styles.small}`}>
                 {LEARNING_COPY.seeOnMap}
-              </Link>
+              </HandoffLink>
             )}
           </div>
           {map}

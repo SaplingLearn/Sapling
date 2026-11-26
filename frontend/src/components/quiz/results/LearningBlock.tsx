@@ -22,6 +22,7 @@
  * anything.
  */
 
+import { HandoffLink } from "@/components/ui/HandoffLink";
 import React from "react";
 import { useLoopStatus } from "@/components/learn/useLoopStatus";
 import { useStudyNavShown } from "@/components/useRetentionNav";
@@ -133,31 +134,19 @@ export function LearningBlock({
         <div className="quiz-learning__next" data-testid="quiz-learning-next">
           <span className="quiz-learning__next-label">Next:</span>
           {reviewOffered ? (
-            <a
-              className="btn btn--primary"
-              href={reviewHref(courseId)}
-              data-testid="quiz-next-step-review"
-            >
+            <HandoffLink variant="primary" href={reviewHref(courseId)} testId="quiz-next-step-review">
               {LEARNING_COPY.reviewLink(learning.review.due_count)}
-            </a>
+            </HandoffLink>
           ) : null}
           {learn && (
-            <a
-              className={reviewOffered ? "btn" : "btn btn--primary"}
-              href={learnHref(learn)}
-              data-testid="quiz-next-step-learn"
-            >
+            <HandoffLink variant={reviewOffered ? "secondary" : "primary"} href={learnHref(learn)} testId="quiz-next-step-learn">
               {LEARNING_COPY.learnConcept(learn.concept_name)}
-            </a>
+            </HandoffLink>
           )}
           {treeHref && (
-            <a
-              className={reviewOffered || learn ? "btn" : "btn btn--primary"}
-              href={treeHref}
-              data-testid="quiz-next-step-tree"
-            >
+            <HandoffLink variant={reviewOffered || learn ? "secondary" : "primary"} href={treeHref} testId="quiz-next-step-tree">
               {LEARNING_COPY.seeOnMap}
-            </a>
+            </HandoffLink>
           )}
         </div>
       )}

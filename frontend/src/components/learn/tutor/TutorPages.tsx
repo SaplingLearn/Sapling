@@ -1,4 +1,5 @@
 "use client";
+import { HandoffLink } from "@/components/ui/HandoffLink";
 import React, { useLayoutEffect, useRef } from "react";
 import Link from "next/link";
 import type { EnrolledCourse } from "@/lib/api";
@@ -111,9 +112,9 @@ export function TutorHome({
           </button>
         )}
         {dueHref && (dueCount ?? 0) > 0 && (
-          <Link className={styles.pill} data-testid="tutor-home-due" href={dueHref}>
+          <HandoffLink variant="plain" className={styles.pill} testId="tutor-home-due" href={dueHref}>
             {LEARNING_COPY.reviewLink(dueCount)}
-          </Link>
+          </HandoffLink>
         )}
         {startWith && (
           <button type="button" className={styles.pill} data-testid="tutor-home-start-with" onClick={() => onStartWith(startWith)} disabled={busy}>

@@ -2,6 +2,7 @@
 // The session's notices region (moved out of LoopLearn.tsx unchanged): the
 // budget pause, the course's item state (A26/A128), the materials outage
 // (A128), the goal's exhausted practice, and the ?topic= offer (F3).
+import { CtaLink, HandoffLink } from "@/components/ui/HandoffLink";
 import React from "react";
 import Link from "next/link";
 import { AnimatePresence, motion } from "framer-motion";
@@ -78,9 +79,9 @@ export function LoopNotices({
           sessionCapped={paused.sessionCapped}
           message={tutorPauseMessage(paused.resetAt, paused.sessionCapped, paused.pauseNovice, paused.aiLimit)}
         >
-          {studyVisible && <>{" "}<Link data-testid="loop-budget-study-link" href={handoffStudyHref(courseId)} className={styles.studyLink}>
+          {studyVisible && <>{" "}<HandoffLink variant="plain" testId="loop-budget-study-link" href={handoffStudyHref(courseId)} className={styles.studyLink}>
             {LEARNING_COPY.review}
-          </Link></>}
+          </HandoffLink></>}
         </BudgetPausedBanner>
         </motion.div>
       )}
@@ -114,14 +115,7 @@ export function LoopNotices({
           <div className={styles.actions}>
             {libraryVisible && <Link data-testid="loop-practice-sources" href="/library" className={`${handoff} btn--ghost ${styles.centered}`}>Review source material</Link>}
             {practiceHandoffs.map((link) => (
-              <Link
-                key={link.testId}
-                data-testid={link.testId}
-                href={link.href}
-                className={`${handoff} ${styles.centered}`}
-              >
-                {link.label}
-              </Link>
+              <CtaLink key={link.testId} cta={link} variant="plain" className={`${handoff} ${styles.centered}`} />
             ))}
             {!exhaustedPracticeAttempt && canRefreshPractice && (
               <button data-testid="loop-practice-refresh" type="button" className={handoff}

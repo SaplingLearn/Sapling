@@ -13,8 +13,8 @@
  * crossfaded by the hub's useFlip (the `data-flip` parts; the body's key
  * carries the concept, so a new concept is a new body).
  */
+import { HandoffLink } from "@/components/ui/HandoffLink";
 import React from "react";
-import Link from "next/link";
 import { Icon } from "@/components/Icon";
 import { LEARNING_COPY } from "@/lib/learningCopy";
 import { FOCUS_ARC, chipsThatFit, focusCardsLabel } from "./hubModel";
@@ -22,7 +22,7 @@ import { Glyph, StatusDot, WarnIcon, shownTools, type GlyphName } from "./hubUi"
 import f from "./FocusCard.module.css";
 import s from "./StudyHub.module.css";
 import { ST_LABEL, ring, type Concept } from "./studyModel";
-import { leaveOnClick, type ToolKey, type ToolNav } from "./useToolNav";
+import { type ToolKey, type ToolNav } from "./useToolNav";
 
 /* Every word on the block is --sidenav-fg (white, 4.85:1 on the olive), its
    chips a dark --sidenav-wash under it (globals.css, spec §13 A135). A paler
@@ -190,16 +190,16 @@ export function FocusCard({ concept, upNext, masteredExam, prereqs, cardCount, q
             tools themselves; these start the quiz / deck / tutor on what is up next. */}
         <nav aria-label={`Study ${concept.name}`} className={s.focusActions}>
           {visible.map((ac, i) => (
-            <Link key={ac.key} href={ac.href} data-testid={ac.testId}
+            <HandoffLink key={ac.key} variant="plain" href={ac.href} testId={ac.testId}
               className={i === 0 ? `${s.focusAct} ${s.focusActPrimary}` : s.focusAct}
-              onClick={leaveOnClick(nav.leaveTo, ac.href)}>
+              onNavigate={nav.leaveTo}>
               <span aria-hidden="true" className={f.actIcon}>
                 {ac.icon === "clover"
                   ? <Icon name="clover" size={14} />
                   : <Glyph name={ac.icon} size={14} />}
               </span>
               {ac.label}
-            </Link>
+            </HandoffLink>
           ))}
         </nav>
       </div>
