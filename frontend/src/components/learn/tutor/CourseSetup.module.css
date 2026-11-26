@@ -268,8 +268,14 @@
     grid-template-columns: minmax(0, 1fr) auto;
   }
 
-  .dateRow .input:first-child {
+  /* the name on its own line, then the date and Remove side by side */
+  .dateName,
+  .dateRow > .input:first-child {
     grid-column: 1 / -1;
+  }
+
+  .remove {
+    padding: 0 var(--sp-2);
   }
 
   .foot {
