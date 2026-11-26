@@ -172,12 +172,10 @@ function HubPage(props: {
   const pickConcept = (id: string) => {
     if (view.byId.has(id)) set({ topic: id, recentOpen: false });
   };
-  const startReviews = () => nav.leaveTo(nav.cardsHref(view.reviews.map(x => x.t.name)));
+  const reviewsHref = nav.cardsHref(view.reviews.map(x => x.t.name));
   // W8.3b: Due Reviews offer Quiz beside Flashcards when learner-next is on
   // and quiz is shown. Flag-off / hide_quiz keeps the single Flashcards CTA.
-  const startDueQuiz = view.reviewsQuizHref && quizShown
-    ? () => nav.leaveTo(view.reviewsQuizHref!)
-    : null;
+  const dueQuizHref = view.reviewsQuizHref && quizShown ? view.reviewsQuizHref : null;
   const { focus } = view;
   // A change of exam moves the band and the Up Next block to their new state
   // (the roadmap below does the same, on the same clock: ./hubMotion.ts).
@@ -222,7 +220,8 @@ function HubPage(props: {
         <aside aria-label="Activity" className={`${s.areaRail} ${s.rail}`}>
           <section aria-label="Daily goal" className={s.dailyGoal}>
             <DailyGoalCard daily={records.daily} onSave={records.saveGoal} />
-            <QuickReviews reviews={view.reviews} courseLabel={view.label} fsrsDue={view.reviewsFsrsDue} onStart={startReviews} onQuiz={startDueQuiz} />
+            <QuickReviews reviews={view.reviews} courseLabel={view.label} fsrsDue={view.reviewsFsrsDue}
+              reviewHref={reviewsHref} quizHref={dueQuizHref} onNavigate={nav.leaveTo} />
           </section>
           <RecentActivity rows={view.recent} onPickConcept={pickConcept} onShowAll={() => set({ recentOpen: true })} />
         </aside>

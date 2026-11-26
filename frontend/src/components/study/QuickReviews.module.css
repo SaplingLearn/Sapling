@@ -1,5 +1,5 @@
-/* Quick Reviews (QuickReviews.tsx): one row that starts the flashcards, and
-   the list of what it covers on hover or focus. */
+/* Quick Reviews (QuickReviews.tsx): one row that opens the list of what it
+   covers (a disclosure), with Review and Practice under it. */
 
 .anchor { position: relative; }
 
@@ -22,7 +22,7 @@
   font-size: var(--fs-sm); font-weight: 700;
 }
 
-/* The hover list. */
+/* The list the row opens. */
 .listAnchor { position: absolute; left: 0; right: 0; top: 100%; padding-top: var(--sp-4); z-index: var(--z-popover); }
 .list {
   width: 100%; box-sizing: border-box; padding: var(--sp-7) var(--sp-8);

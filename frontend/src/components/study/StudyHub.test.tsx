@@ -1120,11 +1120,11 @@ describe("StudyHub's roadmap and Up Next follow the selected exam", () => {
     await screen.findByText("Ready for Exam 2");
     const names = () => {
       const row = screen.getByRole("button", { name: /2 quick reviews/ });
-      fireEvent.focus(row);
-      const list = screen.getByRole("dialog", { name: "Quick reviews" });
+      fireEvent.click(row);
+      const list = screen.getByRole("region", { name: "Quick reviews" });
       const found = ["Variables", "Loops", "Recursion", "Arrays"].filter(n => within(list).queryByText(n));
       expect(within(list).getByText("~ 4 min · CS101")).toBeTruthy();
-      fireEvent.blur(row);
+      fireEvent.click(row); // the row closes what it opened
       return found;
     };
     // Recursion is not on Exam 2, and is still in the list there.
@@ -1284,8 +1284,10 @@ describe("StudyHub shows only what its data backs", () => {
     await screen.findByText("Ready for Exam 2");
     const row = screen.getByRole("button", { name: /2 quick reviews/ });
     expect(within(row).getByText("~ 4 min")).toBeTruthy();
-    fireEvent.focus(row); // the list opens on focus as well as hover
-    const list = screen.getByRole("dialog", { name: "Quick reviews" });
+    expect(row.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(row); // a disclosure: a click (or Enter) opens it, never a hover
+    expect(row.getAttribute("aria-expanded")).toBe("true");
+    const list = screen.getByRole("region", { name: "Quick reviews" });
     expect(within(list).getByText("~ 4 min · CS101")).toBeTruthy();
     expect(within(list).queryByText(/on Exam 2/)).toBeNull();
     expect(within(list).getByText("Loops")).toBeTruthy();
@@ -1312,8 +1314,8 @@ describe("StudyHub shows only what its data backs", () => {
     const focus = screen.getByTestId("focus-card");
     expect(within(focus).getByText("Arrays")).toBeTruthy();
     expect(within(focus).getByText("Up Next")).toBeTruthy();
-    fireEvent.focus(screen.getByRole("button", { name: /1 review due/ }));
-    const dueDlg = screen.getByRole("dialog", { name: "Due reviews" });
+    fireEvent.click(screen.getByRole("button", { name: /1 review due/ }));
+    const dueDlg = screen.getByRole("region", { name: "Due reviews" });
     expect(within(dueDlg).getByText("Due for review")).toBeTruthy();
     // W8.3b / W3.3b: Due Reviews offer Practice what's due beside Flashcards.
     expect(within(dueDlg).getByTestId("due-reviews-flashcards").textContent).toBe("Review");
@@ -1338,9 +1340,9 @@ describe("StudyHub shows only what its data backs", () => {
     renderHub();
     await hubLoaded();
     await waitFor(() => expect(screen.getByRole("button", { name: /1 review due/ })).toBeTruthy());
-    fireEvent.focus(screen.getByRole("button", { name: /1 review due/ }));
-    const dueDlg = screen.getByRole("dialog", { name: "Due reviews" });
-    expect(within(dueDlg).getByRole("button", { name: "Review" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /1 review due/ }));
+    const dueDlg = screen.getByRole("region", { name: "Due reviews" });
+    expect(within(dueDlg).getByRole("link", { name: "Review" })).toBeTruthy();
     expect(within(dueDlg).queryByTestId("due-reviews-quiz")).toBeNull();
   });
 
@@ -1355,9 +1357,9 @@ describe("StudyHub shows only what its data backs", () => {
     renderHub();
     await hubLoaded();
     const row = screen.getByRole("button", { name: /quick reviews?/ });
-    fireEvent.focus(row);
-    const list = screen.getByRole("dialog", { name: "Quick reviews" });
-    expect(within(list).getByRole("button", { name: "Review" })).toBeTruthy();
+    fireEvent.click(row);
+    const list = screen.getByRole("region", { name: "Quick reviews" });
+    expect(within(list).getByRole("link", { name: "Review" })).toBeTruthy();
     expect(within(list).queryByTestId("due-reviews-quiz")).toBeNull();
   });
 

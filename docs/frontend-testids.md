@@ -1251,7 +1251,8 @@ inside `loop-messages` is `ChatPanel`, whose own `tutor-*` ids
 | `loop-close-quiz-link` | W3.4 "Quiz this concept" on a wrap-up concept that went down (else the first); omitted while `hide_quiz` or with no concept id |
 | `loop-close-tree-link` | W3.4 "See on your map" (`/tree?course=`); omitted while `hide_tree` |
 | `loop-practice-study-link` / `loop-practice-quiz-link` | practice-unavailable notice → Review / Quiz this concept |
-| `due-reviews-quiz` | Study Hub Due Reviews secondary CTA; label "Practice what's due" (W3.3b); omitted while `hide_quiz` / flags off |
+| `due-reviews-flashcards` | Study Hub Quick / Due Reviews primary link, "Review" (the concepts' flashcards), inside the list the row opens: the row is a disclosure (`aria-expanded`; a click or Enter opens it, Escape or a click outside closes it), never a hover pop-up |
+| `due-reviews-quiz` | Study Hub Due Reviews secondary link; label "Practice what's due" (W3.3b); omitted while `hide_quiz` / flags off |
 | `focus-learn` | Study Hub Focus "Learn"; omitted while `hide_tutor` |
 
 `loop-hint-offer` was removed in the PKG-13 fix round: PKG-07 sends `hint_offer`
