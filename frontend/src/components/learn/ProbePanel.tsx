@@ -6,7 +6,7 @@ import { OptionList } from "./OptionList";
 import tutorStyles from "./tutor/tutor.module.css";
 import { modalOpen } from "./modalOpen";
 import { type Draft, focusAnswerStart } from "./loopShared";
-import { AnswerField, QuestionActions, QuestionCard, REASON_LABEL } from "./question/QuestionCard";
+import { AnswerField, CHECKING, DONT_KNOW, QuestionActions, QuestionCard, REASON_LABEL, SUBMIT_ANSWER } from "./question/QuestionCard";
 import { TutorTurn } from "./TutorTurn";
 import { HYPERCORRECTION_DWELL_COPY } from "@/lib/hypercorrectionDwell";
 import styles from "./ProbePanel.module.css";
@@ -156,8 +156,8 @@ export function ProbePanel({
                   disabled={busy}
                 />
                 <QuestionActions
-                  submit={{ label: "Submit answer", busyLabel: "Checking…", busy, disabled: !canSubmit, onClick: onSubmit, testId: "loop-probe-submit" }}
-                  optOut={{ label: "I don't know", disabled: busy, onClick: onIdk, testId: "loop-probe-idk" }}
+                  submit={{ label: SUBMIT_ANSWER, busyLabel: CHECKING, busy, disabled: !canSubmit, onClick: onSubmit, testId: "loop-probe-submit" }}
+                  optOut={{ label: DONT_KNOW, disabled: busy, onClick: onIdk, testId: "loop-probe-idk" }}
                 />
               </>
             ) : (

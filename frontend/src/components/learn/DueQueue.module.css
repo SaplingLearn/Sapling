@@ -17,6 +17,7 @@
 /* 17px, between --fs-lg and --fs-xl: rounded up a px to --fs-xl, the size
    the app's other card titles use. */
 .title {
+  margin: 0;
   font-size: var(--fs-xl);
 }
 
@@ -47,25 +48,6 @@
 
 .start {
   align-self: flex-start;
-}
-
-/* A field label sits close to its box in the card's gap. Doubled class:
-   outranks tutor's .fl margin whichever stylesheet loads last. */
-.fieldLabel.fieldLabel {
-  margin-bottom: calc(-1 * var(--sp-2));
-}
-
-.options {
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-3);
-}
-
-.option {
-  display: flex;
-  gap: var(--sp-4);
-  align-items: flex-start;
-  font-size: var(--fs-base);
 }
 
 /* A question and a card's faces were 15px, between --fs-base and --fs-lg:

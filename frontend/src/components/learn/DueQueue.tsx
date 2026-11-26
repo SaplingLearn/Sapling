@@ -55,19 +55,17 @@ import { useFeedbackHold } from "@/lib/feedbackPacing";
 import { HYPERCORRECTION_DWELL_COPY, useHypercorrectionDwell } from "@/lib/hypercorrectionDwell";
 import { BudgetPausedBanner, formatResetAt } from "./BudgetPausedBanner";
 import { ConfidenceControl } from "./ConfidenceControl";
-import { FIELD_CLASS } from "./loopShared";
+import { OptionList } from "./OptionList";
+import { AnswerField, CHECKING, QuestionActions, QuestionCard, REASON_LABEL, SUBMIT_ANSWER } from "./question/QuestionCard";
 import { ReportQuestion } from "./ReportQuestion";
 import { answerPauseMessage, gradingPausedMessage, pausedConceptsMessage } from "./reviewPauseCopy";
-import tutorStyles from "./tutor/tutor.module.css";
 import { useCrisisSupport } from "../safety/CrisisSupportCard";
-import { LOOP_ANSWER_MAX } from "@/lib/inputLimits";
 import { type MotionPresets, useMotionPresets } from "@/lib/motion";
 import styles from "./DueQueue.module.css";
 
 // #866 Z29: Tailwind's preflight strips a textarea's border, padding and fill, so
 // each answer box takes the loop's field style and a visible label (as the
 // loop's check card does); the label sits close to its box in the card's gap.
-const FIELD_LABEL_CLASS = `${tutorStyles.fl} ${styles.fieldLabel}`;
 const START_BUTTON = `btn btn--sm ${styles.start} ${styles.press}`;
 
 // Review 409s (routes/learn_loop.py): "loop state changed, retry" — a concurrent write
@@ -125,7 +123,6 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
   const flipRef = React.useRef<HTMLButtonElement>(null);
   const statusRef = React.useRef<HTMLDivElement>(null);
   const errorRef = React.useRef<HTMLDivElement>(null);
-  const promptId = React.useId();
   // #866 K16: what was typed for each check the queue moved past unanswered (a
   // grade the grader could not make, a pause), so it comes back with the check.
   const drafts = React.useRef(new Map<string, Draft>());
@@ -323,7 +320,7 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
     >
       {crisis.dialog}
       <div className={styles.head}>
-        <div className={`h-serif ${styles.title}`}>Due today</div>
+        <h2 className={`h-serif ${styles.title}`}>Due today</h2>
         <div className={styles.spacer} />
         {next && (
           <span data-testid="review-budget" className="chip chip--accent">
@@ -359,7 +356,7 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
         <motion.div key={item.id} {...m.fadeUp} data-testid="review-item" className={styles.item}>
           {item.kind === "check"
             ? renderCheckItem({
-                item, promptId, choice, setChoice, reason, setReason, answer, setAnswer,
+                item, choice, setChoice, reason, setReason, answer, setAnswer,
                 answered, confidence, setConfidence, busy, canSubmit, retryable, reportsOn,
                 onSubmit: () => submit(), onReport: report,
               })
@@ -592,7 +589,6 @@ function resultText(result: ReviewAnswerResponse): React.ReactNode {
 
 interface CheckItemView {
   item: ReviewItem;
-  promptId: string;
   choice: string;
   setChoice: (v: string) => void;
   reason: string;
@@ -610,92 +606,52 @@ interface CheckItemView {
   onReport: (reason: LoopReportReason) => Promise<boolean>;
 }
 
-function renderCheckAnswer({ item, promptId, choice, setChoice, reason, setReason, answer, setAnswer, answered }: CheckItemView) {
-  if (item.format === "mc_reason") {
-    return (
-      <>
-        <div role="radiogroup" aria-labelledby={promptId} className={styles.options}>
-          {(item.options ?? []).map((o, i) => (
-            <label key={o.letter} className={styles.option}>
-              <input
-                data-testid={`review-option-${o.letter}`}
-                data-answer-start={(choice ? choice === o.letter : i === 0) ? "" : undefined}
-                type="radio"
-                name={`review-${item.id}`}
-                value={o.letter}
-                checked={choice === o.letter}
-                disabled={answered}
-                onChange={() => setChoice(o.letter)}
-              />
-              <span>{o.letter}. {o.text}</span>
-            </label>
-          ))}
-        </div>
-        <label className={FIELD_LABEL_CLASS} htmlFor={`${promptId}-reason`}>Your reasoning</label>
-        <textarea
-          id={`${promptId}-reason`}
-          data-testid="review-reason-input"
-          className={FIELD_CLASS}
-          maxLength={LOOP_ANSWER_MAX}
-          placeholder="In one sentence: why?"
-          value={reason}
-          disabled={answered}
-          onChange={(e) => setReason(e.target.value)}
-          rows={2}
-        />
-      </>
-    );
-  }
-  return (
-    <>
-      <label className={FIELD_LABEL_CLASS} htmlFor={`${promptId}-answer`}>Your answer</label>
-      <textarea
-        id={`${promptId}-answer`}
-        data-testid="review-answer-input"
-        data-answer-start=""
-        aria-describedby={promptId}
-        className={FIELD_CLASS}
-        maxLength={LOOP_ANSWER_MAX}
-        value={answer}
-        disabled={answered}
-        onChange={(e) => setAnswer(e.target.value)}
-        rows={3}
-      />
-    </>
-  );
-}
-
+/** A due check: the shared question card (learn/question), bare inside the
+ *  review panel. Its concept is the one meta line; the answer is one field
+ *  (or the options and their one-sentence why), then the one verb. */
 function renderCheckItem(view: CheckItemView) {
-  const { item, promptId, answered, confidence, setConfidence, busy, canSubmit, retryable, reportsOn, onSubmit, onReport } = view;
+  const { item, choice, setChoice, reason, setReason, answer, setAnswer, answered, confidence, setConfidence, busy, canSubmit, retryable, reportsOn, onSubmit, onReport } = view;
+  const submitIfReady = () => { if (canSubmit) onSubmit(); };
   return (
-    <>
-      {item.concept_name && (
-        <span className={`chip ${styles.start}`}>{item.concept_name}</span>
+    <QuestionCard bare graded animateIn={false} meta={item.concept_name || "Question"} prompt={item.prompt}>
+      {({ promptId }) => (
+        <>
+          {item.format === "mc_reason" ? (
+            <>
+              <OptionList
+                options={item.options ?? []}
+                selected={choice}
+                onSelect={setChoice}
+                testIdPrefix="review-option"
+                labelledBy={promptId}
+                disabled={answered}
+              />
+              <AnswerField label={REASON_LABEL} name="reason" testId="review-reason-input" describedByPrompt={false}
+                placeholder="Because…" value={reason} disabled={answered} onChange={setReason} onSubmit={submitIfReady} />
+            </>
+          ) : (
+            <AnswerField label="Your answer" name="answer" testId="review-answer-input" start rows={3}
+              value={answer} disabled={answered} onChange={setAnswer} onSubmit={submitIfReady} />
+          )}
+          {!answered && (
+            <ConfidenceControl
+              testIdPrefix="review-confidence"
+              value={confidence}
+              onChange={setConfidence}
+              disabled={busy}
+            />
+          )}
+          {!answered && (
+            <QuestionActions
+              submit={{ label: retryable ? "Try again" : SUBMIT_ANSWER, busyLabel: CHECKING, busy, disabled: !canSubmit, onClick: onSubmit, testId: "review-submit" }}
+            />
+          )}
+          {reportsOn && (
+            <ReportQuestion key={item.id} testIdPrefix="review-report" disabled={busy} onReport={onReport} />
+          )}
+        </>
       )}
-      <div id={promptId} className={styles.face}>{item.prompt}</div>
-      {renderCheckAnswer(view)}
-      {!answered && (
-        <ConfidenceControl
-          testIdPrefix="review-confidence"
-          value={confidence}
-          onChange={setConfidence}
-          disabled={busy}
-        />
-      )}
-      {!answered && (
-        <button
-          data-testid="review-submit"
-          className={`${START_BUTTON} btn--primary`}
-          disabled={!canSubmit}
-          onClick={onSubmit}
-        >
-          {retryable ? "Try again" : "Check"}
-        </button>
-      )}
-      {reportsOn && (
-        <ReportQuestion key={item.id} testIdPrefix="review-report" disabled={busy} onReport={onReport} />
-      )}
-    </>
+    </QuestionCard>
   );
 }
 

@@ -18,7 +18,8 @@ import styles from "./LoopLearn.module.css";
 import own from "./RetentionCheck.module.css";
 import { useCrisisSupport } from "../safety/CrisisSupportCard";
 import { RetentionPauseBanner, retentionErrorText } from "./retentionPause";
-import { LOOP_ANSWER_MAX } from "@/lib/inputLimits";
+import { OptionList } from "./OptionList";
+import { AnswerField, CHECKING, DONT_KNOW, QuestionActions, QuestionCard, REASON_LABEL, SUBMIT_ANSWER } from "./question/QuestionCard";
 
 /** Spec §13 A126: how often and how long the page was hidden while one item
  *  was on screen. Telemetry for the outcome record — the server clamps it and
@@ -145,7 +146,7 @@ function RetentionSession({ userId, courseId }: { userId: string; courseId: stri
     if (!want || busy) return;
     if (document.querySelector('[aria-modal="true"]')) { focusNext.current = null; return; }
     const target = errorRef.current ?? pauseRef.current ?? (want === "result" ? resultRef.current
-      : itemRef.current?.querySelector<HTMLElement>("textarea, input") ?? statusRef.current);
+      : itemRef.current?.querySelector<HTMLElement>("[data-answer-start], textarea, input") ?? statusRef.current);
     if (!target) return;
     focusNext.current = null;
     target.focus();
@@ -228,6 +229,7 @@ function RetentionSession({ userId, courseId }: { userId: string; courseId: stri
     }
   };
   const canSubmit = !!item && !busy && retentionAnswered(item, choice, reason, answer);
+  const submitIfReady = () => { if (canSubmit) void submit(false); };
   const m = useMotionPresets();
   return <>
     {crisis.dialog}
@@ -256,31 +258,46 @@ function RetentionSession({ userId, courseId }: { userId: string; courseId: stri
     {error && <p ref={errorRef} tabIndex={-1} role="alert" className={own.copy}>{error}</p>}
     <RetentionPauseBanner pause={pause} focusRef={pauseRef} />
     {/* Keyed on the question: the next one rises in as a new card. */}
+    {/* Keyed on the question: the next one rises in as a new card. The
+        question is the shared card (learn/question), bare in this panel. */}
     {item && <motion.div key={`${index}:${item.question_hash}`} {...m.fadeUp} ref={itemRef} data-testid="retention-item" className={own.item}>
-      <p className={own.counter}>Question {index + 1} of {items?.length}</p>
-      <div>
-        <p className={own.prompt}>{item.prompt}</p>
-        {/* Present while the question is, so the result is announced when it is written. */}
-        <div aria-live="polite">
-          {/* The verdict lands with a pulse (right) or a shake (wrong). */}
-          {result !== null && <motion.p {...m.pulse(result ? "correct" : "wrong")} ref={resultRef} tabIndex={-1} data-testid="retention-result" className={own.result}>{result ? "Correct on this retention check. One answer is not proof of mastery." : "Not correct on this check. Review your material before trying again."}</motion.p>}
-        </div>
-      </div>
-      {result === null ? <form aria-label="Retention answer" onSubmit={(event) => { event.preventDefault(); if (canSubmit) void submit(false); }} className={own.form}>
-        {item.format === "mc_reason" ? <>
-          <fieldset disabled={busy} className={own.fieldset}><legend>Your answer</legend>
-            {(item.options ?? []).map((option) => <label key={option.letter} className={styles.scopeOption}>
-              <input type="radio" name="retention-option" checked={choice === option.letter} onChange={() => setChoice(option.letter)} />
-              <span>{option.letter}. {option.text}</span>
-            </label>)}
-          </fieldset>
-          <label>Your reasoning<input data-testid="retention-reason" maxLength={LOOP_ANSWER_MAX} value={reason} disabled={busy} onChange={(event) => setReason(event.target.value)} className={styles.scopeText} /></label>
-        </> : <label>Your answer<textarea data-testid="retention-answer" maxLength={LOOP_ANSWER_MAX} rows={3} value={answer} disabled={busy} onChange={(event) => setAnswer(event.target.value)} className={styles.scopeText} /></label>}
-        <div className={styles.scopeActions}>
-          <button data-testid="retention-submit" type="submit" className={`btn btn--sm btn--primary ${own.press}`} disabled={!canSubmit}>Check answer</button>
-          <button data-testid="retention-idk" type="button" className={`btn btn--sm ${own.press}`} disabled={busy} onClick={() => void submit(true)}>I don&apos;t know</button>
-        </div>
-      </form> : <button data-testid="retention-next" type="button" className={`btn btn--sm ${own.next} ${own.press}`} onClick={() => { setSkipped(false); advance(); }}>Continue</button>}
+      <QuestionCard
+        bare
+        graded
+        animateIn={false}
+        meta={`Question ${index + 1} of ${items?.length}`}
+        prompt={item.prompt}
+        afterPrompt={
+          // Present while the question is, so the result is announced when it is written.
+          <div aria-live="polite">
+            {/* The verdict lands with a pulse (right) or a shake (wrong). */}
+            {result !== null && <motion.p {...m.pulse(result ? "correct" : "wrong")} ref={resultRef} tabIndex={-1} data-testid="retention-result" className={own.result}>{result ? "Correct on this retention check. One answer is not proof of mastery." : "Not correct on this check. Review your material before trying again."}</motion.p>}
+          </div>
+        }
+      >
+        {({ promptId }) => result === null ? <>
+          {item.format === "mc_reason" ? <>
+            <OptionList
+              options={item.options ?? []}
+              selected={choice}
+              onSelect={setChoice}
+              testIdPrefix="retention-option"
+              labelledBy={promptId}
+              disabled={busy}
+            />
+            <AnswerField label={REASON_LABEL} name="reason" testId="retention-reason" singleLine describedByPrompt={false}
+              placeholder="Because…" value={reason} disabled={busy} onChange={setReason} onSubmit={submitIfReady} />
+          </> : (
+            <AnswerField label="Your answer" name="answer" testId="retention-answer" start rows={3}
+              value={answer} disabled={busy} onChange={setAnswer} onSubmit={submitIfReady} />
+          )}
+          <QuestionActions
+            size="sm"
+            submit={{ label: SUBMIT_ANSWER, busyLabel: CHECKING, busy, disabled: !canSubmit, onClick: submitIfReady, testId: "retention-submit" }}
+            optOut={{ label: DONT_KNOW, disabled: busy, onClick: () => void submit(true), testId: "retention-idk" }}
+          />
+        </> : <button data-testid="retention-next" type="button" className={`btn btn--sm ${own.next} ${own.press}`} onClick={() => { setSkipped(false); advance(); }}>Continue</button>}
+      </QuestionCard>
     </motion.div>}
   </>;
 }

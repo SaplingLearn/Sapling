@@ -1059,11 +1059,11 @@ loop active (`GET /api/learn/loop/review/active` 200 — a gate-only probe; the 
 | `review-new-card` | "New card" chip on a served flashcard never rated yet (`/review/next` item `new`; spec §13 A74's pool — a new card, not a review that is due; #866 K14) |
 | `review-answer-input` | free-response answer textarea (a `free` check) |
 | `review-option-{letter}` | one stored `mc_reason` option radio, suffixed with the option's own letter (stored order; correctness never marked, A22); the radio group is named by the question (spec §13 A135) |
-| `review-reason-input` | the one-sentence reason textarea of an `mc_reason` check |
+| `review-reason-input` | the one-sentence reason textarea of an `mc_reason` check, labelled "In one sentence: why?" (the shared `learn/question/QuestionCard`, bare in the panel) |
 | `review-confidence` | the optional "How sure?" radio group on a check, never a flashcard (spec §13 A127; shared `ConfidenceControl`); hidden once the answer is graded |
 | `review-confidence-{guessing,fairly_sure,sure}` | one level; a chosen one rides `/review/answer` as `confidence` |
 | `review-confidence-clear` | "Clear" — takes the choice back |
-| `review-submit` | "Check" / "Try again" — sends a check answer |
+| `review-submit` | "Submit answer" ("Checking…" while it is sent) / "Try again" — sends a check answer |
 | `review-flip` | "Show answer" on a flashcard |
 | `review-rate-1` / `review-rate-2` / `review-rate-3` | a flashcard self-rating (forgot / hard / easy) |
 | `review-hint` | the result line: verdict + corrective hint (with the answer when wrong), the grader-could-not-grade line (nothing recorded; Next moves on and the question comes back after the rest of today's review — #866 K16), or the A33 own-words prompt |
@@ -1094,8 +1094,9 @@ The delayed retention check (spec §13 A112, A126) on Study. Owner:
 | `retention-empty` / `retention-finished` | no eligible check is open for the course / the opened set is done; W3.4 cross-links `retention-study-link` / `retention-tutor-link` (and `retention-finished-{study\|tutor}-link`) when Study / Tutor are visible |
 | `retention-skipped` | "That question is no longer available, so it was skipped." — a 404 on an answer |
 | `retention-item` | the question on screen |
-| `retention-answer` / `retention-reason` | the free answer textarea / an `mc_reason` question's reason |
-| `retention-submit` / `retention-idk` | "Check answer" / "I don't know" |
+| `retention-answer` / `retention-reason` | the free answer textarea ("Your answer") / an `mc_reason` question's reason ("In one sentence: why?") |
+| `retention-option-{letter}` | one `mc_reason` option of a retention question: a radio of the group named by the question (`learn/OptionList`, as the loop's cards) |
+| `retention-submit` / `retention-idk` | "Submit answer" / "I don't know" |
 | `retention-result` / `retention-next` | the graded line / "Continue" |
 
 ### `loop`

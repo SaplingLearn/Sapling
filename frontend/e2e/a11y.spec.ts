@@ -696,7 +696,7 @@ test("review queue: a flashcard, its answer, the rated result and a multiple-cho
     await page.getByTestId("review-confidence-sure").click();
     // #866 Z29: under Tailwind's preflight an unstyled textarea has no border or
     // fill; the reason box is a visible, labelled field
-    const reasonBox = page.getByRole("textbox", { name: "Your reasoning" });
+    const reasonBox = page.getByRole("textbox", { name: "In one sentence: why?" });
     await expect(reasonBox).toBeVisible();
     expect(await reasonBox.evaluate((el) => getComputedStyle(el).borderTopWidth)).toBe("1px");
     await expectAccessible(page, "review: a multiple-choice check");

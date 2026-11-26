@@ -225,8 +225,8 @@ describe("DueQueue", () => {
     mockAnswer.mockResolvedValue(graded());
     render(<DueQueue userId="u1" />);
     await screen.findByTestId("review-item");
-    expect(screen.getByText("A. base case")).toBeTruthy();
-    expect(screen.getByText("B. a loop")).toBeTruthy();
+    expect(screen.getByRole("radio", { name: "A. base case" })).toBeTruthy();
+    expect(screen.getByRole("radio", { name: "B. a loop" })).toBeTruthy();
     expect((screen.getByTestId("review-submit") as HTMLButtonElement).disabled).toBe(true);
     await userEvent.click(screen.getByTestId("review-option-A"));
     await userEvent.type(screen.getByTestId("review-reason-input"), "it stops the recursion");
@@ -574,7 +574,7 @@ describe("DueQueue — stated confidence (spec §13 A127)", () => {
       answer: "the base case", confidence: "sure",
     });
     await userEvent.click(await screen.findByTestId("review-next"));
-    await screen.findByText("A. base case");
+    await screen.findByRole("radio", { name: "A. base case" });
     // the next item starts with none chosen
     expect(screen.getByTestId("review-confidence-sure").getAttribute("aria-checked")).toBe("false");
     await userEvent.click(screen.getByTestId("review-option-B"));
@@ -778,9 +778,9 @@ describe("DueQueue — the answer boxes are visible fields (#866 Z29)", () => {
   it("an mc_reason check's reason box is styled and has a visible label", async () => {
     mockNext.mockResolvedValue(next(MC));
     render(<DueQueue userId="u1" courseId="c1" />);
-    const box = await screen.findByLabelText("Your reasoning");
+    const box = await screen.findByLabelText("In one sentence: why?");
     expect(box).toBe(screen.getByTestId("review-reason-input"));
-    expect(screen.getByText("Your reasoning").tagName).toBe("LABEL");
+    expect(screen.getByText("In one sentence: why?").tagName).toBe("LABEL");
     looksLikeAField(box);
   });
 });

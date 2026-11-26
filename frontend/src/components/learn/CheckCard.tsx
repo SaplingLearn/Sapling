@@ -10,7 +10,7 @@ import { Icon } from "../Icon";
 import styles from "./CheckCard.module.css";
 import { modalOpen } from "./modalOpen";
 import { type Draft, type HintView, focusAnswerStart } from "./loopShared";
-import { AnswerField, QuestionActions, QuestionCard, REASON_LABEL } from "./question/QuestionCard";
+import { AnswerField, CHECKING, DONT_KNOW, QuestionActions, QuestionCard, REASON_LABEL, SUBMIT_ANSWER } from "./question/QuestionCard";
 
 /** Plain-English lines for POST /hint's denial reasons (routes/learn_loop.py::hint). */
 const HINT_DENIED_COPY: Record<string, string> = {
@@ -122,8 +122,8 @@ export function CheckCard({
             disabled={busy}
           />
           <QuestionActions
-            submit={{ label: "Submit answer", busyLabel: "Checking…", busy, disabled: !canSubmit, onClick: onSubmit, testId: "loop-attempt-submit" }}
-            optOut={{ label: "I don't know", disabled: busy || hintBusy, onClick: onIdk, testId: "loop-attempt-idk" }}
+            submit={{ label: SUBMIT_ANSWER, busyLabel: CHECKING, busy, disabled: !canSubmit, onClick: onSubmit, testId: "loop-attempt-submit" }}
+            optOut={{ label: DONT_KNOW, disabled: busy || hintBusy, onClick: onIdk, testId: "loop-attempt-idk" }}
           >
             <button
               type="button"

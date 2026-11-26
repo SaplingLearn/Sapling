@@ -8,6 +8,8 @@
 // - not graded: an accent-bordered card whose meta line says "Not graded"
 //   and whose verb is its own ("Save guess", "Send"); nested inside another
 //   card it is a dashed sub-section.
+// - bare: the question of a panel that is already a card (Study's review
+//   queue, the retention check), with no frame of its own.
 //
 // The card names itself with ONE small line (`meta`, its heading for screen
 // readers), then the question, then the answer: every field has a visible
@@ -22,8 +24,12 @@ import styles from "./QuestionCard.module.css";
 
 /** The meta line of a card whose answer never counts. */
 export const NOT_GRADED = "Not graded";
-/** The one-sentence "why" a multiple-choice answer needs (check-in and check alike). */
+/** The one-sentence "why" a multiple-choice answer needs (every graded card). */
 export const REASON_LABEL = "In one sentence: why?";
+/** The graded verb, its busy label and the opt-out: one word each, everywhere. */
+export const SUBMIT_ANSWER = "Submit answer";
+export const CHECKING = "Checking…";
+export const DONT_KNOW = "I don't know";
 
 type QuestionIds = { headingId: string; promptId: string; fieldId: (name: string) => string };
 const IdsContext = createContext<QuestionIds | null>(null);
@@ -42,6 +48,8 @@ export type QuestionCardProps = {
   graded: boolean;
   /** Inside another card: a sub-section with an h3, not a card with an h2. */
   nested?: boolean;
+  /** No frame: the question of a panel that is already a card (an h3). */
+  bare?: boolean;
   /** The one line that names the card ("Question 2", the concept, "Not graded"). */
   meta: React.ReactNode;
   /** The question. */
@@ -64,7 +72,7 @@ export type QuestionCardProps = {
 };
 
 export function QuestionCard({
-  graded, nested = false, meta, prompt, promptTestId, afterPrompt, head, testId, data, animateIn = true, sectionRef, className, children,
+  graded, nested = false, bare = false, meta, prompt, promptTestId, afterPrompt, head, testId, data, animateIn = true, sectionRef, className, children,
 }: QuestionCardProps) {
   const base = useId();
   const ids: QuestionIds = {
@@ -73,11 +81,13 @@ export function QuestionCard({
     fieldId: (name) => `${base}-${name}`,
   };
   const m = useMotionPresets();
-  const Heading = nested ? "h3" : "h2";
+  const Heading = nested || bare ? "h3" : "h2";
   const { testId: headTestId, ...headData } = head ?? { testId: undefined };
-  const shape = nested
-    ? styles.nested
-    : `card ${tutorStyles.qcard}${graded ? "" : ` ${styles.ungraded}`}`;
+  const shape = bare
+    ? styles.bare
+    : nested
+      ? styles.nested
+      : `card ${tutorStyles.qcard}${graded ? "" : ` ${styles.ungraded}`}`;
   return (
     <IdsContext.Provider value={ids}>
       <motion.section
