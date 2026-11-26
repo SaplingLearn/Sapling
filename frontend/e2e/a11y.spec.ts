@@ -575,6 +575,46 @@ test("learning loop: check-in, plan, teaching, a check with hints, feedback, a m
   }
 });
 
+// Tutor redesign phase 4: the rebuilt surfaces are student surfaces too (spec
+// §13 A135), scanned in their own states with their flags on for this student.
+test("learning loop: the hint ladder and the rebuilt verdict (hint_ladder, verdict_v2 on)", async ({ browser }) => {
+  test.skip(loopOffLane, "loop path: default lane only");
+  test.setTimeout(LOOP_TIMEOUT_MS);
+  await setUserFlag("hint_ladder", USER_LOOP, "on");
+  await setUserFlag("verdict_v2", USER_LOOP, "on");
+  const P = await learningParams(["PROBE_SESSION_CAP"]);
+  const { context, page } = await signIn(browser, USER_LOOP, "Lou Loop");
+  try {
+    await page.goto("/learn");
+    await page.getByTestId("loop-start-guided").click();
+    await walkCheckInAndPlan(page, Number(P.PROBE_SESSION_CAP));
+    const phase = page.getByTestId("loop-phase");
+    await page.getByTestId("loop-teach-start").click();
+    await expect(page.getByTestId("tutor-stop")).toHaveCount(0, { timeout: 30_000 });
+
+    // spec §13 A122: the first check opens on its worked example: the ladder's first step.
+    await page.getByTestId("loop-check-me").click();
+    await expect(page.getByTestId("loop-hint-ladder")).toContainText(LOOP_HINT_BODY, { timeout: 30_000 });
+    await expect(page.getByTestId("loop-hint-reply")).toHaveAttribute("data-rung", /^[4-6]$/);
+    await expect(page.getByTestId("loop-hint-cost")).toContainText("Worked steps: no credit");
+    await expectAccessible(page, "learn loop: the hint ladder");
+    await page.getByTestId("loop-hint-button").click();
+    await expect(page.getByTestId("loop-hint-denied")).toBeVisible();
+    await expectAccessible(page, "learn loop: the hint ladder, a step refused");
+
+    await page.getByTestId("loop-attempt-input").fill(`working: ${GRADER_CORRECT_TOKEN}`);
+    await page.getByTestId("loop-attempt-submit").click();
+    await expect(phase).toHaveAttribute("data-phase", "feedback");
+    await expect(page.getByTestId("tutor-stop")).toHaveCount(0, { timeout: 30_000 });
+    const verdict = page.getByTestId("loop-verdict");
+    await expect(verdict).toBeVisible();
+    await expect(verdict).not.toContainText("Not yet"); // the rebuilt card's words
+    await expectAccessible(page, "learn loop: the rebuilt verdict");
+  } finally {
+    await context.close();
+  }
+});
+
 test("learning loop: a segment's ungraded guess and a self-explanation prompt (A138, A139 on)", async ({ browser }) => {
   test.skip(loopOffLane, "loop path: default lane only");
   test.setTimeout(LOOP_TIMEOUT_MS);
