@@ -49,7 +49,7 @@ it("never creates a pose on mount/course change and honestly renders no eligible
   fireEvent.click(screen.getByTestId("retention-open"));
   expect(await screen.findByTestId("retention-empty")).toBeTruthy();
   expect(api.startRetentionCheck).toHaveBeenCalledWith("u1", "c1");
-  expect(screen.getByTestId("retention-empty").textContent).toContain("No retention checks are open");
+  expect(screen.getByTestId("retention-empty").textContent).toContain("Nothing is ready yet");
   // W3.4: empty state cross-links Study + Tutor (hide_* default off in unit).
   expect(screen.getByTestId("retention-study-link").getAttribute("href")).toBe("/study?course=c1");
   expect(screen.getByTestId("retention-tutor-link").getAttribute("href")).toBe("/learn?mode=socratic&course=c1");
@@ -75,7 +75,9 @@ it("grades only the explicitly submitted item and does not infer mastery", async
   fireEvent.click(screen.getByTestId("retention-submit"));
   expect(await screen.findByTestId("retention-result")).toBeTruthy();
   expect(api.answerRetentionCheck).toHaveBeenCalledWith({ user_id: "u1", node_id: "n1", question_hash: "qh", answer: "My own remembered explanation", idk: false, ...VISIBLE });
-  expect(screen.getByTestId("retention-result").textContent).toContain("not proof of mastery");
+  // One right answer claims no mastery (and says no hedge about it either).
+  expect(screen.getByTestId("retention-result").textContent).toBe("Right. You remembered this one.");
+  expect(screen.getByTestId("retention-result").textContent).not.toMatch(/master/i);
   expect(screen.queryByTestId("retention-answer")).toBeNull();
   fireEvent.click(screen.getByTestId("retention-next"));
   expect(screen.getByTestId("retention-finished")).toBeTruthy();

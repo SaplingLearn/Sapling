@@ -151,7 +151,9 @@ test("plan, planned, gated, routed: the learner model chooses, the gates verify,
   // ── A147: what changed, and where to go next ─────────────────────────────
   const block = page.getByTestId("quiz-results-learning");
   await expect(block).toBeVisible();
-  await expect(block.getByTestId("quiz-results-change").first()).toContainText(`${CONCEPT_NAME}: rose from`);
+  // One measure: the quizzed concept's skill move leads the results; the block
+  // lists only the other meters its evidence reached ("Also moved").
+  await expect(page.getByTestId("quiz-results-mastery")).toContainText("Skill rose from");
   await expect(block.getByTestId("quiz-results-due")).toBeVisible();
   const learn = block.getByTestId("quiz-next-step-learn");
   await expect(learn).toHaveAttribute("href", /^\/learn\?topic=/);

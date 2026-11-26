@@ -1654,7 +1654,7 @@ test("phone retention entry creates no pose until requested and respects real de
   // This freshly re-seeded learner has no aged evidence. Do not backdate it,
   // override the clock or manufacture a delayed-retention success.
   expect((await opened.json()).items).toEqual([]);
-  await expect(page.getByTestId("retention-empty")).toContainText("No retention checks are open");
+  await expect(page.getByTestId("retention-empty")).toContainText("Nothing is ready yet");
   expect(opens).toBe(1);
   const geometry = await page.evaluate(() => ({ viewport: innerWidth, content: document.documentElement.scrollWidth }));
   expect(geometry.content).toBeLessThanOrEqual(geometry.viewport);

@@ -25,14 +25,7 @@ vi.mock("@/context/UserContext", () => ({
   useUser: () => ({ userId: "user_andres", userReady: true }),
 }));
 
-import {
-  LearningBlock,
-  changeLine,
-  conceptTreeHref,
-  dueIn,
-  learnHref,
-  reviewHref,
-} from "./LearningBlock";
+import { LearningBlock, changeLine, conceptTreeHref, dueIn, learnHref, reviewHref, ownChange, skillMove } from "./LearningBlock";
 
 afterEach(() => {
   cleanup();
@@ -81,13 +74,20 @@ function renderBlock(
 }
 
 describe("LearningBlock", () => {
-  it("words each meter that moved, in the server's order", () => {
+  it("lists the other meters that moved under Also moved; the quizzed one leads the results", () => {
     renderBlock();
     const rows = screen.getAllByTestId("quiz-results-change").map(r => r.textContent);
-    expect(rows).toEqual([
-      "Recursion: rose from 35% to 62% (still developing)",
-      "Functions: rose from 78% to 81% (now proficient)",
-    ]);
+    expect(rows).toEqual(["Functions: rose from 78% to 81% (now proficient)"]);
+    expect(screen.getByRole("heading", { name: "Also moved" })).toBeTruthy();
+    expect(ownChange(LEARNING, "n1")?.concept_name).toBe("Recursion");
+    expect(skillMove(ownChange(LEARNING, "n1")!)).toBe("rose from 35% to 62% (still developing)");
+  });
+
+  it("only the quizzed concept moved: no Also moved, and no 'nothing moved' line", () => {
+    renderBlock({ ...LEARNING, changes: LEARNING.changes.slice(0, 1) });
+    expect(screen.queryByTestId("quiz-results-change")).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Also moved" })).toBeNull();
+    expect(screen.queryByTestId("quiz-results-no-change")).toBeNull();
   });
 
   it("offers Study review, Learn, and Tree on the shared spine", () => {

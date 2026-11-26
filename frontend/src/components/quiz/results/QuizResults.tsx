@@ -30,7 +30,7 @@ import type { MasteryUnmovedReason, QuizSession } from "@/lib/quiz/types";
 import { sourceLabel } from "@/lib/quiz/exits";
 import { AskPanel } from "../question/AskPanel";
 import type { QuizConceptSummary } from "../question/QuizQuestion";
-import { LearningBlock } from "./LearningBlock";
+import { LearningBlock, ownChange, skillMove } from "./LearningBlock";
 import { MissedList, buildMissedItems, type MissedItem } from "./MissedList";
 import "./results.css";
 
@@ -103,6 +103,26 @@ export function masteryLine(
 ): string {
   const numbers = `${pct(before)}% → ${pct(after)}%`;
   return learnerBlock ? numbers : `${numbers} · ${tiers.before} → ${tiers.after}`;
+}
+
+/**
+ * The line under the concept's name, and whether the concept grew. With the
+ * learner model's block (A147) its skill meter is the screen's one measure:
+ * the quizzed concept's own move ("Skill rose from 35% to 62% (now
+ * developing)"), or no line when it did not move (the block says so);
+ * without it, the map's mastery line.
+ */
+export function headerFor(
+  result: NonNullable<QuizSession["result"]>,
+  conceptId: string,
+  tiers: { before: string; after: string },
+): { line: string | null; grew: boolean } {
+  if (result.learning) {
+    const own = ownChange(result.learning, conceptId);
+    return { line: own ? `Skill ${skillMove(own)}` : null, grew: !!own && own.after > own.before };
+  }
+  const { mastery_before: before, mastery_after: after } = result;
+  return { line: masteryLine(before, after, tiers, false), grew: masteryMove(before, after) === "up" };
 }
 
 /** Which way the mastery moved, as the screen shows it (whole percent). */
@@ -183,7 +203,7 @@ export function QuizResults({
   // "grew" is the whole promise of the screen, so it is said only of a node
   // that did; one that went down gets an honest verb, one that did not move
   // says so, and why (#866 K40).
-  const grew = masteryMove(before, after) === "up";
+  const { line: headerLine, grew } = headerFor(result, concept.id, { before: tierBefore, after: tierAfter });
   const unchanged = masteryMove(before, after) === "same" ? unchangedNote(session, Boolean(result.learning)) : null;
 
   const missed = buildMissedItems(session);
@@ -237,9 +257,11 @@ export function QuizResults({
       )}
 
       <h2 className="h-serif quiz-results__name">{concept.name}</h2>
-      <p className="quiz-results__delta" data-testid="quiz-results-mastery">
-        {masteryLine(before, after, { before: tierBefore, after: tierAfter }, Boolean(result.learning))}
-      </p>
+      {headerLine && (
+        <p className="quiz-results__delta" data-testid="quiz-results-mastery">
+          {headerLine}
+        </p>
+      )}
       {unchanged && (
         <p className="quiz-results__unchanged" data-testid="quiz-results-unchanged">
           {unchanged}

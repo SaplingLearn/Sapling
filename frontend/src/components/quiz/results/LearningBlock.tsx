@@ -69,13 +69,23 @@ export function dueIn(iso: string | null, now: Date = new Date()): string | null
   return `in ${days} days`;
 }
 
-export function changeLine(change: QuizLearning["changes"][number]): string {
+/** "rose from 35% to 62% (now developing)": one skill meter's move. */
+export function skillMove(change: QuizLearning["changes"][number]): string {
   const verb = change.after >= change.before ? "rose" : "fell";
   const band =
     change.band_after === change.band_before
       ? `still ${BAND_WORDS[change.band_after]}`
       : `now ${BAND_WORDS[change.band_after]}`;
-  return `${change.concept_name}: ${verb} from ${pct(change.before)}% to ${pct(change.after)}% (${band})`;
+  return `${verb} from ${pct(change.before)}% to ${pct(change.after)}% (${band})`;
+}
+
+export function changeLine(change: QuizLearning["changes"][number]): string {
+  return `${change.concept_name}: ${skillMove(change)}`;
+}
+
+/** The quizzed concept's own move, which the results lead with. */
+export function ownChange(learning: QuizLearning, conceptId: string): QuizLearning["changes"][number] | null {
+  return learning.changes.find((c) => c.concept_id === conceptId) ?? null;
 }
 
 export function LearningBlock({
@@ -104,19 +114,22 @@ export function LearningBlock({
   const treeHref = treeShown && conceptId ? conceptTreeHref(conceptId) : null;
   const nextDue = dueIn(learning.review.next_due_at);
   const hasNext = reviewOffered || Boolean(learn) || Boolean(treeHref);
+  const others = learning.changes.filter((c) => c.concept_id !== conceptId);
 
   return (
     <section className="quiz-learning" data-testid="quiz-results-learning" aria-label="What changed">
-      <h3 className="quiz-learning__title">Your skill meters</h3>
-      {learning.changes.length > 0 ? (
+      {/* One measure: the quizzed concept's own move leads the results (its
+          header line); the meters its evidence also reached sit here. */}
+      {others.length > 0 && <h3 className="quiz-learning__title">Also moved</h3>}
+      {others.length > 0 ? (
         <ul className="quiz-learning__changes">
-          {learning.changes.map(change => (
+          {others.map(change => (
             <li key={change.concept_id} className="quiz-learning__change" data-testid="quiz-results-change">
               {changeLine(change)}
             </li>
           ))}
         </ul>
-      ) : (
+      ) : learning.changes.length > 0 ? null : (
         <p className="quiz-learning__line" data-testid="quiz-results-no-change">
           No skill meter moved this time. Each question counts toward your meters once a day, and
           only if it passed its checks.

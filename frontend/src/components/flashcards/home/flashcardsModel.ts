@@ -144,6 +144,8 @@ export interface MapItem {
   due: number;
   /** Added by the student and not generated yet: it can be taken off again. */
   custom: boolean;
+  /** From a skill graph (the loop on): its status reads in the ladder's words. */
+  ladder?: boolean;
 }
 
 export interface MapColumn {
@@ -172,7 +174,7 @@ export function mapColumns(concepts: Concept[], index: CardIndex, custom: string
     label,
     items: concepts
       .filter(c => c.group === label)
-      .map(c => ({ id: c.id, name: c.name, status: c.st, ...countsFor(index, c.name), custom: false })),
+      .map(c => ({ id: c.id, name: c.name, status: c.st, ...countsFor(index, c.name), custom: false, ...(c.ladder ? { ladder: true } : {}) })),
   }));
   const own: MapItem[] = index.others.map(o => ({
     id: `deck:${o.key}`, name: o.name, status: null, ...countsFor(index, o.name), custom: false,

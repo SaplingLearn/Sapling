@@ -214,9 +214,9 @@ describe("QuizResults", () => {
         },
       },
     });
-    expect(screen.getByTestId("quiz-results-change")).toHaveTextContent(
-      "Recursion: rose from 29% to 46% (now developing)",
-    );
+    // One measure: the quizzed concept's skill move leads; nothing else moved.
+    expect(screen.getByTestId("quiz-results-mastery")).toHaveTextContent("Skill rose from 29% to 46% (now developing)");
+    expect(screen.queryByTestId("quiz-results-change")).toBeNull();
     expect(screen.getByTestId("quiz-next-step-learn")).toHaveAttribute(
       "href",
       "/learn?topic=Recursion&concept=recursion&mode=socratic&course=cs101",
@@ -227,7 +227,7 @@ describe("QuizResults", () => {
     );
   });
 
-  it("names a level on one scale: with the learner model's block, the mastery line drops the tier move (#866 K42)", () => {
+  it("names a level on one scale: with the learner model's block, the header is its skill meter (#866 K42)", () => {
     // The block says "still proficient" from 80%; the tier map says "learning"
     // up to 95%. One screen, one belief: the block's levels are the scale.
     renderResults({
@@ -245,9 +245,9 @@ describe("QuizResults", () => {
         },
       },
     });
-    expect(screen.getByTestId("quiz-results-mastery")).toHaveTextContent(/^82% → 88%$/);
+    expect(screen.getByTestId("quiz-results-mastery")).toHaveTextContent(/^Skill rose from 82% to 88% \(still proficient\)$/);
     expect(screen.getByTestId("quiz-results-mastery")).not.toHaveTextContent(/learning|struggling|mastered/);
-    expect(screen.getByTestId("quiz-results-change")).toHaveTextContent("Recursion: rose from 82% to 88% (still proficient)");
+    expect(screen.queryByTestId("quiz-results-change")).toBeNull();
   });
 
   it("shows the score, the mastery delta and the XP line", () => {

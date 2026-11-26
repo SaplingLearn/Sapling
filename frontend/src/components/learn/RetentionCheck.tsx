@@ -62,7 +62,7 @@ export function RetentionCheck({ userId, courses, initialCourseId = "" }: {
   return (
     <section aria-label="Retention check" className={`card ${styles.retention} ${own.flush}`}>
       <h2 className={own.title}>Retention check</h2>
-      <p className={own.copy}>Check what you remember after time away. No tutor hints here. Sapling notes any help or practice in between.</p>
+      <p className={own.copy}>See what you remember after some time away. There are no hints here.</p>
       <label>Course
         {/* #866 Z29: the answer boxes' field style — Tailwind's preflight strips a select's border and fill */}
         <select aria-label="Retention course" aria-describedby={fellBack ? noteId : undefined} data-testid="retention-course" value={courseId} onChange={(event) => setSelected(event.target.value)} className={`${styles.scopeText} ${own.select}`}>
@@ -220,7 +220,7 @@ function RetentionSession({ userId, courseId }: { userId: string; courseId: stri
         advance(); setSkipped(true); refreshDue();
       } else if (status === 409) {
         setItems(null);
-        setError("This question is no longer open. Open eligible checks again to continue.");
+        setError("This question has closed. Open the check again to continue.");
       } else if (budgetPauseOf(err)) setPause(budgetPauseOf(err)); // the typed answer stays
       else setError(retentionErrorText(err, "Couldn't check your answer. Your work is still here; try again.",
         "Couldn't check your answer right now, so nothing was recorded. Your work is still here; try again later."));
@@ -243,13 +243,13 @@ function RetentionSession({ userId, courseId }: { userId: string; courseId: stri
         {skipped && <p data-testid="retention-skipped" className={own.statusLine}>That question is no longer available, so it was skipped.</p>}
         {items?.length === 0 && (
           <div ref={statusRef} tabIndex={-1} data-testid="retention-empty" className={own.statusLine}>
-            <p className={own.bare}>No retention checks are open for this course yet. They open at set times after you first study a concept, so check back later or add course material.</p>
+            <p className={own.bare}>Nothing is ready yet. Retention checks open a few days after you first study a concept.</p>
             {renderHandoffs(emptyHandoffs, (link) => link.testId, (link) => link.testId)}
           </div>
         )}
         {items && items.length > 0 && !item && (
           <div ref={statusRef} tabIndex={-1} data-testid="retention-finished" className={own.statusLine}>
-            <p className={own.bare}>This set is finished. A few answers do not establish mastery; keep checking what you retain over time.</p>
+            <p className={own.bare}>That&apos;s the set. More open as time passes.</p>
             {renderHandoffs(emptyHandoffs, (link) => `fin-${link.testId}`, (link) => `retention-finished-${link.key}-link`)}
           </div>
         )}
@@ -271,7 +271,7 @@ function RetentionSession({ userId, courseId }: { userId: string; courseId: stri
           // Present while the question is, so the result is announced when it is written.
           <div aria-live="polite">
             {/* The verdict lands with a pulse (right) or a shake (wrong). */}
-            {result !== null && <motion.p {...m.pulse(result ? "correct" : "wrong")} ref={resultRef} tabIndex={-1} data-testid="retention-result" className={own.result}>{result ? "Correct on this retention check. One answer is not proof of mastery." : "Not correct on this check. Review your material before trying again."}</motion.p>}
+            {result !== null && <motion.p {...m.pulse(result ? "correct" : "wrong")} ref={resultRef} tabIndex={-1} data-testid="retention-result" className={own.result}>{result ? "Right. You remembered this one." : "Not quite. It's worth a review before it comes back."}</motion.p>}
           </div>
         }
       >
