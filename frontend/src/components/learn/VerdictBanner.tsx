@@ -30,7 +30,9 @@ function joinClauses(parts: string[]): string {
 export function creditNote(credit: LoopCredit, reasons: LoopCreditReason[] = []): string {
   if (credit === "full") return VERDICT_COPY.correct.note;
   if (credit === "none") {
-    return "This one doesn't count toward the concept, because help was shown before you answered. Try the next one on your own.";
+    // Said of the steps, never of the student (the audit: a worked example the
+    // tutor opened with read as the student's fault).
+    return "No skill change this time: the worked steps came before your answer. Try the next one on your own.";
   }
   const why = joinClauses(reasons.filter((r) => REASON_CLAUSE[r]).map((r) => REASON_CLAUSE[r]));
   return why ? `That answer counts partly toward this concept, because ${why}.` : "That answer counts partly toward this concept.";

@@ -1080,7 +1080,8 @@ describe("K07 — the verdict says what a correct answer earned", () => {
     expect(banner.getAttribute("data-credit")).toBe("none");
     expect(banner.textContent).toContain("Correct");
     expect(banner.textContent).not.toContain("That answer counts toward this concept.");
-    expect(banner.textContent).toContain("doesn't count toward the concept");
+    expect(banner.textContent).toContain("No skill change this time: the worked steps came before your answer.");
+    expect(banner.textContent).not.toMatch(/because help was shown/);
   });
 
   it("a correct answer after a hint says it counts partly", async () => {
