@@ -280,13 +280,19 @@
   flex-shrink: 0;
 }
 
+/* One height on every Tutor page, whether or not a session's course crumb
+   sits above the title: the crumb's row is kept, and the title sits at its
+   foot (tutor-layout.spec pins the TopBar's height across pages). */
 .topTitle {
   flex: 1;
   min-width: 0;
+  min-height: calc(var(--sp-12) + var(--sp-1) + 36px);
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
 }
 
-/* TopBar rhythm, the same on every page: crumb 14 · 4 · title 36 · 4 · line 20,
-   and every action 32px tall. */
+/* TopBar rhythm: crumb (a session's course) · title 36, and every action 32px tall. */
 .topTitle h1 {
   margin: 0;
   font-size: var(--fs-4xl);
