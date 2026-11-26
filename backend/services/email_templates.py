@@ -1,10 +1,14 @@
 """Email bodies. Pure functions returning `(subject, html, text)`.
 
-The look: a white card topped with the landing page's hero, frozen into an
-image (the pale ground, the point cloud and the wordmark), then Aleo headlines
-and SUSE body text, everything left-aligned. The three lifecycle
+The look: one flat white column (no outer background, no card border, no
+boxed sections) topped with the landing page's hero, frozen into an image (the
+pale ground, the point cloud and the wordmark) that fades into the page, then
+Aleo headlines and SUSE body text, everything left-aligned. Nested frames read
+as boxes inside boxes on a phone, where the mail client already frames the
+message, so there is one column and nothing else. The waitlist and approval
 emails carry a progress line (Signed up, Approved, Signed in) so a student can
-see where they are; broadcasts are the same card without it.
+see where they are; the welcome email drops it, since signing in is the very
+thing that sent it. Broadcasts have no progress line either.
 
 Built for email clients, not browsers: nested tables, inline styles, `bgcolor`
 attributes for Outlook, and one JPEG (Gmail won't render SVG or run canvas):
@@ -29,9 +33,7 @@ import config
 from services import email_variables
 
 BRAND = "#445D22"     # brand forest: buttons, links, progress
-_OUTER = "#f1f2ed"    # the page around the card
-_PAPER = "#ffffff"
-_TINT = "#f4f7f0"     # sap-50-ish: progress and figure wells
+_PAPER = "#ffffff"    # the page and the column: one surface, no card
 _RULE = "#e6e3da"
 _INK = "#1a1814"
 _BODY = "#3f3b31"
@@ -167,12 +169,9 @@ def _progress(current: int) -> str:
             f'font-weight:{600 if here else 400};">{_e(stage)}</td>'
         )
     return (
-        f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" '
-        f'bgcolor="{_TINT}" style="background:{_TINT};border-radius:10px;">'
-        '<tr><td style="padding:18px 8px 16px 8px;">'
         '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">'
         "<tr>" + "".join(dots) + "</tr><tr>" + "".join(labels) + "</tr>"
-        "</table></td></tr></table>"
+        "</table>"
     )
 
 
@@ -252,11 +251,11 @@ def _layout(
   }}
 </style>
 </head>
-<body bgcolor="{_OUTER}" style="margin:0;padding:0;background:{_OUTER};">
+<body bgcolor="{_PAPER}" style="margin:0;padding:0;background:{_PAPER};">
 <div style="display:none;max-height:0;overflow:hidden;opacity:0;mso-hide:all;">{_e(preheader)}&#8199;&#847;&#8199;&#847;&#8199;&#847;&#8199;&#847;</div>
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="{_OUTER}" style="background:{_OUTER};">
-<tr><td align="center" style="padding:32px 12px 40px 12px;">
-<table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:600px;border-radius:12px;overflow:hidden;background:{_PAPER};border:1px solid {_RULE};">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="{_PAPER}" style="background:{_PAPER};">
+<tr><td align="center" style="padding:0 0 40px 0;">
+<table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:600px;background:{_PAPER};">
 <tr><td bgcolor="#F2F4F0" style="font-size:0;line-height:0;background:#F2F4F0;">
 <a href="{_e(site)}" target="_blank"><img src="{_e(_asset("header.jpg"))}" width="600" alt="Sapling" style="display:block;width:100%;max-width:600px;height:auto;border:0;"></a>
 </td></tr>
@@ -393,9 +392,7 @@ def welcome(first_name: str | None, *, app_url: str, unsubscribe_url: str) -> tu
     reason = "You're getting this because you just signed in to Sapling for the first time."
     rows = [
         _row(_headline(heading) + _lede(lede) + _button(app_url, "Open Sapling")),
-        _spacer(32),
-        _row(_progress(2)),
-        _spacer(32),
+        _spacer(40),
         _row(_section_title("Four things to try this week") + _points(tips)),
         _spacer(8),
         _rule(),

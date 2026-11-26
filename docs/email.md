@@ -131,9 +131,11 @@ takes its sent count from `email_sends`. Two clicks start one run.
 
 `services/email_templates.py` builds every email: the landing page hero
 (pale ground, point cloud) with the navbar's hand-drawn wordmark, as a header image
-over a white card, then Aleo headlines and SUSE body text, all left-aligned.
-The three lifecycle emails show a Signed up / Approved / Signed in progress
-line; broadcasts are the same card without it. The "you're in" and welcome
+that fades into one flat white column (no outer background, card border or
+boxed sections, which stack into boxes inside boxes on a phone), then Aleo
+headlines and SUSE body text, all left-aligned. The waitlist and approval
+emails show a Signed up / Approved / Signed in progress line; the welcome email
+and broadcasts don't. The "you're in" and welcome
 emails greet the person by first name when it's known. Aleo and SUSE load from
 Google Fonts where the client allows it (Apple Mail, iOS); Gmail and Outlook
 fall back to Georgia and the system sans.
