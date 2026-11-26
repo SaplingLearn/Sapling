@@ -6,8 +6,8 @@
 import { describe, expect, it } from "vitest";
 import type { Assignment, EnrolledCourse } from "@/lib/api";
 import {
-  agendaOf, busiestWeek, countdown, coursesOf, labelRows, loadText, monthCells, monthLine, rangeText, startOfWeek,
-  timelinePos, toItems, weekCells, weekLine, weekLoads,
+  agendaOf, busiestWeek, countdown, coursesOf, loadText, monthCells, monthLine, rangeText, startOfWeek,
+  semesterLanes, toItems, weekCells, weekLine, weekLoads,
 } from "./calendarModel";
 
 const TODAY = new Date(2026, 2, 11);
@@ -94,7 +94,6 @@ describe("week loads", () => {
     expect(busy.range).toBe("Mar 30 – Apr 5");
     expect(busy.items.map((i) => i.id)).toEqual(["mid3", "prop", "prac"]);
     expect(busiestWeek(ITEMS.slice(0, 3), TODAY)).toBeNull();
-    expect(timelinePos(new Date(2026, 2, 16), new Date(2026, 2, 2), 2)).toBe(1);
   });
 
   it("a busiest-week tie goes to the week with more exams", () => {
@@ -105,8 +104,11 @@ describe("week loads", () => {
     expect(busiestWeek(tie, TODAY)!.range).toBe("Mar 23 – 29");
   });
 
-  it("timeline labels stagger into rows so close ones never overlap; a fourth crowded one hides", () => {
-    const d = (n: number) => ({ day: new Date(2026, 2, n) });
-    expect(labelRows([d(1), d(3), d(5), d(6), d(8), d(20)]).map((r) => r.row)).toEqual([0, 1, 2, -1, 0, 0]);
+  it("the semester grid: a row per course with something in the span, a cell per week", () => {
+    const lanes = semesterLanes(ITEMS, new Date(2026, 2, 4), 3);
+    expect(lanes.map((l) => l.label)).toEqual(["CS 112", "MA 123"]);
+    expect(lanes[0].cells.map((c) => c.map((i) => i.id))).toEqual([["mid1"], ["hw7"], ["mid2"]]);
+    expect(lanes[1].cells.map((c) => c.map((i) => i.id))).toEqual([[], ["q4"], ["lab"]]);
+    expect(semesterLanes(ITEMS, new Date(2026, 5, 1), 2)).toEqual([]);
   });
 });

@@ -109,7 +109,7 @@
   position: absolute;
   right: 0;
   top: calc(100% + var(--sp-3));
-  z-index: 20;
+  z-index: var(--z-popover);
   min-width: 240px;
   padding: var(--sp-3);
   border-radius: var(--r-md);
@@ -144,33 +144,59 @@
   color: var(--text-dim);
 }
 
-/* ── kinds ─────────────────────────────────────────────────────────────── */
+/* ── kinds: a tint plus a mark, never colour alone ───────────────────── */
 
-.kindExam,
-.kindQuiz,
-.kindHomework {
+.kExam {
+  --k-bg: var(--warn-soft);
+  --k-fg: var(--c-brown);
+  --k-mark: var(--warn);
+}
+
+.kQuiz {
+  --k-bg: var(--info-soft);
+  --k-fg: var(--info);
+  --k-mark: var(--info);
+}
+
+.kHomework {
+  --k-bg: var(--bg-soft);
+  --k-fg: var(--text);
+  --k-mark: var(--text-dim);
+}
+
+.kind {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-1) var(--sp-4);
+  border-radius: var(--r-sm);
+  background: var(--k-bg);
+  color: var(--k-fg);
   font-size: var(--fs-sm);
   font-weight: 600;
   white-space: nowrap;
 }
 
-.kindExam {
-  padding: var(--sp-1) var(--sp-4);
-  border-radius: var(--r-sm);
-  background: var(--text);
-  color: var(--bg);
+.mark {
+  flex-shrink: 0;
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: var(--r-full);
+  background: var(--k-mark);
 }
 
-.kindQuiz {
-  padding: 0 var(--sp-4);
-  border-radius: var(--r-sm);
-  border: 1px solid var(--text);
-  color: var(--text);
+.mark.kExam {
+  border-radius: 0;
+  transform: rotate(45deg);
 }
 
-.kindHomework {
-  font-weight: 400;
-  color: var(--text-dim);
+.mark.kQuiz {
+  width: 9px;
+  height: 9px;
+  box-sizing: border-box;
+  background: transparent;
+  border: 2px solid var(--k-mark);
 }
 
 /* ── agenda ────────────────────────────────────────────────────────────── */
@@ -226,13 +252,8 @@
   background: var(--bg-panel);
 }
 
-.rowExam {
-  border-color: var(--accent-border);
-  background: var(--accent-soft);
-}
-
 .rowPast {
-  opacity: 0.75;
+  background: var(--bg-subtle);
 }
 
 .dateBlock {
@@ -596,8 +617,8 @@
   padding: 0 var(--sp-4);
   border: 0;
   border-radius: var(--r-sm);
-  background: var(--bg-soft);
-  color: var(--text);
+  background: var(--k-bg);
+  color: var(--k-fg);
   font: inherit;
   font-size: var(--fs-md);
   display: flex;
@@ -607,26 +628,21 @@
   cursor: pointer;
 }
 
-.pill > span:last-child {
+.pill > span:nth-child(2) {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.pillExam {
-  background: var(--text);
-  color: var(--bg);
-  font-weight: 600;
-}
-
-.pillQuiz {
-  background: transparent;
-  box-shadow: inset 0 0 0 1px var(--text);
+.pill.kExam,
+.pill.kQuiz {
   font-weight: 600;
 }
 
 .pillPast {
-  opacity: 0.6;
+  filter: saturate(0.35);
 }
 
 .moreBtn {
@@ -641,60 +657,91 @@
   cursor: pointer;
 }
 
-/* ── semester timeline ────────────────────────────────────────────────── */
+/* ── semester: a row per course, a column per week ──────────────────── */
 
-.timeline {
-  padding: var(--sp-9) var(--sp-12) var(--sp-12);
+.sem {
+  min-width: 0;
   border-radius: var(--r-lg);
   border: 1px solid var(--border);
   background: var(--bg-panel);
+  overflow: hidden;
   display: flex;
   flex-direction: column;
-  gap: var(--sp-3);
 }
 
-.tlHead {
-  display: flex;
+.semRow {
+  display: grid;
+  grid-template-columns: 120px repeat(var(--weeks), minmax(0, 1fr));
 }
 
-.laneLabel {
-  width: 120px;
-  flex-shrink: 0;
+.semRow + .semRow {
+  border-top: 1px solid var(--border);
+}
+
+.semCorner,
+.semCourse {
+  padding: var(--sp-6) var(--sp-8);
   display: flex;
   align-items: center;
   gap: var(--sp-4);
-  font-size: var(--fs-lg);
+  font-size: var(--fs-base);
   font-weight: 600;
 }
 
-.weeks {
-  flex: 1;
-  display: grid;
-  grid-template-columns: repeat(var(--weeks), minmax(0, 1fr));
-  gap: var(--sp-2);
+.semCorner {
+  align-items: flex-end;
+  color: var(--text-dim);
+  font-size: var(--fs-md);
 }
 
-.week {
+.semHead {
+  padding: var(--sp-6) var(--sp-5);
   display: flex;
   flex-direction: column;
   gap: var(--sp-3);
-  padding-bottom: var(--sp-4);
+  border-left: 1px solid var(--border);
   font-size: var(--fs-md);
+}
+
+.semHeadTop {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  flex-wrap: wrap;
+  min-height: 22px;
 }
 
 .weekLabel {
   font-weight: 600;
 }
 
+.tagNow,
+.tagHeavy {
+  padding: 0 var(--sp-3);
+  border-radius: var(--r-sm);
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.tagNow {
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+.tagHeavy {
+  background: var(--warn);
+  color: var(--accent-fg);
+}
+
 .load {
-  height: 8px;
+  height: 6px;
   width: var(--load);
   border-radius: var(--r-full);
   background: var(--accent-border);
 }
 
 .loadEmpty {
-  width: 100%;
   background: var(--bg-soft);
 }
 
@@ -712,130 +759,73 @@
   font-weight: 600;
 }
 
-.lanes {
-  position: relative;
-}
-
-.lane {
-  display: flex;
-  border-top: 1px solid var(--border);
-}
-
-.track {
-  flex: 1;
-  position: relative;
-  height: calc(64px + var(--rows, 1) * 40px);
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.track::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 34px;
-  height: 2px;
-  background: var(--bg-soft);
-}
-
-.mark {
-  position: absolute;
-  top: 26px;
-  left: calc(var(--pos) - 8px);
-  width: 120px;
+.semCell {
+  min-width: 0;
+  min-height: 72px;
+  padding: var(--sp-4);
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
   gap: var(--sp-3);
+  border-left: 1px solid var(--border);
 }
 
-.markBtn {
-  padding: 0;
+.colNow {
+  background: var(--accent-soft);
+}
+
+.colHeavy {
+  background: color-mix(in srgb, var(--warn-soft) 40%, var(--bg-panel));
+}
+
+.colPast .weekLabel,
+.colPast .loadText {
+  color: var(--text-muted);
+}
+
+.ev {
+  width: 100%;
+  min-width: 0;
+  padding: var(--sp-3) var(--sp-4);
   border: 0;
-  background: transparent;
-  color: var(--text);
+  border-radius: var(--r-sm);
+  background: var(--k-bg);
+  color: var(--k-fg);
   font: inherit;
-  font-size: var(--fs-md);
-  font-weight: 600;
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
+  align-items: baseline;
   gap: var(--sp-3);
   text-align: left;
   cursor: pointer;
 }
 
-.markExam .markBtn {
-  font-weight: 700;
+.ev:hover {
+  filter: brightness(0.97);
 }
 
-.glyph {
-  width: 11px;
-  height: 11px;
-  border-radius: var(--r-full);
-  background: var(--course);
-  display: block;
-}
-
-.markExam .glyph {
-  width: 16px;
-  height: 16px;
-  border-radius: 0;
-  transform: rotate(45deg);
-  outline: 3px solid var(--bg-panel);
-}
-
-.markQuiz .glyph {
-  width: 14px;
-  height: 14px;
-  box-sizing: border-box;
-  background: var(--bg-panel);
-  border: 3px solid var(--course);
-}
-
-.markText {
+.evText {
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: var(--sp-1);
-  margin-top: calc(var(--row, 0) * var(--sp-20));
-  max-width: 132px;
+}
+
+.evTitle {
+  font-size: var(--fs-md);
+  font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.markCrowded .markText {
-  display: none;
+.evDate {
+  font-size: var(--fs-sm);
 }
 
-.markDate {
-  font-size: var(--fs-sm);
-  font-weight: 400;
+.semNothing {
+  margin: 0;
+  padding: var(--sp-12);
+  font-size: var(--fs-base);
   color: var(--text-dim);
-}
-
-.todayLine {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: calc(120px + (100% - 120px) * var(--today));
-  width: 2px;
-  background: var(--accent);
-  pointer-events: none;
-}
-
-.todayTag {
-  position: absolute;
-  bottom: calc(-1 * var(--sp-12));
-  left: calc(120px + (100% - 120px) * var(--today) - 22px);
-  padding: var(--sp-1) var(--sp-4);
-  border-radius: var(--r-sm);
-  background: var(--accent);
-  color: var(--accent-fg);
-  font-size: var(--fs-sm);
-  font-weight: 700;
 }
 
 .keyRow {
@@ -843,13 +833,6 @@
   gap: var(--sp-9);
   flex-wrap: wrap;
   font-size: var(--fs-base);
-}
-
-.keyItem {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--sp-4);
-  --course: var(--text);
 }
 
 .belowTimeline {
@@ -867,8 +850,8 @@
 .scrim {
   position: fixed;
   inset: 0;
-  z-index: 60;
-  background: rgba(26, 24, 20, 0.32);
+  z-index: var(--z-modal);
+  background: var(--scrim);
 }
 
 .panel {
@@ -876,7 +859,7 @@
   top: 0;
   right: 0;
   bottom: 0;
-  z-index: 61;
+  z-index: calc(var(--z-modal) + 1);
   width: min(480px, 100vw);
   box-sizing: border-box;
   padding: var(--sp-14) var(--sp-16);
@@ -1135,10 +1118,9 @@ textarea.input {
   .stripDay {
     height: 60px;
     padding: 0;
-    border: 0;
     border-radius: var(--r-md);
     background: var(--bg-panel);
-    box-shadow: inset 0 0 0 1px var(--border);
+    border: 1px solid var(--border);
     color: var(--text);
     font: inherit;
     display: flex;
@@ -1156,8 +1138,8 @@ textarea.input {
 
   .stripToday {
     background: var(--accent);
+    border-color: var(--accent);
     color: var(--accent-fg);
-    box-shadow: none;
   }
 
   .row {
@@ -1189,8 +1171,8 @@ textarea.input {
     overflow-x: auto;
   }
 
-  .timeline {
-    min-width: 760px;
+  .sem {
+    min-width: 900px;
   }
 
   .weekGrid {

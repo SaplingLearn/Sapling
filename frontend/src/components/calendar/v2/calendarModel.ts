@@ -29,8 +29,8 @@ export interface CalItem {
 
 const DAY_MS = 86_400_000;
 
-/** Courses with no colour of their own, in order; each differs in lightness too. */
-export const COURSE_FALLBACK_COLORS = ["#3a6ea5", "#b5602a", "#2e7a6f", "#7b4f93", "#8a6d1f", "#a3413f"];
+/** Courses with no colour of their own, in order: the globals.css course hues. */
+export const COURSE_FALLBACK_COLORS = ["var(--c-sky)", "var(--c-rust)", "var(--c-teal)", "var(--c-plum)", "var(--c-amber)", "var(--c-rose)"];
 
 export function parseDay(iso: string): Date {
   const [y, m, d] = iso.slice(0, 10).split("-").map(Number);
@@ -88,7 +88,7 @@ export function toItems(assignments: readonly Assignment[], courses: readonly En
         kind: classifyAssessment(a.assignment_type, a.title) as ItemKind,
         courseId: a.course_id ?? null,
         course: course ? courseLabel(course) : a.course_code || a.course_name || "No course",
-        color: (a.course_id && colors.get(a.course_id)) || "#6e675a",
+        color: (a.course_id && colors.get(a.course_id)) || "var(--text-muted)",
         notes: a.notes ?? "",
         raw: a,
       };
@@ -254,28 +254,6 @@ export function semesterStart(cursor: Date): Date {
   return addDays(startOfWeek(cursor), -7);
 }
 
-/** Where on the timeline a day falls, 0..1 across `weeks` weeks from `start`. */
-export function timelinePos(day: Date, start: Date, weeks: number): number {
-  return daysBetween(start, day) / (weeks * 7);
-}
-
-/** How far apart (in days) two labels on one timeline row must be. */
-export const LABEL_GAP_DAYS = 7;
-/** Label rows a course's line has before a crowded label hides. */
-export const LABEL_ROWS = 3;
-
-/** Each item's label row on its course's line, so close labels never overlap:
- *  the first row whose last label is far enough back, or -1 (only its mark
- *  shows; its name stays on the mark's button). */
-export function labelRows<T extends { day: Date }>(items: readonly T[]): (T & { row: number })[] {
-  const last: Date[] = [];
-  return items.map((it) => {
-    let row = last.findIndex((d) => daysBetween(d, it.day) >= LABEL_GAP_DAYS);
-    if (row === -1 && last.length < LABEL_ROWS) row = last.length;
-    if (row >= 0) last[row] = it.day;
-    return { ...it, row };
-  });
-}
 
 /** The courses the items name, in first-seen order, with their colours. */
 export function coursesOf(items: readonly CalItem[]): { id: string; label: string; color: string }[] {
@@ -285,4 +263,28 @@ export function coursesOf(items: readonly CalItem[]): { id: string; label: strin
     if (!seen.has(id)) seen.set(id, { id, label: i.course, color: i.color });
   }
   return [...seen.values()];
+}
+
+export interface SemesterLane {
+  id: string;
+  label: string;
+  color: string;
+  /** One list per week: that course's items due in it, soonest first. */
+  cells: CalItem[][];
+}
+
+/** The semester grid: a row per course that has something due in the `weeks`
+ *  weeks from `start`'s Monday, a cell per week. */
+export function semesterLanes(items: readonly CalItem[], start: Date, weeks: number): SemesterLane[] {
+  const monday = startOfWeek(start);
+  const end = addDays(monday, weeks * 7);
+  const inSpan = items.filter((i) => i.day >= monday && i.day < end);
+  return coursesOf(inSpan).map((c) => ({
+    ...c,
+    cells: Array.from({ length: weeks }, (_, w) => {
+      const s = addDays(monday, w * 7);
+      const e = addDays(s, 7);
+      return inSpan.filter((i) => (i.courseId ?? "none") === c.id && i.day >= s && i.day < e);
+    }),
+  }));
 }

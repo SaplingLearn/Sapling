@@ -165,14 +165,19 @@ describe("Month, Week and Semester", () => {
     expect(within(screen.getByTestId("calendar-week")).getByTestId("calendar-pill-hw7")).toBeTruthy();
   });
 
-  it("Semester: a line per course and how much is due each week, the busiest marked", () => {
+  it("Semester: a row per course, a column per week; this week and the busiest marked; a chip opens its item", () => {
     renderCalendar();
     fireEvent.click(screen.getByTestId("calendar-view-semester"));
-    const tl = screen.getByTestId("calendar-semester");
-    expect(within(tl).getByRole("list", { name: "CS 112" })).toBeTruthy();
-    expect(within(tl).getByTestId("calendar-mark-mid2")).toBeTruthy();
-    const loads = within(tl).getAllByTestId("calendar-week-load").map((w) => w.textContent);
-    expect(loads).toContain("Mar 303 due, 2 exams");
+    const grid = screen.getByRole("table", { name: "Week by week" });
+    expect(within(grid).getAllByRole("rowheader").map((h) => h.textContent)).toEqual(["CS 112", "MA 123"]);
+    const heads = within(grid).getAllByTestId("calendar-week-load");
+    expect(heads).toHaveLength(8);
+    expect(heads[1].textContent).toContain(VIEWS_COPY.thisWeek);
+    expect(heads.find((h) => h.textContent?.includes(VIEWS_COPY.busiest))?.textContent).toContain("3 due, 2 exams");
+    const chip = within(grid).getByTestId("calendar-mark-mid2");
+    expect(chip.getAttribute("aria-label")).toBe("Midterm 2, CS 112, Exam, Fri Mar 20");
+    fireEvent.click(chip);
+    expect(screen.getByTestId("calendar-panel")).toBeTruthy();
   });
 });
 

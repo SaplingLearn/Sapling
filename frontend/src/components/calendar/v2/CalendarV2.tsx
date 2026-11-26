@@ -12,11 +12,11 @@ import { studyGuideHref } from "@/lib/toolHrefs";
 import { TopBar } from "../../TopBar";
 import { Toggle } from "@/components/ui";
 import {
-  addDays, agendaOf, busiestWeek, coursesOf, daysBetween, labelRows, longDate, monthCells, monthLine, monthTitle, rangeText,
-  semesterStart, shortDate, startOfWeek, toItems, weekCells, weekLine, weekLoads, weekdayShort, WEEKDAYS,
+  addDays, agendaOf, busiestWeek, coursesOf, daysBetween, longDate, monthCells, monthLine, monthTitle, rangeText,
+  semesterLanes, semesterStart, shortDate, startOfWeek, toItems, weekCells, weekLine, weekLoads, weekdayShort, WEEKDAYS,
   type CalItem,
 } from "./calendarModel";
-import { AgendaView, KindKey, MonthView, SemesterKey, SemesterView, Swatch, WeekView, type Lane } from "./CalendarViews";
+import { AgendaView, KindKey, MonthView, SemesterKey, SemesterView, Swatch, WeekView } from "./CalendarViews";
 import { ItemPanel } from "./ItemPanel";
 import { useExamReadiness } from "./useExamReadiness";
 import styles from "./CalendarV2.module.css";
@@ -231,12 +231,6 @@ function periodTitle(view: View, cursor: Date): string {
   return rangeText(s, addDays(s, SEMESTER_WEEKS * 7 - 1));
 }
 
-function lanesOf(items: CalItem[], start: Date): Lane[] {
-  const end = addDays(start, SEMESTER_WEEKS * 7);
-  const inSpan = items.filter((i) => i.day >= start && i.day < end);
-  return coursesOf(items).map((c) => ({ ...c, items: labelRows(inSpan.filter((i) => (i.courseId ?? "none") === c.id)) }));
-}
-
 export function CalendarV2(props: CalendarV2Props) {
   const { userId } = useUser();
   const today = React.useMemo(() => new Date(props.now.getFullYear(), props.now.getMonth(), props.now.getDate()), [props.now]);
@@ -335,8 +329,8 @@ export function CalendarV2(props: CalendarV2Props) {
             {view === "week" && <WeekView cells={weekCells(period.cursor, items, today)} today={today} onOpen={itemProps.onOpen} />}
             {view === "semester" && (
               <>
-                <SemesterView start={semStart} weeks={SEMESTER_WEEKS} loads={weekLoads(semStart, SEMESTER_WEEKS, items)}
-                  lanes={lanesOf(items, semStart)} today={today} heavyStart={busiestWeek(items, today)?.start ?? null} onOpen={itemProps.onOpen} />
+                <SemesterView weeks={SEMESTER_WEEKS} loads={weekLoads(semStart, SEMESTER_WEEKS, items)}
+                  lanes={semesterLanes(items, semStart, SEMESTER_WEEKS)} today={today} heavyStart={busiestWeek(items, today)?.start ?? null} onOpen={itemProps.onOpen} />
                 <div className={styles.belowTimeline}>
                   <BusiestCard items={items} today={today} prepareHref={prepareHref} />
                   <SemesterKey />

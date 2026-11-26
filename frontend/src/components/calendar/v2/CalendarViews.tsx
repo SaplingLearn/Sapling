@@ -1,13 +1,16 @@
 "use client";
 // The redesigned calendar's four views (behind `calendar_v2`; design:
 // calendar/v2/__fixtures__/*.design.html): Agenda (the default: what is due,
-// soonest first), Month, Week and Semester (each course on its own line, week
-// by week). Every item opens the same panel (ItemPanel.tsx).
+// soonest first), Month, Week and Semester (a grid: a row per course, a
+// column per week). Every item opens the same panel (ItemPanel.tsx).
+//
+// An item's kind is a tint plus a mark, never colour alone: an exam is clay
+// with a diamond, a quiz blue with a ring, homework plain with a dot.
 import React from "react";
 import { plural } from "@/lib/learningCopy";
 import {
-  WEEKDAYS, countdown, daysBetween, loadText, shortDate, timelinePos, weekdayShort,
-  type AgendaGroup, type CalItem, type DayCell, type WeekLoad,
+  WEEKDAYS, countdown, daysBetween, loadText, rangeText, addDays, shortDate, weekdayShort,
+  type AgendaGroup, type CalItem, type DayCell, type SemesterLane, type WeekLoad,
 } from "./calendarModel";
 import type { ExamReadiness } from "./useExamReadiness";
 import styles from "./CalendarV2.module.css";
@@ -24,6 +27,10 @@ export const VIEWS_COPY = {
   today: "Today",
   key: "Key",
   keyNote: "The bar under each week: how much is due that week.",
+  thisWeek: "This week",
+  busiest: "Busiest",
+  course: "Course",
+  nothingInSpan: "Nothing is due in these weeks.",
   exam: "Exam",
   quiz: "Quiz",
   homework: "Homework",
@@ -31,9 +38,15 @@ export const VIEWS_COPY = {
 
 const PILLS_SHOWN = 3;
 
+const KIND_CLASS: Record<CalItem["kind"], string> = { Exam: styles.kExam, Quiz: styles.kQuiz, Homework: styles.kHomework };
+
+/** An item's kind as its mark: a diamond, a ring or a dot (beside its words). */
+export function KindMark({ kind }: { kind: CalItem["kind"] }) {
+  return <span aria-hidden className={`${styles.mark} ${KIND_CLASS[kind]}`} />;
+}
+
 export function KindLabel({ kind }: { kind: CalItem["kind"] }) {
-  const cls = kind === "Exam" ? styles.kindExam : kind === "Quiz" ? styles.kindQuiz : styles.kindHomework;
-  return <span className={cls}>{kind}</span>;
+  return <span className={`${styles.kind} ${KIND_CLASS[kind]}`}><KindMark kind={kind} />{kind}</span>;
 }
 
 export function Swatch({ color }: { color: string }) {
@@ -126,13 +139,13 @@ export function AgendaView({ earlier, groups, ...rest }: ItemProps & { earlier: 
 }
 
 function Pill({ item, today, onOpen }: { item: CalItem; today: Date; onOpen: ItemProps["onOpen"] }) {
-  const cls = [styles.pill, item.kind === "Exam" ? styles.pillExam : item.kind === "Quiz" ? styles.pillQuiz : "",
-    daysBetween(today, item.day) < 0 ? styles.pillPast : ""].join(" ");
+  const cls = [styles.pill, KIND_CLASS[item.kind], daysBetween(today, item.day) < 0 ? styles.pillPast : ""].join(" ");
   return (
     <button type="button" className={cls} data-testid={`calendar-pill-${item.id}`} onClick={(e) => onOpen(item, e.currentTarget)}
       aria-label={`${item.title}, ${item.course}, ${item.kind}, ${shortDate(item.day)}`}>
+      <KindMark kind={item.kind} />
+      <span>{item.title}</span>
       <Swatch color={item.color} />
-      <span>{item.kind === "Exam" ? `${item.title} · ${item.course}` : item.title}</span>
     </button>
   );
 }
@@ -161,9 +174,9 @@ function DayCellView({ cell, today, onOpen, onMore, week = false }: {
 export function KindKey() {
   return (
     <div className={styles.legend} aria-label={VIEWS_COPY.key}>
-      <span className={styles.kindExam}>{VIEWS_COPY.exam}</span>
-      <span className={styles.kindQuiz}>{VIEWS_COPY.quiz}</span>
-      <span>{VIEWS_COPY.homework}</span>
+      <KindLabel kind="Exam" />
+      <KindLabel kind="Quiz" />
+      <KindLabel kind="Homework" />
     </div>
   );
 }
@@ -195,67 +208,62 @@ export function WeekView({ cells, today, onOpen }: { cells: DayCell[]; today: Da
   );
 }
 
-export interface Lane { id: string; label: string; color: string; items: (CalItem & { row: number })[] }
+function SemesterChip({ item, today, onOpen }: { item: CalItem; today: Date; onOpen: ItemProps["onOpen"] }) {
+  const past = daysBetween(today, item.day) < 0;
+  const name = `${item.title}, ${item.course}, ${item.kind}, ${weekdayShort(item.day)} ${shortDate(item.day)}`;
+  return (
+    <button type="button" className={`${styles.ev} ${KIND_CLASS[item.kind]} ${past ? styles.pillPast : ""}`}
+      onClick={(e) => onOpen(item, e.currentTarget)} aria-label={name} title={name} data-testid={`calendar-mark-${item.id}`}>
+      <KindMark kind={item.kind} />
+      <span className={styles.evText}>
+        <span className={styles.evTitle}>{item.title}</span>
+        <span className={styles.evDate}>{weekdayShort(item.day)} {item.day.getDate()}</span>
+      </span>
+    </button>
+  );
+}
 
-export function SemesterView({ start, weeks, loads, lanes, today, heavyStart, onOpen }: {
-  start: Date; weeks: number; loads: WeekLoad[]; lanes: Lane[]; today: Date; heavyStart: Date | null; onOpen: ItemProps["onOpen"];
+export function SemesterView({ weeks, loads, lanes, today, heavyStart, onOpen }: {
+  weeks: number; loads: WeekLoad[]; lanes: SemesterLane[]; today: Date; heavyStart: Date | null; onOpen: ItemProps["onOpen"];
 }) {
-  const todayPos = timelinePos(today, start, weeks);
   const maxCount = Math.max(1, ...loads.map((w) => w.count));
+  const flags = loads.map((w) => ({
+    now: daysBetween(w.start, today) >= 0 && daysBetween(w.start, today) < 7,
+    heavy: !!heavyStart && w.start.getTime() === heavyStart.getTime(),
+    past: daysBetween(addDays(w.start, 6), today) > 0,
+  }));
+  const colCls = (i: number) => [flags[i].now ? styles.colNow : "", flags[i].heavy ? styles.colHeavy : "", flags[i].past ? styles.colPast : ""].join(" ");
   return (
     <div className={styles.timelineScroll}>
-      <section aria-label="Timeline" className={styles.timeline} data-testid="calendar-semester"
+      <div role="table" aria-label="Week by week" className={styles.sem} data-testid="calendar-semester"
         style={{ "--weeks": weeks } as React.CSSProperties}>
-        <div className={styles.tlHead}>
-          <span className={styles.laneLabel}>Week of</span>
-          <div className={styles.weeks}>
-            {loads.map((w) => {
-              const heavy = !!heavyStart && w.start.getTime() === heavyStart.getTime();
-              return (
-                <div key={w.label} className={styles.week} data-testid="calendar-week-load">
-                  <span className={styles.weekLabel}>{w.label}</span>
-                  <span aria-hidden className={`${styles.load} ${w.count === 0 ? styles.loadEmpty : ""} ${heavy ? styles.loadHeavy : ""}`}
-                    style={{ "--load": `${30 + Math.round((w.count / maxCount) * 70)}%` } as React.CSSProperties} />
-                  <span className={`${styles.loadText} ${heavy ? styles.loadTextHeavy : ""}`}>{loadText(w)}</span>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-        <div className={styles.lanes}>
-          {lanes.map((l) => (
-            <div key={l.id} className={styles.lane}
-              style={{ "--course": l.color, "--rows": Math.max(1, ...l.items.map((i) => i.row + 1)) } as React.CSSProperties}>
-              <span className={styles.laneLabel}><Swatch color={l.color} />{l.label}</span>
-              <ul className={styles.track} aria-label={l.label}>
-                {l.items.map((it) => {
-                  const mark = it.kind === "Exam" ? styles.markExam : it.kind === "Quiz" ? styles.markQuiz : "";
-                  const name = `${it.title}, ${it.kind}, ${shortDate(it.day)}`;
-                  return (
-                    <li key={it.id} className={`${styles.mark} ${mark} ${it.row < 0 ? styles.markCrowded : ""}`}
-                      style={{ "--pos": `${(timelinePos(it.day, start, weeks) * 100).toFixed(2)}%`, "--row": Math.max(0, it.row) } as React.CSSProperties}>
-                      <button type="button" className={styles.markBtn} onClick={(e) => onOpen(it, e.currentTarget)}
-                        aria-label={name} title={name} data-testid={`calendar-mark-${it.id}`}>
-                        <span aria-hidden className={styles.glyph} />
-                        <span className={styles.markText} aria-hidden>
-                          {it.title}
-                          <span className={styles.markDate}>{shortDate(it.day)}</span>
-                        </span>
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
+        <div role="row" className={styles.semRow}>
+          <span role="columnheader" className={styles.semCorner}>{VIEWS_COPY.course}</span>
+          {loads.map((w, i) => (
+            <div key={w.label} role="columnheader" className={`${styles.semHead} ${colCls(i)}`} data-testid="calendar-week-load"
+              aria-label={`Week of ${rangeText(w.start, addDays(w.start, 6))}: ${loadText(w)}`}>
+              <span className={styles.semHeadTop}>
+                <span className={styles.weekLabel}>{w.label}</span>
+                {flags[i].now ? <span className={styles.tagNow}>{VIEWS_COPY.thisWeek}</span>
+                  : flags[i].heavy ? <span className={styles.tagHeavy}>{VIEWS_COPY.busiest}</span> : null}
+              </span>
+              <span aria-hidden className={`${styles.load} ${w.count === 0 ? styles.loadEmpty : ""} ${flags[i].heavy ? styles.loadHeavy : ""}`}
+                style={{ "--load": `${w.count === 0 ? 100 : 25 + Math.round((w.count / maxCount) * 75)}%` } as React.CSSProperties} />
+              <span className={`${styles.loadText} ${flags[i].heavy ? styles.loadTextHeavy : ""}`}>{loadText(w)}</span>
             </div>
           ))}
-          {todayPos >= 0 && todayPos <= 1 && (
-            <>
-              <span aria-hidden className={styles.todayLine} style={{ "--today": todayPos } as React.CSSProperties} />
-              <span className={styles.todayTag} style={{ "--today": todayPos } as React.CSSProperties}>{VIEWS_COPY.today}</span>
-            </>
-          )}
         </div>
-      </section>
+        {lanes.length === 0 ? <p className={styles.semNothing}>{VIEWS_COPY.nothingInSpan}</p> : lanes.map((l) => (
+          <div key={l.id} role="row" className={styles.semRow}>
+            <span role="rowheader" className={styles.semCourse}><Swatch color={l.color} />{l.label}</span>
+            {l.cells.map((cell, i) => (
+              <div key={i} role="cell" className={`${styles.semCell} ${colCls(i)}`}>
+                {cell.map((it) => <SemesterChip key={it.id} item={it} today={today} onOpen={onOpen} />)}
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -265,9 +273,9 @@ export function SemesterKey() {
     <section aria-labelledby="calendar-key-h" className={styles.card}>
       <h2 id="calendar-key-h" className={styles.cardTitle}>{VIEWS_COPY.key}</h2>
       <div className={styles.keyRow}>
-        <span className={`${styles.keyItem} ${styles.markExam}`}><span aria-hidden className={styles.glyph} />{VIEWS_COPY.exam}</span>
-        <span className={`${styles.keyItem} ${styles.markQuiz}`}><span aria-hidden className={styles.glyph} />{VIEWS_COPY.quiz}</span>
-        <span className={styles.keyItem}><span aria-hidden className={styles.glyph} />{VIEWS_COPY.homework}</span>
+        <KindLabel kind="Exam" />
+        <KindLabel kind="Quiz" />
+        <KindLabel kind="Homework" />
       </div>
       <p className={styles.cardText}>{VIEWS_COPY.keyNote}</p>
     </section>
