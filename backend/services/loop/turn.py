@@ -9,6 +9,7 @@ import threading
 import uuid
 from datetime import datetime, timezone
 from services.loop.errors import HTTPException
+from services.just_ask import is_just_ask
 from starlette.requests import Request
 import config
 from agents.loop_tutor import (
@@ -1588,9 +1589,11 @@ def _asks_open_question(turn: _LoopTurn) -> bool:
     """Spec §13 A121: whether the next teach-phase chat message replies to
     the tutor's own open question (its turn then opens with the verdict).
     A139: a self-explanation prompt is answered on its own card, never in
-    chat; A138: a turn that handed over to a prequestion card asked nothing."""
+    chat; A138: a turn that handed over to a prequestion card asked nothing.
+    A just-ask session's replies get no verdict: it grades nothing."""
     return (
-        turn.tier != _NO_MODEL_TIER
+        not is_just_ask(turn.state)
+        and turn.tier != _NO_MODEL_TIER
         and turn.phase in _OPEN_QUESTION_PHASES
         and not turn.poses_check
         and not turn.pq_follows

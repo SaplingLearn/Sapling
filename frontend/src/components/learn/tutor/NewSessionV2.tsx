@@ -27,15 +27,19 @@ export const NEW_SESSION_COPY = {
   courseLine: "Starts with a short check-in, then a plan.",
   goalTitle: "Work toward a goal",
   goalLine: "Say what you want to learn and pick its concepts.",
+  askTitle: "Just ask a question",
+  askLine: "Talk it through. Nothing is graded.",
   wrapsUp: (title: string) => `This wraps up your open session, ${title}.`,
 } as const;
 
-export type IntentId = "prepare" | "continue" | "concept" | "course" | "goal" | "review";
+export type IntentId = "prepare" | "continue" | "concept" | "course" | "goal" | "review" | "ask";
 export type Intent = { id: IntentId; title: string; line: string; label: string; startsNew: boolean };
 
 /** The choices, in the order the board lists them (what's already going
  *  first, then new learning, a goal, and review last). */
-export function intentsFor({ prepare = null, continueTitle, startWith, courseName, dueCount, dueHref }: {
+export function intentsFor({ prepare = null, ask = false, continueTitle, startWith, courseName, dueCount, dueHref }: {
+  /** `just_ask`: offer an ungraded chat. */
+  ask?: boolean;
   /** `milestones`: the course's next exam with concepts linked to it. */
   prepare?: { title: string; concepts: number } | null;
   continueTitle: string | null;
@@ -51,6 +55,7 @@ export function intentsFor({ prepare = null, continueTitle, startWith, courseNam
   out.push({ id: "course", title: NEW_SESSION_COPY.courseTitle(courseName), line: NEW_SESSION_COPY.courseLine, label: LEARNING_COPY.newSession, startsNew: true });
   out.push({ id: "goal", title: NEW_SESSION_COPY.goalTitle, line: NEW_SESSION_COPY.goalLine, label: "Choose a goal", startsNew: true });
   // The glossary's words (lib/learningCopy.ts), not the board's retired "Review what's due" / "Start review".
+  if (ask) out.push({ id: "ask", title: NEW_SESSION_COPY.askTitle, line: NEW_SESSION_COPY.askLine, label: "Start chatting", startsNew: true });
   if (dueHref && (dueCount ?? 0) > 0) out.push({ id: "review", title: LEARNING_COPY.review, line: `${LEARNING_COPY.reviewsDue(dueCount ?? 0)}.`, label: LEARNING_COPY.review, startsNew: false });
   return out;
 }
@@ -75,7 +80,7 @@ function usePrepare(courseId: string | null, nodes: readonly GraphNode[]) {
 
 export function NewSessionV2({
   courseName, continueTitle, startWith, dueCount, dueHref, busy, starting, closesCurrent,
-  onContinue, onStart, onStartWith, onGoal, courseId = null, nodes = [], onStartGoal,
+  onContinue, onStart, onStartWith, onGoal, courseId = null, nodes = [], onStartGoal, onAsk,
 }: {
   courseName: string | null;
   /** The course's open session's name, offered as "Continue …"; null: none. */
@@ -94,9 +99,12 @@ export function NewSessionV2({
   courseId?: string | null;
   nodes?: readonly GraphNode[];
   onStartGoal?: (topic: string, goal: LoopGoal) => void;
+  /** `just_ask`: starts an ungraded chat. */
+  onAsk?: () => void;
 }) {
   const prep = usePrepare(onStartGoal ? courseId : null, nodes);
-  const intents = intentsFor({ prepare: prep, continueTitle, startWith, courseName, dueCount, dueHref });
+  const askOn = useFlag("just_ask") === "on" && !!onAsk;
+  const intents = intentsFor({ prepare: prep, ask: askOn, continueTitle, startWith, courseName, dueCount, dueHref });
   // The board picks the exam first; without one, the whole-course session.
   const [picked, setPicked] = useState<IntentId | null>(null);
   const fallback = intents.find((i) => i.id === "prepare") ?? intents.find((i) => i.id === DEFAULT_INTENT)!;
@@ -109,6 +117,7 @@ export function NewSessionV2({
   const name = useId();
   const start = () => {
     if (current.id === "prepare" && prep && onStartGoal) onStartGoal(prep.plan.topic, prep.plan.goal);
+    else if (current.id === "ask" && onAsk) onAsk();
     else if (current.id === "continue") onContinue();
     else if (current.id === "concept" && startWith) onStartWith(startWith);
     else if (current.id === "goal") onGoal();

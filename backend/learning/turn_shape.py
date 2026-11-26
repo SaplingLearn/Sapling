@@ -77,6 +77,9 @@ LOOP_PLAN_OPENER = (
 LOOP_QUIZ_ASK_OPENER = "Welcome! We'll work through the idea behind your quiz question together."
 #: #866 K01: a study guide's Ask (services/guide_ask.py) has no check-in to promise.
 LOOP_GUIDE_ASK_OPENER = "Welcome! Let's work through your question about the study guide together."
+#: Tutor redesign: a just-ask session (services/just_ask.py) is ungraded chat;
+#: its opener is this template, so the student asks first.
+LOOP_JUST_ASK_OPENER = "Ask me anything about this course. Nothing here is graded."
 
 
 @dataclass(frozen=True)

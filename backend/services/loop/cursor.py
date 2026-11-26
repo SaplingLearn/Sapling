@@ -11,6 +11,7 @@ from learning.leak import detect_leak
 from learning.misconceptions import set_confront
 from learning.params import H6_MIN_GENUINE_ATTEMPTS, LOOP_SOURCE_CHUNKS_MAX
 from services.check_item_service import list_items
+from services.just_ask import JUST_ASK_ORIGIN
 from services.quiz_ask import QUIZ_ASK_ORIGIN
 from services.rag_service import chunks_for_ids
 
@@ -22,8 +23,9 @@ def _auto_poses_checks(state: dict) -> bool:
     itself (A27 trigger 1). Not in a quiz-ask session (A99): its surface, the
     quiz's "Ask about this" sheet, shows no check card, so a check posed there
     would be an invisible second prompt that answers the student's next
-    message with its pose. "Check me" still poses one wherever a card shows."""
-    return state.get("origin") != QUIZ_ASK_ORIGIN
+    message with its pose. "Check me" still poses one wherever a card shows.
+    Nor in a just-ask session, which grades nothing (services/just_ask.py)."""
+    return state.get("origin") not in (QUIZ_ASK_ORIGIN, JUST_ASK_ORIGIN)
 
 
 def _h6_ok(state: dict, qh: str | None, item_state: dict, check) -> bool:

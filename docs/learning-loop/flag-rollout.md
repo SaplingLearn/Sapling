@@ -36,7 +36,7 @@ Several flags change a prompt or an output schema, so their eval datasets must b
 
 ## Recommended order
 
-1. **Read-only, no eval needed:** `quiz_concept_plan`, `quiz_results_routing`, `item_reports`, `skill_ladder`, `hint_ladder`, `verdict_v2`, `wrapup_v2`, `plan_v2`, `new_session_v2`, `session_v2`, `course_page_v2`, `review_v2`, `milestones`.
+1. **Read-only, no eval needed:** `quiz_concept_plan`, `quiz_results_routing`, `item_reports`, `skill_ladder`, `hint_ladder`, `verdict_v2`, `wrapup_v2`, `plan_v2`, `new_session_v2`, `session_v2`, `course_page_v2`, `review_v2`, `milestones`, `just_ask`.
 2. **Safety, after copy review:** `crisis_support`.
 3. **Prompt changes, after their evals:** `loop_tutor_v2`, `segment_prequestion`, `self_explanation_prompts`, `quiz_planned_questions`, `quiz_item_gates`, then `quiz_misconceptions`.
 4. **Drafting changes, after their evals:** `varied_isomorphs`, `multi_concept_items`, `upload_prereq_edges`.
@@ -114,6 +114,12 @@ Several flags change a prompt or an output schema, so their eval datasets must b
 - **Before:** students' exams have dates (Exams and Deadlines, or a syllabus) and the course outline links topics to them; without links a milestone says "No topics are linked to Midterm 2 yet." and Prepare waits.
 - **Watch:** Prepare sessions started; milestones with nothing linked.
 - **Roll back:** off removes milestones from the Tutor.
+
+### just_ask (Tutor redesign) — client-visible
+- **Changes:** New session offers "Just ask a question" ("Talk it through. Nothing is graded."): a loop session with origin `just_ask` (backend `services/just_ask.py`) that starts teaching at once on no planned concept, with a template opener ("Ask me anything about this course. Nothing here is graded."; no model run) so the student asks first. It grades nothing: no teach turn poses a check, "Check me" is hidden (GET /status says `ungraded`) and /check/next and the answer routes refuse it (409), and no teach turn ends on an open question whose reply would get a verdict (A121). What the tutor reveals of a check item is still recorded by the served-text scan.
+- **Before:** nothing. The backend refuses the origin (422) while the flag is off for the student.
+- **Watch:** sessions started per choice; tutor cost per just-ask session (every message is a model turn).
+- **Roll back:** off removes the choice and refuses new just-ask starts; open ones stay ungraded.
 
 ### item_reports (A113, A123) — client-visible
 - **Changes:** students can report a check question. Two reports hold it from the whole course until staff approve or retire it in the admin check-items queue.

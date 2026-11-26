@@ -384,6 +384,14 @@ REGISTRY: dict[str, FlagDef] = _registry(
             "study guides, Prepare in a session), readiness on the course "
             "page's Coming up, and Prepare for <exam> in New session. Off: no "
             "milestones in the Tutor.", True),
+    # Tutor redesign ("Just ask a question", owner decision 2026-11-26): an
+    # ungraded chat session (services/just_ask.py). The backend refuses the
+    # origin while it is off; the frontend offers it in New session. A loop flag.
+    FlagDef("just_ask", ("off", "on"),
+            "Just ask a question: an ungraded chat with the tutor from New "
+            "session. It starts teaching at once on no planned concept, poses "
+            "no check, refuses Check me and gives no verdict on replies. Off: "
+            "the origin is refused and New session does not offer it.", True),
     FlagDef("skill_ladder", ("off", "on"),
             "One skill measure on the graph: each concept's score, tier and words "
             "come from the learner model's decayed skill (Not started / Getting "

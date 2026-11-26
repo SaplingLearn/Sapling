@@ -1413,11 +1413,12 @@ export const LOOP_DEEP_LINK_MODES = ['socratic', 'expository', 'teachback'] as c
  *  note's title — the backend screens the note as stored material, so a crisis
  *  match puts the card beside the session (`crisis_support_alongside`) instead
  *  of in place of it (docs/safety/crisis-support.md). */
-export const startLoopSession = (userId: string, courseId: string, topic: string, mode?: string | null, goal?: LoopGoal | null, fromNoteId?: string | null) =>
+export const startLoopSession = (userId: string, courseId: string, topic: string, mode?: string | null, goal?: LoopGoal | null, fromNoteId?: string | null, ask = false) =>
   loopPost<LoopStartResult>('/start-session', {
     user_id: userId,
     topic,
     course_id: courseId,
+    ...(ask ? { origin: 'just_ask' } : {}), // `just_ask`: an ungraded chat (backend services/just_ask.py)
     ...(mode && (LOOP_DEEP_LINK_MODES as readonly string[]).includes(mode) ? { mode } : {}),
     ...(goal !== undefined ? { goal } : {}),
     ...(fromNoteId ? { from_note_id: fromNoteId } : {}),

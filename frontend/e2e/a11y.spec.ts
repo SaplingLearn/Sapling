@@ -699,6 +699,35 @@ test("learning loop: milestones in the Tutor (milestones, course_page_v2, new_se
   }
 });
 
+// Just ask a question (`just_ask`): an ungraded chat from New session. It
+// starts teaching at once on the server's own just_ask session (no check-in,
+// no Check me), and the tutor answers the student's first message.
+test("learning loop: Just ask a question, an ungraded chat (just_ask, new_session_v2 on)", async ({ browser }) => {
+  test.skip(loopOffLane, "loop path: default lane only");
+  test.setTimeout(LOOP_TIMEOUT_MS);
+  for (const flag of ["just_ask", "new_session_v2"]) await setUserFlag(flag, USER_LOOP, "on");
+  const { context, page } = await signIn(browser, USER_LOOP, "Lou Loop");
+  try {
+    await page.goto("/learn");
+    await page.getByRole("radio", { name: /Just ask a question/ }).check();
+    await expect(page.getByTestId("loop-start-guided")).toHaveText("Start chatting");
+    await page.getByTestId("loop-start-guided").click();
+    const phase = page.getByTestId("loop-phase");
+    await expect(phase).toHaveAttribute("data-phase", "teach");
+    await expect(page.getByTestId("tutor-messages")).toContainText("Nothing here is graded.");
+    await expect(page.getByTestId("loop-check-me")).toHaveCount(0);
+    await expect(page.getByTestId("loop-probe-item")).toHaveCount(0);
+    await page.getByTestId("tutor-input").fill("What is a bit?");
+    await page.getByTestId("tutor-send").click();
+    await expect(page.getByTestId("tutor-stop")).toHaveCount(0, { timeout: 30_000 });
+    await expect(page.getByTestId("tutor-messages")).toContainText("What is a bit?");
+    await expect(page.getByTestId("loop-check-me")).toHaveCount(0); // still nothing to grade
+    await expectAccessible(page, "just ask: an ungraded chat");
+  } finally {
+    await context.close();
+  }
+});
+
 test("learning loop: a segment's ungraded guess and a self-explanation prompt (A138, A139 on)", async ({ browser }) => {
   test.skip(loopOffLane, "loop path: default lane only");
   test.setTimeout(LOOP_TIMEOUT_MS);

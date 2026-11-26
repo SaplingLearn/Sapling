@@ -129,3 +129,23 @@ describe("TutorHome", () => {
     expect(screen.getByTestId("tutor-new-session-v2")).toBeTruthy();
   });
 });
+
+describe("Just ask a question (just_ask on)", () => {
+  it("the board's choice: an ungraded chat, offered only with the flag", () => {
+    expect(DESIGN).toContain(NEW_SESSION_COPY.askTitle);
+    expect(DESIGN).toContain(NEW_SESSION_COPY.askLine);
+    expect(DESIGN).toContain("Start chatting");
+    const onAsk = vi.fn();
+    render(<NewSessionV2 {...FULL} onContinue={() => {}} onStart={() => {}} onStartWith={() => {}} onGoal={() => {}} onAsk={onAsk} />);
+    expect(screen.queryByRole("radio", { name: /Just ask a question/ })).toBeNull(); // flag off
+    cleanup();
+    flags.just_ask = "on";
+    render(<NewSessionV2 {...FULL} onContinue={() => {}} onStart={() => {}} onStartWith={() => {}} onGoal={() => {}} onAsk={onAsk} />);
+    fireEvent.click(screen.getByRole("radio", { name: /Just ask a question/ }));
+    expect(screen.getByTestId("loop-start-guided").textContent).toBe("Start chatting");
+    expect(screen.getByTestId("tutor-new-wraps-up")).toBeTruthy(); // it starts a new session
+    fireEvent.click(screen.getByTestId("loop-start-guided"));
+    expect(onAsk).toHaveBeenCalledTimes(1);
+  });
+});
+

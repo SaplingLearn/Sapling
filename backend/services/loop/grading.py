@@ -8,6 +8,7 @@ import copy
 import logging
 import uuid
 from datetime import datetime, timezone
+from services.just_ask import UNGRADED_DETAIL, is_just_ask
 from services.loop.flags import _GRADING_CLAIM, _GRADING_CLAIM_AT
 from services.loop.errors import HTTPException
 from starlette.requests import Request
@@ -194,6 +195,8 @@ async def _grade_submission(
     course_id = scope[1]
     # #117: every sync PostgREST read and write below hops off the event loop
     state = await asyncio.to_thread(_load_loop_state, body.session_id)
+    if is_just_ask(state):  # it grades nothing (services/just_ask.py)
+        raise HTTPException(status_code=409, detail=UNGRADED_DETAIL)
     _require_open(state)
     qh = body.question_hash
     entry = _steps(state).get(qh)

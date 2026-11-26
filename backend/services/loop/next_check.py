@@ -18,6 +18,7 @@ from services.ai_budget import AIBudgetExceeded
 from services.check_item_service import get_check_item
 from services import varied_practice
 
+from services.just_ask import UNGRADED_DETAIL, is_just_ask
 from services.loop.flags import _ANSWER_CLAIM, _GRADING_CLAIM, _GUESS_IN_FLIGHT, OPEN_QUESTION_KEY
 from services.loop.state import (
     _arm_for,
@@ -54,6 +55,8 @@ def check_next(body: LoopCheckNextBody, request: Request) -> dict:
     _consume_pending(body.session_id, body.user_id)
     _, course_id = _session_scope(body.session_id, body.user_id)
     state = _load_loop_state(body.session_id)
+    if is_just_ask(state):  # it grades nothing (services/just_ask.py)
+        raise HTTPException(status_code=409, detail=UNGRADED_DETAIL)
     _require_teaching(state)
     _require_no_pending_feedback(state)
     position = _plan_position(state)  # #866 K08: before the trial below moves it

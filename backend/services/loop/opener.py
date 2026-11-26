@@ -9,14 +9,22 @@ import uuid
 from services.loop.errors import HTTPException
 from starlette.requests import Request
 from learning.goals import encode_goal
-from learning.turn_shape import LOOP_GUIDE_ASK_OPENER, LOOP_PLAN_OPENER, LOOP_PROBE_OPENER, LOOP_QUIZ_ASK_OPENER
+from learning.turn_shape import (
+    LOOP_GUIDE_ASK_OPENER,
+    LOOP_JUST_ASK_OPENER,
+    LOOP_PLAN_OPENER,
+    LOOP_PROBE_OPENER,
+    LOOP_QUIZ_ASK_OPENER,
+)
 from models import StartSessionBody
 from services.tutor import _get_course_id_for_topic_sync as _get_course_id_for_topic
 from services.tutor_sessions import stash_pending
 from services.academics import require_course_enrollment, resolve_offering
 from services.check_item_jobs import draft_missing_for_course
 from services.graph_service import get_graph
+from services.feature_flags import flag_on
 from services.guide_ask import GUIDE_ASK_ORIGIN, guide_ask_node, guide_ask_state
+from services.just_ask import JUST_ASK_FLAG, JUST_ASK_ORIGIN, just_ask_state
 from services.quiz_ask import QUIZ_ASK_ORIGIN, open_quiz_ask
 
 from services.loop.constants import _LOOP_OPENER_TEMPLATE
@@ -90,8 +98,12 @@ class _LoopOpener(_LoopTurn):
         self.arm = _arm_for(body.user_id, request)  # PKG-14 (A20), as _LoopTurn
         # A99: a quiz-ask session names its quiz question; the help row is written
         # here, before any tutor text exists (a failed write is a 503)
-        if body.goal is not None and body.origin in ("quiz_ask", GUIDE_ASK_ORIGIN):
+        if body.goal is not None and body.origin in ("quiz_ask", GUIDE_ASK_ORIGIN, JUST_ASK_ORIGIN):
             raise HTTPException(status_code=422, detail="Choose a goal in a course learning session")
+        # Tutor redesign: an ungraded chat, only while the student's flag is on
+        self.just_ask = body.origin == JUST_ASK_ORIGIN
+        if self.just_ask and not flag_on(JUST_ASK_FLAG, body.user_id):
+            raise HTTPException(status_code=422, detail="Start a learning session")
         self.quiz_ask = open_quiz_ask(body, session_id=self.session_id)
         # A106 (review m2): a quiz-ask session runs on the quiz node's course only
         # (resolve_quiz_ask 422s when it has none) — never the client's course_id
@@ -138,6 +150,8 @@ class _LoopOpener(_LoopTurn):
             self.state = quiz_ask_state(self.quiz_ask.node_id)
         elif self.guide_ask:
             self.state = guide_ask_state(guide_ask_node(self.user_id, self.course_id, body.topic))
+        elif self.just_ask:
+            self.state = just_ask_state()
         else:
             self.state = {}
         if body.goal is not None:
@@ -155,12 +169,15 @@ class _LoopOpener(_LoopTurn):
 
     def _template_only(self) -> bool:
         # Spec §13 A121: the probe-phase opener is a template at every budget
-        # level — the check-in is a pretest, so nothing may be taught before it
-        return self._probing()
+        # level — the check-in is a pretest, so nothing may be taught before it.
+        # A just-ask session's too: the student asks first (no model run).
+        return self._probing() or self.just_ask
 
     def _deterministic_text(self, *, hard: bool) -> str | None:
         if self._probing():
             return _probe_opener(self.course_id)
+        if self.just_ask:
+            return LOOP_JUST_ASK_OPENER
         if not hard:
             return None
         # the opener is never paused: at the hard level it is a template (A27). A
@@ -178,7 +195,7 @@ class _LoopOpener(_LoopTurn):
         if self.reveal_fallback is not None:
             raise RuntimeError("the opener's reveals could not be recorded")  # never served unrecorded
         self._emit_reveal()
-        if self.tier != "none" and not self._probing() and self.quiz_ask is None and not self.guide_ask:
+        if self.tier != "none" and not self._probing() and self.quiz_ask is None and not self.guide_ask and not self.just_ask:
             # Spec §13 A121: a model opener ends with the tutor's own question,
             # as any served teach turn does, so the student's reply to it is
             # judged like any other. A template opener asks nothing and leaves

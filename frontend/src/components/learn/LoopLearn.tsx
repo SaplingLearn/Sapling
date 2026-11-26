@@ -258,6 +258,7 @@ export function LoopLearn() {
   const [view, setView] = useState<TutorView>("session");
   const [courseView, setCourseView] = useState<string | null>(null);
   const [milestoneId, setMilestoneId] = useState<string | null>(null); // `milestones`: the course view's milestone
+  const [ungraded, setUngraded] = useState(false); // `just_ask`: the session grades nothing (no Check me)
   const [sideQuery, setSideQuery] = useState("");
   const [allQuery, setAllQuery] = useState("");
   const [allFilter, setAllFilter] = useState<SessionFilter>("all");
@@ -393,7 +394,7 @@ export function LoopLearn() {
   const bootKey = useRef<string | null>(null);
   const resumePending = useRef(true); // the deep link's ?resume= is honoured once
   const topicStarted = useRef(false); // the deep link's ?topic= starts a session once
-  const lastStart = useRef<{ topic?: string; mode?: string; goal?: LoopGoal }>({}); // the start card's "Try again" repeats it
+  const lastStart = useRef<{ topic?: string; mode?: string; goal?: LoopGoal; ask?: boolean }>({}); // the start card's "Try again" repeats it
   const sessionRef = useRef<string | null>(null);
   // K26: re-enter the session on screen as the server now has it (set below,
   // once `resume` exists). One at a time.
@@ -586,7 +587,7 @@ export function LoopLearn() {
   /** Apply GET /status: the phase, and the open item's pose or none. */
   const applyStatus = useCallback((sid: string, st: LoopSessionStatus) => {
     invalidateHint();
-    applyLearningScope(st);
+    applyLearningScope(st); setUngraded(st.ungraded === true); // a resumed `just_ask` session stays ungraded
     if (st.approved_plan) setApprovedPlan(st.approved_plan);
     if (st.practiced_node_ids) dispatch({ type: "practiced", nodeIds: st.practiced_node_ids }); // W3.2
     setPendingGrade(st.pending_grade ?? null);
@@ -874,10 +875,10 @@ export function LoopLearn() {
    *  With none on screen (a read-only transcript), the course's listed open
    *  session is the one left (Z64: one open session per course). */
   const newSession = useCallback(async (
-    { closeCurrent = false, topic, mode, goal }: { closeCurrent?: boolean; topic?: string; mode?: string; goal?: LoopGoal } = {},
+    { closeCurrent = false, topic, mode, goal, ask }: { closeCurrent?: boolean; topic?: string; mode?: string; goal?: LoopGoal; ask?: boolean } = {},
   ) => {
     if (!courseId || !userId || sessionTransitionBusy) return;
-    lastStart.current = { topic, mode, goal };
+    lastStart.current = { topic, mode, goal, ask };
     // An explicit start wins over a boot that has not listed the sessions yet.
     bootKey.current = `${userId}:${courseId}`;
     const leaving = closeCurrent ? sessionToLeave(sessionRef.current, isOpenPhase(state.phase), openSessions) : null;
@@ -893,9 +894,10 @@ export function LoopLearn() {
     const cardShown = !!fromNoteId && takeNoteCardShown(fromNoteId);
     try {
       // K05/K30: a session on chosen concepts starts on them (StartSessionBody.goal)
-      const r = await startLoopSession(userId, courseId, title, mode, goal, fromNoteId);
+      const r = await startLoopSession(userId, courseId, title, mode, goal, fromNoteId, !!ask);
       if (g !== gen.current || !adoptStarted(r, cardShown)) return;
-      await nextProbe(r.session_id, g);
+      setUngraded(!!ask); // `just_ask` (ungraded chat) skips the check-in: it teaches from the first message
+      if (ask) dispatch({ type: "phase", phase: "teach" }); else await nextProbe(r.session_id, g);
       if (g !== gen.current) return;
       // the first /probe/next materialised the session row: list it
       listStarted(r.session_id, title);
@@ -1084,9 +1086,9 @@ export function LoopLearn() {
   };
   /** T1's start: a new session (the open one on screen is wrapped up first),
    *  on the concepts of `goal` when one was chosen (K05, K30). */
-  const startGuided = (opts: { topic?: string; goal?: LoopGoal } = {}) => {
+  const startGuided = (opts: { topic?: string; goal?: LoopGoal; ask?: boolean } = {}) => {
     setView("session");
-    return newSession({ closeCurrent: true, topic: opts.topic, mode: deepLink.mode, goal: opts.goal });
+    return newSession({ closeCurrent: true, topic: opts.topic, mode: deepLink.mode, goal: opts.goal, ask: opts.ask });
   };
   const retryStart = () => newSession(lastStart.current);
   /** K30: the home's "Set a goal" sets it before anything starts or is posed. */
@@ -2045,7 +2047,7 @@ export function LoopLearn() {
       hold={hypercorrectionHold}
       next={verdictV2 && verdict ? { label: nextStepLabel(nextAfterVerdict(approvedPlan, verdict.nodeId, conceptNames)), holdUntil: verdict.holdUntil ?? null } : null}
       continueDisabled={anyOf(!!paused, streaming, starting, scopeLoading, hypercorrectionHold)}
-      checkMeDisabled={anyOf(checkBusy, streaming, feedbackPending, starting, scopeLoading, hypercorrectionHold)}
+      checkMeDisabled={anyOf(checkBusy, streaming, feedbackPending, starting, scopeLoading, hypercorrectionHold)} ungraded={ungraded}
       pendingNote={allOf(feedbackPending, !streaming, !checkNote)}
       teachStart={allOf(messages.length <= 1 || planJustApproved, state.phase === "teach", !paused) ? firstConcept : undefined}
       streaming={streaming}
@@ -2335,7 +2337,7 @@ export function LoopLearn() {
           onContinue={() => { if (openHere) openRow(openHere); }}
           onStart={() => void startGuided()}
           onStartWith={(c) => void startGuided({ topic: c.name, goal: conceptGoal(c.id) })}
-          onGoal={showStartGoal} courseId={courseId} nodes={railGraph.nodes} onStartGoal={(topic, goal) => void startGuided({ topic, goal })}
+          onGoal={showStartGoal} courseId={courseId} nodes={railGraph.nodes} onStartGoal={(topic, goal) => void startGuided({ topic, goal })} onAsk={() => void startGuided({ ask: true })}
         />
       </div>
     );

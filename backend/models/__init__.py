@@ -80,7 +80,7 @@ class StartSessionBody(BaseModel):
     # the attempt row the student owns — never from a client-supplied hash.
     # #866 K01: "guide_ask" is a study guide's Ask the tutor (services/guide_ask.py);
     # the legacy path ignores it, the loop starts it teaching.
-    origin: Optional[Literal["quiz_ask", "guide_ask"]] = None
+    origin: Optional[Literal["quiz_ask", "guide_ask", "just_ask"]] = None
     quiz_attempt_id: Optional[str] = None
     quiz_question_index: Optional[int] = Field(default=None, ge=0)
 

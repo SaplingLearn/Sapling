@@ -439,7 +439,7 @@ describe("G1 — Send to tutor names its note", () => {
     api.startLoopSession.mockResolvedValue({ session_id: "s9", initial_message: OPENER, crisis_support: crisisFixture, crisis_support_alongside: true });
     api.nextLoopProbe.mockResolvedValue(probeItem);
     render(<LoopLearn />);
-    await waitFor(() => expect(api.startLoopSession).toHaveBeenCalledWith("u1", "c1", "Week 3 notes", "", undefined, "note-1"));
+    await waitFor(() => expect(api.startLoopSession).toHaveBeenCalledWith("u1", "c1", "Week 3 notes", "", undefined, "note-1", false));
     expect(await screen.findByTestId("crisis-support-card")).toBeTruthy();
     expect(await screen.findByTestId("loop-probe-item")).toBeTruthy(); // the session opened
     expect(screen.getByTestId("loop-phase").getAttribute("data-session-id")).toBe("s9");
@@ -648,6 +648,28 @@ describe("Tutor redesign phase 4 — the rebuilt session panel (session_v2 on)",
     expect(within(panel).getAllByRole("listitem").map((li) => li.getAttribute("data-testid"))).toEqual(["tutor-panel-concept-n1", "tutor-panel-concept-n2"]);
     expect(screen.queryByTestId("tutor-panel-due-count")).toBeNull();
     expect(await screen.findByTestId("tutor-side-review-count")).toHaveTextContent("7 due");
+  });
+});
+
+describe("Just ask a question (just_ask on): an ungraded chat", () => {
+  it("starts with the just_ask origin, runs no check-in, and offers no Check me", async () => {
+    flags.new_session_v2 = "on";
+    flags.just_ask = "on";
+    api.listLoopSessionsFor.mockResolvedValue(listed([]));
+    api.startLoopSession.mockResolvedValue({ session_id: "s9", initial_message: "Ask me anything about this course. Nothing here is graded." });
+    render(<LoopLearn />);
+    fireEvent.click(await screen.findByRole("radio", { name: /Just ask a question/ }));
+    fireEvent.click(screen.getByTestId("loop-start-guided"));
+    await waitFor(() => expect(screen.getByTestId("loop-phase").getAttribute("data-phase")).toBe("teach"));
+    expect(api.startLoopSession.mock.calls[0][6]).toBe(true); // the origin
+    expect(api.nextLoopProbe).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("loop-check-me")).toBeNull();
+  });
+
+  it("a resumed just-ask session stays ungraded", async () => {
+    api.getLoopSessionStatus.mockResolvedValue(status({ ungraded: true }));
+    await resumedTeach();
+    expect(screen.queryByTestId("loop-check-me")).toBeNull();
   });
 });
 
@@ -1003,7 +1025,7 @@ describe("K05 — a link or button about one concept starts a session on that co
     render(<LoopLearn />);
     fireEvent.click(await screen.findByTestId("tutor-home-start-with"));
     await screen.findByTestId("loop-probe-item");
-    expect(api.startLoopSession).toHaveBeenCalledWith("u1", "c1", "Recursion", "", onRecursion, null);
+    expect(api.startLoopSession).toHaveBeenCalledWith("u1", "c1", "Recursion", "", onRecursion, null, false);
     expect(screen.getByTestId("loop-goal-summary").textContent).toContain("Recursion");
   });
 
@@ -1012,7 +1034,7 @@ describe("K05 — a link or button about one concept starts a session on that co
     api.listLoopSessionsFor.mockResolvedValue(listed([]));
     render(<LoopLearn />);
     await screen.findByTestId("loop-probe-item");
-    expect(api.startLoopSession).toHaveBeenCalledWith("u1", "c1", "Recursion", "socratic", onRecursion, null);
+    expect(api.startLoopSession).toHaveBeenCalledWith("u1", "c1", "Recursion", "socratic", onRecursion, null, false);
   });
 
   it("Send to tutor's link (its note's linked concepts) starts a session on all of them", async () => {
@@ -1020,7 +1042,7 @@ describe("K05 — a link or button about one concept starts a session on that co
     api.listLoopSessionsFor.mockResolvedValue(listed([]));
     render(<LoopLearn />);
     await screen.findByTestId("loop-probe-item");
-    expect(api.startLoopSession).toHaveBeenCalledWith("u1", "c1", "Week 3", "", { text: "", target_node_ids: ["n1", "n2"] }, "note1");
+    expect(api.startLoopSession).toHaveBeenCalledWith("u1", "c1", "Week 3", "", { text: "", target_node_ids: ["n1", "n2"] }, "note1", false);
   });
 
   it("a link with no course to scope the concept to still starts on the whole course", async () => {
@@ -1028,7 +1050,7 @@ describe("K05 — a link or button about one concept starts a session on that co
     api.listLoopSessionsFor.mockResolvedValue(listed([]));
     render(<LoopLearn />);
     await screen.findByTestId("loop-probe-item");
-    expect(api.startLoopSession).toHaveBeenCalledWith("u1", "c1", "Recursion", "", undefined, null);
+    expect(api.startLoopSession).toHaveBeenCalledWith("u1", "c1", "Recursion", "", undefined, null, false);
   });
 
   it("'Start a session on X' while another session is open starts on X", async () => {
@@ -1036,7 +1058,7 @@ describe("K05 — a link or button about one concept starts a session on that co
     api.closeLoopSession.mockResolvedValue({ close: closeRecord, model_written: false, close_phase: "teach" });
     await resumedTeach("Sorting");
     fireEvent.click(await screen.findByTestId("loop-topic-start"));
-    await waitFor(() => expect(api.startLoopSession).toHaveBeenCalledWith("u1", "c1", "Recursion", "", onRecursion, null));
+    await waitFor(() => expect(api.startLoopSession).toHaveBeenCalledWith("u1", "c1", "Recursion", "", onRecursion, null, false));
   });
 
   it("a concept the course no longer has opens the goal editor with the reason, not a retry that fails again", async () => {
@@ -1070,7 +1092,7 @@ describe("K30 — 'Set a goal' sets it before the session starts", () => {
     fireEvent.click(screen.getByTestId("loop-goal-target-n1"));
     fireEvent.click(screen.getByTestId("loop-goal-save"));
     await screen.findByTestId("loop-probe-item");
-    expect(api.startLoopSession).toHaveBeenCalledWith("u1", "c1", "Intro CS", "", { text: "", target_node_ids: ["n1"] }, null);
+    expect(api.startLoopSession).toHaveBeenCalledWith("u1", "c1", "Intro CS", "", { text: "", target_node_ids: ["n1"] }, null, false);
     expect(api.setLoopGoal).not.toHaveBeenCalled(); // no posed item is burnt by a later goal write
   });
 

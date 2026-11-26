@@ -11,7 +11,7 @@ import { FEEDBACK_PENDING_COPY } from "./checkNote";
 import styles from "./TeachActions.module.css";
 
 export function TeachActions({
-  feedback, feedbackPending, hold, continueDisabled, checkMeDisabled, pendingNote, teachStart, streaming,
+  feedback, feedbackPending, hold, continueDisabled, checkMeDisabled, ungraded = false, pendingNote, teachStart, streaming,
   checkNote, checkNoteReported, continueRef, checkMeRef, teachStartRef, onContinue, onCheckMe, onTeachStart,
   next = null,
 }: {
@@ -23,6 +23,8 @@ export function TeachActions({
   hold: boolean;
   continueDisabled: boolean;
   checkMeDisabled: boolean;
+  /** `just_ask`: an ungraded chat, so no Check me. */
+  ungraded?: boolean;
   /** Say why Check me waits (nothing else is said in the status line). */
   pendingNote: boolean;
   /** The plan's first concept, when "Start with …" is offered. */
@@ -63,7 +65,7 @@ export function TeachActions({
           {HYPERCORRECTION_DWELL_COPY}
         </span>
       )}
-      <button
+      {!ungraded && <button
         ref={checkMeRef}
         data-testid="loop-check-me"
         className={`${feedback ? "btn" : "btn btn--primary"} ${styles.press}`}
@@ -72,7 +74,7 @@ export function TeachActions({
         title={feedbackPending ? FEEDBACK_PENDING_COPY : "Get a question on this concept"}
       >
         Check me
-      </button>
+      </button>}
       {pendingNote && <span role="status" className={styles.note}>{FEEDBACK_PENDING_COPY}</span>}
       {teachStart && (
         <button

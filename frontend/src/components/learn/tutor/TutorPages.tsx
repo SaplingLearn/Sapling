@@ -81,7 +81,10 @@ export function TutorHome({
   courseId = null,
   nodes = [],
   onStartGoal,
+  onAsk,
 }: {
+  /** `just_ask` (New session's "Just ask a question"): starts an ungraded chat. */
+  onAsk?: () => void;
   /** `milestones` (New session's "Prepare for <exam>"): the course, its concepts, and a goal session's start. */
   courseId?: string | null;
   nodes?: GraphNode[];
@@ -114,7 +117,7 @@ export function TutorHome({
       <NewSessionV2 courseName={courseName} continueTitle={continueRow ? continueTitle ?? sessionTitle(continueRow) : null}
         startWith={startWith} dueCount={dueCount} dueHref={dueHref} busy={busy} starting={starting} closesCurrent={closesCurrent}
         onContinue={onContinue} onStart={onStart} onStartWith={onStartWith} onGoal={onGoal}
-        courseId={courseId} nodes={nodes} onStartGoal={onStartGoal} />
+        courseId={courseId} nodes={nodes} onStartGoal={onStartGoal} onAsk={onAsk} />
     );
   }
   return (

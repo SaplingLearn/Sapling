@@ -4,6 +4,7 @@ loop sessions (PKG-13).
 from __future__ import annotations
 
 import copy
+from services.just_ask import is_just_ask
 from services.loop.errors import HTTPException
 from starlette.requests import Request
 from db.connection import table
@@ -92,6 +93,9 @@ def status(request: Request, user_id: str, session_id: str) -> dict:
         **({"practiced_node_ids": practiced} if practiced else {}),
         "active": True,
         "session_id": session_id,
+        # Tutor redesign: a just-ask session is ungraded chat (the client hides
+        # Check me); present only then
+        **({"ungraded": True} if is_just_ask(state) else {}),
         "loop_phase": _loop_phase(state),  # PKG-08: probe | plan | teach (resume point)
         **_learning_scope_payload(state, session_id),
         **approved_plan_view(state, lambda ids: _plan_node_names(user_id, ids)),

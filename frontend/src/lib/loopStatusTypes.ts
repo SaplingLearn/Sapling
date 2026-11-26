@@ -16,6 +16,8 @@ export interface LoopSessionStatus extends LoopLearningScope, LoopPlanMoved {
   session_id: string;
   /** PKG-08's phase: probe | plan | teach | close. */
   loop_phase: string;
+  /** `just_ask`: an ungraded chat session (no Check me); present only then. */
+  ungraded?: true;
   /** PKG-07's teach refinement: teach | check | feedback. */
   phase: string;
   active_question_hash?: string | null;

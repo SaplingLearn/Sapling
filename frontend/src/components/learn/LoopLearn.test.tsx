@@ -1540,7 +1540,7 @@ describe("LoopLearn — PKG-13 fix round", () => {
     api.startLoopSession.mockResolvedValue({ session_id: "s9", initial_message: "" });
     api.nextLoopProbe.mockResolvedValue(probeItem);
     render(<LoopLearn />);
-    await waitFor(() => expect(api.startLoopSession).toHaveBeenCalledWith("u1", "c2", "Linked lists", "expository", undefined, null));
+    await waitFor(() => expect(api.startLoopSession).toHaveBeenCalledWith("u1", "c2", "Linked lists", "expository", undefined, null, false));
     expect(api.listLoopSessionsFor).toHaveBeenCalledWith("u1", "c2", null);
   });
 
