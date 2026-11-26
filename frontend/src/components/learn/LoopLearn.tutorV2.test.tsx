@@ -636,6 +636,21 @@ describe("Tutor redesign phase 4 — the rebuilt plan (plan_v2 on)", () => {
   });
 });
 
+describe("Tutor redesign phase 4 — the rebuilt session panel (session_v2 on)", () => {
+  it("lists the approved plan once with each concept's level, and Review moves to the sidebar with the queue's count", async () => {
+    flags.session_v2 = "on";
+    api.getReviewSummary.mockResolvedValue({ due: { flashcard: 4, check: 3 }, new: 0 });
+    api.getLoopSessionStatus.mockResolvedValue(status({ approved_plan: { concepts: [
+      { node_id: "n1", concept_name: "Recursion", kind: "new" }, { node_id: "n2", concept_name: "Stacks", kind: "review" },
+    ], cursor: 0 } }));
+    await resumedTeach();
+    const panel = await screen.findByTestId("tutor-panel-v2");
+    expect(within(panel).getAllByRole("listitem").map((li) => li.getAttribute("data-testid"))).toEqual(["tutor-panel-concept-n1", "tutor-panel-concept-n2"]);
+    expect(screen.queryByTestId("tutor-panel-due-count")).toBeNull();
+    expect(await screen.findByTestId("tutor-side-review-count")).toHaveTextContent("7 due");
+  });
+});
+
 describe("U9 — How was that session? is asked on the wrap-up, with its ends labelled", () => {
   it("asks once per session (paced), never after the student has left", async () => {
     api.closeLoopSession.mockResolvedValue({ close: closeRecord, model_written: false, close_phase: "teach" });

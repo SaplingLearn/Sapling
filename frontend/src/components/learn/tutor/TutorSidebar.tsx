@@ -5,6 +5,9 @@ import { Icon } from "../../Icon";
 import { ChevRight, SidebarGlyph } from "./TutorIcons";
 import { WHEN_GROUPS, courseColor, dotColor, sessionTitle, whenGroup, type TutorSessionRow } from "./sessions";
 import styles from "./tutor.module.css";
+import { HandoffLink } from "@/components/ui/HandoffLink";
+import { useFlag } from "@/context/FlagsContext";
+import { LEARNING_COPY } from "@/lib/learningCopy";
 
 /** How many recents the sidebar shows before "View all sessions". */
 const RECENTS_LIMIT = 12;
@@ -31,6 +34,8 @@ export function TutorSidebar({
   onAll,
   onHide,
   onRetryRecent,
+  dueCount = null,
+  dueHref = null,
 }: {
   courses: EnrolledCourse[] | null;
   courseId: string | null;
@@ -50,7 +55,12 @@ export function TutorSidebar({
   onHide: () => void;
   /** Present when the recents failed to load: they say so, never "None yet". */
   onRetryRecent?: (() => void) | null;
+  /** `session_v2`: the sidebar's Review, with the review queue's count (the panel's due box moves here). */
+  dueCount?: number | null;
+  /** Where Review goes; null while `hide_study` hides Study. */
+  dueHref?: string | null;
 }) {
+  const reviewHere = useFlag("session_v2") === "on" && !!dueHref;
   const byId = useMemo(() => new Map((courses ?? []).map((c, i) => [c.course_id, { c, i }])), [courses]);
   const q = query.trim().toLowerCase();
   const shown = sessions
@@ -168,6 +178,13 @@ export function TutorSidebar({
             </button>
           </div>
         </div>
+        {reviewHere && (
+          <HandoffLink variant="plain" href={dueHref!} testId="tutor-side-review" className={`${styles.sideRow} ${styles.sideReview}`}>
+            <Icon name="book" size={14} />
+            <span className={styles.rowText}>{LEARNING_COPY.review}</span>
+            {(dueCount ?? 0) > 0 && <span className={styles.sideCount} data-testid="tutor-side-review-count">{dueCount}<span className={styles.sr}> due</span></span>}
+          </HandoffLink>
+        )}
       </div>
     </nav>
   );

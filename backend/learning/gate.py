@@ -57,7 +57,7 @@ LOOP_FLAGS: frozenset[str] = frozenset({
     "next_probe_hint",
     "varied_isomorphs", "multi_concept_items", "quiz_concept_plan", "quiz_planned_questions",
     "quiz_item_gates", "quiz_misconceptions", "quiz_results_routing",
-    "skill_ladder", "hint_ladder", "verdict_v2", "wrapup_v2", "plan_v2", "new_session_v2",
+    "skill_ladder", "hint_ladder", "verdict_v2", "wrapup_v2", "plan_v2", "new_session_v2", "session_v2",
 })
 
 

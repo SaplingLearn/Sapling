@@ -36,7 +36,7 @@ Several flags change a prompt or an output schema, so their eval datasets must b
 
 ## Recommended order
 
-1. **Read-only, no eval needed:** `quiz_concept_plan`, `quiz_results_routing`, `item_reports`, `skill_ladder`, `hint_ladder`, `verdict_v2`, `wrapup_v2`, `plan_v2`, `new_session_v2`.
+1. **Read-only, no eval needed:** `quiz_concept_plan`, `quiz_results_routing`, `item_reports`, `skill_ladder`, `hint_ladder`, `verdict_v2`, `wrapup_v2`, `plan_v2`, `new_session_v2`, `session_v2`.
 2. **Safety, after copy review:** `crisis_support`.
 3. **Prompt changes, after their evals:** `loop_tutor_v2`, `segment_prequestion`, `self_explanation_prompts`, `quiz_planned_questions`, `quiz_item_gates`, then `quiz_misconceptions`.
 4. **Drafting changes, after their evals:** `varied_isomorphs`, `multi_concept_items`, `upload_prereq_edges`.
@@ -90,6 +90,12 @@ Several flags change a prompt or an output schema, so their eval datasets must b
 - **Before:** nothing.
 - **Watch:** which choice students start from; sessions continued against new ones started.
 - **Roll back:** off restores the Tutor home as before.
+
+### session_v2 (Tutor redesign phase 4) — client-visible
+- **Changes:** the session panel is headed "Plan" and lists each planned concept once with its level word and a bar (the one being taught marked, the ones before it dimmed), then "See on your map". The separate Skill meters, the "How these connect" list, the kind line under each name, the due box and the map with its key are gone from the panel; Review with the queue's count moves to the foot of the Tutor sidebar. Frontend only; the board's "Saved" tab (no saved artifacts) and milestone link (no milestones) are not built.
+- **Before:** nothing.
+- **Watch:** Tree visits from the session; Review clicks from the sidebar against the old due box.
+- **Roll back:** off restores the panel as before.
 
 ### item_reports (A113, A123) — client-visible
 - **Changes:** students can report a check question. Two reports hold it from the whole course until staff approve or retire it in the admin check-items queue.

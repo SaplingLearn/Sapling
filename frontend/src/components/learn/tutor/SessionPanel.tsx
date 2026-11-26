@@ -10,6 +10,8 @@ import { planKind } from "../planLabels";
 import { SidebarGlyph } from "./TutorIcons";
 import { Meter } from "./TutorPages";
 import styles from "./tutor.module.css";
+import { useFlag } from "@/context/FlagsContext";
+import { SessionPanelV2 } from "./SessionPanelV2";
 
 /** A key swatch's colour, from the map's own palette (runtime data, not a literal here). */
 const swatch = (color: string) => ({ "--swatch": color }) as React.CSSProperties;
@@ -66,6 +68,10 @@ export function SessionPanel({
   showTreeLink: boolean;
   onHide: () => void;
 }) {
+  if (useFlag("session_v2") === "on") { // Tutor redesign phase 4: one list, levels in it
+    return <SessionPanelV2 plan={plan} currentNodeId={currentNodeId} skills={skills} skillWords={skillWords}
+      treeHref={treeHref} showTreeLink={showTreeLink} onHide={onHide} />;
+  }
   return (
     <aside data-testid="loop-rail" aria-label="Today's session" className={styles.panel}>
       <div className={styles.panelHead}>

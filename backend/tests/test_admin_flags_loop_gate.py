@@ -198,6 +198,7 @@ EXPECTED_LOOP_FLAGS = {
     "wrapup_v2",  # a loop UI flag: the wrap-up only renders with the loop on
     "plan_v2",  # a loop UI flag: the plan only renders with the loop on
     "new_session_v2",  # a loop UI flag: the Tutor home only renders with the loop on
+    "session_v2",  # a loop UI flag: the session panel only renders with the loop on
 }
 
 

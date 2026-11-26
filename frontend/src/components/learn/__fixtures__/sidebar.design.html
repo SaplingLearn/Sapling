@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Tutor sidebar</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Aleo:wght@400;600;700&amp;family=SUSE:wght@400;500;600;700&amp;display=swap">
+<style>
+body{margin:0}
+a{color:#1a1814;text-decoration:none}a:hover{color:#445D22}
+</style>
+</helmet>
+<nav aria-label="Tutor" style="width: 264px; min-height: 980px; height: 100%; box-sizing: border-box; padding: 20px 14px; display: flex; flex-direction: column; gap: 20px; background: #f4f1ea; border-right: 1px solid rgba(42,39,31,0.10); font-family: 'SUSE', system-ui, sans-serif; color: #1a1814;">
+  <a href="Main.dc.html" style="font-family: 'Aleo', Georgia, serif; font-size: 24px; font-weight: 700; color: #445D22; padding: 0 8px;">Sapling</a>
+  <a href="NewSession.dc.html" style="display: flex; align-items: center; justify-content: center; gap: 8px; height: 40px; border-radius: 10px; background: #445D22; color: #ffffff; font-size: 14px; font-weight: 600;">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+    New session
+  </a>
+  <label style="display: flex; align-items: center; gap: 8px; height: 36px; padding: 0 10px; border-radius: 10px; background: #fdfcf9; border: 1px solid rgba(42,39,31,0.10); font-size: 13px; color: #696252;">
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.5-3.5"></path></svg>
+    <input type="search" placeholder="Search sessions…" aria-label="Search sessions" style="border: 0; background: transparent; font: inherit; color: #1a1814; outline: none; width: 100%;">
+  </label>
+
+  <div style="display: flex; flex-direction: column; gap: 2px;">
+    <a href="Course.dc.html" style="{{courseStyle}}">
+      <span style="width: 9px; height: 9px; border-radius: 50%; background: #60842c; flex-shrink: 0;"></span>
+      <span style="flex: 1; font-weight: 600;">CS 112</span>
+    </a>
+    <a href="Milestone.dc.html" style="{{milestoneStyle}}">
+      <span style="flex: 1;">Midterm 2</span>
+      <span style="font-size: 12px; color: #696252;">13 days</span>
+    </a>
+    <a href="Milestone.dc.html" style="{{hwStyle}}">
+      <span style="flex: 1;">HW 7</span>
+      <span style="font-size: 12px; color: #696252;">6 days</span>
+    </a>
+    <a href="Course.dc.html" style="display: flex; align-items: center; gap: 10px; height: 36px; padding: 0 10px; border-radius: 8px; font-size: 14px; margin-top: 6px;">
+      <span style="width: 9px; height: 9px; border-radius: 50%; background: #3a6984; flex-shrink: 0;"></span>
+      <span style="flex: 1; font-weight: 600;">MA 242</span>
+    </a>
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 2px;">
+    <h2 style="margin: 0 0 4px; padding: 0 10px; font-size: 12px; font-weight: 600; color: #696252;">Recent</h2>
+    <a href="Session.dc.html" style="{{sessionStyle}}">
+      <span style="width: 7px; height: 7px; border-radius: 50%; background: #60842c; flex-shrink: 0;"></span>
+      <span style="flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Hash tables and 2 more</span>
+      <span style="font-size: 12px; color: #445D22; font-weight: 600;">Open</span>
+    </a>
+    <a href="Session.dc.html" style="display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 10px; border-radius: 8px; font-size: 14px;">
+      <span style="width: 7px; height: 7px; border-radius: 50%; background: #60842c; flex-shrink: 0;"></span>
+      <span style="flex: 1;">Linked lists</span>
+    </a>
+    <a href="Session.dc.html" style="display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 10px; border-radius: 8px; font-size: 14px;">
+      <span style="width: 7px; height: 7px; border-radius: 50%; background: #3a6984; flex-shrink: 0;"></span>
+      <span style="flex: 1;">Eigenvalues</span>
+    </a>
+  </div>
+
+  <div style="margin-top: auto; display: flex; flex-direction: column; gap: 8px;">
+    <a href="Review.dc.html" style="{{reviewStyle}}">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"></path><path d="M3 3v5h5"></path></svg>
+      <span style="flex: 1;">Review</span>
+      <span style="min-width: 22px; height: 22px; padding: 0 6px; box-sizing: border-box; border-radius: 999px; background: #445D22; color: #ffffff; font-size: 12px; font-weight: 600; display: inline-flex; align-items: center; justify-content: center;">7</span>
+    </a>
+    <div style="display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-top: 1px solid rgba(42,39,31,0.10);">
+      <span aria-hidden="true" style="width: 30px; height: 30px; border-radius: 50%; background: #c45a2e; color: #ffffff; font-size: 12px; font-weight: 600; display: inline-flex; align-items: center; justify-content: center;">MC</span>
+      <span style="font-size: 14px;">Maya Chen</span>
+    </div>
+  </div>
+</nav>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"active":{"editor":"enum","options":["home","course","milestone","session","review"],"default":"home"},"$preview":{"width":264,"height":980}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const a = this.props.active ?? 'home';
+    const base = 'display: flex; align-items: center; gap: 10px; padding: 0 10px; border-radius: 8px; font-size: 14px; color: #1a1814;';
+    const on = ' background: #e1ecd7;';
+    return {
+      courseStyle: base + ' height: 36px;' + (a === 'course' ? on : ''),
+      milestoneStyle: base + ' height: 32px; padding-left: 29px;' + (a === 'milestone' ? on : ''),
+      hwStyle: base + ' height: 32px; padding-left: 29px;',
+      sessionStyle: base + ' height: 34px;' + (a === 'session' ? on : ''),
+      reviewStyle: base + ' height: 38px; font-weight: 600;' + (a === 'review' ? on : '')
+    };
+  }
+}
+</script>
+</body>
+</html>

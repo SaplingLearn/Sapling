@@ -2422,7 +2422,7 @@ export function LoopLearn() {
       onOpen={openRow}
       onAll={showAll}
       onHide={layout.hideSide}
-      onRetryRecent={lists.retryRecent}
+      onRetryRecent={lists.retryRecent} dueCount={lists.dueReviews} dueHref={dueHref}
     />
   );
 

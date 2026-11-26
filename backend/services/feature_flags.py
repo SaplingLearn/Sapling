@@ -346,6 +346,15 @@ REGISTRY: dict[str, FlagDef] = _registry(
             "a goal, review what's due), one start button named for the pick, "
             "and one line when it wraps up the open session. Off: the Tutor "
             "home as before.", True),
+    # Tutor redesign phase 4 (the session layout): the session panel is one
+    # list of the plan's concepts, each with its level and a bar, and Review
+    # with the queue's count moves to the Tutor sidebar. Frontend only. A loop flag.
+    FlagDef("session_v2", ("off", "on"),
+            "The rebuilt session panel and sidebar: one list of the plan's "
+            "concepts with each one's level and bar (the current one marked), a "
+            "link to the map, and Review with the queue's count at the foot of "
+            "the Tutor sidebar. Off: the panel's plan, skill meters, due box and "
+            "map as before.", True),
     FlagDef("skill_ladder", ("off", "on"),
             "One skill measure on the graph: each concept's score, tier and words "
             "come from the learner model's decayed skill (Not started / Getting "

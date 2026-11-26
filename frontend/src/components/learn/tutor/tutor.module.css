@@ -175,6 +175,26 @@
   color: var(--text);
 }
 
+/* session_v2: Review at the sidebar's foot, with the queue's count. */
+.sideReview {
+  margin-top: auto;
+  flex-shrink: 0;
+  color: var(--text);
+  text-decoration: none;
+}
+
+.sideCount {
+  margin-left: auto;
+  min-width: 22px;
+  padding: 0 var(--sp-3);
+  border-radius: var(--r-full);
+  background: var(--brand-forest);
+  color: var(--accent-fg);
+  font: 600 var(--fs-xs)/22px var(--font-sans);
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
 .sideRow[aria-current="true"] {
   background: var(--bg-panel);
   color: var(--text);
