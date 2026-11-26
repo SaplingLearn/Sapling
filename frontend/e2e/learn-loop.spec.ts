@@ -2388,7 +2388,7 @@ test("W3.1 plan dependencies: the plan card and, after approve, the session pane
     await expect(page.getByTestId("loop-set-goal")).toBeEnabled();
     await page.getByTestId("loop-set-goal").click();
     const editor = page.getByRole("form", { name: "Learning goal" });
-    await editor.getByRole("textbox", { name: /Your objective/ }).fill("Use bitwise operators on binary numbers");
+    await editor.getByRole("textbox", { name: /Your goal in your own words/ }).fill("Use bitwise operators on binary numbers");
     await editor.getByRole("checkbox", { name: "Bitwise Operators", exact: true }).check();
     const goalSaved = page.waitForResponse((r) => r.url().includes("/api/learn/loop/goal") && r.request().method() === "POST");
     await editor.getByTestId("loop-goal-save").click();

@@ -720,7 +720,7 @@ test("entry points: each link shape arrives in the state it promised", async ({ 
   proposal = page.getByTestId("quiz-proposal");
   await expect(proposal).toContainText("Review everything due");
   await expect(proposal).toContainText(
-    `${ranking.count} concepts across ${ranking.courseCount} courses · ` +
+    `${ranking.count} concepts across ${ranking.courseCount} courses, ` +
       `starting with the ${Math.min(ranking.count, QUEUE_MAX)} weakest`,
   );
 
