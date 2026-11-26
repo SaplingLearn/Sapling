@@ -6,12 +6,12 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from models import Id, ShortText
 from services.auth_guard import require_self
-from services.feature_flags import require_flag
+from services.feature_flags import flag_on
 from services.saved_items import (
     CONTENT_MAX,
     SAVED_ITEMS_FLAG,
@@ -21,7 +21,16 @@ from services.saved_items import (
     list_saved_items,
 )
 
-router = APIRouter(dependencies=[Depends(require_flag(SAVED_ITEMS_FLAG))])
+router = APIRouter()
+
+
+def _own(user_id: str, request: Request) -> None:
+    """The caller is the student (403 otherwise), then the flag is on for them
+    (404 otherwise). In that order, so another student's request learns
+    nothing about the flag (the cross-user matrix's swap case)."""
+    require_self(user_id, request)
+    if not flag_on(SAVED_ITEMS_FLAG, user_id):
+        raise HTTPException(status_code=404, detail="Not Found")
 
 
 class SavedItemCreateBody(BaseModel):
@@ -41,20 +50,20 @@ def _errors():
 
 @router.get("/{user_id}")
 def get_saved_items(user_id: str, request: Request, session_id: str | None = None, course_id: str | None = None):
-    require_self(user_id, request)
+    _own(user_id, request)
     return {"items": list_saved_items(user_id, session_id=session_id, course_id=course_id)}
 
 
 @router.post("")
 def save_item(body: SavedItemCreateBody, request: Request):
-    require_self(body.user_id, request)
+    _own(body.user_id, request)
     with _errors():
         return {"item": create_saved_item(body.user_id, session_id=body.session_id, title=body.title, content=body.content)}
 
 
 @router.delete("/{saved_item_id}")
 def remove_saved_item(saved_item_id: str, user_id: str, request: Request):
-    require_self(user_id, request)
+    _own(user_id, request)
     with _errors():
         delete_saved_item(user_id, saved_item_id)
     return {"deleted": True}
