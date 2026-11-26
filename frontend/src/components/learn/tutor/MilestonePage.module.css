@@ -37,3 +37,12 @@
 .title:focus {
   outline: none;
 }
+
+/* saved_items: a saved reply's text, opened under its title. */
+.savedText {
+  margin: var(--sp-3) 0 0;
+  font-size: var(--fs-md);
+  font-weight: 400;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}

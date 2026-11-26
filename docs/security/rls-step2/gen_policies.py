@@ -35,6 +35,8 @@ History:
     as flashcards). Its four policies and its grant ship in the table's own
     migration (20261112060028_flashcard_sets.sql), written as this generator
     prints them; the applied step-2b/2c migrations are not regenerated.
+  * 2026-11-26 tutor_saved_items (the Tutor's Saved tab) joins bucket A the
+    same way: its policies and grant ship in 20261126055016_tutor_saved_items.sql.
 """
 import json
 import sys
@@ -82,7 +84,7 @@ BUCKETS = {
         "quiz_context", "study_guides", "graph_nodes", "graph_edges", "feedback",
         "issue_reports", "user_achievements", "user_cosmetics", "user_roles", "xp_events",
         "friend_requests", "friendships",
-        "flashcard_sets",
+        "flashcard_sets", "tutor_saved_items",
     ],
     "B_via_parent": [
         "messages", "node_mastery_events", "note_concepts", "quiz_responses",
@@ -133,6 +135,7 @@ for t in ("oauth_tokens", "gradescope_credentials", "enrollments", "notes",
 # Added after steps 2b/2c were applied: policies + grant live in the table's
 # own migration (20261112060028_flashcard_sets.sql), not in those two.
 owner("flashcard_sets", own); grant("flashcard_sets", "SELECT, INSERT, UPDATE, DELETE")
+owner("tutor_saved_items", own); grant("tutor_saved_items", "SELECT, INSERT, UPDATE, DELETE")  # 20261126055016
 owner("documents", own)
 grant("documents", "SELECT, INSERT, DELETE")
 # Not the index_* lease columns (document_indexing owns them, svc), nor id /

@@ -113,6 +113,7 @@ personalisation. It is not a privacy inventory.
 |---|---|---|---|---|---|---|---|
 | `flashcards` | `front`, `back`, `topic`, `times_reviewed`, `last_rating` | Flashcards | Partial: `front`, `back`. `topic` is plaintext. | Owner (`/api/flashcards`) | Student delete route exists. Wiped. | ANT (generation from documents, pasted text and weak concepts) | M: `0025`; C: `routes/flashcards.py:234` |
 | `flashcard_sets` | `name`, `concepts`, `options` | Saved selections | No | Owner | Student delete route exists. Wiped. | none | M: `20261112060028` |
+| `tutor_saved_items` | `title` 🔒, `content` 🔒 (a tutor reply the student saved) | Saved items (the Tutor's Saved tab) | Yes | Owner | Student delete route exists. Wiped; bundled (re-sealed). Cascades with its session. | none | M: `20261126055016` |
 | `study_guides` | `content`, `previous_content`, `answers`, `goal`, `depth`, `feedback`, `material_ids`, `read_sections` | Generated study guides and the student's check answers | Partial: `content`, `previous_content`, `answers` | Owner (`/api/study-guide`) | No student delete route found. Wiped. | ANT (documents, mastery and quiz history when `use_history`) | M: `0025`, `20261112094239` |
 | `topic_checklists`, `topic_checklist_progress` | `content` (outline from the student's materials), `reviewed_at` | Topic checklist | Partial: `content` | Owner (`/api/topic-checklist`) | Cascades from enrollments. Wiped. | ANT | M: `20261019005643` |
 

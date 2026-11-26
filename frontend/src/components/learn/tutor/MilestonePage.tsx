@@ -19,6 +19,7 @@ import { listGuides } from "@/lib/studyGuide/api";
 import type { GuideCard } from "@/lib/studyGuide/types";
 import { masteryTone } from "./TutorPages";
 import { coveredConcepts, milestoneHeadline, prepareGoal, readinessOf, type Milestone } from "./milestones";
+import { listSaved, type SavedItem } from "./saved";
 import { sessionTitle, shortWhen, type TutorSessionRow } from "./sessions";
 import tutorStyles from "./tutor.module.css";
 import styles from "./CourseV2.module.css";
@@ -40,6 +41,22 @@ const LEVEL_ORDER: SkillLevel[] = ["profic", "develop", "novice", "not_started"]
 /** "3 Proficient, 3 Developing, 2 Getting started": the levels present, high to low. */
 export function levelBreakdown(counts: Record<SkillLevel, number>): string {
   return LEVEL_ORDER.filter((l) => counts[l] > 0).map((l) => `${counts[l]} ${LEVEL_WORDS[l]}`).join(", ");
+}
+
+/** `saved_items`: what was saved in the sessions that prepared for it. */
+function usePreparedSaved(userId: string, courseId: string, sessionIds: readonly string[], enabled: boolean) {
+  const [items, setItems] = useState<SavedItem[]>([]);
+  const key = sessionIds.join(",");
+  useEffect(() => {
+    if (!enabled || !userId || !key) return;
+    let live = true;
+    const ids = new Set(key.split(","));
+    listSaved(userId, { courseId })
+      .then((r) => { if (live) setItems((r.items ?? []).filter((i) => ids.has(i.session_id))); })
+      .catch(() => { if (live) setItems([]); });
+    return () => { live = false; };
+  }, [enabled, userId, courseId, key]);
+  return enabled && key ? items : [];
 }
 
 /** The study guides saved for this exam (a guide names the exam it is for). */
@@ -81,6 +98,8 @@ export function MilestonePage({ course, milestone, conceptIds, nodes, sessions, 
   const { ready, total, counts } = readinessOf(concepts);
   const plan = prepareGoal(milestone, concepts);
   const prepared = sessions.filter((s) => s.topic === `Prepare for ${milestone.title}`);
+  const { userId } = useUser();
+  const savedItems = usePreparedSaved(userId, course.course_id, prepared.map((s) => s.id), useFlag("saved_items") === "on");
   const courseName = course.course_code || course.course_name;
   return (
     <div className={styles.page} data-testid="tutor-milestone" data-milestone-id={milestone.id}>
@@ -149,7 +168,7 @@ export function MilestonePage({ course, milestone, conceptIds, nodes, sessions, 
                 </ul>
               ) : <p className={styles.sub}>{MILESTONE_COPY.noSessions}</p>}
             </section>
-            {guides.length > 0 && (
+            {(guides.length > 0 || savedItems.length > 0) && (
               <section aria-labelledby="tutor-milestone-saved" className={styles.section}>
                 <h3 id="tutor-milestone-saved" className={`h-serif ${styles.h2}`}>{MILESTONE_COPY.saved(milestone.title)}</h3>
                 <ul className={styles.box}>
@@ -157,6 +176,15 @@ export function MilestonePage({ course, milestone, conceptIds, nodes, sessions, 
                     <li key={g.id} className={styles.dueRow}>
                       <Link href={`/study/guide/${g.id}`} className={styles.name} data-testid={`tutor-milestone-guide-${g.id}`}>{g.title}</Link>
                       <span className={styles.dim}>Study guide</span>
+                    </li>
+                  ))}
+                  {savedItems.map((i) => (
+                    <li key={i.id} className={styles.dueRow} data-testid={`tutor-milestone-saved-${i.id}`}>
+                      <details className={styles.name}>
+                        <summary>{i.title}</summary>
+                        <p className={own.savedText}>{i.content}</p>
+                      </details>
+                      <span className={styles.dim}>Saved</span>
                     </li>
                   ))}
                 </ul>

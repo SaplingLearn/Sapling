@@ -185,6 +185,7 @@ const FLAG_KILL_SWITCHES = [
   "review_v2",
   "milestones",
   "just_ask",
+  "saved_items",
   "quiz_planned_questions",
   "quiz_item_gates",
   "quiz_misconceptions",

@@ -728,6 +728,38 @@ test("learning loop: Just ask a question, an ungraded chat (just_ask, new_sessio
   }
 });
 
+// Saved (`saved_items`): Save under a tutor reply, then the session panel's
+// Saved tab lists it. A just-ask session is the shortest way to a real reply.
+test("learning loop: saving a tutor reply and the Saved tab (saved_items, session_v2, just_ask on)", async ({ browser }) => {
+  test.skip(loopOffLane, "loop path: default lane only");
+  test.setTimeout(LOOP_TIMEOUT_MS);
+  for (const flag of ["saved_items", "session_v2", "just_ask", "new_session_v2"]) await setUserFlag(flag, USER_LOOP, "on");
+  const { context, page } = await signIn(browser, USER_LOOP, "Lou Loop");
+  try {
+    await page.goto("/learn");
+    await page.getByRole("radio", { name: /Just ask a question/ }).check();
+    await page.getByTestId("loop-start-guided").click();
+    await expect(page.getByTestId("loop-phase")).toHaveAttribute("data-phase", "teach");
+    await page.getByTestId("tutor-input").fill("What is a bit?");
+    await page.getByTestId("tutor-send").click();
+    await expect(page.getByTestId("tutor-stop")).toHaveCount(0, { timeout: 30_000 });
+    const save = page.getByTestId("tutor-save-reply").last();
+    await expect(save).toHaveText("Save");
+    await save.click();
+    await expect(save).toHaveText("Saved");
+    const tab = page.getByTestId("tutor-panel-tab-saved");
+    await expect(tab).toHaveText("Saved (1)");
+    await tab.click();
+    await expect(page.getByTestId("tutor-saved-list").getByRole("listitem")).toHaveCount(1);
+    await expectAccessible(page, "saved: the session panel's Saved tab");
+    const rows = (await queryRaw("SELECT title, content FROM tutor_saved_items WHERE user_id = $1", [USER_LOOP])) as { title: string; content: string }[];
+    expect(rows).toHaveLength(1);
+    expect(rows[0].content).not.toContain("bit"); // sealed at rest
+  } finally {
+    await context.close();
+  }
+});
+
 test("learning loop: a segment's ungraded guess and a self-explanation prompt (A138, A139 on)", async ({ browser }) => {
   test.skip(loopOffLane, "loop path: default lane only");
   test.setTimeout(LOOP_TIMEOUT_MS);

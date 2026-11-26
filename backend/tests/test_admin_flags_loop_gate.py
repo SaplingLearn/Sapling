@@ -203,6 +203,7 @@ EXPECTED_LOOP_FLAGS = {
     "review_v2",  # a loop UI flag: the review queue only renders with the loop on
     "milestones",  # a loop UI flag: the Tutor only renders with the loop on
     "just_ask",  # read at a loop session's start, after the loop's gate
+    "saved_items",  # a Tutor UI flag (and its /api/learn/saved routes): the Tutor only renders with the loop on
 }
 
 

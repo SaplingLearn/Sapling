@@ -35,6 +35,7 @@ BUCKETS: dict[str, frozenset[str]] = {
         "issue_reports", "user_achievements", "user_cosmetics", "user_roles", "xp_events",
         "friend_requests", "friendships",
         "flashcard_sets",  # 20261112060028_flashcard_sets.sql
+        "tutor_saved_items",  # 20261126055016_tutor_saved_items.sql
     }),
     "B_via_parent": frozenset({
         "messages", "node_mastery_events", "note_concepts", "quiz_responses",
@@ -116,6 +117,8 @@ _SEED = [
     f"INSERT INTO flashcard_sets (id, user_id, course_id, name, concepts) "
     f"VALUES ('rlsp-fset-a', '{A}', 'rlsp-course', 'set', '[\"limits\"]')",
     "INSERT INTO messages (id, session_id, role, content) VALUES ('rlsp-msg-a', 'rlsp-sess-a', 'user', 'hi')",
+    f"INSERT INTO tutor_saved_items (id, user_id, session_id, course_id, title, content) "
+    f"VALUES ('rlsp-saved-a', '{A}', 'rlsp-sess-a', 'rlsp-course', 't', 'c')",
     f"INSERT INTO graph_nodes (id, user_id, course_id, concept_name, mastery_score) "
     f"VALUES ('rlsp-node-a', '{A}', 'rlsp-course', 'limits', 0.5)",
     f"INSERT INTO documents (id, user_id, offering_id, file_name, category) VALUES "
@@ -226,6 +229,7 @@ A_ROWS = {
     "documents": "id = 'rlsp-doc-a'",
     "sessions": "id = 'rlsp-sess-a'",
     "flashcard_sets": "id = 'rlsp-fset-a'",
+    "tutor_saved_items": "id = 'rlsp-saved-a'",
     "graph_nodes": "id = 'rlsp-node-a'",
     "enrollments": "id = 'rlsp-enr-a'",
     "messages": "id = 'rlsp-msg-a'",

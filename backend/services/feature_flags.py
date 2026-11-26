@@ -392,6 +392,14 @@ REGISTRY: dict[str, FlagDef] = _registry(
             "session. It starts teaching at once on no planned concept, poses "
             "no check, refuses Check me and gives no verdict on replies. Off: "
             "the origin is refused and New session does not offer it.", True),
+    # Tutor redesign (the session panel's "Saved" tab, owner decision
+    # 2026-11-26): what a student saves from a tutor session
+    # (services/saved_items.py, table tutor_saved_items). /api/learn/saved
+    # 404s while it is off. A loop flag.
+    FlagDef("saved_items", ("off", "on"),
+            "Saved: a student saves a tutor reply from a session and finds it "
+            "again in the session panel's Saved tab and on its milestone's page. "
+            "Off: no Save, no Saved tab, and /api/learn/saved is a 404.", True),
     FlagDef("skill_ladder", ("off", "on"),
             "One skill measure on the graph: each concept's score, tier and words "
             "come from the learner model's decayed skill (Not started / Getting "

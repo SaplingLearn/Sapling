@@ -197,6 +197,8 @@ ID_SOURCES: dict[str, IdSource] = {
     "doc_id": _owned(_DOCUMENT),            # /api/gradebook/syllabus/apply
     "card_id": _owned("SELECT id::text FROM flashcards WHERE user_id = %(a)s ORDER BY id LIMIT 1"),
     "set_id": _owned("SELECT id::text FROM flashcard_sets WHERE user_id = %(a)s ORDER BY id LIMIT 1"),
+    # /api/learn/saved/{saved_item_id} (the Tutor's Saved tab)
+    "saved_item_id": _owned("SELECT id::text FROM tutor_saved_items WHERE user_id = %(a)s ORDER BY id LIMIT 1"),
     "node_id": _owned(_NODE),
     "concept_node_id": _owned(_NODE),
     "anchor_node_id": _owned(_NODE),

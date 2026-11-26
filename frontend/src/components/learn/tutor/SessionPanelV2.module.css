@@ -71,3 +71,29 @@
   font-weight: 600;
   color: var(--accent);
 }
+
+/* saved_items: the head's two tabs, Plan and Saved (n). */
+.tabs {
+  display: flex;
+  gap: var(--sp-2);
+  padding: var(--sp-2);
+  border-radius: var(--r-md);
+  background: var(--bg-soft);
+}
+
+.tab {
+  padding: var(--sp-3) var(--sp-6);
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  font: inherit;
+  font-size: var(--fs-md);
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.tab[aria-selected="true"] {
+  background: var(--bg-panel);
+  color: var(--text);
+  font-weight: 600;
+}

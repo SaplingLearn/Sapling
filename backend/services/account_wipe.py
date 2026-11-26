@@ -87,6 +87,10 @@ _USER_TABLES: tuple[tuple[str, str], ...] = (
     # Library folders. documents.folder_id is ON DELETE SET NULL, so these can
     # go before or after documents; they go here with the other owned labels.
     ("document_folders", "id"),
+    # What a student saved from a session (the Tutor's Saved tab): account
+    # data, wiped here AND copied by the bundle; before the sessions it
+    # references (which would cascade it anyway).
+    ("tutor_saved_items", "id"),
     ("sessions", "id"),
     ("study_guides", "id"),
     ("quiz_attempts", "id"),

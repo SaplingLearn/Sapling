@@ -14,6 +14,8 @@ import type { LoopPanelConcept } from "@/lib/api";
 import { LEARNING_COPY } from "@/lib/learningCopy";
 import { tierWord } from "@/lib/levels";
 import { SidebarGlyph } from "./TutorIcons";
+import { useFlag } from "@/context/FlagsContext";
+import { SAVED_COPY, SavedList, useSessionSaved } from "./saved";
 import { masteryTone, meterTier } from "./TutorPages";
 import type { PanelConcept } from "./SessionPanel";
 import tutorStyles from "./tutor.module.css";
@@ -46,7 +48,7 @@ export function panelRows(plan: readonly LoopPanelConcept[] | null, skills: read
   }));
 }
 
-export function SessionPanelV2({ plan, currentNodeId, skills, skillWords = false, treeHref, showTreeLink, onHide }: {
+export function SessionPanelV2({ plan, currentNodeId, skills, skillWords = false, treeHref, showTreeLink, onHide, sessionId = null }: {
   plan: LoopPanelConcept[] | null;
   currentNodeId: string | null;
   skills: PanelConcept[];
@@ -54,18 +56,34 @@ export function SessionPanelV2({ plan, currentNodeId, skills, skillWords = false
   treeHref: string;
   showTreeLink: boolean;
   onHide: () => void;
+  /** `saved_items`: the session whose Saved tab shows beside Plan. */
+  sessionId?: string | null;
 }) {
   const rows = panelRows(plan, skills, currentNodeId);
+  const savedOn = useFlag("saved_items") === "on" && !!sessionId;
+  const { items: saved } = useSessionSaved(sessionId, savedOn);
+  const [tab, setTab] = React.useState<"plan" | "saved">("plan");
+  const showing = savedOn ? tab : "plan";
   return (
     <aside data-testid="loop-rail" aria-label="Today's session" className={tutorStyles.panel}>
       <div className={tutorStyles.panelHead}>
-        <h2 className="h-serif">{SESSION_PANEL_COPY.title}</h2>
+        {savedOn ? (
+          <div role="tablist" aria-label="Session panel" className={styles.tabs}>
+            {(["plan", "saved"] as const).map((t) => (
+              <button key={t} type="button" role="tab" id={`tutor-panel-tab-${t}`} aria-selected={showing === t}
+                aria-controls="tutor-panel-body" data-testid={`tutor-panel-tab-${t}`} className={styles.tab} onClick={() => setTab(t)}>
+                {t === "plan" ? SESSION_PANEL_COPY.title : SAVED_COPY.tab(saved?.length ?? 0)}
+              </button>
+            ))}
+          </div>
+        ) : <h2 className="h-serif">{SESSION_PANEL_COPY.title}</h2>}
         <button type="button" className={tutorStyles.iconBtn} onClick={onHide} aria-label="Hide session panel" data-testid="tutor-panel-hide">
           <SidebarGlyph side="right" />
         </button>
       </div>
-      <div className={`${tutorStyles.panelInner} ${styles.inner}`} data-testid="tutor-panel-v2">
-        {rows.length > 0 ? (
+      <div id="tutor-panel-body" className={`${tutorStyles.panelInner} ${styles.inner}`} data-testid="tutor-panel-v2"
+        role={savedOn ? "tabpanel" : undefined} aria-labelledby={savedOn ? `tutor-panel-tab-${showing}` : undefined}>
+        {showing === "saved" && sessionId ? <SavedList sessionId={sessionId} /> : rows.length > 0 ? (
           <ol className={styles.rows} aria-label="Concepts in today's plan">
             {rows.map((r) => {
               const tier = meterTier(r.score, skillWords);

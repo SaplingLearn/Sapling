@@ -243,6 +243,8 @@ ENCRYPTED_COLUMNS: tuple[ColumnSpec, ...] = tuple([
                note="one row per (attempt, question): the natural key"),
     # Study.
     *_cols("flashcards", {"front": TEXT, "back": TEXT}),
+    # The Tutor's Saved tab (services/saved_items.py mints the id first).
+    *_cols("tutor_saved_items", {"title": TEXT, "content": TEXT}),
     *_cols("study_guides", {"content": JSON, "previous_content": JSON, "answers": JSON}),
     ColumnSpec("room_summaries", "summary", key=("room_id",), pk=("room_id",)),
     # Learning loop. check_items ids are minted in Python (item_id: a hash of

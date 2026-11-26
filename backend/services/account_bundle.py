@@ -135,7 +135,7 @@ JSON = "json"
 _ENCRYPTED_TABLES = (
     "user_profiles", "assignments", "topic_checklists", "documents", "notes", "flashcards",
     "sessions", "messages", "study_guides", "quiz_attempts", "quiz_responses", "quiz_context",
-    "misconceptions", "learning_prequestions", "learning_self_explanations",
+    "misconceptions", "learning_prequestions", "learning_self_explanations", "tutor_saved_items",
 )
 
 ENCRYPTED: dict[str, dict[str, str]] = {
@@ -367,6 +367,9 @@ SPECS: tuple[_Spec, ...] = (
     _Spec("flashcard_sets"),
     _Spec("sessions"),
     _Spec("messages", key="session_id", parent="sessions"),
+    # The Tutor's Saved tab: after the sessions it references (row ids are
+    # preserved); 🔒 title/content re-sealed per row; `course_id` remapped.
+    _Spec("tutor_saved_items"),
     # `exam_id` (an assignment), `material_ids` (documents) and the
     # `document:<id>` source ids inside the content travel unchanged, because
     # row ids are preserved.
@@ -393,7 +396,7 @@ _OFFERING_TABLES = ("documents", "enrollments", "notes", "flashcards", "sessions
 _COURSE_TABLES = (
     "graph_nodes", "flashcard_sets", "document_folders", "learning_evidence_voids", "misconception_attempts",
     "posttest_poses", "posttest_skips", "learning_prequestions",
-    "learning_self_explanations", "document_folders",
+    "learning_self_explanations", "document_folders", "tutor_saved_items",
 )
 
 # Foreign keys between bundled tables that are not covered by a parent spec

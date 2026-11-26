@@ -117,6 +117,9 @@ interface ChatPanelProps {
    *  class material verbatim from code — a check pose, an H2 passage, a worked
    *  sibling, a reference — and so is drawn "inert" (Z08). */
   markdown?: MarkdownProfile;
+  /** An action under a settled tutor turn (the Tutor's Save, `saved_items`);
+   *  null for a turn without one. Keep it stable (Message is memoised). */
+  messageAction?: (m: ChatMsg) => React.ReactNode;
 }
 
 export function ChatPanel({
@@ -137,6 +140,7 @@ export function ChatPanel({
   footer,
   turnStyle = "bubble",
   markdown = "rich",
+  messageAction,
 }: ChatPanelProps) {
   const onPage = turnStyle === "page";
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -186,7 +190,7 @@ export function ChatPanel({
         className={styles.log}
         data-has-footer={!!footer}
       >
-        {messages.map(msg => <Message key={msg.id} m={msg} onRetry={onRetry} onPage={onPage} markdown={markdown} />)}
+        {messages.map(msg => <Message key={msg.id} m={msg} onRetry={onRetry} onPage={onPage} markdown={markdown} action={messageAction} />)}
         {streamingText !== null && streamingText !== undefined && (
           // Reuse Message/MarkdownChat exactly as settled assistant messages
           // do, so a streaming reply never styles differently from a
@@ -522,8 +526,11 @@ const Message = React.memo(function Message({
   onRetry,
   onPage,
   markdown = "rich",
+  action,
 }: {
   m: ChatMsg;
+  /** ChatPanel's `messageAction`. */
+  action?: (m: ChatMsg) => React.ReactNode;
   onRetry?: (m: ChatMsg) => void;
   /** A tutor turn sits on the page (`PageTurn`) rather than in a bubble. */
   onPage?: boolean;
@@ -539,7 +546,7 @@ const Message = React.memo(function Message({
       </div>
     );
   }
-  const body = renderMessageBody(m, isUser, markdown, onRetry);
+  const body = <>{renderMessageBody(m, isUser, markdown, onRetry)}{!isUser && !m.visuallyHidden && action?.(m)}</>;
   // In the log but not painted (`visuallyHidden`): the row's own attributes.
   const hidden = m.visuallyHidden ? { attr: "true", cls: ` ${VISUALLY_HIDDEN}` } : { attr: undefined, cls: "" };
   if (onPage && !isUser) {

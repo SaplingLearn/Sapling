@@ -1,0 +1,70 @@
+/* The Tutor's Saved tab (saved.tsx): the Save action under a tutor reply and
+   the session panel's list of what was saved. */
+
+.action {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  margin-top: var(--sp-3);
+}
+
+.save,
+.remove {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.save:disabled {
+  color: var(--text-dim);
+  cursor: default;
+}
+
+.note {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+}
+
+.list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+.item {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-4);
+  padding: var(--sp-5) var(--sp-6);
+  border-radius: var(--r-md);
+  border: 1px solid var(--border);
+}
+
+.item details {
+  flex: 1;
+  min-width: 0;
+}
+
+.title {
+  font-size: var(--fs-md);
+  font-weight: 600;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.content {
+  margin: var(--sp-3) 0 0;
+  font-size: var(--fs-md);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

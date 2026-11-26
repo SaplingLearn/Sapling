@@ -118,6 +118,7 @@ import { modalOpen } from "./modalOpen";
 import { LOOP_GOAL_MAX_TARGETS, LOOP_GOAL_TEXT_MAX, hintDenial, type Draft, type HintView } from "./loopShared";
 import { ProbePanel } from "./ProbePanel";
 import { PlanSlot, goalLocked } from "./plan/PlanV2";
+import { useSaveAction } from "./tutor/saved";
 import { CheckCard } from "./CheckCard";
 import { LoopNotices } from "./LoopNotices";
 import { ReadOnlyTranscript } from "./ReadOnlyTranscript";
@@ -288,6 +289,7 @@ export function LoopLearn() {
   const [openComplete, setOpenComplete] = useState(true); // K29: it lists every open session
   const [sessionsError, setSessionsError] = useState(false);
   const [sessionId, setSessionId] = useState<string | null>(null);
+  const saveAction = useSaveAction(sessionId); // `saved_items`: Save under each tutor reply
   const [readOnly, setReadOnly] = useState<{ id: string; topic: string; messages: ChatMsg[] } | null>(null);
   const [starting, setStarting] = useState(false);
   // A route the current view is waiting on failed (not a budget pause): the
@@ -2056,10 +2058,7 @@ export function LoopLearn() {
       continueRef={continueRef}
       checkMeRef={checkMeRef}
       teachStartRef={teachStartRef}
-      onContinue={() => {
-        setFeedbackDwellMs(null);
-        send(CONTINUE_MESSAGE);
-      }}
+      onContinue={() => { setFeedbackDwellMs(null); send(CONTINUE_MESSAGE); }}
       onCheckMe={() => void checkMe()}
       onTeachStart={(concept) => send(`Teach me about ${concept.concept_name}.`)}
     />
@@ -2146,7 +2145,7 @@ export function LoopLearn() {
     return (
       <div data-testid="loop-messages" className={styles.fill}>
         <ChatPanel
-          messages={logMessages}
+          messages={logMessages} messageAction={saveAction}
           composerRef={composerRef}
           onSend={send}
           footer={renderChatHeader(firstConcept)}
@@ -2304,7 +2303,7 @@ export function LoopLearn() {
       skillWords={graphUsesSkill(railGraph.nodes)}
       dueCount={lists.dueReviews}
       dueHref={dueHref}
-      treeHref={treeHref}
+      treeHref={treeHref} sessionId={readOnly ? null : sessionId}
       showTreeLink={allOf(!isMobile, treeVisible)}
       onHide={layout.hidePanel}
       map={railGraph.nodes.some((n) => !n.is_subject_root) ? (

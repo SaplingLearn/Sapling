@@ -47,6 +47,7 @@ export function SessionPanel({
   treeHref,
   showTreeLink,
   onHide,
+  sessionId = null,
 }: {
   plan: LoopPanelConcept[] | null;
   /** W3.1: kept GET /plan `prereq_edges` after approve (SessionPanel twin of PlanPanel). */
@@ -67,11 +68,13 @@ export function SessionPanel({
   /** False on a phone, where the TopBar carries the map link. */
   showTreeLink: boolean;
   onHide: () => void;
+  /** `saved_items`: the session whose Saved tab the rebuilt panel shows. */
+  sessionId?: string | null;
 }) {
   const boardWords = useFlag("plan_v2") === "on"; // the plan card's words (planKindLabel)
   if (useFlag("session_v2") === "on") { // Tutor redesign phase 4: one list, levels in it
     return <SessionPanelV2 plan={plan} currentNodeId={currentNodeId} skills={skills} skillWords={skillWords}
-      treeHref={treeHref} showTreeLink={showTreeLink} onHide={onHide} />;
+      treeHref={treeHref} showTreeLink={showTreeLink} onHide={onHide} sessionId={sessionId} />;
   }
   return (
     <aside data-testid="loop-rail" aria-label="Today's session" className={styles.panel}>

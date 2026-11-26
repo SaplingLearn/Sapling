@@ -36,7 +36,7 @@ Several flags change a prompt or an output schema, so their eval datasets must b
 
 ## Recommended order
 
-1. **Read-only, no eval needed:** `quiz_concept_plan`, `quiz_results_routing`, `item_reports`, `skill_ladder`, `hint_ladder`, `verdict_v2`, `wrapup_v2`, `plan_v2`, `new_session_v2`, `session_v2`, `course_page_v2`, `review_v2`, `milestones`, `just_ask`.
+1. **Read-only, no eval needed:** `quiz_concept_plan`, `quiz_results_routing`, `item_reports`, `skill_ladder`, `hint_ladder`, `verdict_v2`, `wrapup_v2`, `plan_v2`, `new_session_v2`, `session_v2`, `course_page_v2`, `review_v2`, `milestones`, `just_ask`, `saved_items`.
 2. **Safety, after copy review:** `crisis_support`.
 3. **Prompt changes, after their evals:** `loop_tutor_v2`, `segment_prequestion`, `self_explanation_prompts`, `quiz_planned_questions`, `quiz_item_gates`, then `quiz_misconceptions`.
 4. **Drafting changes, after their evals:** `varied_isomorphs`, `multi_concept_items`, `upload_prereq_edges`.
@@ -120,6 +120,12 @@ Several flags change a prompt or an output schema, so their eval datasets must b
 - **Before:** nothing. The backend refuses the origin (422) while the flag is off for the student.
 - **Watch:** sessions started per choice; tutor cost per just-ask session (every message is a model turn).
 - **Roll back:** off removes the choice and refuses new just-ask starts; open ones stay ungraded.
+
+### saved_items (Tutor redesign) — client-visible
+- **Changes:** a "Save" under each settled tutor reply keeps it (its first line as the title, the reply as the text) in the new `tutor_saved_items` table (migration 20261126055016; title and text are 🔒 columns sealed to the row; RLS bucket A; wiped and bundled with the account; cascades with its session). With `session_v2`, the session panel's head becomes two tabs, Plan and Saved (n), the Saved list opening each item and removing it; with `milestones`, a milestone's page lists what was saved in the sessions that prepared for it. `/api/learn/saved` (list, save, delete) 404s while the flag is off; a session holds at most 50.
+- **Before:** the migration is applied.
+- **Watch:** saves per session; items removed.
+- **Roll back:** off hides Save and the tab and 404s the routes; the saved rows stay.
 
 ### item_reports (A113, A123) — client-visible
 - **Changes:** students can report a check question. Two reports hold it from the whole course until staff approve or retire it in the admin check-items queue.
