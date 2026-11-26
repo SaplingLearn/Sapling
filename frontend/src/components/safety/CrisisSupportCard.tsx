@@ -17,17 +17,7 @@
 import React, { useCallback, useId, useRef, useState } from "react";
 import Dialog from "../Dialog";
 import { crisisSupportIn, type CrisisSupport, type CrisisSupportAction } from "@/lib/crisisSupport";
-
-const CARD: React.CSSProperties = {
-  background: "var(--info-soft)",
-  border: "1px solid rgba(62, 111, 138, 0.28)",
-  borderRadius: "var(--r-lg)",
-  padding: "18px 20px",
-  color: "var(--text)",
-  fontFamily: "var(--font-sans)",
-  fontSize: 14,
-  lineHeight: 1.6,
-};
+import { cn } from "@/lib/cn";
 
 const ACTION: React.CSSProperties = {
   display: "inline-flex",
@@ -77,26 +67,26 @@ export function CrisisSupportCard({
     <section
       data-testid="crisis-support-card"
       aria-labelledby={headingId}
-      style={{ ...CARD, ...style }}
+      className="bg-info-soft border border-[rgba(62,_111,_138,_0.28)] rounded-lg py-4.5 px-5 text-text font-sans text-base leading-[1.6]" style={{ ...style }}
     >
-      <h3 id={headingId} style={{ margin: "0 0 8px", fontSize: 16, fontWeight: 700, color: "var(--text)" }}>
+      <h3 id={headingId} className="mt-0 mx-0 mb-2 text-lg font-bold text-text">
         {support.title}
       </h3>
       {support.intro.map((p, i) => (
-        <p key={i} style={{ margin: "0 0 8px" }}>{p}</p>
+        <p key={i} className="mt-0 mx-0 mb-2">{p}</p>
       ))}
       {support.resources_heading && (
-        <p style={{ margin: "12px 0 6px", fontSize: 14, fontWeight: 600, color: "var(--info)" }}>
+        <p className="mt-3 mx-0 mb-1.5 text-base font-semibold text-info">
           {support.resources_heading}
         </p>
       )}
-      <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 10 }}>
+      <ul className="list-none m-0 p-0 flex flex-col gap-2.5">
         {support.resources.map((r) => (
           <li key={r.id} data-testid={`crisis-support-resource-${r.id}`}>
-            <div style={{ fontWeight: 700 }}>{r.name}</div>
-            <div style={{ color: "var(--text-dim)" }}>{r.detail}</div>
+            <div className="font-bold">{r.name}</div>
+            <div className="text-text-dim">{r.detail}</div>
             {r.actions.length > 0 && (
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6 }}>
+              <div className="flex flex-wrap gap-1.5 mt-1.5">
                 {r.actions.map((a) => <ActionLink key={a.href} action={a} />)}
               </div>
             )}
@@ -104,10 +94,10 @@ export function CrisisSupportCard({
         ))}
       </ul>
       {support.closing.map((p, i) => (
-        <p key={i} style={{ margin: i === 0 ? "14px 0 0" : "8px 0 0" }}>{p}</p>
+        <p key={i} className={cn(i === 0 ? "mt-3.5 mx-0 mb-0" : "mt-2 mx-0 mb-0")}>{p}</p>
       ))}
       {onDismiss && support.dismiss_label && (
-        <div style={{ marginTop: 16, display: "flex", justifyContent: "flex-end" }}>
+        <div className="mt-4 flex justify-end">
           <button type="button" className="btn btn--sm" data-testid="crisis-support-dismiss" onClick={onDismiss}>
             {support.dismiss_label}
           </button>

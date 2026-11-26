@@ -32,7 +32,6 @@ import { ExamTabs } from "./ExamTabs";
 import { FocusCard, FocusEmpty } from "./FocusCard";
 import { HubHeader } from "./HubHeader";
 import { assessmentsForCourse, cardsFor, upcomingOf, type FlashcardRow } from "./hubModel";
-import { SANS } from "./hubUi";
 import { QuickReviews } from "./QuickReviews";
 import { ReadinessBand } from "./ReadinessBand";
 import { RecentActivity, RecentActivityModal } from "./RecentActivity";
@@ -45,6 +44,7 @@ import { COURSE_PICKED, examPicked, useHubState, type HubState, type SetHub } fr
 import { useHubView } from "./useHubView";
 import { useConceptGraph, useCourseOutline, useStudyRecords, type StudyGraph, type StudyRecords } from "./useStudyData";
 import { useToolNav } from "./useToolNav";
+import { cn } from "@/lib/cn";
 
 export interface StudyHubProps {
   courses: EnrolledCourse[];
@@ -97,16 +97,14 @@ export function StudyHub({ courses, coursesReady = true, semester, semesterReady
 /** A student with no course this term: what the hub would show once they add one. */
 function NoCourses() {
   return (
-    <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", background: "var(--bg)", fontFamily: SANS, color: "var(--text)", padding: 32 }}>
-      <div style={{ textAlign: "center", maxWidth: 420 }}>
-        <h1 className="h-serif" style={{ margin: 0, fontSize: 42, letterSpacing: "-0.02em" }}>Study</h1>
-        <p style={{ fontSize: "var(--fs-base)", color: "var(--text-dim)" }}>Add a course to get a study roadmap, readiness for each exam, and quick reviews.</p>
+    <div className="h-full flex items-center justify-center bg-bg font-sans text-text p-8">
+      <div className="text-center max-w-105">
+        <h1 className="h-serif m-0 text-[42px] tracking-[-0.02em]">Study</h1>
+        <p className="text-base text-text-dim">Add a course to get a study roadmap, readiness for each exam, and quick reviews.</p>
       </div>
     </div>
   );
 }
-
-const HUB: React.CSSProperties = { color: "var(--text)", fontFamily: SANS, fontSize: "var(--fs-md)", lineHeight: 1.45, WebkitFontSmoothing: "antialiased" };
 
 /** The hub for one course, once its concepts are in. */
 function HubPage(props: {
@@ -161,8 +159,8 @@ function HubPage(props: {
   useFlip(readiness, view.exam?.id ?? "");
 
   return (
-    <div className={s.shell} style={{ background: "var(--bg)" }}>
-      <div className={nav.leaving ? `${s.hub} ${s.leaving}` : s.hub} style={HUB}>
+    <div className={cn(s.shell, "[background:var(--bg)]")}>
+      <div className={cn(nav.leaving ? `${s.hub} ${s.leaving}` : s.hub, "text-text font-sans text-md leading-[1.45] [-webkit-font-smoothing:antialiased]")}>
         <HubHeader courses={props.courses} courseId={cid} onPickCourse={props.onPickCourse} upcomingIn={upcomingIn}
           isMobile={isMobile} quizShown={quizShown} onTool={tool => nav.leaveTo(nav.toolHome(tool))} />
 
@@ -174,7 +172,7 @@ function HubPage(props: {
             entrance), a change of exam is tweened in place by useFlip. Positioned
             and packed to the top because useFlip measures against this box and
             tweens its height. */}
-        <section ref={readiness} aria-label="Readiness" key={cid} className={`${s.areaReady} ${s.readyGrid} ${s.paneEnter}`} style={{ position: "relative", alignContent: "start", padding: "16px 0", borderBottom: "1px solid var(--border)" }}>
+        <section ref={readiness} aria-label="Readiness" key={cid} className={cn(`${s.areaReady} ${s.readyGrid} ${s.paneEnter}`, "relative [align-content:start] py-4 px-0 border-b border-b-border")}>
           <ReadinessBand label={view.band.label} note={view.band.note} concepts={view.band.concepts} ready={view.ready}
             selectedId={view.sel?.id ?? null} level={st.lvl} onSelect={id => set({ topic: id })} onLevel={lvl => set({ lvl })} />
           {focus
@@ -194,8 +192,8 @@ function HubPage(props: {
         {/* The 40px side bleed (padding + negative margin, in the stylesheet so
             the narrow layout can drop it) gives the Quick Reviews pop-up's drop
             shadow room to fade out; it sits in the 56px column gap. */}
-        <aside aria-label="Activity" className={s.areaRail} style={{ display: "flex", flexDirection: "column" }}>
-          <section aria-label="Daily goal" style={{ display: "flex", flexDirection: "column", gap: 12, paddingBottom: 24 }}>
+        <aside aria-label="Activity" className={cn(s.areaRail, "flex flex-col")}>
+          <section aria-label="Daily goal" className="flex flex-col gap-3 pb-6">
             <DailyGoalCard daily={records.daily} onSave={records.saveGoal} />
             <QuickReviews reviews={view.reviews} courseLabel={view.label} onStart={startReviews} />
           </section>

@@ -71,7 +71,7 @@ export function ModelToggle({
 
   return (
     <div
-      style={{ position: "relative", display: "inline-block" }}
+      className="relative inline-block"
       onMouseEnter={() => setTooltip(true)}
       onMouseLeave={() => setTooltip(false)}
       onFocus={() => setTooltip(true)}
@@ -80,33 +80,11 @@ export function ModelToggle({
       <div
         role="radiogroup"
         aria-label="Tutor model"
-        style={{
-          position: "relative",
-          display: "inline-flex",
-          height: 28,
-          padding: 2,
-          alignItems: "center",
-          background: "var(--bg-subtle)",
-          border: "1px solid var(--border)",
-          borderRadius: "var(--r-full)",
-          boxSizing: "border-box",
-        }}
+        className="relative inline-flex h-7 p-0.5 items-center bg-bg-subtle border border-border rounded-[var(--r-full)] box-border"
       >
         <span
           aria-hidden
-          style={{
-            position: "absolute",
-            top: 2,
-            left: 2,
-            width: 56,
-            height: "calc(100% - 4px)",
-            borderRadius: "var(--r-full)",
-            background: active.soft,
-            border: `1px solid ${active.border}`,
-            transform: `translateX(${activeIndex * 56}px)`,
-            transition:
-              "transform var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease)",
-          }}
+          className="absolute top-0.5 left-0.5 w-14 h-[calc(100%_-_4px)] rounded-[var(--r-full)] [transition:transform_var(--dur-fast)_var(--ease),_background_var(--dur-fast)_var(--ease),_border-color_var(--dur-fast)_var(--ease)]" style={{ background: active.soft, border: `1px solid ${active.border}`, transform: `translateX(${activeIndex * 56}px)` }}
         />
         {options.map((opt) => {
           const isActive = pref === opt.value;
@@ -126,23 +104,9 @@ export function ModelToggle({
       {tooltip && (
         <div
           role="tooltip"
-          style={{
-            position: "absolute",
-            top: "calc(100% + 6px)",
-            right: 0,
-            zIndex: 60,
-            width: 240,
-            padding: 10,
-            background: "var(--bg-panel)",
-            border: "1px solid var(--border-strong)",
-            borderRadius: "var(--r-md)",
-            boxShadow: "var(--shadow-md)",
-            fontSize: 11,
-            color: "var(--text-dim)",
-            lineHeight: 1.5,
-          }}
+          className="absolute top-[calc(100%_+_6px)] right-0 z-60 w-60 p-2.5 bg-bg-panel border border-border-strong rounded-md shadow-md text-xs text-text-dim leading-[1.5]"
         >
-          <strong style={{ color: "var(--text)", display: "block", marginBottom: 4 }}>
+          <strong className="text-text block mb-1">
             Tutor model
           </strong>
           Fast is the default — lighter and snappier. Switch to Smart for stronger reasoning

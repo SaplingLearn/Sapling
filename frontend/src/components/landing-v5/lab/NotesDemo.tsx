@@ -13,7 +13,8 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
-import { LAB_TIER, LABEL } from './LabShell';
+import { LAB_TIER } from './LabShell';
+import { cn } from "@/lib/cn";
 
 const INITIAL_TITLE = 'Lecture 7 — Eigenvalues';
 const INITIAL_BODY = [
@@ -30,12 +31,6 @@ const MATCHERS: { name: string; tier: keyof typeof LAB_TIER; hit: RegExp }[] = [
   { name: 'Diagonalization', tier: 'unexplored', hit: /diagonal/ },
   { name: 'Eigenvectors', tier: 'struggling', hit: /eigenvector|independent/ },
 ];
-
-const ACTION_BTN: React.CSSProperties = {
-  padding: '9px 14px', borderRadius: 9, border: '1px solid #E0E6DA', background: '#FDFCF9',
-  ...LABEL, fontSize: 11.5, letterSpacing: '0.01em', color: '#445D22',
-  cursor: 'pointer', transition: 'all 180ms',
-};
 
 export function NotesDemo() {
   const [title, setTitle] = useState(INITIAL_TITLE);
@@ -80,16 +75,16 @@ export function NotesDemo() {
   };
 
   return (
-    <div className="ld-lab-split" style={{ display: 'grid', gridTemplateColumns: '1fr 240px', minHeight: '100%', boxSizing: 'border-box' }}>
-      <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 10, borderRight: '1px solid #ECE9DE' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+    <div className="ld-lab-split grid grid-cols-[1fr_240px] min-h-full box-border">
+      <div className="py-5 px-6 flex flex-col gap-2.5 border-r border-r-paper-100">
+        <div className="flex items-center justify-between gap-3">
           <input
             value={title}
             onChange={(e) => { setTitle(e.target.value); touchSave(); }}
             aria-label="Note title"
-            style={{ flex: 1, border: 'none', outline: 'none', background: 'transparent', fontFamily: "var(--font-aleo), 'Aleo', Georgia, serif", fontSize: 22, fontWeight: 600, color: '#191F13', padding: 0 }}
+            className="flex-1 border-0 outline-none bg-transparent font-serif text-2xl font-semibold text-moss-900 p-0"
           />
-          <span style={{ ...LABEL, fontSize: 11, letterSpacing: '0.01em', whiteSpace: 'nowrap', color: saved ? '#5a7834' : '#9FA49A' }}>
+          <span className={cn("font-sans text-xs tracking-[0.01em] whitespace-nowrap", saved ? "text-[#5a7834]" : "text-moss-300")}>
             {saved ? 'Saved' : 'Saving…'}
           </span>
         </div>
@@ -99,45 +94,44 @@ export function NotesDemo() {
           onChange={(e) => { setBody(e.target.value); touchSave(); }}
           aria-label="Note body"
           spellCheck={false}
-          style={{ flex: 1, minHeight: 190, resize: 'none', border: '1px solid #E8E5DA', borderRadius: 12, background: '#FDFCF9', padding: '14px 16px', fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif", fontSize: 14, lineHeight: 1.8, color: '#3B4233', outline: 'none' }}
+          className="flex-1 min-h-47.5 resize-none border border-paper-200 rounded-[12px] bg-bg-panel py-3.5 px-4 font-sans text-base leading-[1.8] text-moss-700 outline-none"
         />
 
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <button onClick={summarize} type="button" className="ld-labaction" style={ACTION_BTN}>Summarize</button>
-          <button onClick={extract} type="button" className="ld-labaction" style={ACTION_BTN}>Extract concepts</button>
+        <div className="flex gap-2 flex-wrap">
+          <button onClick={summarize} type="button" className="ld-labaction py-[9px] px-3.5 rounded-[9px] border border-moss-100 [background:#FDFCF9] font-sans text-[11.5px] tracking-[0.01em] text-brand-forest cursor-pointer [transition:all_180ms]">Summarize</button>
+          <button onClick={extract} type="button" className="ld-labaction py-[9px] px-3.5 rounded-[9px] border border-moss-100 [background:#FDFCF9] font-sans text-[11.5px] tracking-[0.01em] text-brand-forest cursor-pointer [transition:all_180ms]">Extract concepts</button>
           <button
             onClick={() => setSummary('Lowest-mastery linked concept is Eigenvalues (41%) — /quiz?concept=eigenvalues would open next.')}
             type="button"
-            className="ld-labaction"
-            style={ACTION_BTN}
+            className="ld-labaction py-[9px] px-3.5 rounded-[9px] border border-moss-100 [background:#FDFCF9] font-sans text-[11.5px] tracking-[0.01em] text-brand-forest cursor-pointer [transition:all_180ms]"
           >
             Generate quiz
           </button>
         </div>
 
         {summary && (
-          <div style={{ borderRadius: 11, background: '#F6F8F4', border: '1px solid #E6EAE2', padding: '13px 15px', animation: 'labIn 280ms ease both' }}>
-            <span style={{ ...LABEL, fontSize: 11, letterSpacing: '0.01em', color: '#91978B' }}>Summary</span>
-            <p style={{ margin: '6px 0 0', fontSize: 13, lineHeight: 1.65, color: '#3B4233' }}>{summary}</p>
+          <div className="rounded-[11px] bg-moss-25 border border-moss-75 py-[13px] px-[15px] [animation:labIn_280ms_ease_both]">
+            <span className="font-sans text-xs tracking-[0.01em] text-moss-400">Summary</span>
+            <p className="mt-1.5 mx-0 mb-0 text-md leading-[1.65] text-moss-700">{summary}</p>
           </div>
         )}
       </div>
 
-      <div style={{ padding: '20px 18px', background: '#F6F8F4', display: 'flex', flexDirection: 'column', gap: 10 }}>
-        <span style={{ ...LABEL, fontSize: 11, letterSpacing: '0.01em', color: '#91978B' }}>Linked concepts</span>
+      <div className="py-5 px-4.5 bg-moss-25 flex flex-col gap-2.5">
+        <span className="font-sans text-xs tracking-[0.01em] text-moss-400">Linked concepts</span>
         {busy && (
-          <span style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 12, color: '#91978B' }}>
-            <span style={{ width: 12, height: 12, borderRadius: 99, border: '2px solid #E0E6DA', borderTopColor: '#68951F', animation: 'labSpin 700ms linear infinite' }} />
+          <span className="flex items-center gap-[7px] text-sm text-moss-400">
+            <span className="w-3 h-3 rounded-[99px] border-2 border-moss-100 border-t-leaf-500 [animation:labSpin_700ms_linear_infinite]" />
             reading the note…
           </span>
         )}
         {concepts.map((c) => (
-          <span key={c.name} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 11px', borderRadius: 99, background: '#FDFCF9', border: '1px solid #E0E6DA', fontSize: 12, color: '#3B4233', animation: 'labIn 300ms ease both' }}>
-            <span style={{ width: 7, height: 7, borderRadius: 99, flex: '0 0 auto', background: LAB_TIER[c.tier] }} />
+          <span key={c.name} className="flex items-center gap-2 py-2 px-[11px] rounded-[99px] bg-bg-panel border border-moss-100 text-sm text-moss-700 [animation:labIn_300ms_ease_both]">
+            <span className="w-[7px] h-[7px] rounded-[99px] flex-[0_0_auto]" style={{ background: LAB_TIER[c.tier] }} />
             {c.name}
           </span>
         ))}
-        <span style={{ marginTop: 'auto', fontSize: 11, lineHeight: 1.6, color: '#9FA49A' }}>
+        <span className="mt-auto text-xs leading-[1.6] text-moss-300">
           {concepts.length
             ? `${concepts.length} concepts linked to your MA 242 graph.`
             : 'Concepts you extract are linked to your graph, not just tagged on the note.'}

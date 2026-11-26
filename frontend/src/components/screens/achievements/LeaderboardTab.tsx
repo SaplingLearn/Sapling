@@ -4,6 +4,7 @@ import { Toggle } from "@/components/ui";
 import { Avatar } from "@/components/Avatar";
 import { fetchLeaderboard } from "@/lib/api";
 import type { LeaderboardRow } from "@/lib/types";
+import { cn } from "@/lib/cn";
 
 type Scope = "everyone" | "friends" | "school";
 const SCOPES: { value: Scope; label: string }[] = [
@@ -28,20 +29,16 @@ const PODIUM_HEIGHT: Record<1 | 2 | 3, number> = { 1: 108, 2: 84, 3: 64 };
 
 function PodiumSpot({ row, place }: { row: LeaderboardRow; place: 1 | 2 | 3 }) {
   return (
-    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, flex: 1, minWidth: 0 }}>
+    <div className="flex flex-col items-center gap-2 flex-1 min-w-0">
       <Avatar name={row.name} size={place === 1 ? 56 : 46} />
-      <div style={{ fontSize: 12.5, fontWeight: 600, textAlign: "center", maxWidth: 110, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+      <div className="text-[12.5px] font-semibold text-center max-w-27.5 overflow-hidden text-ellipsis whitespace-nowrap">
         {row.name}
       </div>
-      <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{row.week_xp.toLocaleString()} XP</div>
+      <div className="text-xs text-text-muted">{row.week_xp.toLocaleString()} XP</div>
       <div
-        style={{
-          width: "100%", height: PODIUM_HEIGHT[place],
-          background: "var(--bg-soft)", borderRadius: "var(--r-md) var(--r-md) 0 0",
-          display: "flex", alignItems: "flex-start", justifyContent: "center", paddingTop: 8,
-        }}
+        className="w-full bg-bg-soft rounded-[var(--r-md)_var(--r-md)_0_0] flex items-start justify-center pt-2" style={{ height: PODIUM_HEIGHT[place] }}
       >
-        <span style={{ fontSize: 15, fontWeight: 700, color: "var(--text-dim)" }}>#{place}</span>
+        <span className="text-[15px] font-bold text-text-dim">#{place}</span>
       </div>
     </div>
   );
@@ -67,7 +64,7 @@ function Podium({ rows }: { rows: LeaderboardRow[] }) {
   const spots = buildPodiumSpots(rows);
   if (!spots.length) return null;
   return (
-    <div style={{ display: "flex", alignItems: "flex-end", gap: 16, padding: "8px 24px 0", marginBottom: 8 }}>
+    <div className="flex items-end gap-4 pt-2 px-6 pb-0 mb-2">
       {spots.map((s) => <PodiumSpot key={s.row.user_id} row={s.row} place={s.place} />)}
     </div>
   );
@@ -77,29 +74,25 @@ function RankRow({ row }: { row: LeaderboardRow }) {
   return (
     <div
       data-testid={row.is_you ? "leaderboard-row-you" : undefined}
-      style={{
-        display: "flex", alignItems: "center", gap: 12, padding: "10px 16px",
-        borderRadius: "var(--r-md)",
-        background: row.is_you ? "var(--accent-soft)" : "transparent",
-      }}
+      className={cn("flex items-center gap-3 py-2.5 px-4 rounded-md", row.is_you ? "bg-accent-soft" : "bg-transparent")}
     >
-      <div style={{ width: 24, textAlign: "center", fontSize: 12.5, fontWeight: 600, color: "var(--text-dim)" }}>
+      <div className="w-6 text-center text-[12.5px] font-semibold text-text-dim">
         {row.rank}
       </div>
       <Avatar name={row.name} size={30} />
-      <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 8 }}>
-        <span style={{ fontSize: 13, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+      <div className="flex-1 min-w-0 flex items-center gap-2">
+        <span className="text-md font-medium overflow-hidden text-ellipsis whitespace-nowrap">
           {row.name}
         </span>
         {row.is_you && <span className="chip chip--accent">You</span>}
       </div>
-      <div style={{ fontSize: 11.5, color: "var(--text-muted)", whiteSpace: "nowrap" }}>
+      <div className="text-[11.5px] text-text-muted whitespace-nowrap">
         {row.stage} · Lvl {row.level}
       </div>
-      <div style={{ fontSize: 11.5, color: "var(--text-muted)", whiteSpace: "nowrap", width: 64, textAlign: "right" }}>
+      <div className="text-[11.5px] text-text-muted whitespace-nowrap w-16 text-right">
         {row.streak} day{row.streak === 1 ? "" : "s"}
       </div>
-      <div style={{ fontSize: 13, fontWeight: 600, width: 76, textAlign: "right" }}>
+      <div className="text-md font-semibold w-19 text-right">
         {row.week_xp.toLocaleString()} XP
       </div>
     </div>
@@ -145,30 +138,30 @@ export function LeaderboardTab({ userId }: { userId: string }) {
   const viewerRow = you ?? rows.find((r) => r.is_you) ?? null;
 
   return (
-    <div style={{ padding: "24px 32px" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18, gap: 12, flexWrap: "wrap" }}>
+    <div className="py-6 px-8">
+      <div className="flex justify-between items-center mb-4.5 gap-3 flex-wrap">
         <Toggle options={SCOPES} value={scope} onChange={setScope} />
         {resetsAt && (
-          <div style={{ fontSize: 11.5, color: "var(--text-muted)" }}>
+          <div className="text-[11.5px] text-text-muted">
             Weekly board {formatResetTimer(resetsAt)}
           </div>
         )}
       </div>
 
       {loading && (
-        <div style={{ padding: "60px 32px", textAlign: "center", color: "var(--text-muted)", fontSize: 13 }}>
+        <div className="py-15 px-8 text-center text-text-muted text-md">
           Loading leaderboard…
         </div>
       )}
 
       {!loading && error && (
-        <div style={{ padding: "60px 32px", textAlign: "center", color: "var(--text-muted)", fontSize: 13 }}>
+        <div className="py-15 px-8 text-center text-text-muted text-md">
           Couldn&apos;t load the leaderboard right now.
         </div>
       )}
 
       {!loading && !error && rows.length === 0 && (
-        <div style={{ padding: "60px 32px", textAlign: "center", color: "var(--text-muted)", fontSize: 13 }}>
+        <div className="py-15 px-8 text-center text-text-muted text-md">
           No XP earned in this group yet this week.
         </div>
       )}
@@ -176,7 +169,7 @@ export function LeaderboardTab({ userId }: { userId: string }) {
       {!loading && !error && rows.length > 0 && (
         <>
           <Podium rows={podiumRows} />
-          <div className="card" style={{ padding: 8 }}>
+          <div className="card p-2">
             {rows.map((row) => <RankRow key={row.user_id} row={row} />)}
           </div>
           {viewerRow && !rows.some((r) => r.user_id === viewerRow.user_id) && (
@@ -186,7 +179,7 @@ export function LeaderboardTab({ userId }: { userId: string }) {
             // contiguity is an implementation detail of the current
             // unpaginated backend, not something the LeaderboardRow type
             // guarantees (xp_events already grew pagination once, #Task 8).
-            <div className="card" style={{ padding: 8, marginTop: 10 }}>
+            <div className="card p-2 mt-2.5">
               <RankRow row={viewerRow} />
             </div>
           )}

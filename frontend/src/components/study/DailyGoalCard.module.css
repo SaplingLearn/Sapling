@@ -1,3 +1,4 @@
+@layer components {
 /* Daily Goal card (Study hub rail). Token sizes only: the card matches the
    side cards on Dashboard / Calendar (.card, 16px 18px, label-micro). */
 
@@ -271,4 +272,6 @@
   text-align: right;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+
 }

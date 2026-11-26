@@ -44,6 +44,7 @@ import {
 } from "@/lib/useAdminAnalytics";
 import type { CostDayPoint, LlmCostGroupBy } from "@/lib/types";
 import { sentenceCase } from "@/lib/sentenceCase";
+import { cn } from "@/lib/cn";
 
 const PRESETS = [
   { days: 7, label: "7d" },
@@ -53,16 +54,6 @@ const PRESETS = [
 
 const GROUPS: LlmCostGroupBy[] = ["feature", "user", "model"];
 
-const th: React.CSSProperties = {
-  textAlign: "left", fontSize: 13, 
-  color: "var(--text-muted)", padding: "4px 8px" };
-const td: React.CSSProperties = {
-  fontSize: 13, padding: "6px 8px", borderTop: "1px solid var(--border)",
-};
-const tdNum: React.CSSProperties = { ...td, textAlign: "right", fontVariantNumeric: "tabular-nums" };
-// Panel tables keep a minWidth so columns stay readable; this wrapper lets
-// narrow viewports scroll the table instead of overflowing the page.
-const scrollX: React.CSSProperties = { overflowX: "auto" };
 // Tiny nonzero rates floor at "<0.1%" so the tooltip/table never reads as
 // "no errors" when errors exist.
 const formatPct = (v: number) => (v > 0 && v < 0.1 ? "<0.1%" : `${Number(v.toFixed(1))}%`);
@@ -82,7 +73,7 @@ function Stat({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div>
       <div className="label-micro">{label}</div>
-      <div style={{ fontSize: 24, fontWeight: 600 }}>{value}</div>
+      <div className="text-[24px] font-semibold">{value}</div>
     </div>
   );
 }
@@ -100,26 +91,26 @@ function DaySeriesTable({ label, columns }: {
   if (dates.length === 0) return null;
   const byDate = columns.map((c) => new Map(c.points.map((p) => [p.date, p.value])));
   return (
-    <details style={{ marginTop: 12 }}>
-      <summary style={{ fontSize: 12, color: "var(--text-muted)", cursor: "pointer" }}>View data: {label}</summary>
-      <div style={scrollX}>
-        <table style={{ borderCollapse: "collapse", minWidth: 280, marginTop: 8 }}>
+    <details className="mt-3">
+      <summary className="text-sm text-text-muted cursor-pointer">View data: {label}</summary>
+      <div className="overflow-x-auto">
+        <table className="border-collapse min-w-70 mt-2">
           <thead>
             <tr>
-              <th style={th}>Date</th>
+              <th className="text-left text-md text-text-muted py-1 px-2">Date</th>
               {columns.map((c) => (
-                <th key={c.label} style={{ ...th, textAlign: "right" }}>{c.label}</th>
+                <th key={c.label} className="text-md text-text-muted py-1 px-2 text-right">{c.label}</th>
               ))}
             </tr>
           </thead>
           <tbody>
             {dates.map((date) => (
               <tr key={date}>
-                <td style={td}>{date}</td>
+                <td className="text-md py-1.5 px-2 border-t border-t-border">{date}</td>
                 {columns.map((c, i) => {
                   const value = byDate[i].get(date);
                   return (
-                    <td key={c.label} style={tdNum}>
+                    <td key={c.label} className="text-md py-1.5 px-2 border-t border-t-border text-right tabular-nums">
                       {value == null ? "—" : (c.format ?? String)(value)}
                     </td>
                   );
@@ -140,17 +131,17 @@ function Panel<T>({ title, query, testid, children }: {
   children: (data: T) => React.ReactNode;
 }) {
   return (
-    <section className="card" style={{ padding: "var(--pad-lg)" }}>
-      <h2 className="h-serif" style={{ fontSize: 18, marginBottom: 12 }}>{title}</h2>
+    <section className="card p-(--pad-lg)">
+      <h2 className="h-serif text-xl mb-3">{title}</h2>
       {query.error && !query.data ? (
-        <div role="alert" style={{ display: "flex", alignItems: "center", gap: 12, color: "var(--text-muted)", fontSize: 13 }}>
+        <div role="alert" className="flex items-center gap-3 text-text-muted text-md">
           <span>{query.error}</span>
           <button data-testid={`${testid}-retry`} className="btn btn--sm" onClick={query.reload}>
             Try again
           </button>
         </div>
       ) : !query.data ? (
-        <div style={{ color: "var(--text-muted)", fontSize: 13 }}>Loading…</div>
+        <div className="text-text-muted text-md">Loading…</div>
       ) : (
         children(query.data)
       )}
@@ -167,7 +158,7 @@ export function AdminAnalytics() {
     return (
       <div>
         <TopBar breadcrumb="Admin" title="Analytics" subtitle="Staff only" />
-        <div style={{ padding: 60, textAlign: "center", color: "var(--text-muted)" }}>
+        <div className="p-15 text-center text-text-muted">
           You don&apos;t have admin access.
         </div>
       </div>
@@ -225,10 +216,7 @@ function AnalyticsBody() {
         actions={<span className="chip chip--err">Staff only</span>}
       />
       <AdminReauthBanner />
-      <div style={{
-        padding: "12px 32px", borderBottom: "1px solid var(--border)",
-        display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap",
-      }}>
+      <div className="py-3 px-8 border-b border-b-border flex gap-2 items-center flex-wrap">
         <span className="label-micro">Range</span>
         {PRESETS.map((p) => (
           <button
@@ -247,9 +235,9 @@ function AnalyticsBody() {
           value={range.from.slice(0, 10)}
           max={range.to.slice(0, 10)}
           onChange={(e) => setCustom("from", e.target.value)}
-          style={{ fontSize: 13 }}
+          className="text-md"
         />
-        <span style={{ color: "var(--text-muted)", fontSize: 13 }}>→</span>
+        <span className="text-text-muted text-md">→</span>
         <input
           data-testid="admin-analytics-range-to"
           type="date"
@@ -257,13 +245,13 @@ function AnalyticsBody() {
           value={range.to.slice(0, 10)}
           min={range.from.slice(0, 10)}
           onChange={(e) => setCustom("to", e.target.value)}
-          style={{ fontSize: 13 }}
+          className="text-md"
         />
       </div>
 
-      <div style={{ padding: "24px 32px", display: "grid", gap: 16 }}>
+      <div className="py-6 px-8 grid gap-4">
         {/* Headline stats — type carries the hierarchy, no card chrome. */}
-        <div style={{ display: "flex", gap: 40, flexWrap: "wrap", padding: "4px 2px" }}>
+        <div className="flex gap-10 flex-wrap py-1 px-0.5">
           <Stat label="Total events" value={summary.data ? summary.data.total_events : "—"} />
           <Stat label="Active users" value={summary.data ? summary.data.distinct_active_users : "—"} />
           <Stat label="LLM cost" value={cost.data ? `$${cost.data.totals.cost_usd.toFixed(2)}` : "—"} />
@@ -285,23 +273,23 @@ function AnalyticsBody() {
                   ariaLabel="Events per day"
                 />
                 <DaySeriesTable label="events per day" columns={[{ label: "Events", points: eventPoints }]} />
-                <h3 className="label-micro" style={{ margin: "16px 0 8px" }}>Top event types</h3>
+                <h3 className="label-micro mt-4 mx-0 mb-2">Top event types</h3>
                 <CategoryBars
                   rows={d.by_event_type.slice(0, 8).map((r) => ({ label: r.event_type, value: r.count }))}
                   ariaLabel="Top event types"
                 />
-                <details style={{ marginTop: 12 }}>
-                  <summary style={{ fontSize: 12, color: "var(--text-muted)", cursor: "pointer" }}>View data: event types</summary>
-                  <div style={scrollX}>
-                    <table style={{ borderCollapse: "collapse", minWidth: 360, marginTop: 8 }}>
+                <details className="mt-3">
+                  <summary className="text-sm text-text-muted cursor-pointer">View data: event types</summary>
+                  <div className="overflow-x-auto">
+                    <table className="border-collapse min-w-90 mt-2">
                       <thead>
-                        <tr><th style={th}>Event type</th><th style={{ ...th, textAlign: "right" }}>Count</th></tr>
+                        <tr><th className="text-left text-md text-text-muted py-1 px-2">Event type</th><th className="text-md text-text-muted py-1 px-2 text-right">Count</th></tr>
                       </thead>
                       <tbody>
                         {d.by_event_type.map((row) => (
                           <tr key={row.event_type}>
-                            <td style={td}>{row.event_type}</td>
-                            <td style={tdNum}>{row.count}</td>
+                            <td className="text-md py-1.5 px-2 border-t border-t-border">{row.event_type}</td>
+                            <td className="text-md py-1.5 px-2 border-t border-t-border text-right tabular-nums">{row.count}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -330,10 +318,7 @@ function AnalyticsBody() {
               <button
                 data-testid={`admin-analytics-users-sort-${key}`}
                 onClick={() => toggleUserSort(key)}
-                style={{
-                  font: "inherit", color: "inherit", textTransform: "inherit", letterSpacing: "inherit",
-                  fontWeight: userSort.key === key ? 700 : "inherit",
-                }}
+                className={cn("[font-family:inherit] [font-size:inherit] [font-style:inherit] [font-variant:inherit] [font-stretch:inherit] [line-height:inherit] text-inherit [text-transform:inherit] [letter-spacing:inherit]", userSort.key === key ? "font-bold" : "[font-weight:inherit]")}
               >
                 {label}{userSort.key === key ? (userSort.desc ? " ↓" : " ↑") : ""}
               </button>
@@ -342,25 +327,25 @@ function AnalyticsBody() {
               <>
                 {d.truncated && <TruncatedBadge />}
                 {d.users.length === 0 ? (
-                  <div style={{ color: "var(--text-muted)", fontSize: 13 }}>No user activity in this range.</div>
+                  <div className="text-text-muted text-md">No user activity in this range.</div>
                 ) : (
-                  <div style={scrollX}>
-                    <table style={{ borderCollapse: "collapse", minWidth: 520 }}>
+                  <div className="overflow-x-auto">
+                    <table className="border-collapse min-w-130">
                       <thead>
                         <tr>
-                          <th style={th}>User</th>
-                          <th style={{ ...th, textAlign: "right" }}>{sortBtn("events", "Events")}</th>
-                          <th style={{ ...th, textAlign: "right" }}>{sortBtn("cost", "LLM cost")}</th>
-                          <th style={{ ...th, textAlign: "right" }}>{sortBtn("tokens", "Tokens")}</th>
+                          <th className="text-left text-md text-text-muted py-1 px-2">User</th>
+                          <th className="text-md text-text-muted py-1 px-2 text-right">{sortBtn("events", "Events")}</th>
+                          <th className="text-md text-text-muted py-1 px-2 text-right">{sortBtn("cost", "LLM cost")}</th>
+                          <th className="text-md text-text-muted py-1 px-2 text-right">{sortBtn("tokens", "Tokens")}</th>
                         </tr>
                       </thead>
                       <tbody>
                         {users.map((u) => (
                           <tr key={u.user_id}>
-                            <td style={{ ...td, fontFamily: "var(--font-code)", fontSize: 12 }}>{u.user_id}</td>
-                            <td style={tdNum}>{u.event_count}</td>
-                            <td style={tdNum}>${u.llm_cost_usd.toFixed(4)}</td>
-                            <td style={tdNum}>{u.total_tokens}</td>
+                            <td className="py-1.5 px-2 border-t border-t-border font-code text-sm">{u.user_id}</td>
+                            <td className="text-md py-1.5 px-2 border-t border-t-border text-right tabular-nums">{u.event_count}</td>
+                            <td className="text-md py-1.5 px-2 border-t border-t-border text-right tabular-nums">${u.llm_cost_usd.toFixed(4)}</td>
+                            <td className="text-md py-1.5 px-2 border-t border-t-border text-right tabular-nums">{u.total_tokens}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -386,7 +371,7 @@ function AnalyticsBody() {
             const callPoints = dayMetric((p) => p.calls);
             return (
             <>
-              <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 12 }}>
+              <div className="flex gap-1.5 items-center mb-3">
                 <span className="label-micro">Group by</span>
                 {GROUPS.map((g) => (
                   <button
@@ -408,7 +393,7 @@ function AnalyticsBody() {
                 ariaLabel="Cost per day"
                 format={(v) => `$${v.toFixed(2)}`}
               />
-              <h3 className="label-micro" style={{ margin: "16px 0 8px" }}>Tokens per day</h3>
+              <h3 className="label-micro mt-4 mx-0 mb-2">Tokens per day</h3>
               <DayLineChart
                 points={tokenPoints}
                 color="var(--brand-forest, #445D22)"
@@ -424,44 +409,44 @@ function AnalyticsBody() {
                   { label: "Cost", points: costPoints, format: (v) => `$${v.toFixed(2)}` },
                 ]}
               />
-              <h3 className="label-micro" style={{ margin: "16px 0 8px" }}>Cost by {sentenceCase(d.group_by)}</h3>
+              <h3 className="label-micro mt-4 mx-0 mb-2">Cost by {sentenceCase(d.group_by)}</h3>
               <CategoryBars
                 rows={d.rows.slice(0, 8).map((r) => ({ label: r.key || "(none)", value: r.cost_usd }))}
                 ariaLabel={`Cost by ${sentenceCase(d.group_by)}`}
                 format={(v) => `$${v.toFixed(4)}`}
               />
-              <details style={{ marginTop: 12 }}>
-                <summary style={{ fontSize: 12, color: "var(--text-muted)", cursor: "pointer" }}>View data: cost breakdown</summary>
-                <div style={scrollX}>
-                  <table style={{ borderCollapse: "collapse", minWidth: 560, marginTop: 8 }}>
+              <details className="mt-3">
+                <summary className="text-sm text-text-muted cursor-pointer">View data: cost breakdown</summary>
+                <div className="overflow-x-auto">
+                  <table className="border-collapse min-w-140 mt-2">
                     <thead>
                       <tr>
-                        <th style={th}>{sentenceCase(d.group_by)}</th>
-                        <th style={{ ...th, textAlign: "right" }}>Calls</th>
-                        <th style={{ ...th, textAlign: "right" }}>Prompt</th>
-                        <th style={{ ...th, textAlign: "right" }}>Completion</th>
-                        <th style={{ ...th, textAlign: "right" }}>Tokens</th>
-                        <th style={{ ...th, textAlign: "right" }}>Cost</th>
+                        <th className="text-left text-md text-text-muted py-1 px-2">{sentenceCase(d.group_by)}</th>
+                        <th className="text-md text-text-muted py-1 px-2 text-right">Calls</th>
+                        <th className="text-md text-text-muted py-1 px-2 text-right">Prompt</th>
+                        <th className="text-md text-text-muted py-1 px-2 text-right">Completion</th>
+                        <th className="text-md text-text-muted py-1 px-2 text-right">Tokens</th>
+                        <th className="text-md text-text-muted py-1 px-2 text-right">Cost</th>
                       </tr>
                     </thead>
                     <tbody>
                       {d.rows.map((row) => (
                         <tr key={row.key}>
-                          <td style={td}>{row.key || "(none)"}</td>
-                          <td style={tdNum}>{row.calls}</td>
-                          <td style={tdNum}>{row.prompt_tokens}</td>
-                          <td style={tdNum}>{row.completion_tokens}</td>
-                          <td style={tdNum}>{row.total_tokens}</td>
-                          <td style={tdNum}>${row.cost_usd.toFixed(4)}</td>
+                          <td className="text-md py-1.5 px-2 border-t border-t-border">{row.key || "(none)"}</td>
+                          <td className="text-md py-1.5 px-2 border-t border-t-border text-right tabular-nums">{row.calls}</td>
+                          <td className="text-md py-1.5 px-2 border-t border-t-border text-right tabular-nums">{row.prompt_tokens}</td>
+                          <td className="text-md py-1.5 px-2 border-t border-t-border text-right tabular-nums">{row.completion_tokens}</td>
+                          <td className="text-md py-1.5 px-2 border-t border-t-border text-right tabular-nums">{row.total_tokens}</td>
+                          <td className="text-md py-1.5 px-2 border-t border-t-border text-right tabular-nums">${row.cost_usd.toFixed(4)}</td>
                         </tr>
                       ))}
                       <tr>
-                        <td style={{ ...td, fontWeight: 600 }}>Total</td>
-                        <td style={{ ...tdNum, fontWeight: 600 }}>{d.totals.calls}</td>
-                        <td style={{ ...tdNum, fontWeight: 600 }}>{d.totals.prompt_tokens}</td>
-                        <td style={{ ...tdNum, fontWeight: 600 }}>{d.totals.completion_tokens}</td>
-                        <td style={{ ...tdNum, fontWeight: 600 }}>{d.totals.total_tokens}</td>
-                        <td style={{ ...tdNum, fontWeight: 600 }}>${d.totals.cost_usd.toFixed(4)}</td>
+                        <td className="text-md py-1.5 px-2 border-t border-t-border font-semibold">Total</td>
+                        <td className="text-md py-1.5 px-2 border-t border-t-border text-right tabular-nums font-semibold">{d.totals.calls}</td>
+                        <td className="text-md py-1.5 px-2 border-t border-t-border text-right tabular-nums font-semibold">{d.totals.prompt_tokens}</td>
+                        <td className="text-md py-1.5 px-2 border-t border-t-border text-right tabular-nums font-semibold">{d.totals.completion_tokens}</td>
+                        <td className="text-md py-1.5 px-2 border-t border-t-border text-right tabular-nums font-semibold">{d.totals.total_tokens}</td>
+                        <td className="text-md py-1.5 px-2 border-t border-t-border text-right tabular-nums font-semibold">${d.totals.cost_usd.toFixed(4)}</td>
                       </tr>
                     </tbody>
                   </table>
@@ -510,7 +495,7 @@ function AnalyticsBody() {
                 color="var(--err, #a83a3a)"
                 ariaLabel="Errors per day"
               />
-              <h3 className="label-micro" style={{ margin: "16px 0 8px" }}>Error rate</h3>
+              <h3 className="label-micro mt-4 mx-0 mb-2">Error rate</h3>
               {ratePoints.length ? (
                 <>
                   {/* A truncated summary scan undercounts the denominator, so
@@ -524,7 +509,7 @@ function AnalyticsBody() {
                   />
                 </>
               ) : (
-                <div style={{ color: "var(--text-muted)", fontSize: 13 }}>
+                <div className="text-text-muted text-md">
                   {summary.error
                     ? "Couldn't load the events-per-day series, so the error rate can't be computed."
                     : summary.data && rangesAgree
@@ -539,31 +524,31 @@ function AnalyticsBody() {
                   { label: "Error rate", points: ratePoints, format: formatPct },
                 ]}
               />
-              <div style={{ height: 12 }} />
+              <div className="h-3" />
               {d.errors.length === 0 ? (
-                <div style={{ color: "var(--text-muted)", fontSize: 13 }}>No errors in this range. 🎉</div>
+                <div className="text-text-muted text-md">No errors in this range. 🎉</div>
               ) : (
-                <div style={scrollX}>
-                  <table style={{ borderCollapse: "collapse", minWidth: 640 }}>
+                <div className="overflow-x-auto">
+                  <table className="border-collapse min-w-160">
                     <thead>
                       <tr>
-                        <th style={th}>Time</th>
-                        <th style={th}>Type</th>
-                        <th style={th}>Method</th>
-                        <th style={th}>Path</th>
-                        <th style={{ ...th, textAlign: "right" }}>Status</th>
-                        <th style={{ ...th, textAlign: "right" }}>Duration</th>
+                        <th className="text-left text-md text-text-muted py-1 px-2">Time</th>
+                        <th className="text-left text-md text-text-muted py-1 px-2">Type</th>
+                        <th className="text-left text-md text-text-muted py-1 px-2">Method</th>
+                        <th className="text-left text-md text-text-muted py-1 px-2">Path</th>
+                        <th className="text-md text-text-muted py-1 px-2 text-right">Status</th>
+                        <th className="text-md text-text-muted py-1 px-2 text-right">Duration</th>
                       </tr>
                     </thead>
                     <tbody>
                       {d.errors.map((e, i) => (
                         <tr key={e.request_id ?? `${e.created_at}-${i}`}>
-                          <td style={{ ...td, whiteSpace: "nowrap" }}>{e.created_at ?? "—"}</td>
-                          <td style={td}>{e.event_type}</td>
-                          <td style={td}>{e.method ?? "—"}</td>
-                          <td style={{ ...td, fontFamily: "var(--font-code)", fontSize: 12 }}>{e.path ?? "—"}</td>
-                          <td style={tdNum}>{e.status_code ?? "—"}</td>
-                          <td style={tdNum}>{e.duration_ms != null ? `${e.duration_ms.toFixed(1)}ms` : "—"}</td>
+                          <td className="text-md py-1.5 px-2 border-t border-t-border whitespace-nowrap">{e.created_at ?? "—"}</td>
+                          <td className="text-md py-1.5 px-2 border-t border-t-border">{e.event_type}</td>
+                          <td className="text-md py-1.5 px-2 border-t border-t-border">{e.method ?? "—"}</td>
+                          <td className="py-1.5 px-2 border-t border-t-border font-code text-sm">{e.path ?? "—"}</td>
+                          <td className="text-md py-1.5 px-2 border-t border-t-border text-right tabular-nums">{e.status_code ?? "—"}</td>
+                          <td className="text-md py-1.5 px-2 border-t border-t-border text-right tabular-nums">{e.duration_ms != null ? `${e.duration_ms.toFixed(1)}ms` : "—"}</td>
                         </tr>
                       ))}
                     </tbody>

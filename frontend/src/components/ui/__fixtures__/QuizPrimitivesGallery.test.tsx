@@ -4,6 +4,7 @@ import { render, screen, cleanup, fireEvent } from "@testing-library/react";
 import React from "react";
 import { __resetScrollLocksForTests } from "@/lib/useScrollLock";
 import { QuizPrimitivesGallery } from "./QuizPrimitivesGallery";
+import { twStyle } from "@/test-utils/twStyle";
 
 afterEach(() => {
   cleanup();
@@ -19,7 +20,7 @@ describe("QuizPrimitivesGallery", () => {
   it("mounts every primitive, with the course accent bound on the root", () => {
     const { container } = render(<QuizPrimitivesGallery />);
     const root = container.querySelector<HTMLElement>(".quiz-gallery")!;
-    expect(root.style.getPropertyValue("--quiz-accent")).toBe("#7b4b99");
+    expect(twStyle(root).getPropertyValue("--quiz-accent")).toBe("#7b4b99");
 
     expect(container.querySelectorAll(".btn").length).toBeGreaterThan(6);
     expect(container.querySelectorAll(".seg").length).toBe(4);

@@ -1,3 +1,4 @@
+@layer components {
 /* The review: one centred column, and the one place on the page that is
    allowed colour. Every colour is an app token (globals.css) or a tint of one:
    the mastery-state three for how a card was rated, the course's own colour
@@ -130,4 +131,6 @@
    the flip and the strip do not depend on it. */
 @media (prefers-reduced-motion: reduce) {
   .cardInner, .segment, .progressFill, .rate { transition: none; }
+}
+
 }

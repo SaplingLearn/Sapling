@@ -85,8 +85,7 @@ export function QuizPrimitivesGallery() {
 
   return (
     <div
-      className="quiz-gallery"
-      style={{ "--quiz-accent": COURSE_COLOR } as React.CSSProperties}
+      className="quiz-gallery [--quiz-accent:#7b4b99]"
     >
       <h1 className="h-serif quiz-gallery__title">Quiz primitives</h1>
 

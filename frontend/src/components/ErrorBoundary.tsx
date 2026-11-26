@@ -56,32 +56,22 @@ export function ErrorFallback({ error, reset }: { error: Error; reset: () => voi
   return (
     <div
       data-testid="error-fallback"
-      style={{
-        minHeight: "100vh",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: "var(--pad-xl)",
-        background: "var(--bg)",
-      }}
+      className="min-h-screen flex items-center justify-center p-(--pad-xl) bg-bg"
     >
       <div
-        style={{
-          maxWidth: 480, width: "100%",
-          padding: "var(--pad-xl) 12px", textAlign: "center",
-        }}
+        className="max-w-120 w-full py-(--pad-xl) px-3 text-center"
       >
-        <div className="label-micro" style={{ marginBottom: 12 }}>Something interrupted us</div>
-        <div className="h-serif" style={{ fontSize: 28, marginBottom: 12, lineHeight: 1.2 }}>{headline}</div>
-        <div className="body-serif" style={{ fontSize: 15, color: "var(--text-dim)", marginBottom: 18, lineHeight: 1.6 }}>
+        <div className="label-micro mb-3">Something interrupted us</div>
+        <div className="h-serif text-[28px] mb-3 leading-[1.2]">{headline}</div>
+        <div className="body-serif text-[15px] text-text-dim mb-4.5 leading-[1.6]">
           {subtext}
         </div>
         {error.message && (
-          <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 20, wordBreak: "break-word", fontFamily: "var(--font-code)" }}>
+          <div className="text-xs text-text-muted mb-5 [word-break:break-word] font-code">
             {error.message}
           </div>
         )}
-        <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
+        <div className="flex gap-2.5 justify-center">
           <button className="btn btn--primary" onClick={reset}>Try again</button>
           {typeof window !== "undefined" && (
             <a

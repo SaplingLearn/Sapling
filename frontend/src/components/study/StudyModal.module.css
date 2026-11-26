@@ -1,3 +1,4 @@
+@layer components {
 /* The Study hub's centred modal (Exams and Deadlines).
 
    The overlay is fixed to the viewport and portalled to <body>: the old
@@ -70,4 +71,6 @@
 
 @media (prefers-reduced-motion: reduce) {
   .backdrop, .dialog { animation: none; }
+}
+
 }

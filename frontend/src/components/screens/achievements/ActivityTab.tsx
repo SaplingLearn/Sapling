@@ -2,6 +2,7 @@
 import React from "react";
 import { fetchActivity } from "@/lib/api";
 import type { ActivityData } from "@/lib/types";
+import { cn } from "@/lib/cn";
 
 // Scales `values` into pixel heights for a bar chart of height `chartH`.
 // A value of 0 still gets a 4px stub so the bar (and its tooltip target)
@@ -26,18 +27,16 @@ export function computeGoalY(dailyGoalXp: number, scaleMax: number, chartH: numb
 
 function StatTile({ label, value, sub, testId }: { label: string; value: React.ReactNode; sub?: string; testId?: string }) {
   return (
-    <div className="card" style={{ padding: "16px 18px" }}>
+    <div className="card py-4 px-4.5">
       <div className="label-micro">{label}</div>
-      <div data-testid={testId} style={{ fontSize: 22, fontWeight: 600, marginTop: 4 }}>{value}</div>
-      {sub && <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>{sub}</div>}
+      <div data-testid={testId} className="text-2xl font-semibold mt-1">{value}</div>
+      {sub && <div className="text-xs text-text-muted mt-0.5">{sub}</div>}
     </div>
   );
 }
 
 const WEEK_CHART_H = 140;
 const TREND_CHART_H = 100;
-const BAR_W = 28;
-const TREND_BAR_W = 14;
 
 function WeeklyChart({ week, dailyGoalXp }: { week: ActivityData["week"]; dailyGoalXp: number }) {
   const xps = week.map((d) => d.xp);
@@ -47,35 +46,32 @@ function WeeklyChart({ week, dailyGoalXp }: { week: ActivityData["week"]; dailyG
   const todayIdx = week.length - 1;
 
   return (
-    <div className="card" style={{ padding: "18px 20px", marginBottom: 16 }}>
-      <div className="label-micro" style={{ marginBottom: 14 }}>This week</div>
-      <div style={{ position: "relative", height: WEEK_CHART_H, paddingTop: 4 }}>
+    <div className="card py-4.5 px-5 mb-4">
+      <div className="label-micro mb-3.5">This week</div>
+      <div className="relative h-35 pt-1">
         <div
-          style={{
-            position: "absolute", left: 0, right: 0, top: goalY,
-            borderTop: "1.5px dashed var(--text-muted)",
-          }}
+          className="absolute left-0 right-0 [border-top:1.5px_dashed_var(--text-muted)]" style={{ top: goalY }}
           aria-hidden
         />
-        <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 6 }}>
+        <div className="absolute inset-0 flex items-end justify-between gap-1.5">
           {week.map((d, i) => {
             const metGoal = d.xp >= dailyGoalXp && dailyGoalXp > 0;
             const isToday = i === todayIdx;
             const bg = isToday ? "var(--accent)" : metGoal ? "var(--brand-forest)" : "var(--bg-soft)";
             return (
-              <div key={d.date} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, flex: 1 }}>
+              <div key={d.date} className="flex flex-col items-center gap-1.5 flex-1">
                 <div
                   title={`${d.day} ${d.date}: ${d.xp} XP`}
-                  style={{ width: BAR_W, height: heights[i], background: bg, borderRadius: "var(--r-xs) var(--r-xs) 0 0" }}
+                  className="w-7 rounded-[var(--r-xs)_var(--r-xs)_0_0]" style={{ height: heights[i], background: bg }}
                 />
               </div>
             );
           })}
         </div>
       </div>
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 6, marginTop: 8 }}>
+      <div className="flex justify-between gap-1.5 mt-2">
         {week.map((d) => (
-          <div key={d.date} style={{ flex: 1, textAlign: "center", fontSize: 11, color: "var(--text-muted)" }}>
+          <div key={d.date} className="flex-1 text-center text-xs text-text-muted">
             {d.day}
           </div>
         ))}
@@ -89,24 +85,21 @@ function TrendChart({ trend }: { trend: ActivityData["trend"] }) {
   const max = Math.max(...xps, 1);
   const heights = barHeights(xps, max, TREND_CHART_H);
   return (
-    <div className="card" style={{ padding: "18px 20px" }}>
-      <div className="label-micro" style={{ marginBottom: 14 }}>Last 8 weeks</div>
-      <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 6, height: TREND_CHART_H }}>
+    <div className="card py-4.5 px-5">
+      <div className="label-micro mb-3.5">Last 8 weeks</div>
+      <div className="flex items-end justify-between gap-1.5 h-25">
         {trend.map((t, i) => (
-          <div key={`${t.label}-${i}`} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, flex: 1 }}>
+          <div key={`${t.label}-${i}`} className="flex flex-col items-center gap-1.5 flex-1">
             <div
               title={`${t.label}: ${t.xp} XP`}
-              style={{
-                width: TREND_BAR_W, height: heights[i], borderRadius: "3px 3px 0 0",
-                background: i === trend.length - 1 ? "var(--accent)" : "var(--bg-soft)",
-              }}
+              className={cn("w-3.5 [border-radius:3px_3px_0_0]", i === trend.length - 1 ? "bg-accent" : "bg-bg-soft")} style={{ height: heights[i] }}
             />
           </div>
         ))}
       </div>
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 6, marginTop: 8 }}>
+      <div className="flex justify-between gap-1.5 mt-2">
         {trend.map((t, i) => (
-          <div key={`${t.label}-lbl-${i}`} style={{ flex: 1, textAlign: "center", fontSize: 10, color: "var(--text-muted)" }}>
+          <div key={`${t.label}-lbl-${i}`} className="flex-1 text-center text-2xs text-text-muted">
             {t.label}
           </div>
         ))}
@@ -136,7 +129,7 @@ export function ActivityTab({ userId }: { userId: string }) {
 
   if (loading) {
     return (
-      <div style={{ padding: "60px 32px", textAlign: "center", color: "var(--text-muted)", fontSize: 13 }}>
+      <div className="py-15 px-8 text-center text-text-muted text-md">
         Loading activity…
       </div>
     );
@@ -144,7 +137,7 @@ export function ActivityTab({ userId }: { userId: string }) {
 
   if (error || !data) {
     return (
-      <div style={{ padding: "60px 32px", textAlign: "center", color: "var(--text-muted)", fontSize: 13 }}>
+      <div className="py-15 px-8 text-center text-text-muted text-md">
         Couldn&apos;t load activity right now.
       </div>
     );
@@ -153,8 +146,8 @@ export function ActivityTab({ userId }: { userId: string }) {
   const weekAllZero = data.week.every((d) => d.xp === 0);
 
   return (
-    <div style={{ padding: "24px 32px" }}>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 14, marginBottom: 16 }}>
+    <div className="py-6 px-8">
+      <div className="grid grid-cols-[repeat(4,_1fr)] gap-3.5 mb-4">
         <StatTile testId="activity-week-total" label="Week total" value={`${data.tiles.week_total} XP`} />
         <StatTile label="Daily average" value={`${data.tiles.daily_avg} XP`} />
         <StatTile label="Best day" value={`${data.tiles.best_day} XP`} sub={data.tiles.best_day_label || undefined} />
@@ -163,7 +156,7 @@ export function ActivityTab({ userId }: { userId: string }) {
 
       <WeeklyChart week={data.week} dailyGoalXp={data.daily_goal_xp} />
       {weekAllZero && (
-        <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 16, marginTop: -8 }}>
+        <div className="text-sm text-text-muted mb-4 -mt-2">
           No XP earned this week yet — study sessions and quizzes will show up here.
         </div>
       )}

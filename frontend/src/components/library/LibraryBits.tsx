@@ -9,9 +9,8 @@ import React from "react";
 import type { DocFolder } from "@/lib/types";
 import type { EnrolledCourse } from "@/lib/api";
 import { courseLabel } from "./libraryModel";
-import {
-  FolderIcon, Glyph, MENU_HEADING, MENU_IN, MENU_OUT, MENU_SURFACE,
-} from "./primitives";
+import { FolderIcon, Glyph } from "./primitives";
+import { cn } from "@/lib/cn";
 
 /**
  * The selection bar's entrance and exit. The same curves the Library already
@@ -75,12 +74,7 @@ export function BulkBarReveal({ open, children }: { open: boolean; children: Rea
     <div
       data-testid="library-bulk-reveal"
       data-phase={phase}
-      style={{
-        // The column is the full width, as the bar alone was (LibraryBody's
-        // stack sizes its grid the same way).
-        display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gridTemplateRows: "1fr",
-        ...(moving ? { animation: `sapBulkRow${dir} ${ms}ms ${ease} both` } : null),
-      }}
+      className="grid grid-cols-[minmax(0,_1fr)] grid-rows-[1fr]" style={{ ...(moving ? { animation: `sapBulkRow${dir} ${ms}ms ${ease} both` } : null) }}
     >
       {/* The clip is what lets the row close past the bar's own height; a
           clipping grid item may shrink to 0, so no min-height is needed. */}
@@ -125,87 +119,51 @@ export function BulkBar(props: BulkBarProps) {
     : deleteConfirm ? "Click Again to Delete" : "Move to Trash";
 
   return (
-    <div data-testid="library-bulk-bar" style={{
-      marginTop: 12, display: "flex", alignItems: "center", gap: 10,
-      padding: "8px 8px 8px 16px", background: "#E6EDDC", color: "#1A1814",
-      borderRadius: 12, position: "relative", zIndex: 5,
-    }}>
-      <span style={{ fontWeight: 700 }}>{count} Selected</span>
-      <span style={{ flex: 1 }} />
+    <div data-testid="library-bulk-bar" className="mt-3 flex items-center gap-2.5 pt-2 pr-2 pb-2 pl-4 bg-[#E6EDDC] text-ink-800 rounded-[12px] relative z-5">
+      <span className="font-bold">{count} Selected</span>
+      <span className="flex-1" />
 
       {!isTrash && (
-        <div style={{ position: "relative" }}>
+        <div className="relative">
           <button
-            className="sapHoverChipOn"
+            className="sapHoverChipOn inline-flex items-center gap-1.5 h-8.5 py-0 px-3 border-0 rounded-[8px] [background:#C9DCB2] text-leaf-800 [font-family:inherit] [font-style:inherit] [font-variant:inherit] [font-stretch:inherit] [line-height:inherit] text-base font-semibold cursor-pointer"
             onClick={() => onMenu(!menuOpen)}
-            style={{
-              display: "inline-flex", alignItems: "center", gap: 6, height: 34, padding: "0 12px",
-              border: 0, borderRadius: 8, background: "#C9DCB2", color: "#2F4417",
-              font: "inherit", fontSize: 14, fontWeight: 600, cursor: "pointer",
-            }}
           >
             Move To
             <Glyph name="chevronDown" size={10} />
           </button>
           {menuOpen && (
-            <div data-testid="library-bulk-menu" style={{
-              position: "absolute", right: 0, top: 40, width: 240, color: "#1A1814",
-              zIndex: 6, maxHeight: 320, overflowY: "auto", ...MENU_SURFACE,
-              // It hangs from the Move To button, so it grows from that corner.
-              transformOrigin: "top right", animation: menuClosing ? MENU_OUT : MENU_IN,
-            }}>
-              <span style={MENU_HEADING}>Course</span>
+            <div data-testid="library-bulk-menu" className={cn("absolute right-0 top-10 w-60 text-ink-800 z-6 max-h-80 overflow-y-auto bg-bg-panel border border-[rgba(42,39,31,0.14)] rounded-[12px] [box-shadow:0_14px_36px_rgba(25,37,11,0.16)] p-1.5 flex flex-col gap-px [transform-origin:top_right]", menuClosing ? "[animation:sapMenuOut_130ms_cubic-bezier(0.4,_0,_1,_1)_both]" : "[animation:sapMenuIn_170ms_cubic-bezier(0.2,_0.7,_0.2,_1)_both]")}>
+              <span className="pt-1.5 px-2.5 pb-1 font-sans text-md text-text-muted">Course</span>
               {courses.map(c => (
                 <button
                   key={c.course_id}
-                  className="sapHoverMenu"
+                  className="sapHoverMenu flex items-center gap-2.5 py-2 px-2.5 border-0 rounded-[8px] [background:transparent] [font-family:inherit] [font-weight:inherit] [font-style:inherit] [font-variant:inherit] [font-stretch:inherit] [line-height:inherit] text-base text-left cursor-pointer"
                   onClick={() => onMoveCourse(c.course_id)}
-                  style={{
-                    display: "flex", alignItems: "center", gap: 10, padding: "8px 10px",
-                    border: 0, borderRadius: 8, background: "transparent", font: "inherit",
-                    fontSize: 14, textAlign: "left", cursor: "pointer",
-                  }}
                 >
-                  <span style={{
-                    width: 9, height: 9, borderRadius: "50%",
-                    background: c.color || "transparent",
-                    border: c.color ? "0" : "1.5px dashed #8A8372", boxSizing: "border-box",
-                  }} />
+                  <span className={cn("w-[9px] h-[9px] rounded-[50%] box-border", c.color ? "border-0" : "border-[1.5px] border-dashed border-ink-400")} style={{ background: c.color || "transparent" }} />
                   {courseLabel(c)} · {c.course_name}
                 </button>
               ))}
               <button
-                className="sapHoverMenu"
+                className="sapHoverMenu flex items-center gap-2.5 py-2 px-2.5 border-0 rounded-[8px] [background:transparent] [font-family:inherit] [font-weight:inherit] [font-style:inherit] [font-variant:inherit] [font-stretch:inherit] [line-height:inherit] text-base text-left cursor-pointer"
                 onClick={() => onMoveCourse(null)}
-                style={{
-                  display: "flex", alignItems: "center", gap: 10, padding: "8px 10px",
-                  border: 0, borderRadius: 8, background: "transparent", font: "inherit",
-                  fontSize: 14, textAlign: "left", cursor: "pointer",
-                }}
               >
-                <span style={{
-                  width: 9, height: 9, borderRadius: "50%", background: "transparent",
-                  border: "1.5px dashed #8A8372", boxSizing: "border-box",
-                }} />
+                <span className="w-[9px] h-[9px] rounded-[50%] bg-transparent border-[1.5px] border-dashed border-ink-400 box-border" />
                 No Course
               </button>
 
               {/* The second group sits a little lower, as the design draws it. */}
               {folders.length > 0 && (
-                <span style={{ ...MENU_HEADING, padding: "8px 10px 4px" }}>Folder</span>
+                <span className="font-sans text-md text-text-muted pt-2 px-2.5 pb-1">Folder</span>
               )}
               {folders.map(f => {
                 const c = courses.find(x => x.course_id === f.course_id);
                 return (
                   <button
                     key={f.id}
-                    className="sapHoverMenu"
+                    className="sapHoverMenu flex items-center gap-2.5 py-2 px-2.5 border-0 rounded-[8px] [background:transparent] [font-family:inherit] [font-weight:inherit] [font-style:inherit] [font-variant:inherit] [font-stretch:inherit] [line-height:inherit] text-base text-left cursor-pointer"
                     onClick={() => onMoveFolder(f.id)}
-                    style={{
-                      display: "flex", alignItems: "center", gap: 10, padding: "8px 10px",
-                      border: 0, borderRadius: 8, background: "transparent", font: "inherit",
-                      fontSize: 14, textAlign: "left", cursor: "pointer",
-                    }}
                   >
                     <FolderIcon size={14} />
                     {c ? `${courseLabel(c)} / ${f.name}` : f.name}
@@ -219,33 +177,19 @@ export function BulkBar(props: BulkBarProps) {
 
       {isTrash && (
         <button
-          className="sapHoverChipOn"
+          className="sapHoverChipOn h-8.5 py-0 px-3 border-0 rounded-[8px] [background:#C9DCB2] text-leaf-800 [font-family:inherit] [font-style:inherit] [font-variant:inherit] [font-stretch:inherit] [line-height:inherit] text-md font-bold whitespace-nowrap cursor-pointer"
           onClick={onRestore}
-          style={{
-            height: 34, padding: "0 12px", border: 0, borderRadius: 8, background: "#C9DCB2",
-            color: "#2F4417", font: "inherit", fontSize: 13, fontWeight: 700,
-            whiteSpace: "nowrap", cursor: "pointer",
-          }}
         >Restore</button>
       )}
 
       <button
         onClick={onDelete}
-        style={{
-          height: 34, padding: "0 12px", border: 0, borderRadius: 8,
-          background: deleteConfirm ? "#A8443F" : "#F1D9D6",
-          color: deleteConfirm ? "#FFFFFF" : "#A8443F",
-          font: "inherit", fontSize: 14, fontWeight: 600, cursor: "pointer",
-        }}
+        className={cn("h-8.5 py-0 px-3 border-0 rounded-[8px] [font-family:inherit] [font-style:inherit] [font-variant:inherit] [font-stretch:inherit] [line-height:inherit] text-base font-semibold cursor-pointer", deleteConfirm ? "bg-[#A8443F]" : "bg-[#F1D9D6]", deleteConfirm ? "text-accent-fg" : "text-[#A8443F]")}
       >{deleteLabel}</button>
 
       <button
         onClick={onClear}
-        style={{
-          height: 34, padding: "0 12px", border: 0, borderRadius: 8, background: "transparent",
-          color: "#445D22", font: "inherit", fontSize: 14, fontWeight: 600, cursor: "pointer",
-          textDecoration: "underline", textUnderlineOffset: 3,
-        }}
+        className="h-8.5 py-0 px-3 border-0 rounded-[8px] bg-transparent text-brand-forest [font-family:inherit] [font-style:inherit] [font-variant:inherit] [font-stretch:inherit] [line-height:inherit] text-base font-semibold cursor-pointer underline [text-underline-offset:3px]"
       >Clear</button>
     </div>
   );
@@ -264,31 +208,20 @@ export function EmptyState({
   title, body, hasQuery, scoped, onClearSearch, onSearchAll,
 }: EmptyStateProps) {
   return (
-    <div data-testid="library-empty" style={{
-      maxWidth: 440, margin: "72px auto 0", textAlign: "center", display: "flex",
-      flexDirection: "column", alignItems: "center", gap: 10,
-    }}>
-      <div style={{ fontFamily: "var(--font-serif)", fontSize: 22, fontWeight: 600 }}>{title}</div>
-      <div style={{ fontSize: 15, color: "#3F3B31", textWrap: "pretty" }}>{body}</div>
-      <div style={{ display: "flex", gap: 10, marginTop: 6 }}>
+    <div data-testid="library-empty" className="max-w-110 mt-18 mx-auto mb-0 text-center flex flex-col items-center gap-2.5">
+      <div className="font-serif text-2xl font-semibold">{title}</div>
+      <div className="text-[15px] text-ink-600 text-pretty">{body}</div>
+      <div className="flex gap-2.5 mt-1.5">
         {hasQuery && (
           <button
             onClick={onClearSearch}
-            style={{
-              height: 38, padding: "0 16px", border: "1.5px solid #445D22",
-              background: "transparent", color: "#445D22", borderRadius: 10,
-              font: "inherit", fontSize: 14, fontWeight: 700, cursor: "pointer",
-            }}
+            className="h-9.5 py-0 px-4 border-[1.5px] border-brand-forest bg-transparent text-brand-forest rounded-md [font-family:inherit] [font-style:inherit] [font-variant:inherit] [font-stretch:inherit] [line-height:inherit] text-base font-bold cursor-pointer"
           >Clear Search</button>
         )}
         {scoped && (
           <button
             onClick={onSearchAll}
-            style={{
-              height: 38, padding: "0 16px", border: 0, background: "#445D22",
-              color: "#FFFFFF", borderRadius: 10, font: "inherit", fontSize: 14,
-              fontWeight: 700, cursor: "pointer",
-            }}
+            className="h-9.5 py-0 px-4 border-0 bg-brand-forest text-accent-fg rounded-md [font-family:inherit] [font-style:inherit] [font-variant:inherit] [font-stretch:inherit] [line-height:inherit] text-base font-bold cursor-pointer"
           >Search All Documents</button>
         )}
       </div>
@@ -298,23 +231,13 @@ export function EmptyState({
 
 export function UndoToast({ message, onUndo }: { message: string; onUndo?: () => void }) {
   return (
-    <div role="status" data-testid="library-toast" style={{
-      position: "absolute", left: "50%", bottom: 28, transform: "translateX(-50%)",
-      display: "flex", alignItems: "center", gap: 16, padding: "10px 10px 10px 18px",
-      background: "#1A1814", color: "#FAF8F3", borderRadius: 12,
-      boxShadow: "0 12px 30px rgba(25,37,11,0.24)", fontSize: 15,
-      whiteSpace: "nowrap", zIndex: 20,
-    }}>
+    <div role="status" data-testid="library-toast" className="absolute left-1/2 bottom-7 [transform:translateX(-50%)] flex items-center gap-4 pt-2.5 pr-2.5 pb-2.5 pl-4.5 bg-ink-800 text-ink-0 rounded-[12px] [box-shadow:0_12px_30px_rgba(25,37,11,0.24)] text-[15px] whitespace-nowrap z-20">
       <span>{message}</span>
       {onUndo && (
         <button
           data-testid="library-toast-undo"
           onClick={onUndo}
-          style={{
-            height: 32, padding: "0 12px", border: 0, borderRadius: 8,
-            background: "rgba(250,248,243,0.14)", color: "#D9E7C4",
-            font: "inherit", fontSize: 14, fontWeight: 700, cursor: "pointer",
-          }}
+          className="h-8 py-0 px-3 border-0 rounded-[8px] bg-[rgba(250,248,243,0.14)] text-leaf-100 [font-family:inherit] [font-style:inherit] [font-variant:inherit] [font-stretch:inherit] [line-height:inherit] text-base font-bold cursor-pointer"
         >Undo</button>
       )}
     </div>

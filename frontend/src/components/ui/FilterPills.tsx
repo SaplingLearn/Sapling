@@ -1,6 +1,7 @@
 "use client";
 import React from "react";
 import { Pill } from "../Pill";
+import { cn } from "@/lib/cn";
 
 // Shared wrapping filter-group control (family "b"): a row of selectable pills
 // that wraps to multiple lines. Use for "All" + N dynamic filters (categories,
@@ -24,8 +25,8 @@ export function FilterPills<T extends string>({
 }) {
   return (
     <div
-      className={className}
-      style={{ display: "flex", gap, flexWrap: "wrap", ...style }}
+      className={cn(className, "flex flex-wrap")}
+      style={{ gap, ...style }}
     >
       {options.map((o) => (
         <Pill

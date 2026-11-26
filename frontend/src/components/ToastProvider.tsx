@@ -101,50 +101,20 @@ function ToastStack({ toasts, onDismiss }: { toasts: Toast[]; onDismiss: (id: nu
     <div
       aria-live="polite"
       aria-atomic="true"
-      style={{
-        position: "fixed",
-        top: 16,
-        right: 16,
-        display: "flex",
-        flexDirection: "column",
-        gap: 8,
-        zIndex: 1000,
-        pointerEvents: "none",
-        maxWidth: "calc(100vw - 32px)",
-      }}
+      className="fixed top-4 right-4 flex flex-col gap-2 z-1000 pointer-events-none max-w-[calc(100vw_-_32px)]"
     >
       {toasts.map(t => (
         <div
           key={t.id}
-          className="fade-in"
+          className="fade-in pointer-events-auto py-2.5 px-3 rounded-md border border-current shadow-md text-md font-medium flex items-start gap-2.5 min-w-55 max-w-90"
           role="status"
-          style={{
-            pointerEvents: "auto",
-            padding: "10px 12px",
-            borderRadius: "var(--r-md)",
-            border: "1px solid",
-            boxShadow: "var(--shadow-md)",
-            fontSize: 13,
-            fontWeight: 500,
-            display: "flex",
-            alignItems: "flex-start",
-            gap: 10,
-            minWidth: 220,
-            maxWidth: 360,
-            ...variantStyles(t.variant),
-          }}
+          style={{ ...variantStyles(t.variant) }}
         >
-          <div style={{ flex: 1, minWidth: 0 }}>{t.content}</div>
+          <div className="flex-1 min-w-0">{t.content}</div>
           <button
             onClick={() => onDismiss(t.id)}
             aria-label="Dismiss notification"
-            style={{
-              color: "inherit",
-              opacity: 0.6,
-              fontSize: 16,
-              lineHeight: 1,
-              padding: 2,
-            }}
+            className="text-inherit opacity-60 text-lg leading-none p-0.5"
           >
             ×
           </button>

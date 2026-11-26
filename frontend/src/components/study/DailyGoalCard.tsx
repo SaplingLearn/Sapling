@@ -20,15 +20,13 @@ import type { StudyDaily, StudyDay } from "@/lib/studyApi";
 import s from "./DailyGoalCard.module.css";
 import { GOAL_MAX, GOAL_MIN, PRESETS, dayBar, goalStats, type GoalStats } from "./dailyGoalModel";
 import { fmtDow } from "./studyModel";
+import { cn } from "@/lib/cn";
 
 const ACTIVITIES = [
   { key: "quiz", label: "Quiz", color: "#7A4A78" },
   { key: "flashcards", label: "Flashcards", color: "var(--brand-forest-bright)" },
   { key: "tutor", label: "Tutor", color: "#B8873F" },
 ] as const;
-
-/** Figures use the display face, as the Dashboard's (`.h-serif`) do. */
-const SERIF = "var(--font-display)";
 
 /** "Fri" from a YYYY-MM-DD day. */
 const dow = (date: string) => fmtDow(date).split(",")[0];
@@ -156,7 +154,7 @@ function CustomRow({ edit, rowRef, inputRef }: { edit: GoalEdit; rowRef: RowRef;
 function Figure({ stats, onEdit, targetRef }: { stats: GoalStats; onEdit: () => void; targetRef: React.RefObject<HTMLButtonElement | null> }) {
   return (
     <div className={s.figure}>
-      <span style={{ fontFamily: SERIF, fontSize: "var(--fs-2xl)", fontWeight: 600, lineHeight: 1, color: "var(--text)" }}>{stats.done}</span>
+      <span className="font-display text-2xl font-semibold leading-none text-text">{stats.done}</span>
       <span className={s.of}>of</span>
       <button ref={targetRef} type="button" className={s.target} onClick={onEdit}
         aria-label={`Daily goal: ${stats.goal} minutes. Change daily goal`} title="Change daily goal">
@@ -208,7 +206,7 @@ function ActivityRows({ today, goal }: { today: StudyDay | undefined; goal: numb
             <div key={a.key} className={s.row}>
               <span className={s.rowLabel}><span className={s.dot} style={{ background: a.color }} />{a.label}</span>
               <span className={s.track}><span className={s.fill} style={{ width: `${Math.min(100, (min / goal) * 100)}%`, background: a.color }} /></span>
-              <span className={s.min} style={{ color: min > 0 ? "var(--text)" : "var(--text-muted)" }}>{min} min</span>
+              <span className={cn(s.min, min > 0 ? "text-text" : "text-text-muted")}>{min} min</span>
             </div>
           );
         })}

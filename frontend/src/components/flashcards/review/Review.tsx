@@ -190,9 +190,9 @@ export function Review({ deck, accent, fromHome, onRated, onDeleted, onAllSets, 
     return (
       <div className={rv.stage}>
         <div className={rv.message}>
-          <div className="h-serif" style={{ fontSize: "var(--fs-2xl)", color: "var(--text)" }}>No cards left here</div>
-          <div style={{ marginTop: 6 }}>Every card in this deck was deleted.</div>
-          <button type="button" className="btn btn--primary" style={{ marginTop: 16 }} onClick={onAllSets}>Back to all sets</button>
+          <div className="h-serif text-2xl text-text">No cards left here</div>
+          <div className="mt-1.5">Every card in this deck was deleted.</div>
+          <button type="button" className="btn btn--primary mt-4" onClick={onAllSets}>Back to all sets</button>
         </div>
       </div>
     );

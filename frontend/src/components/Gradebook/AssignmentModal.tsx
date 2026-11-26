@@ -16,6 +16,7 @@ import {
   parsePercent,
   parsePoints,
 } from "./assignmentDraft";
+import { cn } from "@/lib/cn";
 
 export interface AssignmentDraft {
   title: string;
@@ -93,20 +94,17 @@ function TitleField({ titleRef, title, touched, patch, onBlur }: {
   const missing = touched && !title.trim();
   return (
     <label>
-      Title <span style={{ color: "var(--err)" }}>*</span>
+      Title <span className="text-err">*</span>
       <input
         ref={titleRef}
         data-testid="gradebook-assignment-title"
         value={title}
         onChange={(e) => patch({ title: e.target.value })}
         onBlur={onBlur}
-        style={{
-          width: "100%", padding: 6, borderRadius: 6,
-          border: `1px solid ${missing ? "var(--err)" : "var(--border)"}`,
-        }}
+        className={cn("w-full p-1.5 rounded-sm", missing ? "border border-err" : "border border-border")}
       />
       {missing && (
-        <span style={{ fontSize: 11, color: "var(--err)", marginTop: 3, display: "block" }}>
+        <span className="text-xs text-err mt-[3px] block">
           Required
         </span>
       )}
@@ -126,13 +124,10 @@ function DueDateField({ dueDate, invalid, patch }: {
         type="date"
         value={dueDate ?? ""}
         onChange={(e) => patch({ due_date: e.target.value || null })}
-        style={{
-          width: "100%", padding: 6, borderRadius: 6,
-          border: `1px solid ${invalid ? "var(--err)" : "var(--border)"}`,
-        }}
+        className={cn("w-full p-1.5 rounded-sm", invalid ? "border border-err" : "border border-border")}
       />
       {invalid && (
-        <span style={{ fontSize: 11, color: "var(--err)", marginTop: 3, display: "block" }}>
+        <span className="text-xs text-err mt-[3px] block">
           Invalid date
         </span>
       )}
@@ -151,35 +146,19 @@ function CurveSection({ draft, patch, curveOpen, onToggle }: {
       <button
         type="button"
         onClick={onToggle}
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 6,
-          background: "none",
-          border: 0,
-          padding: "4px 0",
-          cursor: "pointer",
-          fontFamily: "var(--font-sans)",
-          fontSize: 13,
-          color: "var(--accent)",
-          fontWeight: 500,
-        }}
+        className="flex items-center gap-1.5 [background:none] border-0 py-1 px-0 cursor-pointer font-sans text-md text-accent font-medium"
       >
-        <span style={{
-          display: "inline-block",
-          transition: "transform 0.15s",
-          transform: curveOpen ? "rotate(0deg)" : "rotate(-90deg)",
-        }}>▾</span>
+        <span className={cn("inline-block [transition:transform_0.15s]", curveOpen ? "[transform:rotate(0deg)]" : "[transform:rotate(-90deg)]")}>▾</span>
         Bell Curve
       </button>
       {curveOpen && (
-        <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
-          <p style={{ margin: 0, fontSize: 11, color: "var(--text-dim)", lineHeight: 1.5 }}>
+        <div className="grid gap-2 mt-2">
+          <p className="m-0 text-xs text-text-dim leading-[1.5]">
             A bell curve adjusts your score based on class performance.
             Enter the statistics your professor posted after this exam.
           </p>
-          <div style={{ display: "flex", gap: 8 }}>
-            <label style={{ flex: 1 }}>
+          <div className="flex gap-2">
+            <label className="flex-1">
               Class Average (%)
               <input
                 type="number"
@@ -189,10 +168,10 @@ function CurveSection({ draft, patch, curveOpen, onToggle }: {
                 placeholder="e.g. 68"
                 value={formatPercent(draft.curve_class_mean)}
                 onChange={(e) => patch({ curve_class_mean: parsePercent(e.target.value) })}
-                style={{ width: "100%", padding: 6, border: "1px solid var(--border)", borderRadius: 6 }}
+                className="w-full p-1.5 border border-border rounded-sm"
               />
             </label>
-            <label style={{ flex: 1 }}>
+            <label className="flex-1">
               Std Dev (%)
               <input
                 type="number"
@@ -202,15 +181,15 @@ function CurveSection({ draft, patch, curveOpen, onToggle }: {
                 placeholder="e.g. 12"
                 value={formatPercent(draft.curve_class_sd)}
                 onChange={(e) => patch({ curve_class_sd: parsePercent(e.target.value) })}
-                style={{ width: "100%", padding: 6, border: "1px solid var(--border)", borderRadius: 6 }}
+                className="w-full p-1.5 border border-border rounded-sm"
               />
             </label>
           </div>
-          <p style={{ margin: 0, fontSize: 11, color: "var(--text-muted)" }}>
+          <p className="m-0 text-xs text-text-muted">
             Override course curve policy for this assignment only (optional):
           </p>
-          <div style={{ display: "flex", gap: 8 }}>
-            <label style={{ flex: 1 }}>
+          <div className="flex gap-2">
+            <label className="flex-1">
               Avg maps to (%)
               <input
                 type="number"
@@ -220,10 +199,10 @@ function CurveSection({ draft, patch, curveOpen, onToggle }: {
                 placeholder="Course default"
                 value={formatPercent(draft.curve_avg_target)}
                 onChange={(e) => patch({ curve_avg_target: parsePercent(e.target.value) })}
-                style={{ width: "100%", padding: 6, border: "1px solid var(--border)", borderRadius: 6 }}
+                className="w-full p-1.5 border border-border rounded-sm"
               />
             </label>
-            <label style={{ flex: 1 }}>
+            <label className="flex-1">
               Grade per SD (%)
               <input
                 type="number"
@@ -233,7 +212,7 @@ function CurveSection({ draft, patch, curveOpen, onToggle }: {
                 placeholder="Course default"
                 value={formatPercent(draft.curve_sd_delta)}
                 onChange={(e) => patch({ curve_sd_delta: parsePercent(e.target.value) })}
-                style={{ width: "100%", padding: 6, border: "1px solid var(--border)", borderRadius: 6 }}
+                className="w-full p-1.5 border border-border rounded-sm"
               />
             </label>
           </div>
@@ -241,8 +220,7 @@ function CurveSection({ draft, patch, curveOpen, onToggle }: {
             <button
               type="button"
               onClick={() => patch(CLEARED_CURVE)}
-              style={{ fontSize: 11, color: "var(--err)", background: "none", border: 0,
-                padding: 0, cursor: "pointer", textAlign: "left" }}
+              className="text-xs text-err [background:none] border-0 p-0 cursor-pointer text-left"
             >
               Remove curve from this assignment
             </button>
@@ -263,11 +241,7 @@ function ModalFooter({ showDelete, saving, canSave, onDelete, onCancel, onSave }
 }) {
   return (
     <div
-      style={{
-        marginTop: 16, paddingTop: 12, borderTop: "1px solid var(--border)",
-        display: "flex", flexWrap: "wrap", gap: 8,
-        justifyContent: "space-between", alignItems: "center",
-      }}
+      className="mt-4 pt-3 border-t border-t-border flex flex-wrap gap-2 justify-between items-center"
     >
       <div>
         {showDelete && (
@@ -275,13 +249,13 @@ function ModalFooter({ showDelete, saving, canSave, onDelete, onCancel, onSave }
             type="button"
             disabled={saving}
             onClick={onDelete}
-            style={{ color: "var(--err)" }}
+            className="text-err"
           >
             Delete
           </button>
         )}
       </div>
-      <div style={{ display: "flex", gap: 8 }}>
+      <div className="flex gap-2">
         <button type="button" onClick={onCancel}>Cancel</button>
         <Button
           variant="primary"
@@ -325,7 +299,7 @@ export function AssignmentModal({
       padding="20px"
       initialFocusRef={titleRef}
     >
-      <div style={{ display: "grid", gap: 10 }}>
+      <div className="grid gap-2.5">
         <TitleField
           titleRef={titleRef}
           title={draft.title}
@@ -338,7 +312,7 @@ export function AssignmentModal({
           <select
             value={draft.category_id ?? ""}
             onChange={(e) => patch({ category_id: e.target.value || null })}
-            style={{ width: "100%", padding: 6, border: "1px solid var(--border)", borderRadius: 6 }}
+            className="w-full p-1.5 border border-border rounded-sm"
           >
             <option value="">Uncategorized</option>
             {categories.map((c) => (
@@ -346,23 +320,23 @@ export function AssignmentModal({
             ))}
           </select>
         </label>
-        <div style={{ display: "flex", gap: 8 }}>
-          <label style={{ flex: 1 }}>
+        <div className="flex gap-2">
+          <label className="flex-1">
             Earned
             <input
               type="number"
               value={draft.points_earned ?? ""}
               onChange={(e) => patch({ points_earned: parsePoints(e.target.value) })}
-              style={{ width: "100%", padding: 6, border: "1px solid var(--border)", borderRadius: 6 }}
+              className="w-full p-1.5 border border-border rounded-sm"
             />
           </label>
-          <label style={{ flex: 1 }}>
+          <label className="flex-1">
             Total
             <input
               type="number"
               value={draft.points_possible ?? ""}
               onChange={(e) => patch({ points_possible: parsePoints(e.target.value) })}
-              style={{ width: "100%", padding: 6, border: "1px solid var(--border)", borderRadius: 6 }}
+              className="w-full p-1.5 border border-border rounded-sm"
             />
           </label>
         </div>
@@ -373,7 +347,7 @@ export function AssignmentModal({
             value={draft.notes ?? ""}
             onChange={(e) => patch({ notes: e.target.value || null })}
             rows={2}
-            style={{ width: "100%", padding: 6, border: "1px solid var(--border)", borderRadius: 6 }}
+            className="w-full p-1.5 border border-border rounded-sm"
           />
         </label>
         {/* Bell Curve section */}

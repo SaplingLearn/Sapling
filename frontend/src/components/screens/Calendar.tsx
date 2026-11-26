@@ -1,4 +1,5 @@
 "use client";
+import { PanelModal } from "@/components/ui/PanelModal";
 import React from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { AnimatePresence, motion, MotionGlobalConfig, useReducedMotion } from "framer-motion";
@@ -12,7 +13,6 @@ import { IS_TEST_MODE } from "@/lib/testMode";
 if (IS_TEST_MODE) MotionGlobalConfig.skipAnimations = true;
 import { TopBar } from "../TopBar";
 import { Icon } from "../Icon";
-import { useScrollLock } from "@/lib/useScrollLock";
 import { Toggle } from "@/components/ui";
 import { CustomSelect } from "../CustomSelect";
 import { DocumentUploadModal } from "../DocumentUploadModal";
@@ -38,6 +38,7 @@ import {
 import { now } from "@/lib/testMode";
 import { humanizeError } from "@/lib/errorMessage";
 import { CALENDAR_ERROR_PARAM, calendarConnectError } from "@/lib/calendarConnect";
+import { cn } from "@/lib/cn";
 
 type View = "month" | "week" | "day" | "table";
 
@@ -370,34 +371,23 @@ export function Calendar() {
 // Mirrors the Gradebook course ErrorBanner: what went wrong + a retry.
 function LoadErrorBanner({ message, onRetry }: { message: string; onRetry: () => void }) {
   return (
-    <div style={{ padding: "20px 32px" }}>
+    <div className="py-5 px-8">
       <div
         role="alert"
         data-testid="calendar-load-error"
-        style={{
-          padding: "20px 24px",
-          borderRadius: "var(--r-md)",
-          background: "var(--err-soft)",
-          border: "1px solid color-mix(in oklab, var(--err) 20%, transparent)",
-          display: "flex",
-          gap: 16,
-          alignItems: "center",
-          justifyContent: "space-between",
-          flexWrap: "wrap",
-        }}
+        className="py-5 px-6 rounded-md bg-err-soft border border-[color-mix(in_oklab,_var(--err)_20%,_transparent)] flex gap-4 items-center justify-between flex-wrap"
       >
         <div>
-          <div style={{ fontWeight: 600, color: "var(--err)", marginBottom: 4 }}>
+          <div className="font-semibold text-err mb-1">
             We couldn&apos;t load your calendar.
           </div>
-          <div style={{ fontSize: 13, color: "var(--text-dim)" }}>{message}</div>
+          <div className="text-md text-text-dim">{message}</div>
         </div>
         <button
           type="button"
-          className="btn btn--primary"
+          className="btn btn--primary py-2 px-4"
           data-testid="calendar-load-retry"
           onClick={onRetry}
-          style={{ padding: "8px 16px" }}
         >
           Try again
         </button>
@@ -412,63 +402,29 @@ function GoogleEventsModal({
   events: GoogleEvent[];
   onClose: () => void;
 }) {
-  // This modal only exists while it's open, so the lock is unconditional.
-  useScrollLock(true);
-
-  React.useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
-    window.addEventListener("keydown", onKey);
-    return () => {
-      window.removeEventListener("keydown", onKey);
-    };
-  }, [onClose]);
-
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      onClick={onClose}
-      style={{
-        position: "fixed", inset: 0, zIndex: 120,
-        background: "rgba(25, 37, 11,0.45)",
-        display: "flex", alignItems: "center", justifyContent: "center", padding: 24,
-      }}
-    >
-      <div
-        onClick={e => e.stopPropagation()}
-        style={{
-          background: "var(--bg)", borderRadius: "var(--r-lg)",
-          border: "1px solid var(--border)", maxWidth: 640, width: "100%",
-          maxHeight: "82vh", overflow: "auto",
-        }}
-      >
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 20px", borderBottom: "1px solid var(--border)", position: "sticky", top: 0, background: "var(--bg)" }}>
-          <div className="label-micro">Upcoming Google Calendar events</div>
-          <button className="btn btn--sm btn--ghost" onClick={onClose} aria-label="Close">
-            <Icon name="x" size={12} /> Close
-          </button>
-        </div>
-        <div style={{ padding: 20 }}>
+    <PanelModal label="Upcoming Google Calendar events" onClose={onClose} maxWidth="max-w-160" maxHeight="max-h-[82vh]">
+        <div className="p-5">
           {events.length === 0 ? (
-            <div style={{ color: "var(--text-muted)", fontSize: 13, textAlign: "center", padding: 28 }}>
+            <div className="text-text-muted text-md text-center p-7">
               No upcoming events in the next 60 days.
             </div>
           ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <div className="flex flex-col gap-2.5">
               {events.map(e => (
-                <div key={e.google_event_id} className="card" style={{ padding: 12 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10 }}>
-                    <div style={{ fontWeight: 600, fontSize: 13 }}>{e.title}</div>
-                    <span className="chip" style={{ fontSize: 11 }}>
+                <div key={e.google_event_id} className="card p-3">
+                  <div className="flex justify-between items-baseline gap-2.5">
+                    <div className="font-semibold text-md">{e.title}</div>
+                    <span className="chip text-xs">
                       {e.all_day ? "All day" : e.start_datetime?.slice(11, 16) || ""}
                     </span>
                   </div>
-                  <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>
+                  <div className="text-xs text-text-muted mt-1">
                     {e.start_date} {e.end_date && e.end_date !== e.start_date ? `→ ${e.end_date}` : ""}
                     {e.location ? ` · ${e.location}` : ""}
                   </div>
                   {e.description && (
-                    <div style={{ fontSize: 12, color: "var(--text-dim)", marginTop: 6, lineHeight: 1.5 }}>
+                    <div className="text-sm text-text-dim mt-1.5 leading-[1.5]">
                       {e.description.length > 140 ? e.description.slice(0, 140) + "…" : e.description}
                     </div>
                   )}
@@ -477,7 +433,7 @@ function GoogleEventsModal({
                       href={e.html_link}
                       target="_blank"
                       rel="noreferrer"
-                      style={{ fontSize: 11, color: "var(--accent)", marginTop: 6, display: "inline-block" }}
+                      className="text-xs text-accent mt-1.5 inline-block"
                     >
                       Open in Google Calendar →
                     </a>
@@ -487,8 +443,7 @@ function GoogleEventsModal({
             </div>
           )}
         </div>
-      </div>
-    </div>
+    </PanelModal>
   );
 }
 
@@ -533,11 +488,11 @@ function MonthView({ cursor, byDate, today, courses }: { cursor: Date; byDate: M
   const weekdays = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
   const courseColor = new Map(courses.map(c => [c.course_id, c.color]));
   return (
-    <div style={{ padding: "20px 32px" }}>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4, marginBottom: 4 }}>
-        {weekdays.map(d => <div key={d} className="label-micro" style={{ padding: 6 }}>{d}</div>)}
+    <div className="py-5 px-8">
+      <div className="grid grid-cols-[repeat(7,_1fr)] gap-1 mb-1">
+        {weekdays.map(d => <div key={d} className="label-micro p-1.5">{d}</div>)}
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4 }}>
+      <div className="grid grid-cols-[repeat(7,_1fr)] gap-1">
         {cells.map((d, i) => {
           const key = dateKey(d);
           const items = byDate.get(key) || [];
@@ -546,15 +501,9 @@ function MonthView({ cursor, byDate, today, courses }: { cursor: Date; byDate: M
           return (
             <div
               key={i}
-              className="card"
-              style={{
-                padding: 8, minHeight: 96, display: "flex", flexDirection: "column", gap: 4,
-                opacity: inMonth ? 1 : 0.45,
-                background: isToday ? "var(--accent-soft)" : "var(--bg-panel)",
-                borderColor: isToday ? "var(--accent-border)" : "var(--border)",
-              }}
+              className={cn("card", "p-2 min-h-24 flex flex-col gap-1", inMonth ? "opacity-100" : "opacity-45", isToday ? "bg-accent-soft" : "bg-bg-panel", isToday ? "border-accent-border" : "border-border")}
             >
-              <div style={{ fontSize: 11, fontWeight: 600, color: isToday ? "var(--accent)" : "var(--text-dim)" }}>
+              <div className={cn("text-xs font-semibold", isToday ? "text-accent" : "text-text-dim")}>
                 {d.getDate()}
               </div>
               {items.slice(0, 3).map(a => {
@@ -563,23 +512,16 @@ function MonthView({ cursor, byDate, today, courses }: { cursor: Date; byDate: M
                 return (
                   <div
                     key={a.id}
-                    style={{
-                      fontSize: 10, padding: "3px 6px", borderRadius: "var(--r-xs)",
-                      background: "transparent", color: "var(--text)",
-                      display: "flex", alignItems: "center", gap: 5,
-                      overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                    }}
+                    className="text-2xs py-[3px] px-1.5 rounded-xs bg-transparent text-text flex items-center gap-[5px] overflow-hidden text-ellipsis whitespace-nowrap"
                     title={a.title}
                   >
-                    <span aria-hidden style={{
-                      width: 6, height: 6, borderRadius: "50%", background: dotColor, flexShrink: 0,
-                    }} />
-                    <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{a.title}</span>
+                    <span aria-hidden className="w-1.5 h-1.5 rounded-[50%] shrink-0" style={{ background: dotColor }} />
+                    <span className="overflow-hidden text-ellipsis">{a.title}</span>
                   </div>
                 );
               })}
               {items.length > 3 && (
-                <div style={{ fontSize: 10, color: "var(--text-muted)" }}>+{items.length - 3} more</div>
+                <div className="text-2xs text-text-muted">+{items.length - 3} more</div>
               )}
             </div>
           );
@@ -596,8 +538,8 @@ function WeekView({ cursor, byDate, today, courses }: { cursor: Date; byDate: Ma
   });
   const courseColor = new Map(courses.map(c => [c.course_id, c.color]));
   return (
-    <div style={{ padding: "20px 32px" }}>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 8 }}>
+    <div className="py-5 px-8">
+      <div className="grid grid-cols-[repeat(7,_1fr)] gap-2">
         {days.map((d, i) => {
           const key = dateKey(d);
           const items = byDate.get(key) || [];
@@ -605,36 +547,25 @@ function WeekView({ cursor, byDate, today, courses }: { cursor: Date; byDate: Ma
           return (
             <div
               key={i}
-              className="card"
-              style={{
-                padding: 10, minHeight: 200,
-                background: isToday ? "var(--accent-soft)" : "var(--bg-panel)",
-                borderColor: isToday ? "var(--accent-border)" : "var(--border)",
-              }}
+              className={cn("card", "p-2.5 min-h-50", isToday ? "bg-accent-soft" : "bg-bg-panel", isToday ? "border-accent-border" : "border-border")}
             >
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 8 }}>
-                <span className="h-serif" style={{ fontSize: 20 }}>{d.getDate()}</span>
+              <div className="flex justify-between items-baseline mb-2">
+                <span className="h-serif text-[20px]">{d.getDate()}</span>
                 <span className="label-micro">{d.toLocaleDateString("en-US", { weekday: "short" })}</span>
               </div>
-              {items.length === 0 && <div style={{ fontSize: 11, color: "var(--text-muted)" }}>—</div>}
+              {items.length === 0 && <div className="text-xs text-text-muted">—</div>}
               {items.map(a => {
                 const color = TYPE_COLOR[a.assignment_type || "other"];
                 const dotColor = a.course_id ? courseColor.get(a.course_id) || color : color;
                 return (
                   <div
                     key={a.id}
-                    style={{
-                      fontSize: 11, padding: "6px 0", marginBottom: 6,
-                      display: "flex", gap: 8, alignItems: "flex-start",
-                    }}
+                    className="text-xs py-1.5 px-0 mb-1.5 flex gap-2 items-start"
                   >
-                    <span aria-hidden style={{
-                      width: 6, height: 6, borderRadius: "50%",
-                      background: dotColor, marginTop: 5, flexShrink: 0,
-                    }} />
-                    <div style={{ minWidth: 0 }}>
-                      <div style={{ fontWeight: 600, color: "var(--text)" }}>{a.title}</div>
-                      <div style={{ color: "var(--text-muted)", fontSize: 10 }}>
+                    <span aria-hidden className="w-1.5 h-1.5 rounded-[50%] mt-[5px] shrink-0" style={{ background: dotColor }} />
+                    <div className="min-w-0">
+                      <div className="font-semibold text-text">{a.title}</div>
+                      <div className="text-text-muted text-2xs">
                         {a.course_code || a.course_name}
                       </div>
                     </div>
@@ -654,12 +585,12 @@ function DayView({ cursor, byDate, courses }: { cursor: Date; byDate: Map<string
   const items = byDate.get(key) || [];
   const courseColor = new Map(courses.map(c => [c.course_id, c.color]));
   return (
-    <div style={{ padding: "20px 32px", maxWidth: 720 }}>
-      <div className="h-serif" style={{ fontSize: 24, fontWeight: 500, marginBottom: 16 }}>
+    <div className="py-5 px-8 max-w-180">
+      <div className="h-serif text-[24px] font-medium mb-4">
         {cursor.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}
       </div>
       {items.length === 0 && (
-        <div className="card" style={{ padding: "var(--pad-lg)", textAlign: "center", color: "var(--text-muted)" }}>
+        <div className="card p-(--pad-lg) text-center text-text-muted">
           Nothing scheduled.
         </div>
       )}
@@ -668,20 +599,17 @@ function DayView({ cursor, byDate, courses }: { cursor: Date; byDate: Map<string
         const dotColor = a.course_id ? courseColor.get(a.course_id) || color : color;
         const dl = dueLabel(a.due_date);
         return (
-          <div key={a.id} className="card" style={{ padding: "var(--pad-lg)", marginBottom: 10, display: "flex", gap: 14, alignItems: "flex-start" }}>
-            <span aria-hidden style={{
-              width: 8, height: 8, borderRadius: "50%",
-              background: dotColor, marginTop: 8, flexShrink: 0,
-            }} />
-            <div style={{ flex: 1 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+          <div key={a.id} className="card p-(--pad-lg) mb-2.5 flex gap-3.5 items-start">
+            <span aria-hidden className="w-2 h-2 rounded-[50%] mt-2 shrink-0" style={{ background: dotColor }} />
+            <div className="flex-1">
+              <div className="flex items-center gap-2 mb-1">
                 <strong>{a.title}</strong>
                 <span className={`chip ${dl.cls}`}>{dl.label}</span>
               </div>
-              <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
+              <div className="text-sm text-text-muted">
                 {a.course_code || a.course_name || "—"} · {a.assignment_type || "task"}
               </div>
-              {a.notes && <div style={{ fontSize: 12, color: "var(--text-dim)", marginTop: 6 }}>{a.notes}</div>}
+              {a.notes && <div className="text-sm text-text-dim mt-1.5">{a.notes}</div>}
             </div>
           </div>
         );
@@ -804,13 +732,13 @@ function AssignmentTable({
   };
 
   return (
-    <div style={{ padding: "20px 32px" }}>
-      <div style={{ display: "flex", gap: 8, marginBottom: 12, alignItems: "center", flexWrap: "wrap" }}>
+    <div className="py-5 px-8">
+      <div className="flex gap-2 mb-3 items-center flex-wrap">
         <div className="label-micro">{selected.size} of {assignments.length} selected</div>
-        <div style={{ flex: 1 }} />
-        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <span className="label-micro" style={{ fontSize: 12 }}>Sort</span>
-          <div style={{ minWidth: 140 }}>
+        <div className="flex-1" />
+        <div className="flex items-center gap-1.5">
+          <span className="label-micro text-sm">Sort</span>
+          <div className="min-w-35">
             <CustomSelect
               size="sm"
               value={sortKey}
@@ -846,40 +774,40 @@ function AssignmentTable({
           </button>
         )}
       </div>
-      <div className="card" style={{ padding: 0, overflow: "hidden" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+      <div className="card p-0 overflow-hidden">
+        <table className="w-full border-collapse text-sm">
           <thead>
-            <tr style={{ background: "var(--bg-subtle)", textAlign: "left" }}>
-              <th style={{ padding: 10, width: 32 }}>
+            <tr className="bg-bg-subtle text-left">
+              <th className="p-2.5 w-8">
                 <input type="checkbox" aria-label="Select all assignments" checked={selected.size === assignments.length && assignments.length > 0} onChange={toggleAll} />
               </th>
-              <th style={{ padding: 10 }}>Title</th>
-              <th style={{ padding: 10 }}>Course</th>
-              <th style={{ padding: 10 }}>Type</th>
-              <th style={{ padding: 10 }}>Due</th>
-              <th style={{ padding: 10, width: 90 }}></th>
+              <th className="p-2.5">Title</th>
+              <th className="p-2.5">Course</th>
+              <th className="p-2.5">Type</th>
+              <th className="p-2.5">Due</th>
+              <th className="p-2.5 w-22.5"></th>
             </tr>
           </thead>
           <tbody>
             {sorted.map((a, i) => {
               const editingThis = editing === a.id;
               return (
-                <tr key={a.id} style={{ borderTop: i === 0 ? "none" : "1px solid var(--border)" }}>
-                  <td style={{ padding: 10 }}>
+                <tr key={a.id} className={cn(i === 0 ? "border-t-0" : "border-t border-t-border")}>
+                  <td className="p-2.5">
                     <input type="checkbox" aria-label={`Select ${a.title}`} checked={selected.has(a.id)} onChange={() => toggleOne(a.id)} />
                   </td>
-                  <td style={{ padding: 10 }}>
+                  <td className="p-2.5">
                     {editingThis ? (
                       <input
                         value={draft.title || ""}
                         onChange={e => setDraft(d => ({ ...d, title: e.target.value }))}
-                        style={{ padding: "4px 6px", border: "1px solid var(--border)", borderRadius: "var(--r-xs)", fontSize: 12, width: "100%" }}
+                        className="py-1 px-1.5 border border-border rounded-xs text-sm w-full"
                       />
                     ) : (
                       <strong>{a.title}</strong>
                     )}
                   </td>
-                  <td style={{ padding: 10 }}>
+                  <td className="p-2.5">
                     {editingThis ? (
                       <CustomSelect
                         size="sm"
@@ -892,7 +820,7 @@ function AssignmentTable({
                       a.course_code || a.course_name || "—"
                     )}
                   </td>
-                  <td style={{ padding: 10 }}>
+                  <td className="p-2.5">
                     {editingThis ? (
                       <CustomSelect
                         size="sm"
@@ -902,22 +830,22 @@ function AssignmentTable({
                         placeholder="—"
                       />
                     ) : (
-                      <span style={{ textTransform: "capitalize" }}>{a.assignment_type || "—"}</span>
+                      <span className="capitalize">{a.assignment_type || "—"}</span>
                     )}
                   </td>
-                  <td style={{ padding: 10 }}>
+                  <td className="p-2.5">
                     {editingThis ? (
                       <input
                         type="date"
                         value={(draft.due_date || "").slice(0, 10)}
                         onChange={e => setDraft(d => ({ ...d, due_date: e.target.value }))}
-                        style={{ padding: "4px 6px", border: "1px solid var(--border)", borderRadius: "var(--r-xs)", fontSize: 12 }}
+                        className="py-1 px-1.5 border border-border rounded-xs text-sm"
                       />
                     ) : (
                       a.due_date || "No date"
                     )}
                   </td>
-                  <td style={{ padding: 10, display: "flex", gap: 4 }}>
+                  <td className="p-2.5 flex gap-1">
                     {editingThis ? (
                       <>
                         <button className="btn btn--sm btn--primary" onClick={saveEdit} disabled={saving}>
@@ -931,11 +859,10 @@ function AssignmentTable({
                           <Icon name="pencil" size={11} />
                         </button>
                         <button
-                          className="btn btn--sm btn--ghost"
+                          className="btn btn--sm btn--ghost text-err"
                           onClick={() => removeOne(a)}
                           disabled={deletingId === a.id}
                           title="Delete"
-                          style={{ color: "var(--err)" }}
                         >
                           {deletingId === a.id ? "…" : <Icon name="x" size={11} />}
                         </button>
@@ -947,7 +874,7 @@ function AssignmentTable({
             })}
             {assignments.length === 0 && (
               <tr>
-                <td colSpan={6} style={{ padding: 32, textAlign: "center", color: "var(--text-muted)" }}>
+                <td colSpan={6} className="p-8 text-center text-text-muted">
                   No assignments yet.
                 </td>
               </tr>

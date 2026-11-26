@@ -6,6 +6,7 @@ import { Icon } from "../Icon";
 import { CHAT_MESSAGE_MAX } from "@/lib/inputLimits";
 import { CrisisSupportCard } from "../safety/CrisisSupportCard";
 import type { CrisisSupport } from "@/lib/crisisSupport";
+import { cn } from "@/lib/cn";
 
 // MarkdownChat statically imports mermaid, katex, highlight.js, and the
 // remark/rehype stack. Static-importing it from a client component still
@@ -110,7 +111,7 @@ export function ChatPanel({
   }, [messages, streamingText]);
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
+    <div className="flex flex-col h-full min-h-0">
       {header && <div>{header}</div>}
       <div
         ref={scrollRef}
@@ -120,14 +121,7 @@ export function ChatPanel({
         aria-atomic="false"
         aria-label="Conversation"
         data-testid="tutor-messages"
-        style={{
-          flex: 1,
-          overflowY: "auto",
-          padding: "24px 32px",
-          display: "flex",
-          flexDirection: "column",
-          gap: 16,
-        }}
+        className="flex-1 overflow-y-auto py-6 px-8 flex flex-col gap-4"
       >
         {messages.map(m => <Message key={m.id} m={m} onRetry={onRetry} />)}
         {streamingText !== null && streamingText !== undefined && (
@@ -206,17 +200,10 @@ const ChatInputBar = React.memo(function ChatInputBar({
 
   return (
     <div
-      style={{
-        padding: "12px 32px 20px",
-        borderTop: "1px solid var(--border)",
-        background: "var(--bg-panel)",
-        display: "flex",
-        flexDirection: "column",
-        gap: 10,
-      }}
+      className="pt-3 px-8 pb-5 border-t border-t-border bg-bg-panel flex flex-col gap-2.5"
     >
       {onAction && (
-        <div style={{ display: "flex", gap: 6 }}>
+        <div className="flex gap-1.5">
           <button data-testid="tutor-action-hint" className="btn btn--sm" onClick={() => onAction("hint")} disabled={disabled} title="Ask for a small nudge">
             <Icon name="sparkle" size={12} /> Hint
           </button>
@@ -229,15 +216,7 @@ const ChatInputBar = React.memo(function ChatInputBar({
         </div>
       )}
       <div
-        style={{
-          display: "flex",
-          gap: 10,
-          alignItems: "flex-end",
-          background: "var(--bg-subtle)",
-          border: "1px solid var(--border)",
-          borderRadius: "var(--r-lg)",
-          padding: "10px 14px",
-        }}
+        className="flex gap-2.5 items-end bg-bg-subtle border border-border rounded-lg py-2.5 px-3.5"
       >
         <textarea
           data-testid="tutor-input"
@@ -253,18 +232,7 @@ const ChatInputBar = React.memo(function ChatInputBar({
           }}
           disabled={disabled}
           placeholder={placeholder}
-          style={{
-            flex: 1,
-            resize: "none",
-            border: 0,
-            background: "transparent",
-            fontSize: 14,
-            lineHeight: 1.5,
-            padding: "6px 0",
-            fontFamily: "var(--font-sans)",
-            maxHeight: 160,
-            minHeight: 36,
-          }}
+          className="flex-1 resize-none border-0 bg-transparent text-base leading-[1.5] py-1.5 px-0 font-sans max-h-40 min-h-9"
           rows={1}
         />
         {streaming && onStop && (
@@ -302,59 +270,29 @@ const Message = React.memo(function Message({
   if (m.crisisSupport && !isUser) {
     // Sapling speaking, not the tutor: no tutor avatar, no serif bubble.
     return (
-      <div className="fade-in" style={{ alignSelf: "stretch", maxWidth: 640, width: "100%" }}>
+      <div className="fade-in self-stretch max-w-160 w-full">
         <CrisisSupportCard support={m.crisisSupport} />
       </div>
     );
   }
   return (
     <div
-      className="fade-in"
-      style={{
-        display: "flex",
-        gap: 12,
-        maxWidth: isUser ? "70%" : "85%",
-        alignSelf: isUser ? "flex-end" : "flex-start",
-      }}
+      className={cn("fade-in", "flex gap-3", isUser ? "max-w-[70%]" : "max-w-[85%]", isUser ? "self-end" : "self-start")}
     >
       {!isUser && (
         <div
-          style={{
-            width: 32,
-            height: 32,
-            borderRadius: "50%",
-            background: "var(--accent-soft)",
-            color: "var(--accent)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            flexShrink: 0,
-          }}
+          className="w-8 h-8 rounded-[50%] bg-accent-soft text-accent flex items-center justify-center shrink-0"
         >
           <Icon name="sparkle" size={14} />
         </div>
       )}
       <div
-        style={{
-          background: isUser ? "var(--accent)" : "var(--bg-panel)",
-          color: isUser ? "var(--accent-fg)" : "var(--text)",
-          padding: "12px 16px",
-          borderRadius: "var(--r-lg)",
-          border: isUser ? "none" : "1px solid var(--border)",
-          fontSize: 14,
-          lineHeight: 1.6,
-          // Assistant voice is Spectral (body-serif) — "serif for soul,
-          // sans for function". User messages keep the sans UI voice.
-          fontFamily: isUser ? "var(--font-sans)" : "var(--font-serif)",
-          wordBreak: "break-word",
-          overflowWrap: "break-word",
-          position: "relative",
-        }}
+        className={cn("py-3 px-4 rounded-lg text-base leading-[1.6] [word-break:break-word] [overflow-wrap:break-word] relative", isUser ? "bg-accent" : "bg-bg-panel", isUser ? "text-accent-fg" : "text-text", isUser ? "border-0" : "border border-border", isUser ? "font-sans" : "font-serif")}
       >
         {m.loading ? (
-          <span style={{ opacity: 0.6, fontFamily: "var(--font-sans)" }}>{m.loadingLabel || "Thinking…"}</span>
+          <span className="opacity-60 font-sans">{m.loadingLabel || "Thinking…"}</span>
         ) : isUser ? (
-          <div style={{ whiteSpace: "pre-wrap" }}>{m.content}</div>
+          <div className="whitespace-pre-wrap">{m.content}</div>
         ) : (
           // The tutor speaks in Spectral; the per-session DisclaimerModal
           // covers AI disclosure once up front so each message stays clean
@@ -368,17 +306,9 @@ const Message = React.memo(function Message({
         {m.interrupted && !isUser && (
           <div
             data-testid="tutor-interrupted"
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 10,
-              marginTop: m.content ? 8 : 0,
-              fontFamily: "var(--font-sans)",
-              fontSize: 12,
-              color: "var(--text-muted)",
-            }}
+            className={cn("flex items-center gap-2.5 font-sans text-sm text-text-muted", m.content ? "mt-2" : "mt-0")}
           >
-            <span style={{ fontStyle: "italic" }}>Interrupted</span>
+            <span className="italic">Interrupted</span>
             {onRetry && m.retryText && (
               <button
                 data-testid="tutor-retry"

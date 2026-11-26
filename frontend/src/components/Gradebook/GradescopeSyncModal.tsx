@@ -490,16 +490,7 @@ function GradescopeSyncDialog({
       role="dialog"
       aria-modal="true"
       aria-labelledby="gs-modal-title"
-      style={{
-        position: "fixed",
-        inset: 0,
-        background: "rgba(15, 17, 16, 0.55)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        zIndex: 100,
-        padding: 16,
-      }}
+      className="fixed inset-0 bg-[rgba(15,_17,_16,_0.55)] flex items-center justify-center z-100 p-4"
       onClick={dismiss}
       onKeyDown={(event) => {
         if (event.key === "Escape") {
@@ -512,39 +503,17 @@ function GradescopeSyncDialog({
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        style={{
-          background: "var(--bg-panel)",
-          borderRadius: "var(--r-lg)",
-          padding: "28px 32px",
-          width: "min(560px, 100%)",
-          maxHeight: "min(640px, 90vh)",
-          display: "flex",
-          flexDirection: "column",
-          boxShadow: "var(--shadow-lg)",
-        }}
+        className="bg-bg-panel rounded-lg py-7 px-8 w-[min(560px,_100%)] max-h-[min(640px,_90vh)] flex flex-col shadow-lg"
       >
-        <header style={{ marginBottom: 18 }}>
+        <header className="mb-4.5">
           <div
-            className="mono"
-            style={{
-              fontSize: 12,
-              
-              
-              color: "var(--text-muted)",
-              marginBottom: 8 }}
+            className="mono text-sm text-text-muted mb-2"
           >
             Gradescope · {saplingCourseLabel || "Connection"}
           </div>
           <h2
             id="gs-modal-title"
-            style={{
-              fontFamily: "var(--font-display), 'Aleo', Georgia, serif",
-              fontWeight: 500,
-              fontSize: 24,
-              letterSpacing: "-0.01em",
-              color: "var(--text)",
-              margin: 0,
-            }}
+            className="font-display font-medium text-[24px] tracking-[-0.01em] text-text m-0"
           >
             {gradescopeDialogTitle(stage, result)}
           </h2>
@@ -553,15 +522,7 @@ function GradescopeSyncDialog({
         {error && (
           <div
             role="alert"
-            style={{
-              padding: "10px 12px",
-              borderRadius: "var(--r-sm)",
-              background: "var(--err-soft)",
-              color: "var(--err)",
-              fontSize: 13,
-              marginBottom: 14,
-              border: "1px solid color-mix(in oklab, var(--err) 25%, transparent)",
-            }}
+            className="py-2.5 px-3 rounded-sm bg-err-soft text-err text-md mb-3.5 border border-[color-mix(in_oklab,_var(--err)_25%,_transparent)]"
           >
             {error}
           </div>
@@ -583,9 +544,9 @@ function renderStageBody(flow: SyncFlow, saplingCourseLabel: string | undefined,
   const { stage, saving, result } = flow;
   const backToChoices = () => flow.goTo("choose-mode");
   return (
-    <div style={{ flex: 1, overflowY: "auto", minHeight: 0 }}>
+    <div className="flex-1 overflow-y-auto min-h-0">
       {stage === "loading" && (
-        <p style={{ color: "var(--text-dim)", fontSize: 14 }}>Loading…</p>
+        <p className="text-text-dim text-base">Loading…</p>
       )}
 
       {stage === "verification-error" && (
@@ -682,11 +643,11 @@ function VerificationErrorStep({
 }) {
   return (
     <div>
-      <p style={{ color: "var(--text-dim)" }}>
+      <p className="text-text-dim">
         Your saved credentials have not been changed. Retry the connection check,
         or reconnect if you want to use a different Gradescope session.
       </p>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
+      <div className="flex flex-wrap gap-2.5">
         <button type="button" className="btn btn--primary" onClick={onRetry}>
           Retry connection
         </button>
@@ -712,13 +673,7 @@ function CredentialsStep({
   return (
     <form onSubmit={flow.onSubmitCredentials}>
       <p
-        style={{
-          fontFamily: "var(--font-serif), var(--font-aleo), 'Aleo', Georgia, serif",
-          fontSize: 14,
-          lineHeight: 1.6,
-          color: "var(--text-dim)",
-          margin: "0 0 18px",
-        }}
+        className="font-serif text-base leading-[1.6] text-text-dim mt-0 mx-0 mb-4.5"
       >
         Sapling uses your password once, to sign in to Gradescope, and
         keeps only the session that sign-in creates, never the password.
@@ -726,14 +681,7 @@ function CredentialsStep({
       </p>
       <label
         htmlFor={`${fieldId}-email`}
-        className="mono"
-        style={{
-          display: "block",
-          fontSize: 13,
-          
-          
-          color: "var(--text-muted)",
-          marginBottom: 6 }}
+        className="mono block text-md text-text-muted mb-1.5"
       >
         Email
       </label>
@@ -744,27 +692,11 @@ function CredentialsStep({
         onChange={(e) => flow.setEmail(e.target.value)}
         required
         autoComplete="username"
-        style={{
-          width: "100%",
-          padding: "10px 12px",
-          borderRadius: "var(--r-sm)",
-          border: "1px solid var(--border)",
-          background: "var(--bg-input)",
-          color: "var(--text)",
-          fontSize: 14,
-          marginBottom: 14,
-        }}
+        className="w-full py-2.5 px-3 rounded-sm border border-border bg-bg-input text-text text-base mb-3.5"
       />
       <label
         htmlFor={`${fieldId}-password`}
-        className="mono"
-        style={{
-          display: "block",
-          fontSize: 13,
-          
-          
-          color: "var(--text-muted)",
-          marginBottom: 6 }}
+        className="mono block text-md text-text-muted mb-1.5"
       >
         Password
       </label>
@@ -775,35 +707,20 @@ function CredentialsStep({
         onChange={(e) => flow.setPassword(e.target.value)}
         required
         autoComplete="current-password"
-        style={{
-          width: "100%",
-          padding: "10px 12px",
-          borderRadius: "var(--r-sm)",
-          border: "1px solid var(--border)",
-          background: "var(--bg-input)",
-          color: "var(--text)",
-          fontSize: 14,
-          marginBottom: 20,
-        }}
+        className="w-full py-2.5 px-3 rounded-sm border border-border bg-bg-input text-text text-base mb-5"
       />
       <div
-        style={{
-          display: "flex",
-          gap: 10,
-          justifyContent: "space-between",
-          alignItems: "center",
-        }}
+        className="flex gap-2.5 justify-between items-center"
       >
         <button
           type="button"
-          className="btn btn--ghost"
+          className="btn btn--ghost py-1.5 px-2.5 text-sm"
           disabled={saving}
           onClick={onBack}
-          style={{ padding: "6px 10px", fontSize: 12 }}
         >
           ← Back
         </button>
-        <div style={{ display: "flex", gap: 10 }}>
+        <div className="flex gap-2.5">
           <button type="button" className="btn" onClick={onCancel} disabled={saving}>
             Cancel
           </button>
@@ -834,48 +751,27 @@ function LinkStep({
   return (
     <div>
       <p
-        style={{
-          fontFamily: "var(--font-serif), var(--font-aleo), 'Aleo', Georgia, serif",
-          fontSize: 14,
-          lineHeight: 1.6,
-          color: "var(--text-dim)",
-          margin: "0 0 16px",
-        }}
+        className="font-serif text-base leading-[1.6] text-text-dim mt-0 mx-0 mb-4"
       >
         Which Gradescope course should map to{" "}
-        <span style={{ color: "var(--text)", fontWeight: 500 }}>
+        <span className="text-text font-medium">
           {saplingCourseLabel}
         </span>
         ?
       </p>
       {courses.length === 0 ? (
-        <p style={{ color: "var(--text-dim)", fontSize: 14 }}>
+        <p className="text-text-dim text-base">
           We didn&apos;t find any student courses on this Gradescope account.
         </p>
       ) : (
-        <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+        <ul className="list-none p-0 m-0">
           {courses.map((c) => (
-            <li key={c.id} style={{ marginBottom: 6 }}>
+            <li key={c.id} className="mb-1.5">
               <button
                 type="button"
                 disabled={saving}
                 onClick={() => onPick(c.id)}
-                style={{
-                  width: "100%",
-                  textAlign: "left",
-                  padding: "12px 14px",
-                  border: "1px solid var(--border)",
-                  borderRadius: "var(--r-sm)",
-                  background: "var(--bg-panel)",
-                  cursor: "pointer",
-                  color: "var(--text)",
-                  fontSize: 14,
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "baseline",
-                  gap: 12,
-                  transition: "border-color var(--dur-fast) var(--ease)",
-                }}
+                className="w-full text-left py-3 px-3.5 border border-border rounded-sm bg-bg-panel cursor-pointer text-text text-base flex justify-between items-baseline gap-3 [transition:border-color_var(--dur-fast)_var(--ease)]"
                 onMouseEnter={(e) =>
                   (e.currentTarget.style.borderColor = "var(--border-strong)")
                 }
@@ -884,16 +780,15 @@ function LinkStep({
                 }
               >
                 <span>
-                  <span style={{ fontWeight: 500 }}>{c.name}</span>
+                  <span className="font-medium">{c.name}</span>
                   {c.full_name && c.full_name !== c.name && (
-                    <span style={{ color: "var(--text-dim)", marginLeft: 8 }}>
+                    <span className="text-text-dim ml-2">
                       {c.full_name}
                     </span>
                   )}
                 </span>
                 <span
-                  className="mono"
-                  style={{ fontSize: 11, color: "var(--text-muted)" }}
+                  className="mono text-xs text-text-muted"
                 >
                   {[c.semester, c.year].filter(Boolean).join(" ")}
                 </span>
@@ -902,7 +797,7 @@ function LinkStep({
           ))}
         </ul>
       )}
-      <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 20, gap: 10 }}>
+      <div className="flex justify-end mt-5 gap-2.5">
         <button type="button" className="btn" onClick={onCancel} disabled={saving}>
           Cancel
         </button>
@@ -930,36 +825,19 @@ function ConnectedStep({
   return (
     <div>
       <p
-        style={{
-          fontFamily: "var(--font-serif), var(--font-aleo), 'Aleo', Georgia, serif",
-          fontSize: 14,
-          lineHeight: 1.6,
-          color: "var(--text-dim)",
-          margin: "0 0 12px",
-        }}
+        className="font-serif text-base leading-[1.6] text-text-dim mt-0 mx-0 mb-3"
       >
         {connectedCopy(courseCount)}
       </p>
       {lastSyncedAt && (
         <p
-          className="mono"
-          style={{
-            fontSize: 11,
-            color: "var(--text-muted)",
-            letterSpacing: "-0.01em",
-            margin: "0 0 18px",
-          }}
+          className="mono text-xs text-text-muted tracking-[-0.01em] mt-0 mx-0 mb-4.5"
         >
           Last sync · {new Date(lastSyncedAt).toLocaleString()}
         </p>
       )}
       <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          gap: 12,
-          flexWrap: "wrap",
-        }}
+        className="flex justify-between gap-3 flex-wrap"
       >
         <button
           type="button"
@@ -994,16 +872,10 @@ function ReadyStep({
   return (
     <div>
       <p
-        style={{
-          fontFamily: "var(--font-serif), var(--font-aleo), 'Aleo', Georgia, serif",
-          fontSize: 14,
-          lineHeight: 1.6,
-          color: "var(--text-dim)",
-          margin: "0 0 16px",
-        }}
+        className="font-serif text-base leading-[1.6] text-text-dim mt-0 mx-0 mb-4"
       >
         Sapling will pull every assignment from Gradescope course{" "}
-        <span className="mono" style={{ color: "var(--text)" }}>
+        <span className="mono text-text">
           {flow.linkedGsCourseId}
         </span>{" "}
         and update grades in {saplingCourseLabel}. New assignments
@@ -1011,13 +883,7 @@ function ReadyStep({
       </p>
       {lastSyncedAt && (
         <p
-          className="mono"
-          style={{
-            fontSize: 11,
-            color: "var(--text-muted)",
-            letterSpacing: "-0.01em",
-            margin: "0 0 18px",
-          }}
+          className="mono text-xs text-text-muted tracking-[-0.01em] mt-0 mx-0 mb-4.5"
         >
           Last sync · {new Date(lastSyncedAt).toLocaleString()}
         </p>
@@ -1025,13 +891,13 @@ function ReadyStep({
       {syncing && syncPending && (
         <p
           role="status"
-          style={{ fontSize: 13, lineHeight: 1.5, color: "var(--text-dim)", margin: "0 0 16px" }}
+          className="text-md leading-[1.5] text-text-dim mt-0 mx-0 mb-4"
         >
           Still syncing — this one is taking longer than usual. We&apos;ll refresh
           your gradebook when it finishes.
         </p>
       )}
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+      <div className="flex justify-between gap-3 flex-wrap">
         <button
           type="button"
           className="btn btn--ghost"
@@ -1048,7 +914,7 @@ function ReadyStep({
         >
           Use different account
         </button>
-        <div style={{ display: "flex", gap: 10 }}>
+        <div className="flex gap-2.5">
           <button
             type="button"
             className="btn"
@@ -1083,25 +949,14 @@ function DoneStep({
   return (
     <div>
       <p
-        style={{
-          fontFamily: "var(--font-serif), var(--font-aleo), 'Aleo', Georgia, serif",
-          fontSize: 15,
-          lineHeight: 1.6,
-          color: "var(--text)",
-          margin: "0 0 18px",
-        }}
+        className="font-serif text-[15px] leading-[1.6] text-text mt-0 mx-0 mb-4.5"
       >
         {result.failed > 0
           ? "Some assignments could not be saved. Retry the sync to import the remaining grades."
           : "Pulled grades from Gradescope."}
       </p>
       <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(4, 1fr)",
-          gap: 12,
-          marginBottom: 24,
-        }}
+        className="grid grid-cols-[repeat(4,_1fr)] gap-3 mb-6"
       >
         <SyncStat label="Added" value={result.inserted} />
         <SyncStat label="Updated" value={result.updated} />
@@ -1112,7 +967,7 @@ function DoneStep({
           warn={result.failed > 0}
         />
       </div>
-      <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+      <div className="flex gap-2.5 justify-end">
         {result.failed > 0 && (
           <button type="button" className="btn btn--primary" onClick={onRetry}>
             Retry sync
@@ -1140,25 +995,12 @@ function SyncStat({
   return (
     <div>
       <div
-        className="mono"
-        style={{
-          fontSize: 11,
-          
-          
-          color: "var(--text-muted)",
-          marginBottom: 4 }}
+        className="mono text-xs text-text-muted mb-1"
       >
         {label}
       </div>
       <div
-        style={{
-          fontFamily: "var(--font-display), 'Aleo', Georgia, serif",
-          fontWeight: 500,
-          fontSize: 28,
-          color: warn ? "var(--err)" : muted ? "var(--text-dim)" : "var(--text)",
-          letterSpacing: "-0.02em",
-          lineHeight: 1.1,
-        }}
+        className="font-display font-medium text-[28px] tracking-[-0.02em] leading-[1.1]" style={{ color: warn ? "var(--err)" : muted ? "var(--text-dim)" : "var(--text)" }}
       >
         {value}
       </div>
@@ -1185,13 +1027,7 @@ function ChooseModeStep({
   return (
     <div>
       <p
-        style={{
-          fontFamily: "var(--font-serif), var(--font-aleo), 'Aleo', Georgia, serif",
-          fontSize: 14,
-          lineHeight: 1.6,
-          color: "var(--text-dim)",
-          margin: "0 0 18px",
-        }}
+        className="font-serif text-base leading-[1.6] text-text-dim mt-0 mx-0 mb-4.5"
       >
         Three ways to connect. Pick whichever matches how you sign in to
         Gradescope.
@@ -1202,20 +1038,20 @@ function ChooseModeStep({
         body="If you sign in to Gradescope through BU. Enter your BU username and password here; tap Approve when your phone buzzes. Your BU password is used in-memory only. Sapling never writes it to disk. Only the resulting Gradescope session cookies are stored."
         onClick={onPickBuSso}
       />
-      <div style={{ height: 12 }} />
+      <div className="h-3" />
       <ModeCard
         title="Email + password"
         body="If you set a Gradescope-side password (no SSO). We sign in once and keep only the Gradescope session, never your password; enter it again when the session expires."
         onClick={onPickPassword}
       />
-      <div style={{ height: 12 }} />
+      <div className="h-3" />
       <ModeCard
         title="Session cookies (manual)"
         body="If you'd rather paste session cookies yourself. Works for any school. Reconnect when the session expires or you sign out of Gradescope."
         onClick={onPickCookies}
       />
 
-      <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 20 }}>
+      <div className="flex justify-end mt-5">
         <button type="button" className="btn" onClick={onCancel}>
           Cancel
         </button>
@@ -1247,32 +1083,19 @@ function BuSsoFormStep({
   return (
     <form onSubmit={onSubmit}>
       <p
-        style={{
-          fontFamily: "var(--font-serif), var(--font-aleo), 'Aleo', Georgia, serif",
-          fontSize: 14,
-          lineHeight: 1.6,
-          color: "var(--text-dim)",
-          margin: "0 0 18px",
-        }}
+        className="font-serif text-base leading-[1.6] text-text-dim mt-0 mx-0 mb-4.5"
       >
         Enter your BU login. Sapling drives a headless browser through{" "}
-        <span className="mono" style={{ color: "var(--text)" }}>shib.bu.edu</span>{" "}
+        <span className="mono text-text">shib.bu.edu</span>{" "}
         on your behalf. Your password is held in memory for the request
         only, never written to disk. When you submit, your phone will
         buzz with a Duo push; tap{" "}
-        <strong style={{ color: "var(--text)" }}>Approve</strong>.
+        <strong className="text-text">Approve</strong>.
       </p>
 
       <label
         htmlFor={`${fieldId}-username`}
-        className="mono"
-        style={{
-          display: "block",
-          fontSize: 13,
-          
-          
-          color: "var(--text-muted)",
-          marginBottom: 6 }}
+        className="mono block text-md text-text-muted mb-1.5"
       >
         BU username
       </label>
@@ -1284,27 +1107,11 @@ function BuSsoFormStep({
         required
         autoComplete="username"
         placeholder="e.g. jackhe"
-        style={{
-          width: "100%",
-          padding: "10px 12px",
-          borderRadius: "var(--r-sm)",
-          border: "1px solid var(--border)",
-          background: "var(--bg-input)",
-          color: "var(--text)",
-          fontSize: 14,
-          marginBottom: 14,
-        }}
+        className="w-full py-2.5 px-3 rounded-sm border border-border bg-bg-input text-text text-base mb-3.5"
       />
       <label
         htmlFor={`${fieldId}-password`}
-        className="mono"
-        style={{
-          display: "block",
-          fontSize: 13,
-          
-          
-          color: "var(--text-muted)",
-          marginBottom: 6 }}
+        className="mono block text-md text-text-muted mb-1.5"
       >
         BU password
       </label>
@@ -1315,31 +1122,16 @@ function BuSsoFormStep({
         onChange={(e) => setPassword(e.target.value)}
         required
         autoComplete="current-password"
-        style={{
-          width: "100%",
-          padding: "10px 12px",
-          borderRadius: "var(--r-sm)",
-          border: "1px solid var(--border)",
-          background: "var(--bg-input)",
-          color: "var(--text)",
-          fontSize: 14,
-          marginBottom: 20,
-        }}
+        className="w-full py-2.5 px-3 rounded-sm border border-border bg-bg-input text-text text-base mb-5"
       />
 
       <div
-        style={{
-          display: "flex",
-          gap: 10,
-          justifyContent: "space-between",
-          alignItems: "center",
-        }}
+        className="flex gap-2.5 justify-between items-center"
       >
         <button
           type="button"
-          className="btn btn--ghost"
+          className="btn btn--ghost py-1.5 px-2.5 text-sm"
           onClick={onBack}
-          style={{ padding: "6px 10px", fontSize: 12 }}
         >
           ← Back
         </button>
@@ -1363,42 +1155,24 @@ function BuSsoWaitingStep() {
     return () => clearInterval(t);
   }, []);
   return (
-    <div style={{ paddingTop: 8 }}>
-      <div style={{ display: "flex", gap: 14, alignItems: "center", marginBottom: 14 }}>
+    <div className="pt-2">
+      <div className="flex gap-3.5 items-center mb-3.5">
         <Spinner />
         <div>
           <div
-            style={{
-              fontFamily: "var(--font-display), 'Aleo', Georgia, serif",
-              fontWeight: 500,
-              fontSize: 18,
-              color: "var(--text)",
-              letterSpacing: "-0.01em",
-              marginBottom: 2,
-            }}
+            className="font-display font-medium text-xl text-text tracking-[-0.01em] mb-0.5"
           >
             Approve the Duo push on your phone.
           </div>
           <div
-            className="mono"
-            style={{
-              fontSize: 11,
-              color: "var(--text-muted)",
-              letterSpacing: "-0.01em",
-            }}
+            className="mono text-xs text-text-muted tracking-[-0.01em]"
           >
             Waiting · {elapsed}s
           </div>
         </div>
       </div>
       <p
-        style={{
-          fontFamily: "var(--font-serif), var(--font-aleo), 'Aleo', Georgia, serif",
-          fontSize: 13,
-          lineHeight: 1.6,
-          color: "var(--text-dim)",
-          margin: 0,
-        }}
+        className="font-serif text-md leading-[1.6] text-text-dim m-0"
       >
         Sapling is signing in at shib.bu.edu now. The push usually arrives
         within a few seconds. We&apos;ll finish automatically once you tap
@@ -1412,15 +1186,7 @@ function Spinner() {
   return (
     <div
       aria-hidden="true"
-      style={{
-        width: 28,
-        height: 28,
-        borderRadius: "50%",
-        border: "3px solid var(--border)",
-        borderTopColor: "var(--accent)",
-        animation: "gs-spin 0.9s linear infinite",
-        flexShrink: 0,
-      }}
+      className="w-7 h-7 rounded-[50%] border-3 border-border border-t-accent [animation:gs-spin_0.9s_linear_infinite] shrink-0"
     />
   );
 }
@@ -1438,16 +1204,7 @@ function ModeCard({
     <button
       type="button"
       onClick={onClick}
-      style={{
-        width: "100%",
-        textAlign: "left",
-        padding: "14px 16px",
-        border: "1px solid var(--border)",
-        borderRadius: "var(--r-md)",
-        background: "var(--bg-panel)",
-        cursor: "pointer",
-        transition: "border-color var(--dur-fast) var(--ease), background-color var(--dur-fast) var(--ease)",
-      }}
+      className="w-full text-left py-3.5 px-4 border border-border rounded-md bg-bg-panel cursor-pointer [transition:border-color_var(--dur-fast)_var(--ease),_background-color_var(--dur-fast)_var(--ease)]"
       onMouseEnter={(e) => {
         e.currentTarget.style.borderColor = "var(--border-strong)";
         e.currentTarget.style.background = "var(--bg-subtle)";
@@ -1458,24 +1215,12 @@ function ModeCard({
       }}
     >
       <div
-        style={{
-          fontFamily: "var(--font-display), 'Aleo', Georgia, serif",
-          fontWeight: 500,
-          fontSize: 17,
-          color: "var(--text)",
-          letterSpacing: "-0.01em",
-          marginBottom: 4,
-        }}
+        className="font-display font-medium text-[17px] text-text tracking-[-0.01em] mb-1"
       >
         {title}
       </div>
       <div
-        style={{
-          fontFamily: "var(--font-serif), var(--font-aleo), 'Aleo', Georgia, serif",
-          fontSize: 13,
-          lineHeight: 1.5,
-          color: "var(--text-dim)",
-        }}
+        className="font-serif text-md leading-[1.5] text-text-dim"
       >
         {body}
       </div>
@@ -1504,42 +1249,29 @@ function CookiePasteStep({
   return (
     <form onSubmit={onSubmit}>
       <p
-        style={{
-          fontFamily: "var(--font-serif), var(--font-aleo), 'Aleo', Georgia, serif",
-          fontSize: 14,
-          lineHeight: 1.6,
-          color: "var(--text-dim)",
-          margin: "0 0 12px",
-        }}
+        className="font-serif text-base leading-[1.6] text-text-dim mt-0 mx-0 mb-3"
       >
         Sign in to Gradescope normally in another tab (BU SSO + Duo,
         whatever your school uses). Then copy these two cookie values out
         of DevTools.
       </p>
       <ol
-        style={{
-          fontFamily: "var(--font-serif), var(--font-aleo), 'Aleo', Georgia, serif",
-          fontSize: 13,
-          lineHeight: 1.6,
-          color: "var(--text-dim)",
-          margin: "0 0 18px",
-          paddingLeft: 20,
-        }}
+        className="font-serif text-md leading-[1.6] text-text-dim mt-0 mx-0 mb-4.5 pl-5"
       >
         <li>
-          With Gradescope open, press <kbd style={kbd}>F12</kbd> (or right-click
+          With Gradescope open, press <kbd className="inline-block py-px px-1.5 border border-border [border-bottom-width:2px] rounded-xs font-sans text-xs bg-bg-subtle text-text">F12</kbd> (or right-click
           → Inspect).
         </li>
         <li>
-          Go to <strong style={{ color: "var(--text)" }}>Application</strong> →{" "}
-          <strong style={{ color: "var(--text)" }}>Cookies</strong> →{" "}
-          <span className="mono" style={{ color: "var(--text)" }}>
+          Go to <strong className="text-text">Application</strong> →{" "}
+          <strong className="text-text">Cookies</strong> →{" "}
+          <span className="mono text-text">
             https://www.gradescope.com
           </span>
           .
         </li>
         <li>
-          Copy the <strong style={{ color: "var(--text)" }}>Value</strong> of{" "}
+          Copy the <strong className="text-text">Value</strong> of{" "}
           <span className="mono">_gradescope_session</span> and, if present,{" "}
           <span className="mono">signed_token</span>.
         </li>
@@ -1547,16 +1279,9 @@ function CookiePasteStep({
 
       <label
         htmlFor={`${fieldId}-session`}
-        className="mono"
-        style={{
-          display: "block",
-          fontSize: 13,
-          
-          
-          color: "var(--text-muted)",
-          marginBottom: 6 }}
+        className="mono block text-md text-text-muted mb-1.5"
       >
-        _gradescope_session <span style={{ color: "var(--err)" }}>*</span>
+        _gradescope_session <span className="text-err">*</span>
       </label>
       <textarea
         id={`${fieldId}-session`}
@@ -1566,32 +1291,14 @@ function CookiePasteStep({
         rows={2}
         spellCheck={false}
         autoComplete="off"
-        style={{
-          width: "100%",
-          padding: "10px 12px",
-          borderRadius: "var(--r-sm)",
-          border: "1px solid var(--border)",
-          background: "var(--bg-input)",
-          color: "var(--text)",
-          fontFamily: "var(--font-code)",
-          fontSize: 12,
-          resize: "vertical",
-          marginBottom: 14,
-        }}
+        className="w-full py-2.5 px-3 rounded-sm border border-border bg-bg-input text-text font-code text-sm resize-y mb-3.5"
       />
 
       <label
         htmlFor={`${fieldId}-token`}
-        className="mono"
-        style={{
-          display: "block",
-          fontSize: 13,
-          
-          
-          color: "var(--text-muted)",
-          marginBottom: 6 }}
+        className="mono block text-md text-text-muted mb-1.5"
       >
-        signed_token <span style={{ color: "var(--text-muted)" }}>(optional)</span>
+        signed_token <span className="text-text-muted">(optional)</span>
       </label>
       <textarea
         id={`${fieldId}-token`}
@@ -1600,34 +1307,17 @@ function CookiePasteStep({
         rows={2}
         spellCheck={false}
         autoComplete="off"
-        style={{
-          width: "100%",
-          padding: "10px 12px",
-          borderRadius: "var(--r-sm)",
-          border: "1px solid var(--border)",
-          background: "var(--bg-input)",
-          color: "var(--text)",
-          fontFamily: "var(--font-code)",
-          fontSize: 12,
-          resize: "vertical",
-          marginBottom: 20,
-        }}
+        className="w-full py-2.5 px-3 rounded-sm border border-border bg-bg-input text-text font-code text-sm resize-y mb-5"
       />
 
       <div
-        style={{
-          display: "flex",
-          gap: 10,
-          justifyContent: "space-between",
-          alignItems: "center",
-        }}
+        className="flex gap-2.5 justify-between items-center"
       >
         <button
           type="button"
-          className="btn btn--ghost"
+          className="btn btn--ghost py-1.5 px-2.5 text-sm"
           onClick={onBack}
           disabled={saving}
-          style={{ padding: "6px 10px", fontSize: 12 }}
         >
           ← Back
         </button>
@@ -1639,14 +1329,3 @@ function CookiePasteStep({
   );
 }
 
-const kbd: React.CSSProperties = {
-  display: "inline-block",
-  padding: "1px 6px",
-  border: "1px solid var(--border)",
-  borderBottomWidth: 2,
-  borderRadius: 4,
-  fontFamily: "var(--font-sans)",
-  fontSize: 11,
-  background: "var(--bg-subtle)",
-  color: "var(--text)",
-};

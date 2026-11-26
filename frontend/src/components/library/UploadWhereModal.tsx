@@ -13,10 +13,9 @@ import React from "react";
 import type { DocFolder } from "@/lib/types";
 import type { EnrolledCourse } from "@/lib/api";
 import { FMT, FMT_FALLBACK, courseLabel } from "./libraryModel";
-import {
-  FolderIcon, FONT_MONO, FONT_SERIF, Glyph, MENU_IN, MENU_SURFACE, MenuScrim,
-} from "./primitives";
+import { FolderIcon, Glyph, MenuScrim } from "./primitives";
 import type { UploadRow } from "./useUploadQueue";
+import { cn } from "@/lib/cn";
 
 /**
  * Which course a filename suggests, by the words in it. The prototype hard
@@ -75,50 +74,29 @@ function FileRow({
     : row.status === "done" ? "#2F4417" : "#445D22";
 
   return (
-    <div style={{
-      display: "flex", alignItems: "center", gap: 12, padding: "10px 12px",
-      borderRadius: 10, background: "#F4F1EA",
-    }}>
-      <span style={{
-        width: 26, height: 32, borderRadius: 4, background: FMT[row.fmt] || FMT_FALLBACK,
-        color: "#FFFFFF", display: "grid", placeItems: "center", boxSizing: "border-box",
-        fontFamily: FONT_MONO, fontSize: 7, fontWeight: 600, lineHeight: 1,
-        letterSpacing: 0, flexShrink: 0,
-      }}>{row.fmt}</span>
+    <div className="flex items-center gap-3 py-2.5 px-3 rounded-md bg-ink-50">
+      <span className="w-6.5 h-8 rounded-xs text-accent-fg grid place-items-center box-border font-sans text-[7px] font-semibold leading-none tracking-[0] shrink-0" style={{ background: FMT[row.fmt] || FMT_FALLBACK }}>{row.fmt}</span>
 
-      <span style={{ flex: 1, minWidth: 0 }}>
-        <span style={{
-          display: "block", fontSize: 15, fontWeight: 600, whiteSpace: "nowrap",
-          overflow: "hidden", textOverflow: "ellipsis",
-        }}>{row.name}</span>
+      <span className="flex-1 min-w-0">
+        <span className="block text-[15px] font-semibold whitespace-nowrap overflow-hidden text-ellipsis">{row.name}</span>
         {note && (
-          <span style={{ display: "block", fontSize: 13, color: noteColor }}>{note}</span>
+          <span className="block text-md" style={{ color: noteColor }}>{note}</span>
         )}
       </span>
 
       {row.status === "error" && (
         <button
-          className="sapHoverChip"
+          className="sapHoverChip h-7.5 py-0 px-2.5 border-0 rounded-[8px] [background:#DCE8CE] text-leaf-800 [font-family:inherit] [font-style:inherit] [font-variant:inherit] [font-stretch:inherit] [line-height:inherit] text-md font-bold cursor-pointer"
           onClick={() => onRetry(row.id)}
-          style={{
-            height: 30, padding: "0 10px", border: 0, borderRadius: 8,
-            background: "#DCE8CE", color: "#2F4417", font: "inherit", fontSize: 13,
-            fontWeight: 700, cursor: "pointer",
-          }}
         >Retry</button>
       )}
       {row.status === "uploading" && (
         <button
-          className="sapHoverWarmer"
+          className="sapHoverWarmer h-7.5 py-0 px-2.5 border-0 rounded-[8px] [background:transparent] text-text-muted [font-family:inherit] [font-style:inherit] [font-variant:inherit] [font-stretch:inherit] [line-height:inherit] text-md font-semibold cursor-pointer"
           onClick={() => onCancel(row.id)}
-          style={{
-            height: 30, padding: "0 10px", border: 0, borderRadius: 8,
-            background: "transparent", color: "#6F6857", font: "inherit", fontSize: 13,
-            fontWeight: 600, cursor: "pointer",
-          }}
         >Cancel</button>
       )}
-      {!started && <span style={{ fontSize: 13, color: "#6F6857" }}>{row.size}</span>}
+      {!started && <span className="text-md text-text-muted">{row.size}</span>}
       {row.status === "done" && <Glyph name="check" size={14} fill="#445D22" />}
     </div>
   );
@@ -136,20 +114,15 @@ function CoursePicker({
   const hint = suggested ? courses.find(c => c.course_id === suggested) : undefined;
   return (
     <>
-      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-        <span style={{
-          fontFamily: FONT_MONO, fontSize: 14, color: "#6F6857",
-        }}>Course</span>
+      <div className="flex items-center gap-2.5">
+        <span className="font-sans text-base text-text-muted">Course</span>
         {hint && (
-          <span style={{ fontSize: 13, color: "#445D22", fontWeight: 600 }}>
+          <span className="text-md text-brand-forest font-semibold">
             Sapling suggests {courseLabel(hint)} · {hint.course_name}
           </span>
         )}
       </div>
-      <div role="radiogroup" aria-label="Course" style={{
-        display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8,
-        maxHeight: 220, overflowY: "auto",
-      }}>
+      <div role="radiogroup" aria-label="Course" className="grid grid-cols-[1fr_1fr] gap-2 max-h-55 overflow-y-auto">
         {courses.map(c => {
           const on = courseId === c.course_id;
           return (
@@ -158,29 +131,13 @@ function CoursePicker({
               role="radio"
               aria-checked={on}
               data-on={on ? "1" : "0"}
-              className="sapUplCourse"
+              className={cn(cn("sapUplCourse", "flex items-center gap-2.5 py-3 px-3.5 rounded-[12px] [font:inherit] text-left cursor-pointer", on ? "[background:#F2F6EE]" : "[background:#FDFCF9]"), on ? "border-[1.5px] border-brand-forest-bright" : "border-[1.5px] border-[rgba(42,39,31,0.14)]")}
               onClick={() => onPick(c.course_id)}
-              style={{
-                display: "flex", alignItems: "center", gap: 10, padding: "12px 14px",
-                border: `1.5px solid ${on ? "#597536" : "rgba(42,39,31,0.14)"}`,
-                borderRadius: 12, background: on ? "#F2F6EE" : "#FDFCF9",
-                font: "inherit", textAlign: "left", cursor: "pointer",
-              }}
             >
-              <span style={{
-                width: 10, height: 10, borderRadius: "50%",
-                background: c.color || "transparent",
-                border: c.color ? "0" : "1.5px dashed #8A8372",
-                boxSizing: "border-box", flexShrink: 0,
-              }} />
-              <span style={{ flex: 1, minWidth: 0 }}>
-                <span style={{
-                  display: "block", fontSize: 15, fontWeight: 700, color: "#1A1814",
-                }}>{courseLabel(c)}</span>
-                <span style={{
-                  display: "block", fontSize: 13, color: "#6F6857",
-                  whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
-                }}>{c.course_name}</span>
+              <span className={cn("w-2.5 h-2.5 rounded-[50%] box-border shrink-0", c.color ? "border-0" : "border-[1.5px] border-dashed border-ink-400")} style={{ background: c.color || "transparent" }} />
+              <span className="flex-1 min-w-0">
+                <span className="block text-[15px] font-bold text-ink-800">{courseLabel(c)}</span>
+                <span className="block text-md text-text-muted whitespace-nowrap overflow-hidden text-ellipsis">{c.course_name}</span>
               </span>
               {on && <Glyph name="check" size={14} fill="#445D22" />}
             </button>
@@ -210,45 +167,29 @@ function FolderPicker({
 
   return (
     <>
-      <span style={{
-        marginTop: 14, fontFamily: FONT_MONO, fontSize: 14, color: "#6F6857",
-      }}>
+      <span className="mt-3.5 font-sans text-base text-text-muted">
         Folder{" "}
-        <span style={{ fontFamily: "var(--font-sans)", fontSize: 13 }}>(optional)</span>
+        <span className="font-sans text-md">(optional)</span>
       </span>
 
-      <div style={{ position: "relative" }}>
+      <div className="relative">
         <button
           onClick={() => { if (!none) setOpen(o => !o); }}
           disabled={none}
           aria-haspopup="listbox"
           aria-expanded={open}
           aria-label="Folder"
-          style={{
-            width: "100%", display: "flex", alignItems: "center", gap: 10, height: 46,
-            padding: "0 14px",
-            border: `1.5px solid ${open ? "#597536" : "rgba(42,39,31,0.16)"}`,
-            borderRadius: 12, background: none ? "#F4F1EA" : "#FDFCF9",
-            font: "inherit", fontSize: 15, fontWeight: 600,
-            color: none ? "#8A8372" : "#1A1814",
-            textAlign: "left", cursor: none ? "default" : "pointer",
-          }}
+          className={cn(cn("w-full flex items-center gap-2.5 h-11.5 py-0 px-3.5 rounded-[12px] [font-family:inherit] [font-style:inherit] [font-variant:inherit] [font-stretch:inherit] [line-height:inherit] text-[15px] font-semibold text-left", none ? "bg-ink-50" : "bg-bg-panel", none ? "text-ink-400" : "text-ink-800", none ? "cursor-default" : "cursor-pointer"), open ? "border-[1.5px] border-brand-forest-bright" : "border-[1.5px] border-[rgba(42,39,31,0.16)]")}
         >
-          {selected && <span style={{ display: "inline-flex" }}><FolderIcon size={15} /></span>}
-          <span style={{
-            flex: 1, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden",
-            textOverflow: "ellipsis",
-          }}>{label}</span>
+          {selected && <span className="inline-flex"><FolderIcon size={15} /></span>}
+          <span className="flex-1 min-w-0 whitespace-nowrap overflow-hidden text-ellipsis">{label}</span>
           <Glyph name="chevronDown" size={11} fill="#6F6857" />
         </button>
 
         {open && !none && (
           <>
             <MenuScrim onClick={() => setOpen(false)} zIndex={1} />
-            <div role="listbox" aria-label="Folder" style={{
-              position: "absolute", left: 0, right: 0, bottom: 52, zIndex: 2,
-              transformOrigin: "top right", animation: MENU_IN, ...MENU_SURFACE,
-            }}>
+            <div role="listbox" aria-label="Folder" className="absolute left-0 right-0 bottom-13 z-2 [transform-origin:top_right] [animation:sapMenuIn_170ms_cubic-bezier(0.2,_0.7,_0.2,_1)_both] bg-bg-panel border border-[rgba(42,39,31,0.14)] rounded-[12px] [box-shadow:0_14px_36px_rgba(25,37,11,0.16)] p-1.5 flex flex-col gap-px">
               {[{ id: null as string | null, name: "None" }, ...options].map(f => {
                 const on = folderId === f.id;
                 return (
@@ -256,19 +197,13 @@ function FolderPicker({
                     key={f.id ?? "none"}
                     role="option"
                     aria-selected={on}
-                    className="sapHoverMenu"
+                    className={cn("sapHoverMenu", "flex items-center gap-2.5 py-[9px] px-2.5 border-0 rounded-[8px] [font-family:inherit] [font-style:inherit] [font-variant:inherit] [font-stretch:inherit] [line-height:inherit] text-base font-semibold text-ink-800 text-left cursor-pointer", on ? "[background:#F2F6EE]" : "[background:transparent]")}
                     onClick={() => { onPick(f.id); setOpen(false); }}
-                    style={{
-                      display: "flex", alignItems: "center", gap: 10, padding: "9px 10px",
-                      border: 0, borderRadius: 8, background: on ? "#F2F6EE" : "transparent",
-                      font: "inherit", fontSize: 14, fontWeight: 600, color: "#1A1814",
-                      textAlign: "left", cursor: "pointer",
-                    }}
                   >
                     {f.id && (
-                      <span style={{ display: "inline-flex" }}><FolderIcon size={15} /></span>
+                      <span className="inline-flex"><FolderIcon size={15} /></span>
                     )}
-                    <span style={{ flex: 1 }}>{f.name}</span>
+                    <span className="flex-1">{f.name}</span>
                     <Glyph name="check" size={12} fill="#445D22" style={{ opacity: on ? 1 : 0 }} />
                   </button>
                 );
@@ -297,41 +232,23 @@ function ModalFooter({
     return (
       <button
         data-testid="library-upload-done"
-        className={finished ? "sapHoverForest" : "sapHoverWarm"}
+        className={cn(finished ? "sapHoverForest" : "sapHoverWarm", "h-11.5 py-0 px-5.5 border-0 rounded-[11px] [font-family:inherit] [font-style:inherit] [font-variant:inherit] [font-stretch:inherit] [line-height:inherit] text-[15px] font-bold", finished ? "[background:#445D22]" : "[background:transparent]", finished ? "text-accent-fg" : "text-ink-600", busy ? "cursor-default" : "cursor-pointer", busy ? "opacity-60" : "opacity-100")}
         onClick={onClose}
         disabled={busy}
-        style={{
-          height: 46, padding: "0 22px", border: 0, borderRadius: 11,
-          background: finished ? "#445D22" : "transparent",
-          color: finished ? "#FFFFFF" : "#3F3B31",
-          font: "inherit", fontSize: 15, fontWeight: 700,
-          cursor: busy ? "default" : "pointer", opacity: busy ? 0.6 : 1,
-        }}
       >{busy ? "Working…" : "Done"}</button>
     );
   }
   return (
     <>
       <button
-        className="sapHoverWarm"
+        className="sapHoverWarm h-11.5 py-0 px-4.5 border-0 rounded-[11px] [background:transparent] text-ink-600 [font-family:inherit] [font-style:inherit] [font-variant:inherit] [font-stretch:inherit] [line-height:inherit] text-[15px] font-bold cursor-pointer"
         onClick={onClose}
-        style={{
-          height: 46, padding: "0 18px", border: 0, borderRadius: 11,
-          background: "transparent", color: "#3F3B31", font: "inherit", fontSize: 15,
-          fontWeight: 700, cursor: "pointer",
-        }}
       >Cancel</button>
       <button
         data-testid="library-upload-confirm"
-        className="sapHoverForest"
+        className={cn("sapHoverForest", "h-11.5 py-0 px-5.5 border-0 rounded-[11px] [background:#445D22] text-accent-fg [font-family:inherit] [font-style:inherit] [font-variant:inherit] [font-stretch:inherit] [line-height:inherit] text-[15px] font-bold", canConfirm ? "cursor-pointer" : "cursor-not-allowed", canConfirm ? "opacity-100" : "opacity-50")}
         onClick={onConfirm}
         disabled={!canConfirm}
-        style={{
-          height: 46, padding: "0 22px", border: 0, borderRadius: 11,
-          background: "#445D22", color: "#FFFFFF", font: "inherit", fontSize: 15,
-          fontWeight: 700, cursor: canConfirm ? "pointer" : "not-allowed",
-          opacity: canConfirm ? 1 : 0.5,
-        }}
       >{cta}</button>
     </>
   );
@@ -352,42 +269,23 @@ export function UploadWhereModal(props: UploadWhereModalProps) {
       : `Pick a course for these ${n} documents so Sapling can link them to the right concepts.`;
 
   return (
-    <div style={{
-      position: "absolute", inset: 0, zIndex: 50, background: "rgba(26,24,20,0.32)",
-      display: "grid", placeItems: "center",
-      animation: closing ? "sapScrimOut 180ms ease both" : "sapScrimIn 200ms ease both",
-    }}>
+    <div className={cn("absolute inset-0 z-50 bg-[rgba(26,24,20,0.32)] grid place-items-center", closing ? "[animation:sapScrimOut_180ms_ease_both]" : "[animation:sapScrimIn_200ms_ease_both]")}>
       {/* Clicking away cancels the picker, but never a running upload. */}
-      <div onClick={busy ? undefined : onClose} style={{ position: "absolute", inset: 0 }} />
+      <div onClick={busy ? undefined : onClose} className="absolute inset-0" />
 
       <div
         role="dialog"
         aria-modal="true"
         aria-label="Choose where the upload belongs"
         data-testid="library-upload-where"
-        style={{
-          animation: closing
-            ? "sapModalOut 160ms cubic-bezier(0.4, 0, 1, 1) both"
-            : "sapModalIn 240ms cubic-bezier(0.2, 0.7, 0.2, 1) both",
-          position: "relative", width: 640, maxHeight: 860, display: "flex",
-          flexDirection: "column", background: "#FDFCF9", borderRadius: 18,
-          boxShadow: "0 24px 64px rgba(25,37,11,0.28)", overflow: "hidden",
-        }}
+        className={cn("relative w-160 max-h-215 flex flex-col bg-bg-panel rounded-[18px] [box-shadow:0_24px_64px_rgba(25,37,11,0.28)] overflow-hidden", closing ? "[animation:sapModalOut_160ms_cubic-bezier(0.4,_0,_1,_1)_both]" : "[animation:sapModalIn_240ms_cubic-bezier(0.2,_0.7,_0.2,_1)_both]")}
       >
-        <div style={{
-          padding: "28px 32px 20px", display: "flex", flexDirection: "column", gap: 6,
-        }}>
-          <h2 style={{
-            margin: 0, fontFamily: FONT_SERIF, fontSize: 28, fontWeight: 600,
-            letterSpacing: "-0.015em", color: "#1A1814",
-          }}>{heading}</h2>
-          <p style={{ margin: 0, fontSize: 15, color: "#3F3B31" }}>{subtitle}</p>
+        <div className="pt-7 px-8 pb-5 flex flex-col gap-1.5">
+          <h2 className="m-0 font-serif text-[28px] font-semibold tracking-[-0.015em] text-ink-800">{heading}</h2>
+          <p className="m-0 text-[15px] text-ink-600">{subtitle}</p>
         </div>
 
-        <div style={{
-          padding: "0 32px", display: "flex", flexDirection: "column", gap: 8,
-          overflowY: "auto",
-        }}>
+        <div className="py-0 px-8 flex flex-col gap-2 overflow-y-auto">
           {rows.map(r => (
             <FileRow
               key={r.id}
@@ -400,9 +298,7 @@ export function UploadWhereModal(props: UploadWhereModalProps) {
         </div>
 
         {!started && (
-          <div style={{
-            padding: "24px 32px 8px", display: "flex", flexDirection: "column", gap: 10,
-          }}>
+          <div className="pt-6 px-8 pb-2 flex flex-col gap-2.5">
             <CoursePicker
               courses={courses}
               courseId={courseId}
@@ -418,10 +314,7 @@ export function UploadWhereModal(props: UploadWhereModalProps) {
           </div>
         )}
 
-        <div style={{
-          padding: "20px 32px 28px", display: "flex", alignItems: "center",
-          justifyContent: "flex-end", gap: 10,
-        }}>
+        <div className="pt-5 px-8 pb-7 flex items-center justify-end gap-2.5">
           <ModalFooter
             started={started}
             busy={busy}

@@ -114,7 +114,7 @@ export function Icon({ name, size = 16 }: { name: string; size?: number }) {
   const artwork = brandIcons[brandName];
   if (artwork) {
     return (
-      <svg width={size} height={size} viewBox={brandIconViewBoxes[brandName]} fill="currentColor" aria-hidden="true" focusable="false" style={{ flexShrink: 0 }}>
+      <svg width={size} height={size} viewBox={brandIconViewBoxes[brandName]} fill="currentColor" aria-hidden="true" focusable="false" className="shrink-0">
         {artwork}
       </svg>
     );
@@ -134,7 +134,7 @@ export function Icon({ name, size = 16 }: { name: string; size?: number }) {
       strokeWidth={spec.strokeWidth ?? 1.8}
       strokeLinecap={spec.linecap ?? "round"}
       strokeLinejoin={spec.linejoin ?? "round"}
-      style={{ flexShrink: 0 }}
+      className="shrink-0"
     >
       {ds.map((d, i) => <path key={i} d={d} />)}
     </svg>

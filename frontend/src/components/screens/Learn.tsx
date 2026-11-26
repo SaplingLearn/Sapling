@@ -52,6 +52,7 @@ import { humanizeError, isNotFound, readableError, statusOf } from "@/lib/errorM
 import type { GraphNode as ApiNode, GraphEdge as ApiEdge } from "@/lib/types";
 import { apiToGraphNode, type GraphNode, type GraphEdge } from "@/lib/data";
 import { focusCardDescription, focusCardTitle, sessionSubtitle } from "./learn/view";
+import { cn } from "@/lib/cn";
 
 function apiToGraphEdge(e: ApiEdge): GraphEdge {
   return {
@@ -354,7 +355,7 @@ export function isSessionEndedError(err: unknown): boolean {
 
 export function Learn() {
   return (
-    <Suspense fallback={<div style={{ padding: 40, color: "var(--text-dim)" }}>Loading…</div>}>
+    <Suspense fallback={<div className="p-10 text-text-dim">Loading…</div>}>
       <LearnInner />
     </Suspense>
   );
@@ -440,7 +441,7 @@ function LearnInner() {
     return (
       <FullHeightScreen>
         <DisclaimerModal />
-        <div data-testid="tutor-resume-loading" style={{ padding: 40, color: "var(--text-dim)" }}>
+        <div data-testid="tutor-resume-loading" className="p-10 text-text-dim">
           Loading…
         </div>
       </FullHeightScreen>
@@ -458,14 +459,7 @@ function LearnInner() {
           actions={<AIDisclaimerChip />}
         />
         <div
-          style={{
-            padding: 32,
-            display: "grid",
-            gridTemplateColumns: isMobile ? "1fr" : "minmax(0, 1fr) 320px",
-            gap: 24,
-            flex: 1,
-            overflowY: "auto",
-          }}
+          className={cn("p-8 grid gap-6 flex-1 overflow-y-auto", isMobile ? "grid-cols-[1fr]" : "grid-cols-[minmax(0,_1fr)_320px]")}
         >
           <EntryStartCard
             selectedCourseId={selectedCourseId}
@@ -501,20 +495,12 @@ function LearnInner() {
       {session.crisisDialog}
 
       {isMobile && (
-        <div style={{ display: "flex", borderBottom: "1px solid var(--border)" }}>
+        <div className="flex border-b border-b-border">
           {(["chat", "graph"] as const).map(t => (
             <button
               key={t}
               onClick={() => setMobileTab(t)}
-              style={{
-                flex: 1,
-                padding: "10px 0",
-                fontSize: 12,
-                fontWeight: 500,
-                textTransform: "capitalize",
-                color: mobileTab === t ? "var(--accent)" : "var(--text-dim)",
-                borderBottom: mobileTab === t ? "2px solid var(--accent)" : "2px solid transparent",
-              }}
+              className={cn("flex-1 py-2.5 px-0 text-sm font-medium capitalize", mobileTab === t ? "text-accent" : "text-text-dim", mobileTab === t ? "border-b-2 border-b-accent" : "border-b-2 border-b-transparent")}
             >
               {t}
             </button>
@@ -522,7 +508,7 @@ function LearnInner() {
         </div>
       )}
 
-      <div style={{ display: "flex", flex: 1, minHeight: 0, position: "relative" }}>
+      <div className="flex flex-1 min-h-0 relative">
         {(!isMobile || mobileTab === "chat") && (
           <ChatColumn
             session={session}
@@ -1771,8 +1757,8 @@ function EntryStartCard({
   userId: string;
 }) {
   return (
-    <div className="card" style={{ padding: "var(--pad-xl)" }}>
-      <div className="label-micro" style={{ marginBottom: 8 }}>Course (optional)</div>
+    <div className="card p-(--pad-xl)">
+      <div className="label-micro mb-2">Course (optional)</div>
       <CustomSelect<string>
         value={selectedCourseId}
         options={[
@@ -1782,7 +1768,7 @@ function EntryStartCard({
         onChange={setSelectedCourseId}
         style={{ width: "100%", marginBottom: 16 }}
       />
-      <div className="label-micro" style={{ marginBottom: 8 }}>Topic</div>
+      <div className="label-micro mb-2">Topic</div>
       <TopicPicker
         value={topicDraft}
         onChange={setTopicDraft}
@@ -1792,15 +1778,15 @@ function EntryStartCard({
         selectedCourseId={selectedCourseId}
         activeSemester={activeSemester}
       />
-      <div className="label-micro" style={{ marginBottom: 8 }}>Mode</div>
-      <div style={{ marginBottom: 20 }}>
+      <div className="label-micro mb-2">Mode</div>
+      <div className="mb-5">
         <Toggle
           options={MODES.map(m => ({ value: m.id, label: m.name, title: m.tip }))}
           value={mode}
           onChange={setMode}
         />
       </div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+      <div className="flex justify-between items-center">
         <SharedContextToggle enabled={sharedCtx} onChange={setSharedCtx} align="left" />
         <button data-testid="tutor-start" className="btn btn--primary" onClick={onStart} disabled={!topicDraft.trim() || !userId}>
           <Icon name="sparkle" size={13} /> Start learning
@@ -1817,10 +1803,10 @@ function RecentSessionsCard({ recentSessions, onResume, onDelete, onRename }: {
   onRename: (s: Session, newTopic: string) => void;
 }) {
   return (
-    <div className="card" style={{ padding: "var(--pad-lg)" }}>
-      <div className="label-micro" style={{ marginBottom: 10 }}>Recent sessions</div>
+    <div className="card p-(--pad-lg)">
+      <div className="label-micro mb-2.5">Recent sessions</div>
       {recentSessions.length === 0 && (
-        <div style={{ fontSize: 12, color: "var(--text-muted)" }}>No recent sessions yet.</div>
+        <div className="text-sm text-text-muted">No recent sessions yet.</div>
       )}
       {recentSessions.map(s => (
         <SessionRow key={s.id} s={s} onResume={onResume} onDelete={onDelete} onRename={onRename} />
@@ -1841,7 +1827,7 @@ function ChatColumn({ session, topic, mode, courseCode, sharedCtx, setSharedCtx,
 }) {
   const { messages, sessionEnded, endConfirm } = session;
   return (
-    <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
+    <div className="flex-1 flex flex-col min-w-0">
       <TopBar
         breadcrumb={<BackToLearnLink onClick={session.handleBackToLearn} />}
         title={topic}
@@ -1859,26 +1845,18 @@ function ChatColumn({ session, topic, mode, courseCode, sharedCtx, setSharedCtx,
           </>
         }
       />
-      <div style={{ display: "flex", gap: 6, padding: "10px 32px", borderBottom: "1px solid var(--border)", flexWrap: "wrap" }}>
+      <div className="flex gap-1.5 py-2.5 px-8 border-b border-b-border flex-wrap">
         {MODES.map(m => (
           <button
             key={m.id}
             onClick={() => session.handleModeSwitch(m.id)}
             disabled={sessionEnded}
-            style={{
-              padding: "6px 14px",
-              borderRadius: "var(--r-full)",
-              fontSize: 12,
-              fontWeight: 500,
-              background: mode === m.id ? "var(--accent)" : "var(--bg-subtle)",
-              color: mode === m.id ? "var(--accent-fg)" : "var(--text-dim)",
-              border: mode === m.id ? "1px solid var(--accent)" : "1px solid var(--border)",
-            }}
+            className={cn("py-1.5 px-3.5 rounded-[var(--r-full)] text-sm font-medium", mode === m.id ? "bg-accent" : "bg-bg-subtle", mode === m.id ? "text-accent-fg" : "text-text-dim", mode === m.id ? "border border-accent" : "border border-border")}
           >
             {m.name}
           </button>
         ))}
-        <div style={{ flex: 1 }} />
+        <div className="flex-1" />
         <AIDisclaimerChip />
         <ModelToggle pref={modelPref} onChange={setModelPref} />
       </div>
@@ -1889,17 +1867,7 @@ function ChatColumn({ session, topic, mode, courseCode, sharedCtx, setSharedCtx,
         <div
           data-testid="tutor-session-ended"
           role="status"
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            gap: 12,
-            padding: "10px 32px",
-            borderBottom: "1px solid var(--border)",
-            background: "var(--bg-subtle)",
-            fontSize: 13,
-            color: "var(--text-dim)",
-          }}
+          className="flex items-center justify-between gap-3 py-2.5 px-8 border-b border-b-border bg-bg-subtle text-md text-text-dim"
         >
           <span>This session has ended. Start a new one to keep going.</span>
           <button
@@ -1945,32 +1913,13 @@ function KnowledgeMapRail({
   const { cardCourse, railGraph, focusConcept, progressItems, relatedItems } = model;
   return (
     <aside
-      style={{
-        width: isMobile ? "100%" : railW,
-        minWidth: isMobile ? undefined : railW,
-        flexShrink: 0,
-        overflow: "hidden",
-        transition: isMobile || railDragging
-          ? "none"
-          : "width var(--dur) var(--ease), min-width var(--dur) var(--ease)",
-      }}
+      className={cn("shrink-0 overflow-hidden", isMobile || railDragging ? "[transition:none]" : "[transition:width_var(--dur)_var(--ease),_min-width_var(--dur)_var(--ease)]")} style={{ width: isMobile ? "100%" : railW, minWidth: isMobile ? undefined : railW }}
     >
       {/* Inner content keeps a fixed 400px width so it stays laid out
           (and the graph's measured bounds stay stable) while the outer
           <aside> clips it during the slide. */}
       <div
-        className="learn-map-rail"
-        style={{
-          width: isMobile ? "100%" : RAIL_WIDTH,
-          height: "100%",
-          boxSizing: "border-box",
-          borderLeft: isMobile ? "none" : "1px solid var(--border)",
-          background: "var(--bg-subtle)",
-          overflowY: "auto",
-          overflowX: "hidden",
-          display: "flex",
-          flexDirection: "column",
-        }}
+        className={cn("learn-map-rail", "h-full box-border [background:var(--bg-subtle)] overflow-y-auto overflow-x-hidden flex flex-col", isMobile ? "w-full" : "w-100", isMobile ? "border-l-0" : "border-l border-l-border")}
       >
         {/* Header */}
         <RailHeader cardCourse={cardCourse} topic={topic} />
@@ -2004,14 +1953,14 @@ function KnowledgeMapRail({
 
 function RailHeader({ cardCourse, topic }: { cardCourse: EnrolledCourse | null; topic: string }) {
   return (
-    <div style={{ padding: "20px 22px 16px", borderBottom: "1px solid var(--border)" }}>
+    <div className="pt-5 px-5.5 pb-4 border-b border-b-border">
       <div className="label-micro">Knowledge map</div>
       {cardCourse && (
-        <div style={{ marginTop: 8, fontFamily: "var(--font-sans)", fontSize: 12, fontWeight: 500, color: "var(--brand-forest)" }}>
+        <div className="mt-2 font-sans text-sm font-medium text-brand-forest">
           {cardCourse.course_code}
         </div>
       )}
-      <div style={{ fontFamily: "var(--font-serif)", fontSize: 15, color: "var(--text-dim)", marginTop: 2, lineHeight: 1.35 }}>
+      <div className="font-serif text-[15px] text-text-dim mt-0.5 leading-[1.35]">
         {cardCourse?.course_name ?? topic}
       </div>
     </div>
@@ -2025,10 +1974,7 @@ function RailGraphSection({ railGraph, activeFocusId, onNodeClick }: {
 }) {
   return (
     <div
-      style={{
-        padding: "14px 14px 8px",
-        background: "radial-gradient(ellipse 80% 70% at 55% 42%, color-mix(in srgb, var(--brand-forest-bright) 6%, transparent), transparent 70%)",
-      }}
+      className="pt-3.5 px-3.5 pb-2 [background:radial-gradient(ellipse_80%_70%_at_55%_42%,_color-mix(in_srgb,_var(--brand-forest-bright)_6%,_transparent),_transparent_70%)]"
     >
       <SidebarKnowledgeGraph
         nodes={railGraph.nodes}
@@ -2036,10 +1982,10 @@ function RailGraphSection({ railGraph, activeFocusId, onNodeClick }: {
         highlightId={activeFocusId}
         onNodeClick={onNodeClick}
       />
-      <div style={{ display: "flex", gap: 14, justifyContent: "center", padding: "6px 0 4px", flexWrap: "wrap" }}>
+      <div className="flex gap-3.5 justify-center pt-1.5 px-0 pb-1 flex-wrap">
         {TIER_ORDER.map(tier => (
-          <span key={tier} style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 10.5, color: "var(--text-muted)" }}>
-            <span style={{ width: 8, height: 8, borderRadius: "50%", background: TIER_META[tier].color }} />
+          <span key={tier} className="inline-flex items-center gap-[5px] text-[10.5px] text-text-muted">
+            <span className="w-2 h-2 rounded-[50%]" style={{ background: TIER_META[tier].color }} />
             {TIER_META[tier].label}
           </span>
         ))}
@@ -2057,61 +2003,33 @@ function FocusCard({ model, topic, onSwitch, onRemove }: {
   const { focusConcept, cardCourse, focusIsCurrent, focusHasSession } = model;
   return (
     <div
-      style={{
-        margin: "6px 18px 0",
-        padding: "15px 16px",
-        background: "var(--bg-panel)",
-        border: "1px solid var(--border)",
-        borderRadius: 14,
-        boxShadow: "var(--shadow-sm)",
-      }}
+      className="mt-1.5 mx-4.5 mb-0 py-[15px] px-4 bg-bg-panel border border-border rounded-[14px] shadow-sm"
     >
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+      <div className="flex items-center justify-between gap-2">
         <div className="label-micro">{focusConcept ? "Focused concept" : "Focused course"}</div>
         {focusConcept && (
           <span
-            style={{
-              fontSize: 10.5,
-              fontWeight: 600,
-              padding: "2px 9px",
-              borderRadius: "var(--r-full)",
-              color: "#fff",
-              background: TIER_META[focusConcept.mastery_tier].color,
-            }}
+            className="text-[10.5px] font-semibold py-0.5 px-[9px] rounded-[var(--r-full)] text-accent-fg" style={{ background: TIER_META[focusConcept.mastery_tier].color }}
           >
             {TIER_META[focusConcept.mastery_tier].label}
           </span>
         )}
       </div>
-      <div style={{ fontFamily: "var(--font-display)", fontSize: 19, fontWeight: 500, color: "var(--text)", marginTop: 7, lineHeight: 1.2 }}>
+      <div className="font-display text-[19px] font-medium text-text mt-[7px] leading-[1.2]">
         {focusCardTitle(focusConcept, cardCourse, topic)}
       </div>
       <div
         data-testid="tutor-focus-concept-description"
-        style={{ fontSize: 12.5, color: "var(--text-muted)", marginTop: 6, lineHeight: 1.5 }}
+        className="text-[12.5px] text-text-muted mt-1.5 leading-[1.5]"
       >
         {focusCardDescription(focusConcept, model.descCache, model.neighborIds.size, model.courseConceptCount)}
       </div>
       {focusConcept && (
-        <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+        <div className="flex gap-2 mt-3">
           {!focusIsCurrent && (
             <button
               onClick={() => onSwitch(focusConcept.name)}
-              style={{
-                flex: 1,
-                display: "inline-flex",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: 6,
-                padding: "8px 12px",
-                borderRadius: "var(--r-sm)",
-                fontSize: 12.5,
-                fontWeight: 600,
-                border: "none",
-                background: "var(--brand-forest)",
-                color: "var(--accent-fg)",
-                cursor: "pointer",
-              }}
+              className="flex-1 inline-flex items-center justify-center gap-1.5 py-2 px-3 rounded-sm text-[12.5px] font-semibold border-0 bg-brand-forest text-accent-fg cursor-pointer"
             >
               <Icon name="sparkle" size={12} />
               {focusHasSession ? "Resume session" : "Start session"}
@@ -2120,21 +2038,7 @@ function FocusCard({ model, topic, onSwitch, onRemove }: {
           <button
             onClick={() => onRemove(focusConcept.id)}
             title="Remove concept"
-            style={{
-              flex: focusIsCurrent ? 1 : undefined,
-              display: "inline-flex",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: 6,
-              padding: "8px 12px",
-              borderRadius: "var(--r-sm)",
-              fontSize: 12.5,
-              fontWeight: 500,
-              border: "1px solid var(--border)",
-              background: "var(--bg-panel)",
-              color: "var(--state-struggle)",
-              cursor: "pointer",
-            }}
+            className={cn("inline-flex items-center justify-center gap-1.5 py-2 px-3 rounded-sm text-[12.5px] font-medium border border-border bg-bg-panel text-state-struggle cursor-pointer", focusIsCurrent ? "flex-1" : "")}
           >
             Remove
           </button>
@@ -2150,31 +2054,19 @@ function BranchList({ items, activeFocusId, onFocus }: {
   onFocus: (id: string) => void;
 }) {
   return (
-    <div style={{ padding: "18px 22px 6px" }}>
-      <div className="label-micro" style={{ marginBottom: 10 }}>In this branch</div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
+    <div className="pt-4.5 px-5.5 pb-1.5">
+      <div className="label-micro mb-2.5">In this branch</div>
+      <div className="flex flex-col gap-[9px]">
         {items.map(p => (
           <button
             key={p.id}
             onClick={() => onFocus(p.id)}
             title={`Focus ${p.name}`}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 10,
-              textAlign: "left",
-              width: "100%",
-              margin: "0 -7px",
-              padding: "5px 7px",
-              borderRadius: 8,
-              background: p.id === activeFocusId ? "var(--bg-soft)" : "transparent",
-              border: "none",
-              cursor: "pointer",
-            }}
+            className={cn("flex items-center gap-2.5 text-left w-full my-0 mx-[-7px] py-[5px] px-[7px] rounded-[8px] border-0 cursor-pointer", p.id === activeFocusId ? "bg-bg-soft" : "bg-transparent")}
           >
-            <span style={{ width: 11, height: 11, borderRadius: "50%", flexShrink: 0, background: TIER_META[p.tier].color }} />
-            <span style={{ flex: 1, fontSize: 13, color: "var(--text)", fontWeight: p.id === activeFocusId ? 600 : 400, lineHeight: 1.3 }}>{p.name}</span>
-            <span style={{ fontSize: 10.5, color: "var(--text-muted)" }}>{TIER_META[p.tier].label}</span>
+            <span className="w-[11px] h-[11px] rounded-[50%] shrink-0" style={{ background: TIER_META[p.tier].color }} />
+            <span className={cn("flex-1 text-md text-text leading-[1.3]", p.id === activeFocusId ? "font-semibold" : "font-normal")}>{p.name}</span>
+            <span className="text-[10.5px] text-text-muted">{TIER_META[p.tier].label}</span>
           </button>
         ))}
       </div>
@@ -2188,9 +2080,9 @@ function ElsewhereList({ items, activeFocusId, onFocus }: {
   onFocus: (id: string) => void;
 }) {
   return (
-    <div style={{ padding: "16px 22px 24px" }}>
-      <div className="label-micro" style={{ marginBottom: 10 }}>Elsewhere in course</div>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 7 }}>
+    <div className="pt-4 px-5.5 pb-6">
+      <div className="label-micro mb-2.5">Elsewhere in course</div>
+      <div className="flex flex-wrap gap-[7px]">
         {items.map(r => {
           const active = r.id === activeFocusId;
           return (
@@ -2198,16 +2090,7 @@ function ElsewhereList({ items, activeFocusId, onFocus }: {
               key={r.id}
               onClick={() => onFocus(r.id)}
               title={`Focus ${r.name}`}
-              style={{
-                padding: "6px 12px",
-                borderRadius: "var(--r-full)",
-                fontSize: 12.5,
-                fontWeight: 500,
-                border: `1px solid ${active ? "var(--brand-forest)" : "var(--border)"}`,
-                background: active ? "var(--accent-soft)" : "var(--bg-panel)",
-                color: active ? "var(--text)" : "var(--text-dim)",
-                cursor: "pointer",
-              }}
+              className={cn(cn("py-1.5 px-3 rounded-[var(--r-full)] text-[12.5px] font-medium cursor-pointer", active ? "bg-accent-soft" : "bg-bg-panel", active ? "text-text" : "text-text-dim"), active ? "border border-brand-forest" : "border border-border")}
             >
               {r.name}
             </button>
@@ -2221,9 +2104,9 @@ function ElsewhereList({ items, activeFocusId, onFocus }: {
 function AddConceptComposer({ editing }: { editing: ConceptEditing }) {
   const { addingConcept, setAddingConcept, newConceptName, setNewConceptName, addConcept } = editing;
   return (
-    <div style={{ padding: "4px 22px 24px" }}>
+    <div className="pt-1 px-5.5 pb-6">
       {addingConcept ? (
-        <div style={{ display: "flex", gap: 6 }}>
+        <div className="flex gap-1.5">
           <input
             autoFocus
             value={newConceptName}
@@ -2233,31 +2116,12 @@ function AddConceptComposer({ editing }: { editing: ConceptEditing }) {
               if (e.key === "Escape") { setAddingConcept(false); setNewConceptName(""); }
             }}
             placeholder="New concept name…"
-            style={{
-              flex: 1,
-              minWidth: 0,
-              padding: "7px 10px",
-              fontSize: 12.5,
-              border: "1px solid var(--border-strong)",
-              borderRadius: "var(--r-sm)",
-              background: "var(--bg-panel)",
-              color: "var(--text)",
-              outline: "none",
-            }}
+            className="flex-1 min-w-0 py-[7px] px-2.5 text-[12.5px] border border-border-strong rounded-sm bg-bg-panel text-text outline-none"
           />
           <button
             onClick={() => addConcept(newConceptName)}
             disabled={!newConceptName.trim()}
-            style={{
-              padding: "7px 12px",
-              fontSize: 12.5,
-              fontWeight: 600,
-              borderRadius: "var(--r-sm)",
-              border: "none",
-              background: newConceptName.trim() ? "var(--brand-forest)" : "var(--bg-soft)",
-              color: newConceptName.trim() ? "var(--accent-fg)" : "var(--text-muted)",
-              cursor: newConceptName.trim() ? "pointer" : "not-allowed",
-            }}
+            className={cn("py-[7px] px-3 text-[12.5px] font-semibold rounded-sm border-0", newConceptName.trim() ? "bg-brand-forest" : "bg-bg-soft", newConceptName.trim() ? "text-accent-fg" : "text-text-muted", newConceptName.trim() ? "cursor-pointer" : "cursor-not-allowed")}
           >
             Add
           </button>
@@ -2265,17 +2129,7 @@ function AddConceptComposer({ editing }: { editing: ConceptEditing }) {
       ) : (
         <button
           onClick={() => setAddingConcept(true)}
-          style={{
-            width: "100%",
-            padding: "8px 12px",
-            fontSize: 12.5,
-            fontWeight: 500,
-            borderRadius: "var(--r-sm)",
-            border: "1px dashed var(--border-strong)",
-            background: "transparent",
-            color: "var(--text-muted)",
-            cursor: "pointer",
-          }}
+          className="w-full py-2 px-3 text-[12.5px] font-medium rounded-sm border border-dashed border-border-strong bg-transparent text-text-muted cursor-pointer"
         >
           ＋ Add concept
         </button>
@@ -2297,32 +2151,7 @@ function RailToggleTab({ rail }: { rail: RailCollapse }) {
       onPointerUp={rail.onRailTabPointerUp}
       onPointerCancel={rail.onRailTabPointerCancel}
       onKeyDown={rail.onRailTabKeyDown}
-      style={{
-        position: "absolute",
-        top: "50%",
-        right: railW,
-        transform: "translateY(-50%)",
-        width: 24,
-        height: 68,
-        padding: 0,
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        justifyContent: "center",
-        gap: 4,
-        cursor: railDragging ? "grabbing" : "pointer",
-        touchAction: "none",
-        background: "var(--bg-panel)",
-        border: "1px solid var(--border)",
-        borderRight: "none",
-        borderRadius: "10px 0 0 10px",
-        boxShadow: "-3px 0 8px rgba(25, 37, 11, 0.06)",
-        color: railOpen ? "var(--brand-forest)" : "var(--text-muted)",
-        zIndex: 20,
-        transition: railDragging
-          ? "none"
-          : "right var(--dur) var(--ease), color var(--dur) var(--ease)",
-      }}
+      className={cn("absolute top-1/2 [transform:translateY(-50%)] w-6 h-17 p-0 flex flex-col items-center justify-center gap-1 touch-none bg-bg-panel border border-border border-r-0 [border-radius:10px_0_0_10px] [box-shadow:-3px_0_8px_rgba(25,_37,_11,_0.06)] z-20", railDragging ? "cursor-grabbing" : "cursor-pointer", railOpen ? "text-brand-forest" : "text-text-muted", railDragging ? "[transition:none]" : "[transition:right_var(--dur)_var(--ease),_color_var(--dur)_var(--ease)]")} style={{ right: railW }}
     >
       {/* Knowledge-graph glyph: three nodes joined in a triangle. */}
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -2341,10 +2170,7 @@ function RailToggleTab({ rail }: { rail: RailCollapse }) {
         strokeLinecap="round"
         strokeLinejoin="round"
         aria-hidden="true"
-        style={{
-          transform: railOpen ? "rotate(0deg)" : "rotate(180deg)",
-          transition: railDragging ? "none" : "transform var(--dur) var(--ease)",
-        }}
+        className={cn(railOpen ? "[transform:rotate(0deg)]" : "[transform:rotate(180deg)]", railDragging ? "[transition:none]" : "[transition:transform_var(--dur)_var(--ease)]")}
       >
         <polyline points="9 18 15 12 9 6" />
       </svg>
@@ -2373,7 +2199,7 @@ function SidebarKnowledgeGraph({
     return () => ro.disconnect();
   }, []);
   return (
-    <div ref={ref} style={{ width: "100%" }}>
+    <div ref={ref} className="w-full">
       {width > 0 && (
         <KnowledgeGraph
           nodes={nodes}
@@ -2396,22 +2222,7 @@ function BackToLearnLink({ onClick }: { onClick: () => void }) {
       onClick={onClick}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 4,
-        padding: "0 0 4px",
-        background: "transparent",
-        border: "none",
-        cursor: "pointer",
-        fontFamily: "var(--font-sans)",
-        fontSize: 13,
-        fontWeight: 400,
-        letterSpacing: "normal",
-        textTransform: "none",
-        color: hover ? "var(--accent)" : "var(--text-muted)",
-        transition: "color var(--dur-fast) var(--ease)",
-      }}
+      className={cn("inline-flex items-center gap-1 pt-0 px-0 pb-1 bg-transparent border-0 cursor-pointer font-sans text-md font-normal [letter-spacing:normal] normal-case [transition:color_var(--dur-fast)_var(--ease)]", hover ? "text-accent" : "text-text-muted")}
     >
       <ChevronLeft
         size={14}
@@ -2462,18 +2273,10 @@ function SessionRow({ s, onResume, onDelete, onRename }: {
 
   return (
     <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 6,
-        padding: "8px 10px",
-        borderRadius: "var(--r-md)",
-        background: "var(--bg-subtle)",
-        marginBottom: 6,
-      }}
+      className="flex items-center gap-1.5 py-2 px-2.5 rounded-md bg-bg-subtle mb-1.5"
     >
       {editing ? (
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 2 }}>
+        <div className="flex-1 flex flex-col gap-0.5">
           <input
             autoFocus
             aria-label="Session name"
@@ -2490,17 +2293,9 @@ function SessionRow({ s, onResume, onDelete, onRename }: {
               }
             }}
             onBlur={commitEdit}
-            style={{
-              fontSize: 13,
-              fontWeight: 600,
-              padding: "2px 4px",
-              border: "1px solid var(--border)",
-              borderRadius: "var(--r-sm)",
-              background: "var(--bg)",
-              color: "var(--text)",
-            }}
+            className="text-md font-semibold py-0.5 px-1 border border-border rounded-sm bg-bg text-text"
           />
-          <span style={{ fontSize: 11, color: "var(--text-muted)" }}>
+          <span className="text-xs text-text-muted">
             {s.mode} · {s.message_count} msg{s.message_count === 1 ? "" : "s"}
           </span>
         </div>
@@ -2512,16 +2307,10 @@ function SessionRow({ s, onResume, onDelete, onRename }: {
           // LLM-backed start-session call.
           data-testid={`tutor-session-resume-${s.id}`}
           onClick={() => onResume(s)}
-          style={{
-            flex: 1,
-            textAlign: "left",
-            display: "flex",
-            flexDirection: "column",
-            gap: 2,
-          }}
+          className="flex-1 text-left flex flex-col gap-0.5"
         >
-          <span style={{ fontSize: 13, fontWeight: 600 }}>{s.topic}</span>
-          <span style={{ fontSize: 11, color: "var(--text-muted)" }}>
+          <span className="text-md font-semibold">{s.topic}</span>
+          <span className="text-xs text-text-muted">
             {s.mode} · {s.message_count} msg{s.message_count === 1 ? "" : "s"}
           </span>
         </button>
@@ -2614,27 +2403,14 @@ function TopicPicker({
   const displayLabel = isGeneral ? generalLabel : (value || "Pick or type a topic…");
 
   return (
-    <div ref={wrapRef} style={{ position: "relative", marginBottom: 16 }}>
+    <div ref={wrapRef} className="relative mb-4">
       <button
         data-testid="tutor-topic-picker"
         onClick={() => setOpen(o => !o)}
         onKeyDown={e => { if (e.key === "Enter" && !open && value.trim()) onSubmit(); }}
-        style={{
-          width: "100%",
-          padding: "12px 14px",
-          border: "1px solid var(--border)",
-          borderRadius: "var(--r-sm)",
-          fontSize: 15,
-          background: "var(--bg-input)",
-          textAlign: "left",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: 8,
-          color: value ? "var(--text)" : "var(--text-muted)",
-        }}
+        className={cn("w-full py-3 px-3.5 border border-border rounded-sm text-[15px] bg-bg-input text-left flex items-center justify-between gap-2", value ? "text-text" : "text-text-muted")}
       >
-        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+        <span className="overflow-hidden text-ellipsis whitespace-nowrap">
           {displayLabel}
         </span>
         <Icon name="chev" size={12} />
@@ -2642,19 +2418,7 @@ function TopicPicker({
 
       {open && (
         <div
-          style={{
-            position: "absolute",
-            top: "calc(100% + 4px)",
-            left: 0, right: 0,
-            background: "var(--bg-panel)",
-            border: "1px solid var(--border-strong)",
-            borderRadius: "var(--r-sm)",
-            boxShadow: "var(--shadow-md)",
-            zIndex: 30,
-            maxHeight: 360,
-            display: "flex",
-            flexDirection: "column",
-          }}
+          className="absolute top-[calc(100%_+_4px)] left-0 right-0 bg-bg-panel border border-border-strong rounded-sm shadow-md z-30 max-h-90 flex flex-col"
         >
           <input
             data-testid="tutor-topic-search"
@@ -2669,45 +2433,28 @@ function TopicPicker({
               }
             }}
             placeholder="Search concepts or type a custom topic…"
-            style={{
-              width: "100%",
-              padding: "10px 12px",
-              fontSize: 13,
-              border: "none",
-              borderBottom: "1px solid var(--border)",
-              background: "transparent",
-            }}
+            className="w-full py-2.5 px-3 text-md border-0 border-b border-b-border bg-transparent"
           />
-          <div style={{ overflowY: "auto", flex: 1 }}>
+          <div className="overflow-y-auto flex-1">
             <button
               onClick={pickGeneral}
-              style={{
-                width: "100%", padding: "10px 12px", textAlign: "left",
-                background: isGeneral ? "var(--accent-soft)" : "transparent",
-                border: "none", cursor: "pointer", fontSize: 13,
-                display: "flex", flexDirection: "column", gap: 2,
-                borderBottom: "1px solid var(--border)",
-              }}
+              className={cn("w-full py-2.5 px-3 text-left border-0 cursor-pointer text-md flex flex-col gap-0.5 border-b border-b-border", isGeneral ? "bg-accent-soft" : "bg-transparent")}
             >
-              <span style={{ fontWeight: 600, color: "var(--text)" }}>{generalLabel}</span>
-              <span style={{ fontSize: 11, color: "var(--text-muted)" }}>
+              <span className="font-semibold text-text">{generalLabel}</span>
+              <span className="text-xs text-text-muted">
                 Tutor scans your graph and chooses the next concept.
               </span>
             </button>
             {filtered.length === 0 && query.trim() && (
               <button
                 onClick={pickCustom}
-                style={{
-                  width: "100%", padding: "10px 12px", textAlign: "left",
-                  background: "transparent", border: "none", cursor: "pointer", fontSize: 13,
-                  color: "var(--text)",
-                }}
+                className="w-full py-2.5 px-3 text-left bg-transparent border-0 cursor-pointer text-md text-text"
               >
                 Use custom topic: <strong>“{query.trim()}”</strong>
               </button>
             )}
             {filtered.length === 0 && !query.trim() && (
-              <div style={{ padding: "16px 12px", fontSize: 12, color: "var(--text-muted)" }}>
+              <div className="py-4 px-3 text-sm text-text-muted">
                 {selectedCourseId
                   ? "No concepts in this course yet — upload a syllabus or scan to populate the graph."
                   : "No concepts in your graph yet."}
@@ -2719,18 +2466,13 @@ function TopicPicker({
                 <button
                   key={c.id}
                   onClick={() => pickConcept(c.name)}
-                  style={{
-                    width: "100%", padding: "8px 12px", textAlign: "left",
-                    background: isSel ? "var(--accent-soft)" : "transparent",
-                    border: "none", cursor: "pointer", fontSize: 13,
-                    display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8,
-                  }}
+                  className={cn("w-full py-2 px-3 text-left border-0 cursor-pointer text-md flex justify-between items-center gap-2", isSel ? "bg-accent-soft" : "bg-transparent")}
                 >
-                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--text)" }}>
+                  <span className="overflow-hidden text-ellipsis whitespace-nowrap text-text">
                     {c.name}
                   </span>
                   {c.course_code && (
-                    <span className="mono" style={{ fontSize: 10, color: "var(--text-muted)", flexShrink: 0 }}>
+                    <span className="mono text-2xs text-text-muted shrink-0">
                       {c.course_code}
                     </span>
                   )}

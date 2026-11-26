@@ -20,6 +20,8 @@ import type {
   AdminUserListItem as AdminUser,
 } from "@/lib/types";
 import { sentenceCase } from "@/lib/sentenceCase";
+import { cn } from "@/lib/cn";
+import { fieldClass } from "@/components/ui/field";
 
 const RARITIES: RarityTier[] = ["common", "uncommon", "rare", "epic", "legendary"];
 
@@ -112,25 +114,21 @@ export function AchievementWiki() {
 
   return (
     <div>
-      <div className="body-serif" style={{ fontSize: 15, marginBottom: 18, color: "var(--text-dim)", maxWidth: 780 }}>
-        <span style={{ color: "var(--text)" }}>{live.length}</span> live · {" "}
-        <span style={{ color: "var(--text-muted)" }}>{drafts.length} work in progress</span>
+      <div className="body-serif text-[15px] mb-4.5 text-text-dim max-w-195">
+        <span className="text-text">{live.length}</span> live · {" "}
+        <span className="text-text-muted">{drafts.length} work in progress</span>
       </div>
 
-      <div className="card" style={{ padding: "12px 16px", marginBottom: 24, display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
-        <div style={{ position: "relative", flex: 1, minWidth: 200, maxWidth: 320 }}>
-          <div style={{ position: "absolute", left: 10, top: 8, color: "var(--text-muted)" }}>
+      <div className="card py-3 px-4 mb-6 flex gap-3 flex-wrap items-center">
+        <div className="relative flex-1 min-w-50 max-w-80">
+          <div className="absolute left-2.5 top-2 text-text-muted">
             <Icon name="search" size={14} />
           </div>
           <input
             placeholder="Search name, slug, description…"
             value={search}
             onChange={e => setSearch(e.target.value)}
-            style={{
-              width: "100%", padding: "7px 12px 7px 32px",
-              border: "1px solid var(--border)", borderRadius: "var(--r-sm)",
-              fontSize: 13, background: "var(--bg-input)",
-            }}
+            className="w-full pt-[7px] pr-3 pb-[7px] pl-8 border border-border rounded-sm text-md bg-bg-input"
           />
         </div>
         <CustomSelect
@@ -156,18 +154,18 @@ export function AchievementWiki() {
       </div>
 
       {drafts.length > 0 && (
-        <section style={{ marginBottom: 36 }}>
-          <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 6 }}>
-            <h2 style={{ margin: 0, fontSize: 20, fontWeight: 600 }}>Work in progress</h2>
+        <section className="mb-9">
+          <div className="flex items-baseline gap-2.5 mb-1.5">
+            <h2 className="m-0 text-[20px] font-semibold">Work in progress</h2>
             <span className="chip chip--warn">{drafts.length}</span>
           </div>
-          <div style={{ fontSize: 12.5, color: "var(--text-muted)", marginBottom: 16, maxWidth: 640 }}>
+          <div className="text-[12.5px] text-text-muted mb-4 max-w-160">
             Drafts are visible only here — users never see them and their triggers never fire.
           </div>
           {filteredDrafts.length === 0 ? (
-            <div className="label-micro" style={{ padding: "8px 0" }}>No drafts match these filters.</div>
+            <div className="label-micro py-2 px-0">No drafts match these filters.</div>
           ) : (
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(340px, 1fr))", gap: 14 }}>
+            <div className="grid grid-cols-[repeat(auto-fill,_minmax(340px,_1fr))] gap-3.5">
               {filteredDrafts.map(a => (
                 <AchievementCard key={a.id} achievement={a} onChange={patch => patchLocal(a.id, patch)} />
               ))}
@@ -176,17 +174,17 @@ export function AchievementWiki() {
         </section>
       )}
 
-      <section style={{ marginBottom: 36 }}>
-        <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 6 }}>
-          <h2 style={{ margin: 0, fontSize: 20, fontWeight: 600 }}>Live catalog</h2>
+      <section className="mb-9">
+        <div className="flex items-baseline gap-2.5 mb-1.5">
+          <h2 className="m-0 text-[20px] font-semibold">Live catalog</h2>
           <span className="chip chip--accent">{live.length}</span>
         </div>
         {filteredLive.length === 0 ? (
-          <div className="label-micro" style={{ padding: "8px 0" }}>
+          <div className="label-micro py-2 px-0">
             {live.length === 0 ? "No live achievements yet." : "No live achievements match these filters."}
           </div>
         ) : (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(340px, 1fr))", gap: 14 }}>
+          <div className="grid grid-cols-[repeat(auto-fill,_minmax(340px,_1fr))] gap-3.5">
             {filteredLive.map(a => (
               <AchievementCard key={a.id} achievement={a} onChange={patch => patchLocal(a.id, patch)} />
             ))}
@@ -194,7 +192,7 @@ export function AchievementWiki() {
         )}
       </section>
 
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(260px, 340px) 1fr", gap: 20, alignItems: "start" }}>
+      <div className="grid grid-cols-[minmax(260px,_340px)_1fr] gap-5 [align-items:start]">
         <GrantPanel achievements={items} users={users} />
         <XpRulesPanel />
       </div>
@@ -458,29 +456,29 @@ function AchievementCard({
   };
 
   return (
-    <div className="card" style={{ padding: 16 }}>
-      <div style={{ display: "flex", gap: 14, alignItems: "flex-start" }}>
-        <div style={{ flexShrink: 0 }}>
+    <div className="card p-4">
+      <div className="flex gap-3.5 items-start">
+        <div className="shrink-0">
           <BadgeArt slug={achievement.slug} rarity={achievement.rarity} locked={false}
                     iconUrl={achievement.icon_url} emoji={achievement.icon} size={64} />
         </div>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-            <span style={{ fontWeight: 600, fontSize: 14.5 }}>{achievement.name}</span>
-            <span className="chip" style={{ fontSize: 12 }}>{sentenceCase(achievement.rarity)}</span>
-            <span className="chip" style={{ fontSize: 12 }}>{CAT_META[achievement.category].label}</span>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="font-semibold text-[14.5px]">{achievement.name}</span>
+            <span className="chip text-sm">{sentenceCase(achievement.rarity)}</span>
+            <span className="chip text-sm">{CAT_META[achievement.category].label}</span>
             {achievement.is_secret && <span className="chip chip--warn">secret</span>}
           </div>
-          <div style={{ fontSize: 12, color: "var(--text-dim)", marginTop: 5, lineHeight: 1.45 }}>
-            {achievement.description || <span style={{ color: "var(--text-muted)" }}>No description yet.</span>}
+          <div className="text-sm text-text-dim mt-[5px] leading-[1.45]">
+            {achievement.description || <span className="text-text-muted">No description yet.</span>}
           </div>
-          <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 6 }}>
+          <div className="text-xs text-text-muted mt-1.5">
             +{achievement.xp_reward} XP · sort {achievement.sort_order} · {achievement.slug}
           </div>
         </div>
       </div>
 
-      <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap", alignItems: "center" }}>
+      <div className="flex gap-2 mt-3 flex-wrap items-center">
         <button className="btn btn--sm btn--ghost" onClick={toggleExpanded}>
           {expanded ? "Close" : "Edit"}
         </button>
@@ -499,20 +497,20 @@ function AchievementCard({
           </button>
         )}
         {isDraft && (
-          <span style={{ fontSize: 11, color: "var(--text-muted)" }}>
+          <span className="text-xs text-text-muted">
             Grant is disabled until this is published.
           </span>
         )}
       </div>
 
       {expanded && (
-        <div style={{ marginTop: 16, paddingTop: 16, borderTop: "1px dashed var(--border)", display: "grid", gap: 16 }}>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <div className="mt-4 pt-4 [border-top:1px_dashed_var(--border)] grid gap-4">
+          <div className="grid grid-cols-[1fr_1fr] gap-3">
             <LabeledField label="Name">
-              <input value={name} onChange={e => setName(e.target.value)} style={fieldStyle} />
+              <input value={name} onChange={e => setName(e.target.value)} className={fieldClass} />
             </LabeledField>
             <LabeledField label="XP reward">
-              <input type="number" value={xpReward} onChange={e => setXpReward(Number(e.target.value) || 0)} style={fieldStyle} />
+              <input type="number" value={xpReward} onChange={e => setXpReward(Number(e.target.value) || 0)} className={fieldClass} />
             </LabeledField>
             <LabeledField label="Category">
               <CustomSelect<AchievementCategory>
@@ -529,49 +527,45 @@ function AchievementCard({
               />
             </LabeledField>
             <LabeledField label="Sort order">
-              <input type="number" value={sortOrder} onChange={e => setSortOrder(Number(e.target.value) || 0)} style={fieldStyle} />
+              <input type="number" value={sortOrder} onChange={e => setSortOrder(Number(e.target.value) || 0)} className={fieldClass} />
             </LabeledField>
-            <div style={{ display: "flex", alignItems: "flex-end", paddingBottom: 8 }}>
-              <label style={checkLabel}>
+            <div className="flex items-end pb-2">
+              <label className="inline-flex items-center gap-1.5 text-sm text-text-dim">
                 <input type="checkbox" checked={secret} onChange={e => setSecret(e.target.checked)} /> Secret (hidden until earned)
               </label>
             </div>
           </div>
           <LabeledField label="Description">
-            <textarea value={description} onChange={e => setDescription(e.target.value)} rows={2} style={fieldStyle} />
+            <textarea value={description} onChange={e => setDescription(e.target.value)} rows={2} className={fieldClass} />
           </LabeledField>
-          <button className="btn btn--primary btn--sm" onClick={save} disabled={saving} style={{ justifySelf: "start" }}>
+          <button className="btn btn--primary btn--sm [justify-self:start]" onClick={save} disabled={saving}>
             {saving ? "Saving…" : "Save"}
           </button>
 
           <div>
-            <div className="label-micro" style={{ marginBottom: 6 }}>Icon</div>
+            <div className="label-micro mb-1.5">Icon</div>
             <input
               ref={fileRef}
               type="file"
               accept="image/png,image/webp,image/svg+xml"
-              style={{ display: "none" }}
+              className="hidden"
               onChange={e => handleFile(e.target.files?.[0])}
             />
             <div
               onClick={() => { if (!iconUploading) fileRef.current?.click(); }}
               onDragOver={e => e.preventDefault()}
               onDrop={e => { e.preventDefault(); if (!iconUploading) handleFile(e.dataTransfer.files?.[0]); }}
-              style={{
-                border: "1px dashed var(--border)", borderRadius: "var(--r-md)",
-                padding: 14, textAlign: "center", cursor: iconUploading ? "default" : "pointer",
-                fontSize: 12, color: "var(--text-muted)", opacity: iconUploading ? 0.7 : 1,
-              }}
+              className={cn("border border-dashed border-border rounded-md p-3.5 text-center text-sm text-text-muted", iconUploading ? "cursor-default" : "cursor-pointer", iconUploading ? "opacity-70" : "opacity-100")}
             >
               {iconUploading ? "Uploading…" : "Drop a 512×512 PNG, WebP or SVG here, or click to choose (≤512 KB)"}
             </div>
           </div>
 
           <div>
-            <div className="label-micro" style={{ marginBottom: 6 }}>Triggers · {triggers.length}</div>
-            {triggers.length === 0 && <div style={{ fontSize: 12, color: "var(--text-muted)" }}>None.</div>}
+            <div className="label-micro mb-1.5">Triggers · {triggers.length}</div>
+            {triggers.length === 0 && <div className="text-sm text-text-muted">None.</div>}
             {triggers.map(t => (
-              <div key={t.id} style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 6 }}>
+              <div key={t.id} className="flex gap-1.5 items-center mb-1.5">
                 <input
                   value={triggerDrafts[t.id]?.trigger_type ?? t.trigger_type}
                   onChange={e => setTriggerDrafts(prev => ({
@@ -579,7 +573,7 @@ function AchievementCard({
                   }))}
                   onBlur={() => commitTrigger(t.id)}
                   onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
-                  style={{ ...fieldStyle, flex: 1 }}
+                  className="w-full py-[7px] px-2.5 border border-border rounded-sm text-md bg-bg-input [font-family:inherit] flex-1"
                 />
                 <input
                   type="number"
@@ -590,23 +584,23 @@ function AchievementCard({
                   }))}
                   onBlur={() => commitTrigger(t.id)}
                   onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
-                  style={{ ...fieldStyle, width: 80 }}
+                  className="py-[7px] px-2.5 border border-border rounded-sm text-md bg-bg-input [font-family:inherit] w-20"
                 />
                 <button className="btn btn--sm btn--ghost" onClick={() => deleteTriggerInline(t.id)}>×</button>
               </div>
             ))}
-            <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 6 }}>
+            <div className="flex gap-1.5 items-center mt-1.5">
               <input
                 placeholder="trigger_type (e.g. login_streak)"
                 value={newTrigger.trigger_type}
                 onChange={e => setNewTrigger(v => ({ ...v, trigger_type: e.target.value }))}
-                style={{ ...fieldStyle, flex: 1 }}
+                className="w-full py-[7px] px-2.5 border border-border rounded-sm text-md bg-bg-input [font-family:inherit] flex-1"
               />
               <input
                 type="number"
                 value={newTrigger.trigger_threshold}
                 onChange={e => setNewTrigger(v => ({ ...v, trigger_threshold: Number(e.target.value) || 0 }))}
-                style={{ ...fieldStyle, width: 80 }}
+                className="py-[7px] px-2.5 border border-border rounded-sm text-md bg-bg-input [font-family:inherit] w-20"
               />
               <button
                 className="btn btn--sm btn--primary"
@@ -619,16 +613,16 @@ function AchievementCard({
           </div>
 
           <div>
-            <div className="label-micro" style={{ marginBottom: 6 }}>Linked cosmetics · {linkedCosmeticIds.length}</div>
-            {linkedCosmeticIds.length === 0 && <div style={{ fontSize: 12, color: "var(--text-muted)" }}>None.</div>}
+            <div className="label-micro mb-1.5">Linked cosmetics · {linkedCosmeticIds.length}</div>
+            {linkedCosmeticIds.length === 0 && <div className="text-sm text-text-muted">None.</div>}
             {linkedCosmeticIds.map(cid => {
               const c = cosmetics.find(x => x.id === cid);
               return (
-                <div key={cid} style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 6 }}>
-                  <span style={{ ...fieldStyle, flex: 1, display: "flex", alignItems: "center", gap: 8 }}>
+                <div key={cid} className="flex gap-1.5 items-center mb-1.5">
+                  <span className="w-full py-[7px] px-2.5 border border-border rounded-sm text-md bg-bg-input [font-family:inherit] flex-1 flex items-center gap-2">
                     <span>{c ? c.name : cid}</span>
                     {c && (
-                      <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
+                      <span className="text-sm text-text-muted">
                         {sentenceCase(c.type)} · {sentenceCase(c.rarity)}
                       </span>
                     )}
@@ -643,7 +637,7 @@ function AchievementCard({
                 </div>
               );
             })}
-            <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 6 }}>
+            <div className="flex gap-1.5 items-center mt-1.5">
               <CustomSelect
                 size="sm"
                 value={pendingCosmeticId}
@@ -707,8 +701,8 @@ function GrantPanel({ achievements, users }: { achievements: Achievement[]; user
   };
 
   return (
-    <div className="card" style={{ padding: "var(--pad-lg)" }}>
-      <div className="label-micro" style={{ marginBottom: 10 }}>Grant to user</div>
+    <div className="card p-(--pad-lg)">
+      <div className="label-micro mb-2.5">Grant to user</div>
       <LabeledField label="User">
         <CustomSelect
           size="sm"
@@ -727,14 +721,13 @@ function GrantPanel({ achievements, users }: { achievements: Achievement[]; user
           placeholder="Pick one…"
         />
       </LabeledField>
-      <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: -4, marginBottom: 10 }}>
+      <div className="text-xs text-text-muted -mt-1 mb-2.5">
         Drafts are disabled here — publish a badge first.
       </div>
       <button
-        className="btn"
+        className="btn w-full"
         onClick={doGrant}
         disabled={granting || !grant.userId || !grant.achievementId}
-        style={{ width: "100%" }}
       >
         {granting ? "Granting…" : "Grant achievement"}
       </button>
@@ -801,19 +794,16 @@ function XpRulesPanel() {
   if (loading) return <AdminTableSkeleton />;
 
   return (
-    <div className="card" style={{ padding: 0 }}>
-      <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--border)" }}>
+    <div className="card p-0">
+      <div className="py-3 px-4 border-b border-b-border">
         <div className="label-micro">XP rules · {rules.length}</div>
       </div>
       {rules.length === 0 && (
-        <div style={{ padding: 28, textAlign: "center", color: "var(--text-muted)", fontSize: 13 }}>No XP rules defined.</div>
+        <div className="p-7 text-center text-text-muted text-md">No XP rules defined.</div>
       )}
       {rules.map(r => (
-        <div key={r.key} style={{
-          display: "flex", alignItems: "center", gap: 12,
-          padding: "10px 16px", borderTop: "1px solid var(--border)", fontSize: 13,
-        }}>
-          <span style={{ flex: 1, fontWeight: 500 }}>{r.label}</span>
+        <div key={r.key} className="flex items-center gap-3 py-2.5 px-4 border-t border-t-border text-md">
+          <span className="flex-1 font-medium">{r.label}</span>
           <input
             type="number"
             value={drafts[r.key] ?? String(r.amount)}
@@ -821,9 +811,9 @@ function XpRulesPanel() {
             onBlur={() => commitAmount(r.key)}
             onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
             disabled={busyKey === r.key}
-            style={{ ...fieldStyle, width: 90 }}
+            className="py-[7px] px-2.5 border border-border rounded-sm text-md bg-bg-input [font-family:inherit] w-22.5"
           />
-          <label style={checkLabel}>
+          <label className="inline-flex items-center gap-1.5 text-sm text-text-dim">
             <input
               type="checkbox"
               checked={r.enabled}
@@ -841,23 +831,10 @@ function XpRulesPanel() {
 
 function LabeledField({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div style={{ marginBottom: 10 }}>
-      <div className="label-micro" style={{ marginBottom: 4 }}>{label}</div>
+    <div className="mb-2.5">
+      <div className="label-micro mb-1">{label}</div>
       {children}
     </div>
   );
 }
 
-const fieldStyle: React.CSSProperties = {
-  width: "100%",
-  padding: "7px 10px",
-  border: "1px solid var(--border)",
-  borderRadius: "var(--r-sm)",
-  fontSize: 13,
-  background: "var(--bg-input)",
-  fontFamily: "inherit",
-};
-
-const checkLabel: React.CSSProperties = {
-  display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text-dim)",
-};

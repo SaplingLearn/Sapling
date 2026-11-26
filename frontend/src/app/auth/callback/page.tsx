@@ -174,15 +174,7 @@ function CallbackInner() {
     <div
       role="status"
       data-testid="auth-callback-status"
-      style={{
-        minHeight: '100vh',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        background: 'var(--bg)',
-        color: 'var(--text-dim)',
-        fontSize: 14,
-      }}
+      className="min-h-screen flex items-center justify-center bg-bg text-text-dim text-base"
     >
       {statusText(searchParams.get('error'))}
     </div>
@@ -191,7 +183,7 @@ function CallbackInner() {
 
 export default function CallbackPage() {
   return (
-    <Suspense fallback={<div style={{ minHeight: '100vh', background: 'var(--bg)' }} />}>
+    <Suspense fallback={<div className="min-h-screen bg-bg" />}>
       <CallbackInner />
     </Suspense>
   );

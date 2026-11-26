@@ -114,9 +114,9 @@ describe('GradescopeSyncDialog stage DOM', () => {
     expect(dialogHtml()).toMatchSnapshot();
     const row = screen.getByRole('button', { name: /CS101/ });
     fireEvent.mouseEnter(row);
-    expect(row.style.borderColor).toBe('var(--border-strong)');
+    expect(row).toHaveTwStyle({ borderColor: 'var(--border-strong)' });
     fireEvent.mouseLeave(row);
-    expect(row.style.borderColor).toBe('var(--border)');
+    expect(row).toHaveTwStyle({ borderColor: 'var(--border)' });
     await user.click(row);
     expect(linkGradescopeCourse).toHaveBeenCalledWith('u1', 'c1', '123', 'Fall 2025');
     expect(await screen.findByRole('button', { name: 'Sync now' })).toBeInTheDocument();

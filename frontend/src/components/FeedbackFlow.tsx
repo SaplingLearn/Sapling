@@ -4,10 +4,11 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 import { submitFeedback } from "@/lib/api";
 import { useUser } from "@/context/UserContext";
-import { useScrollLock } from "@/lib/useScrollLock";
+import Dialog from "@/components/Dialog";
 import { releaseFeedbackSlot, tryClaimFeedbackSlot } from "@/lib/feedbackSlot";
 import { useToast } from "./ToastProvider";
 import { LONG_TEXT_MAX } from "@/lib/inputLimits";
+import { cn } from "@/lib/cn";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 /** How long a page is open before the pulse asks. */
@@ -65,8 +66,6 @@ export function FeedbackFlow({ passive = true, open: openProp, onClose }: Feedba
   const [selected, setSelected] = useState<string[]>([]);
   const [comment, setComment] = useState("");
   const [submitting, setSubmitting] = useState(false);
-
-  useScrollLock(open);
 
   useEffect(() => {
     if (!passive) return;
@@ -136,41 +135,24 @@ export function FeedbackFlow({ passive = true, open: openProp, onClose }: Feedba
     }
   };
 
-  if (!open) return null;
-
   return (
-    <div
-      style={{
-        position: "fixed",
-        inset: 0,
-        background: "rgba(0,0,0,0.4)",
-        zIndex: 200,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-      }}
-      onClick={() => !submitting && close(true)}
+    <Dialog
+      open={open}
+      onClose={() => { if (!submitting) close(true); }}
+      labelledBy="feedback-pulse-title"
+      width="440px"
+      zIndex={200}
+      showCloseButton={false}
     >
-      <div
-        onClick={e => e.stopPropagation()}
-        style={{
-          width: 440,
-          maxWidth: "calc(100vw - 32px)",
-          background: "var(--bg-panel)",
-          borderRadius: "var(--r-lg)",
-          padding: 28,
-          boxShadow: "var(--shadow-lg)",
-        }}
-      >
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-          <div className="h-serif" style={{ fontSize: 24 }}>What's clicking?</div>
+        <div className="flex justify-between items-center mb-3">
+          <div id="feedback-pulse-title" className="h-serif text-[24px]">What's clicking?</div>
           <button className="btn btn--ghost btn--sm" onClick={() => close(true)} aria-label="Close">×</button>
         </div>
-        <div className="body-serif" style={{ fontSize: 14, color: "var(--text-dim)", marginBottom: 16 }}>
+        <div className="body-serif text-base text-text-dim mb-4">
           A quick pulse. Nothing is a wrong answer.
         </div>
 
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 6, marginBottom: 20 }}>
+        <div className="flex justify-between gap-1.5 mb-5">
           {RATINGS.map(r => {
             const selectedRating = rating === r.value;
             return (
@@ -179,18 +161,7 @@ export function FeedbackFlow({ passive = true, open: openProp, onClose }: Feedba
                 onClick={() => setRating(r.value)}
                 aria-label={r.label}
                 title={r.label}
-                className="h-serif"
-                style={{
-                  flex: 1,
-                  padding: "14px 4px",
-                  fontSize: 22,
-                  fontWeight: 500,
-                  color: selectedRating ? "var(--accent)" : "var(--text-dim)",
-                  borderRadius: "var(--r-md)",
-                  border: `1px solid ${selectedRating ? "var(--accent-border)" : "var(--border)"}`,
-                  background: selectedRating ? "var(--accent-soft)" : "var(--bg-panel)",
-                  transition: "background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease)",
-                }}
+                className={cn(cn("h-serif", "flex-1 py-3.5 px-1 text-2xl font-medium rounded-md [transition:background_var(--dur-fast)_var(--ease),_color_var(--dur-fast)_var(--ease)]", selectedRating ? "text-accent" : "text-text-dim", selectedRating ? "bg-accent-soft" : "bg-bg-panel"), selectedRating ? "border border-accent-border" : "border border-border")}
               >
                 {r.value}
               </button>
@@ -198,22 +169,15 @@ export function FeedbackFlow({ passive = true, open: openProp, onClose }: Feedba
           })}
         </div>
 
-        <div className="label-micro" style={{ marginBottom: 6 }}>What stood out?</div>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 14 }}>
+        <div className="label-micro mb-1.5">What stood out?</div>
+        <div className="flex flex-wrap gap-1.5 mb-3.5">
           {OPTIONS.map(o => {
             const isSel = selected.includes(o);
             return (
               <button
                 key={o}
                 onClick={() => toggleOption(o)}
-                style={{
-                  padding: "5px 11px",
-                  fontSize: 12,
-                  borderRadius: "var(--r-full)",
-                  background: isSel ? "var(--accent-soft)" : "transparent",
-                  color: isSel ? "var(--accent)" : "var(--text-dim)",
-                  border: `1px solid ${isSel ? "var(--accent-border)" : "var(--border)"}`,
-                }}
+                className={cn(cn("py-[5px] px-[11px] text-sm rounded-[var(--r-full)]", isSel ? "bg-accent-soft" : "bg-transparent", isSel ? "text-accent" : "text-text-dim"), isSel ? "border border-accent-border" : "border border-border")}
               >
                 {o}
               </button>
@@ -221,32 +185,22 @@ export function FeedbackFlow({ passive = true, open: openProp, onClose }: Feedba
           })}
         </div>
 
-        <div className="label-micro" style={{ marginBottom: 6 }}>Anything else? (optional)</div>
+        <div className="label-micro mb-1.5">Anything else? (optional)</div>
         <textarea
           value={comment}
           maxLength={LONG_TEXT_MAX}
           onChange={e => setComment(e.target.value)}
           placeholder="Share a thought…"
           rows={3}
-          style={{
-            width: "100%",
-            padding: "10px 14px",
-            fontSize: 13,
-            border: "1px solid var(--border)",
-            borderRadius: "var(--r-sm)",
-            background: "var(--bg-input)",
-            fontFamily: "inherit",
-            resize: "vertical",
-          }}
+          className="w-full py-2.5 px-3.5 text-md border border-border rounded-sm bg-bg-input [font-family:inherit] resize-y"
         />
 
-        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 16 }}>
+        <div className="flex gap-2 justify-end mt-4">
           <button className="btn" onClick={() => close(true)} disabled={submitting}>Not now</button>
           <button className="btn btn--primary" onClick={submit} disabled={rating === null || submitting}>
             {submitting ? "Sending…" : "Submit"}
           </button>
         </div>
-      </div>
-    </div>
+    </Dialog>
   );
 }

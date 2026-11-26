@@ -2,6 +2,7 @@
 
 import React from "react";
 import type { Role } from "@/lib/types";
+import { cn } from "@/lib/cn";
 
 interface RoleBadgeProps {
   role: Role;
@@ -17,21 +18,8 @@ export function RoleBadge({ role, size = "sm", showIcon = true, className, style
   const padding = size === "sm" ? "2px 7px" : "3px 9px";
   return (
     <span
-      className={className}
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 4,
-        padding,
-        fontSize,
-        fontFamily: "var(--font-sans)",
-        
-        
-        borderRadius: "var(--r-full)",
-        color,
-        background: `color-mix(in oklab, ${color} 14%, transparent)`,
-        border: `1px solid color-mix(in oklab, ${color} 28%, transparent)`,
-        ...style }}
+      className={cn(className, "inline-flex items-center gap-1 font-sans rounded-[var(--r-full)]")}
+      style={{ padding, fontSize, color, background: `color-mix(in oklab, ${color} 14%, transparent)`, border: `1px solid color-mix(in oklab, ${color} 28%, transparent)`, ...style }}
     >
       {showIcon && role.icon && <span aria-hidden>{role.icon}</span>}
       <span>{role.name}</span>

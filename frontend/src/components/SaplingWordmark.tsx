@@ -1,4 +1,5 @@
 import React from "react";
+import { cn } from "@/lib/cn";
 
 export const SAPLING_WORDMARK_SRC = "/design/sapling/originals/logo-letters.svg";
 
@@ -28,15 +29,8 @@ export function SaplingWordmark({
       height={Math.round(width * ASPECT)}
       decoding="async"
       draggable={false}
-      className={className}
-      style={{
-        display: "block",
-        flexShrink: 0,
-        width,
-        height: "auto",
-        ...(tone === "light" ? { filter: "brightness(0) invert(1)" } : {}),
-        ...style,
-      }}
+      className={cn(className, "block shrink-0 h-auto")}
+      style={{ width, ...(tone === "light" ? { filter: "brightness(0) invert(1)" } : {}), ...style }}
     />
   );
 }

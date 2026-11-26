@@ -1,3 +1,4 @@
+@layer components {
 /* The "Import flashcards" dialog and its five source tabs (tabs/*.tsx).
 
    One fixed-size sheet of paper: header, a two-column body (where the cards
@@ -701,4 +702,6 @@
     flex-basis: 100%;
     white-space: normal;
   }
+}
+
 }

@@ -55,6 +55,7 @@ import type { StartProgress } from "../flashcards/home/useStart";
 import { Review } from "../flashcards/review/Review";
 import rv from "../flashcards/review/review.module.css";
 import { studyHref } from "@/lib/toolHrefs";
+import { cn } from "@/lib/cn";
 
 export function Flashcards({
   now,
@@ -187,7 +188,7 @@ function PageHeader({
   return (
     <>
       <header className={fc.head}>
-        <h1 className="h-serif" style={{ margin: 0, fontSize: isMobile ? 34 : 42, letterSpacing: "-0.02em", lineHeight: 1.15, color: "var(--text)" }}>Flashcards</h1>
+        <h1 className={cn("h-serif", "m-0 tracking-[-0.02em] leading-[1.15] text-text", isMobile ? "text-[34px]" : "text-[42px]")}>Flashcards</h1>
         {place && <span className={fc.deckName} data-testid="flashcards-deck-name">{place.label}</span>}
         {!place && courses.length > 0 && (
           <CoursePicker courses={courses} value={courseId} onChange={onCourse} fullWidth={isMobile} />
@@ -263,8 +264,8 @@ function Arriving({ progress }: { progress: StartProgress | null }) {
   return (
     <div className={rv.stage}>
       <div className={rv.message} role="status">
-        <div className="h-serif" style={{ fontSize: "var(--fs-2xl)", color: "var(--text)" }}>Making cards for {progress.name}…</div>
-        <div style={{ marginTop: 6 }}>
+        <div className="h-serif text-2xl text-text">Making cards for {progress.name}…</div>
+        <div className="mt-1.5">
           {progress.of > 1 ? `${progress.at} of ${progress.of}. ` : ""}From your course material. Review starts as soon as they&apos;re ready.
         </div>
       </div>
@@ -278,9 +279,9 @@ function LoadFailed({ onRetry }: { onRetry: () => void }) {
   return (
     <div className={rv.stage}>
       <div className={rv.message} role="alert">
-        <div className="h-serif" style={{ fontSize: "var(--fs-2xl)", color: "var(--text)" }}>Couldn&apos;t load your flashcards</div>
-        <div style={{ marginTop: 6 }}>Check your connection and try again.</div>
-        <button type="button" className="btn btn--primary" style={{ marginTop: 16 }} onClick={onRetry}>Try again</button>
+        <div className="h-serif text-2xl text-text">Couldn&apos;t load your flashcards</div>
+        <div className="mt-1.5">Check your connection and try again.</div>
+        <button type="button" className="btn btn--primary mt-4" onClick={onRetry}>Try again</button>
       </div>
     </div>
   );

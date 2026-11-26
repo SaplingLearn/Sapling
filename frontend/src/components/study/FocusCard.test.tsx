@@ -12,6 +12,7 @@ vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }), usePat
 import { FocusCard } from "./FocusCard";
 import type { Concept } from "./studyModel";
 import type { ToolNav } from "./useToolNav";
+import { twStyle } from "@/test-utils/twStyle";
 
 const concept = (id: string, name: string, gap = ""): Concept => ({
   id, name, st: "progress", m: 40, lastStudied: null, pre: [], post: [], step: 0, group: "Core", gap, weekDelta: 0,
@@ -27,7 +28,7 @@ const PREREQS = [
 /** The element between `el` and the block that cuts off whatever overflows it. */
 function clipperOf(el: HTMLElement): HTMLElement | null {
   for (let at = el.parentElement; at && at.dataset.testid !== "focus-card"; at = at.parentElement) {
-    if (at.style.overflow === "hidden") return at;
+    if (twStyle(at).overflow === "hidden") return at;
   }
   return null;
 }

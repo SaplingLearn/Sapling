@@ -12,6 +12,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { ViewSwitcher, type ViewSwitcherOption } from "./ViewSwitcher";
+import { twStyle } from "@/test-utils/twStyle";
 
 type View = "list" | "panel";
 const OPTIONS: ViewSwitcherOption<View>[] = [
@@ -66,32 +67,33 @@ const tab = (k: View) => screen.getByTestId(`library-view-${k}`);
 describe("the List ⇄ Panel switcher", () => {
   it("lays its one thumb under the selected tab on first paint, in the design's pill", () => {
     render(<Harness />);
-    expect(thumb().style.transform).toBe("translateX(4px)");
-    expect(thumb().style.width).toBe("72px");
-    expect(thumb().style.borderRadius).toBe("9px");
-    expect(thumb().style.background).toBe("rgb(253, 252, 249)");
-    expect(thumb().style.boxShadow).toBe("0 1px 2px rgba(25,37,11,0.10)");
+    expect(thumb()).toHaveTwStyle({ transform: "translateX(4px)" });
+    expect(thumb()).toHaveTwStyle({ width: "72px" });
+    expect(thumb()).toHaveTwStyle({ borderRadius: "9px" });
+    expect(thumb()).toHaveTwStyle({ background: "rgb(253, 252, 249)" });
+    expect(thumb()).toHaveTwStyle({ boxShadow: "0 1px 2px rgba(25,37,11,0.10)" });
     // The slide is a class (so reduced motion can switch it off), never an
     // entrance: the thumb is created where it rests.
-    expect(thumb().className).toBe("sapSwitchThumb");
-    expect(thumb().style.animation).toBe("");
+    expect(thumb()).toHaveClass("sapSwitchThumb");
+    expect(thumb().className).not.toMatch(/animate|\[animation/);
+    expect(twStyle(thumb()).animation).toBe("");
     // Only one pill: the tabs themselves are bare once the thumb is measured.
-    expect(tab("list").style.background).toBe("transparent");
-    expect(tab("list").style.color).toBe("rgb(26, 24, 20)");
-    expect(tab("panel").style.color).toBe("rgb(111, 104, 87)");
+    expect(tab("list")).toHaveTwStyle({ background: "transparent" });
+    expect(tab("list")).toHaveTwStyle({ color: "rgb(26, 24, 20)" });
+    expect(tab("panel")).toHaveTwStyle({ color: "rgb(111, 104, 87)" });
   });
 
   it("keeps the track's resting look: padding, gap, radius, colour and margin", () => {
     render(<Harness />);
     const track = screen.getByRole("tablist", { name: "Layout" });
-    expect(track.style.padding).toBe("4px");
-    expect(track.style.gap).toBe("2px");
-    expect(track.style.height).toBe("40px");
-    expect(track.style.borderRadius).toBe("12px");
-    expect(track.style.background).toBe("rgb(244, 241, 234)");
-    expect(track.style.marginLeft).toBe("16px");
-    expect(tab("list").style.borderRadius).toBe("9px");
-    expect(tab("list").style.padding).toBe("0px 14px");
+    expect(track).toHaveTwStyle({ padding: "4px" });
+    expect(track).toHaveTwStyle({ gap: "2px" });
+    expect(track).toHaveTwStyle({ height: "40px" });
+    expect(track).toHaveTwStyle({ borderRadius: "12px" });
+    expect(track).toHaveTwStyle({ background: "#F4F1EA" });
+    expect(track).toHaveTwStyle({ marginLeft: "16px" });
+    expect(tab("list")).toHaveTwStyle({ borderRadius: "9px" });
+    expect(tab("list")).toHaveTwStyle({ padding: "0px 14px" });
   });
 
   it("moves the thumb to the tab that is chosen, without a second thumb", () => {
@@ -103,10 +105,10 @@ describe("the List ⇄ Panel switcher", () => {
     expect(tab("list").getAttribute("aria-selected")).toBe("false");
     // The same element, moved: that is what lets the transition slide it.
     expect(thumb()).toBe(first);
-    expect(thumb().style.transform).toBe("translateX(78px)");
-    expect(thumb().style.width).toBe("84px");
+    expect(thumb()).toHaveTwStyle({ transform: "translateX(78px)" });
+    expect(thumb()).toHaveTwStyle({ width: "84px" });
     expect(screen.getAllByTestId("library-view-thumb")).toHaveLength(1);
-    expect(tab("panel").style.color).toBe("rgb(26, 24, 20)");
+    expect(tab("panel")).toHaveTwStyle({ color: "rgb(26, 24, 20)" });
   });
 
   it("re-measures on resize", () => {
@@ -114,7 +116,7 @@ describe("the List ⇄ Panel switcher", () => {
     BOXES["library-view-list"] = { left: 4, width: 90 };
     try {
       fireEvent(window, new Event("resize"));
-      expect(thumb().style.width).toBe("90px");
+      expect(thumb()).toHaveTwStyle({ width: "90px" });
     } finally {
       BOXES["library-view-list"] = { left: 4, width: 72 };
     }
@@ -132,7 +134,7 @@ describe("the List ⇄ Panel switcher", () => {
     expect(onChange).toHaveBeenLastCalledWith("panel");
     expect(tab("panel").getAttribute("aria-selected")).toBe("true");
     expect(document.activeElement).toBe(tab("panel"));
-    expect(thumb().style.transform).toBe("translateX(78px)");
+    expect(thumb()).toHaveTwStyle({ transform: "translateX(78px)" });
 
     fireEvent.keyDown(tab("panel"), { key: "ArrowRight" });
     expect(onChange).toHaveBeenLastCalledWith("list");
@@ -140,7 +142,7 @@ describe("the List ⇄ Panel switcher", () => {
 
     fireEvent.keyDown(tab("list"), { key: "ArrowLeft" });
     expect(onChange).toHaveBeenLastCalledWith("panel");
-    expect(thumb().style.transform).toBe("translateX(78px)");
+    expect(thumb()).toHaveTwStyle({ transform: "translateX(78px)" });
 
     fireEvent.keyDown(tab("panel"), { key: "Enter" });
     expect(onChange).toHaveBeenCalledTimes(3);

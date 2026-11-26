@@ -3,11 +3,7 @@ import React from "react";
 import { TopBar } from "@/components/TopBar";
 import { FullHeightScreen } from "@/components/FullHeightScreen";
 import { SemesterChips } from "@/components/Gradebook/SemesterChips";
-import {
-  CourseCard,
-  COURSE_CARD_GRID_GAP,
-  COURSE_CARD_HEIGHT,
-} from "@/components/Gradebook/CourseCard";
+import { CourseCard } from "@/components/Gradebook/CourseCard";
 import { useUser } from "@/context/UserContext";
 import { getGradebookSummary, getCourses, getSemesters } from "@/lib/api";
 import { courseTermLabels, currentTerm } from "@/lib/semesters";
@@ -291,26 +287,11 @@ export function GradebookLanding() {
         }
       />
       <main
-        style={{
-          padding: "var(--pad-xl)",
-          position: "relative",
-          overflow: "hidden",
-          // Fill whatever `<main>` has left below the TopBar, and keep growing
-          // when the content is taller. Was `calc(100vh - var(--row-h))`, which
-          // subtracted a DENSITY token (40/34/48px) as if it were a nav height
-          // — wrong in both shell layouts and at every density (#341).
-          flex: "1 0 auto",
-        }}
+        className="p-(--pad-xl) relative overflow-hidden flex-[1_0_auto]"
       >
-        <div style={{ position: "relative", zIndex: 1 }}>
+        <div className="relative z-1">
         <div
-          style={{
-            display: "flex",
-            alignItems: "flex-start",
-            justifyContent: "space-between",
-            gap: 16,
-            flexWrap: "wrap",
-          }}
+          className="flex items-start justify-between gap-4 flex-wrap"
         >
           <SemesterChips
             semesters={semesters}
@@ -318,20 +299,15 @@ export function GradebookLanding() {
             onSelect={setSelected}
           />
           {userId && (
-            <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+            <div className="flex items-center gap-3.5">
               {termGpa !== null && (
                 <span
                   data-testid="gradebook-term-gpa"
-                  className="mono"
+                  className="mono text-sm tracking-[0.02em] text-text-dim"
                   title="Credit-weighted GPA for this semester"
-                  style={{
-                    fontSize: 12,
-                    letterSpacing: "0.02em",
-                    color: "var(--text-dim)",
-                  }}
                 >
                   Term GPA{" "}
-                  <strong style={{ color: "var(--text)", fontWeight: 600 }}>
+                  <strong className="text-text font-semibold">
                     {termGpa.toFixed(2)}
                   </strong>
                 </span>
@@ -339,9 +315,8 @@ export function GradebookLanding() {
               <button
                 type="button"
                 data-testid="gradebook-transcript-open"
-                className="btn"
+                className="btn py-[5px] px-3.5 text-sm"
                 onClick={() => setTranscriptOpen(true)}
-                style={{ padding: "5px 14px", fontSize: 12 }}
               >
                 Transcript
               </button>
@@ -358,11 +333,7 @@ export function GradebookLanding() {
             onKeyDown={handleGridKeyDown}
             role="grid"
             aria-label="Courses"
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-              gap: COURSE_CARD_GRID_GAP,
-            }}
+            className="grid grid-cols-[repeat(3,_minmax(0,_1fr))] gap-6"
           >
             {courses.map((c) => (
               <CourseCard
@@ -400,17 +371,12 @@ function LoadingSkeleton() {
   return (
     <div
       aria-hidden="true"
-      style={{
-        display: "grid",
-        gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-        gap: COURSE_CARD_GRID_GAP,
-      }}
+      className="grid grid-cols-[repeat(3,_minmax(0,_1fr))] gap-6"
     >
       {Array.from({ length: 6 }).map((_, i) => (
         <div
           key={i}
-          className="skeleton"
-          style={{ height: COURSE_CARD_HEIGHT, borderRadius: "var(--r-md)" }}
+          className="skeleton h-61 rounded-md"
         />
       ))}
     </div>

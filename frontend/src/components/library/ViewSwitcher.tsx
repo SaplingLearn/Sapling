@@ -100,22 +100,14 @@ export function ViewSwitcher<K extends string>({
       role="tablist"
       aria-label={label}
       onKeyDown={onKeyDown}
-      style={{
-        position: "relative", display: "flex", gap: 2, padding: 4, height: 40,
-        flexShrink: 0, boxSizing: "border-box", background: "#F4F1EA", borderRadius: 12,
-        ...style,
-      }}
+      className="relative flex gap-0.5 p-1 h-10 shrink-0 box-border bg-ink-50 rounded-[12px]" style={{ ...style }}
     >
       {thumb && (
         <span
           aria-hidden="true"
-          className="sapSwitchThumb"
+          className="sapSwitchThumb absolute top-1 bottom-1 left-0 rounded-[9px] pointer-events-none [background:#FDFCF9] [box-shadow:0_1px_2px_rgba(25,37,11,0.10)]"
           data-testid={testIdPrefix ? `${testIdPrefix}-thumb` : undefined}
-          style={{
-            position: "absolute", top: 4, bottom: 4, left: 0, width: thumb.w,
-            transform: `translateX(${thumb.x}px)`, borderRadius: 9,
-            pointerEvents: "none", ...PILL,
-          }}
+          style={{ width: thumb.w, transform: `translateX(${thumb.x}px)` }}
         />
       )}
       {options.map(o => {
@@ -128,21 +120,12 @@ export function ViewSwitcher<K extends string>({
               else tabRefs.current.delete(o.key);
             }}
             role="tab"
-            className="sapSwitchTab"
+            className="sapSwitchTab relative inline-flex items-center gap-[7px] border-0 py-0 px-3.5 rounded-[9px] [font-family:inherit] [font-style:inherit] [font-variant:inherit] [font-stretch:inherit] [line-height:inherit] text-base font-semibold cursor-pointer [background:transparent] shadow-none"
             data-testid={testIdPrefix ? `${testIdPrefix}-${o.key}` : undefined}
             aria-selected={on}
             tabIndex={on ? 0 : -1}
             onClick={() => onChange(o.key)}
-            style={{
-              // Positioned, so it paints over the thumb laid before it.
-              position: "relative",
-              display: "inline-flex", alignItems: "center", gap: 7, border: 0,
-              padding: "0 14px", borderRadius: 9, font: "inherit", fontSize: 14,
-              fontWeight: 600, cursor: "pointer",
-              background: "transparent", boxShadow: "none",
-              ...(on && !measured ? PILL : null),
-              color: on ? "#1A1814" : "#6F6857",
-            }}
+            style={{ ...(on && !measured ? PILL : null), color: on ? "#1A1814" : "#6F6857" }}
           >
             {o.icon}
             {o.label}

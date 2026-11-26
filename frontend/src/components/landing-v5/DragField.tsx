@@ -34,24 +34,14 @@ function Cluster({ c }: { c: DragCluster }) {
   return (
     <span
       data-dragnode={c.id}
-      style={{
-        position: 'absolute', ...c.pos,
-        pointerEvents: 'none', cursor: 'grab',
-        // must stay: otherwise a touch-drag scrolls the page
-        touchAction: 'none',
-        animation: c.anim, willChange: 'transform',
-      }}
+      className="absolute" style={{ ...c.pos, pointerEvents: 'none', cursor: 'grab', touchAction: 'none', animation: c.anim, willChange: 'transform' }}
     >
-      <span data-dragpuck="1" style={{ display: 'block', willChange: 'transform' }}>
+      <span data-dragpuck="1" className="block [will-change:transform]">
         <svg
           width={c.svg.w}
           height={c.svg.h}
           viewBox={c.svg.vb}
-          style={{
-            display: 'block', overflow: 'visible', pointerEvents: 'none',
-            // recentres the oversized box so the cluster sits where `pos` says
-            margin: '-1600px -900px',
-          }}
+          className="block overflow-visible pointer-events-none -my-400 -mx-225"
         >
           {c.lines.map((l, i) => (
             <line
@@ -75,12 +65,12 @@ function Cluster({ c }: { c: DragCluster }) {
               <circle
                 key={`glow-${i}`}
                 cx={n.cx} cy={n.cy} r={n.r + 8}
-                fill={c.color} opacity="0.15" style={{ filter: 'blur(3px)' }}
+                fill={c.color} opacity="0.15" className="[filter:blur(3px)]"
               />,
               <circle
                 key={`ring-${i}`}
                 data-ring="1" data-sim="1"
-                style={{ pointerEvents: 'auto', cursor: 'grab' }}
+                className="pointer-events-auto cursor-grab"
                 cx={n.cx} cy={n.cy} r={n.r}
                 fill={c.color} fillOpacity={n.fo}
                 stroke={c.color} strokeWidth={n.sw} strokeOpacity="0.75"
@@ -94,7 +84,7 @@ function Cluster({ c }: { c: DragCluster }) {
                   fontWeight={i === 0 ? '600' : undefined}
                   fill={i === 0 ? c.color : '#3f3b31'}
                   opacity={i === 0 ? undefined : 0.85}
-                  style={{ pointerEvents: 'none', userSelect: 'none' }}
+                  className="pointer-events-none select-none"
                 >
                   {label.text}
                 </text>
@@ -162,10 +152,9 @@ export function DragField({ section }: { section: FieldSection }) {
   if (!PINNED.has(section)) {
     return (
       <div
-        className="drag-field"
+        className="drag-field absolute inset-0 z-2 pointer-events-none overflow-visible"
         aria-hidden="true"
         data-drag-track={TRACKS[section]}
-        style={{ position: 'absolute', inset: 0, zIndex: 2, pointerEvents: 'none', overflow: 'visible' }}
       >
         {clusters}
       </div>
@@ -175,11 +164,10 @@ export function DragField({ section }: { section: FieldSection }) {
   return (
     <div
       aria-hidden="true"
-      style={{ position: 'absolute', inset: 0, zIndex: 2, pointerEvents: 'none', overflow: 'visible' }}
+      className="absolute inset-0 z-2 pointer-events-none overflow-visible"
     >
       <div
-        className="drag-field"
-        style={{ position: 'sticky', top: 0, height: '100vh', pointerEvents: 'none', overflow: 'visible' }}
+        className="drag-field sticky top-0 h-screen pointer-events-none overflow-visible"
       >
         {clusters}
       </div>

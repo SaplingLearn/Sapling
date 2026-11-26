@@ -12,7 +12,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
-import { LAB_TIER, LABEL } from './LabShell';
+import { LAB_TIER } from './LabShell';
 import { GUIDES } from './labData';
 
 type Phase = 'empty' | 'loading' | 'guide';
@@ -22,11 +22,6 @@ const RECENT = [
   { i: 0, exam: 'MA 242 · Midterm 1', meta: 'Generated Sep 28', course: 'MA 242' as CourseKey, pick: 'Midterm 1 · Sep 30' },
   { i: 1, exam: 'CS 201 · Quiz 2', meta: 'Generated Oct 03', course: 'CS 201' as CourseKey, pick: 'Quiz 2 · Oct 03' },
 ];
-
-const SELECT: React.CSSProperties = {
-  padding: '9px 12px', borderRadius: 9, border: '1px solid #E0E6DA', background: '#FDFCF9',
-  fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif", fontSize: 13, color: '#3B4233', cursor: 'pointer',
-};
 
 export function GuideDemo() {
   const [course, setCourse] = useState<CourseKey>('MA 242');
@@ -57,9 +52,9 @@ export function GuideDemo() {
   };
 
   return (
-    <div className="ld-lab-split" style={{ display: 'grid', gridTemplateColumns: '1fr 220px', minHeight: '100%', boxSizing: 'border-box' }}>
-      <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 12, borderRight: '1px solid #ECE9DE' }}>
-        <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+    <div className="ld-lab-split grid grid-cols-[1fr_220px] min-h-full box-border">
+      <div className="py-5 px-6 flex flex-col gap-3 border-r border-r-paper-100">
+        <div className="flex gap-2.5 items-center flex-wrap">
           <select
             value={course}
             onChange={(e) => {
@@ -69,7 +64,7 @@ export function GuideDemo() {
               setPhase('empty');
             }}
             aria-label="Course"
-            style={SELECT}
+            className="py-[9px] px-3 rounded-[9px] border border-moss-100 bg-bg-panel font-sans text-md text-moss-700 cursor-pointer"
           >
             {Object.keys(GUIDES).map((c) => <option key={c} value={c}>{c}</option>)}
           </select>
@@ -77,73 +72,71 @@ export function GuideDemo() {
             value={exam}
             onChange={(e) => { setExam(e.target.value); setPhase('empty'); }}
             aria-label="Exam"
-            style={SELECT}
+            className="py-[9px] px-3 rounded-[9px] border border-moss-100 bg-bg-panel font-sans text-md text-moss-700 cursor-pointer"
           >
             {set.exams.map((e) => <option key={e} value={e}>{e}</option>)}
           </select>
           <button
             onClick={generate}
             type="button"
-            className="ld-labprimary"
-            style={{ marginLeft: 'auto', padding: '10px 18px', borderRadius: 9, border: 'none', background: '#191F13', color: '#FDFCF9', fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif", fontSize: 13, fontWeight: 600, cursor: 'pointer' }}
+            className="ld-labprimary ml-auto py-2.5 px-4.5 rounded-[9px] border-0 [background:#191F13] text-bg-panel font-sans text-md font-semibold cursor-pointer"
           >
             {phase === 'guide' ? 'Regenerate' : 'Generate guide'}
           </button>
         </div>
 
         {phase === 'loading' && (
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12 }}>
-            <span style={{ width: 26, height: 26, borderRadius: 99, border: '3px solid #E6EAE2', borderTopColor: '#68951F', animation: 'labSpin 700ms linear infinite' }} />
-            <span style={{ fontSize: 12.5, color: '#91978B' }}>Reading your library — 11 documents…</span>
+          <div className="flex-1 flex flex-col items-center justify-center gap-3">
+            <span className="w-6.5 h-6.5 rounded-[99px] border-3 border-moss-75 border-t-leaf-500 [animation:labSpin_700ms_linear_infinite]" />
+            <span className="text-[12.5px] text-moss-400">Reading your library — 11 documents…</span>
           </div>
         )}
 
         {phase === 'guide' && (
-          <div style={{ flex: 1, overflow: 'auto', borderRadius: 12, border: '1px solid #E8E5DA', background: '#FDFCF9', padding: '18px 20px', animation: 'labIn 320ms ease both' }}>
-            <span style={{ ...LABEL, fontSize: 11, letterSpacing: '0.01em', color: '#91978B' }}>{course} · STUDY GUIDE</span>
-            <h4 style={{ margin: '8px 0 0', fontFamily: "var(--font-gummi), Georgia, serif", fontSize: 20, fontWeight: 600 }}>{exam}</h4>
-            <p style={{ margin: '8px 0 0', fontSize: 13, lineHeight: 1.7, color: '#697062' }}>{set.overview}</p>
-            <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <div className="flex-1 overflow-auto rounded-[12px] border border-paper-200 bg-bg-panel py-4.5 px-5 [animation:labIn_320ms_ease_both]">
+            <span className="font-sans text-xs tracking-[0.01em] text-moss-400">{course} · STUDY GUIDE</span>
+            <h4 className="mt-2 mx-0 mb-0 font-display text-[20px] font-semibold">{exam}</h4>
+            <p className="mt-2 mx-0 mb-0 text-md leading-[1.7] text-moss-500">{set.overview}</p>
+            <div className="mt-4 flex flex-col gap-3.5">
               {set.topics.map((t) => (
                 <div key={t.name}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span style={{ width: 8, height: 8, borderRadius: 99, background: LAB_TIER[t.tier as keyof typeof LAB_TIER] }} />
-                    <span style={{ fontSize: 14, fontWeight: 600, color: '#191F13' }}>{t.name}</span>
-                    <span style={{ marginLeft: 'auto', ...LABEL, fontSize: 9.5, color: '#91978B' }}>{t.weight}</span>
+                  <div className="flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-[99px]" style={{ background: LAB_TIER[t.tier as keyof typeof LAB_TIER] }} />
+                    <span className="text-base font-semibold text-moss-900">{t.name}</span>
+                    <span className="ml-auto font-sans text-[9.5px] text-moss-400">{t.weight}</span>
                   </div>
-                  <p style={{ margin: '4px 0 0 16px', fontSize: 12, fontStyle: 'italic', color: '#91978B' }}>{t.importance}</p>
-                  <ul style={{ margin: '6px 0 0 16px', paddingLeft: 16, display: 'flex', flexDirection: 'column', gap: 3 }}>
+                  <p className="mt-1 mr-0 mb-0 ml-4 text-sm italic text-moss-400">{t.importance}</p>
+                  <ul className="mt-1.5 mr-0 mb-0 ml-4 pl-4 flex flex-col gap-[3px]">
                     {t.bullets.map((b) => (
-                      <li key={b} style={{ fontSize: 12.5, lineHeight: 1.6, color: '#3B4233' }}>{b}</li>
+                      <li key={b} className="text-[12.5px] leading-[1.6] text-moss-700">{b}</li>
                     ))}
                   </ul>
                 </div>
               ))}
             </div>
-            <span style={{ display: 'block', marginTop: 16, ...LABEL, fontSize: 11, letterSpacing: '0.01em', color: '#9FA49A' }}>{stamp}</span>
+            <span className="block mt-4 font-sans text-xs tracking-[0.01em] text-moss-300">{stamp}</span>
           </div>
         )}
 
         {phase === 'empty' && (
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 6, color: '#9FA49A' }}>
-            <span style={{ fontSize: 14 }}>No guide yet</span>
-            <span style={{ fontSize: 12 }}>Pick a course and exam, then Generate Guide.</span>
+          <div className="flex-1 flex flex-col items-center justify-center gap-1.5 text-moss-300">
+            <span className="text-base">No guide yet</span>
+            <span className="text-sm">Pick a course and exam, then Generate Guide.</span>
           </div>
         )}
       </div>
 
-      <div style={{ padding: '20px 16px', background: '#F6F8F4', display: 'flex', flexDirection: 'column', gap: 9 }}>
-        <span style={{ ...LABEL, fontSize: 11, letterSpacing: '0.01em', color: '#91978B' }}>Recent guides</span>
+      <div className="py-5 px-4 bg-moss-25 flex flex-col gap-[9px]">
+        <span className="font-sans text-xs tracking-[0.01em] text-moss-400">Recent guides</span>
         {RECENT.map((r) => (
           <button
             key={r.i}
             onClick={() => openRecent(r)}
             type="button"
-            className="ld-labrecent"
-            style={{ textAlign: 'left', padding: '10px 12px', borderRadius: 10, border: '1px solid #E0E6DA', background: '#FDFCF9', cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: 2, transition: 'all 180ms' }}
+            className="ld-labrecent text-left py-2.5 px-3 rounded-md border border-moss-100 [background:#FDFCF9] cursor-pointer flex flex-col gap-0.5 [transition:all_180ms]"
           >
-            <span style={{ fontSize: 12.5, fontWeight: 600, color: '#191F13' }}>{r.exam}</span>
-            <span style={{ ...LABEL, fontSize: 9, color: '#91978B' }}>{r.meta}</span>
+            <span className="text-[12.5px] font-semibold text-moss-900">{r.exam}</span>
+            <span className="font-sans text-[9px] text-moss-400">{r.meta}</span>
           </button>
         ))}
       </div>

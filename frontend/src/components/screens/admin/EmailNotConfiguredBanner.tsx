@@ -10,14 +10,7 @@ export function EmailNotConfiguredBanner() {
     <div
       role="status"
       data-testid="email-not-configured-banner"
-      style={{
-        marginBottom: 16,
-        padding: "8px 12px",
-        borderRadius: "var(--r-sm)",
-        background: "var(--warn-soft)",
-        color: "var(--warn)",
-        fontSize: 13,
-      }}
+      className="mb-4 py-2 px-3 rounded-sm bg-warn-soft text-warn text-md"
     >
       Email isn&apos;t configured. Approvals and broadcasts are saved, but no emails go out until Resend is configured.
     </div>

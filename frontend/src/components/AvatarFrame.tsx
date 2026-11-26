@@ -16,8 +16,8 @@ export function AvatarFrame({ name, size = 48, img, color, frame }: AvatarFrameP
   const overlay = size * 0.25;
   const box = Math.round(size + overlay);
   return (
-    <div style={{ position: "relative", width: size + overlay, height: size + overlay, display: "inline-block" }}>
-      <div style={{ position: "absolute", top: overlay / 2, left: overlay / 2 }}>
+    <div className="relative inline-block" style={{ width: size + overlay, height: size + overlay }}>
+      <div className="absolute" style={{ top: overlay / 2, left: overlay / 2 }}>
         <Avatar name={name} size={size} img={img} color={color} />
       </div>
       {frame?.asset_url && (
@@ -30,14 +30,7 @@ export function AvatarFrame({ name, size = 48, img, color, frame }: AvatarFrameP
           loading="lazy"
           decoding="async"
           referrerPolicy="no-referrer"
-          style={{
-            position: "absolute",
-            inset: 0,
-            width: "100%",
-            height: "100%",
-            pointerEvents: "none",
-            objectFit: "contain",
-          }}
+          className="absolute inset-0 w-full h-full pointer-events-none object-contain"
         />
       )}
     </div>

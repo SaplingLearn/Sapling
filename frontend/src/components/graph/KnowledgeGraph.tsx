@@ -100,20 +100,10 @@ type Props = {
 
 const TIERS: MasteryTier[] = ["mastered", "learning", "struggling", "unexplored"];
 
-const PANEL: React.CSSProperties = {
-  position: "absolute",
-  left: 12,
-  background: "var(--bg-panel)",
-  border: "1px solid var(--border)",
-  borderRadius: "var(--r-sm)",
-  boxShadow: "var(--shadow-sm)",
-  zIndex: 5,
-};
-
 /** Four overlapping tier dots — the toggle's glyph. */
 function PaletteGlyph() {
   return (
-    <svg width={22} height={12} viewBox="0 0 22 12" aria-hidden="true" style={{ display: "block" }}>
+    <svg width={22} height={12} viewBox="0 0 22 12" aria-hidden="true" className="block">
       {TIERS.map((t, i) => (
         <circle key={t} cx={5 + i * 4} cy={6} r={4.5} fill={MASTERY_PALETTE[t]} />
       ))}
@@ -140,16 +130,7 @@ function GraphCrashFallback({ error, reset }: { error: Error; reset: () => void 
     <div
       role="status"
       data-testid="graph-crash-fallback"
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        gap: 10,
-        alignItems: "center",
-        justifyContent: "center",
-        height: "100%",
-        color: "var(--text-dim)",
-        fontSize: 13,
-      }}
+      className="flex flex-col gap-2.5 items-center justify-center h-full text-text-dim text-md"
     >
       <span>The graph couldn&apos;t render here.</span>
       <button
@@ -169,31 +150,22 @@ export function KnowledgeGraph(props: Props) {
   const [colorMode, setColorMode] = useGraphColorMode();
   const mastery = colorMode === "mastery";
   return (
-    <div data-testid="graph-container" style={{ position: "relative", width, height }}>
+    <div data-testid="graph-container" className="relative" style={{ width, height }}>
       <ErrorBoundary fallback={(error, reset) => <GraphCrashFallback error={error} reset={reset} />}>
         <KnowledgeGraph2D {...props} colorMode={colorMode} />
       </ErrorBoundary>
       <button
         type="button"
         data-testid="graph-color-toggle"
-        className="btn btn--ghost btn--sm"
+        className="btn btn--ghost btn--sm absolute left-3 bg-bg-panel border border-border rounded-sm shadow-sm z-5 top-3 flex items-center gap-1.5 py-[3px] px-2 text-xs"
         // Constant name + aria-pressed: the label says what the switch
         // turns on, the pressed state says whether it is on.
         aria-pressed={mastery}
         title={mastery ? "Back to course colors" : "Color nodes by mastery"}
         onClick={() => setColorMode(mastery ? "course" : "mastery")}
-        style={{
-          ...PANEL,
-          top: 12,
-          display: "flex",
-          alignItems: "center",
-          gap: 6,
-          padding: "3px 8px",
-          fontSize: 11,
-          ...(mastery
+        style={{ ...(mastery
             ? { borderColor: MASTERY_PALETTE.hub, color: MASTERY_PALETTE.hub, fontWeight: 600 }
-            : null),
-        }}
+            : null) }}
       >
         <PaletteGlyph />
         <span>Mastery colors</span>
@@ -205,31 +177,13 @@ export function KnowledgeGraph(props: Props) {
         <ul
           data-testid={mastery ? "graph-color-legend" : "graph-tier-legend"}
           aria-label={mastery ? "Mastery colors" : "Mastery shown as how solid a node is"}
-          style={{
-            ...PANEL,
-            bottom: 12,
-            listStyle: "none",
-            margin: 0,
-            padding: "6px 10px",
-            display: "flex",
-            flexWrap: "wrap",
-            gap: "4px 12px",
-            fontSize: 11,
-            color: "var(--text-dim)",
-            maxWidth: width - 24,
-          }}
+          className="absolute left-3 bg-bg-panel border border-border rounded-sm shadow-sm z-5 bottom-3 list-none m-0 py-1.5 px-2.5 flex flex-wrap gap-y-1 gap-x-3 text-xs text-text-dim" style={{ maxWidth: width - 24 }}
         >
           {TIERS.map((t) => (
-            <li key={t} style={{ display: "flex", alignItems: "center", gap: 5 }}>
+            <li key={t} className="flex items-center gap-[5px]">
               <span
                 aria-hidden="true"
-                style={{
-                  width: 9,
-                  height: 9,
-                  borderRadius: "50%",
-                  background: mastery ? MASTERY_PALETTE[t] : "var(--text)",
-                  opacity: mastery ? 1 : TIER_OPACITY[t],
-                }}
+                className="w-[9px] h-[9px] rounded-[50%]" style={{ background: mastery ? MASTERY_PALETTE[t] : "var(--text)", opacity: mastery ? 1 : TIER_OPACITY[t] }}
               />
               {TIER_LABEL[t]}
             </li>

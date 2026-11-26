@@ -14,8 +14,8 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
-import { LABEL } from './LabShell';
 import { TUTOR } from './labData';
+import { cn } from "@/lib/cn";
 
 type Mode = keyof typeof TUTOR;
 const MODES: Mode[] = ['socratic', 'expository', 'teachback'];
@@ -60,9 +60,9 @@ export function TutorDemo() {
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100%', boxSizing: 'border-box' }}>
-      <div style={{ flex: '0 0 auto', padding: '14px 22px 12px', borderBottom: '1px solid #ECE9DE', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-        <div style={{ display: 'flex', gap: 4, padding: 3, borderRadius: 9, background: '#F6F8F4', border: '1px solid #E6EAE2' }}>
+    <div className="flex flex-col min-h-full box-border">
+      <div className="flex-[0_0_auto] pt-3.5 px-5.5 pb-3 border-b border-b-paper-100 flex items-center gap-2.5 flex-wrap">
+        <div className="flex gap-1 p-[3px] rounded-[9px] bg-moss-25 border border-moss-75">
           {MODES.map((k) => {
             const on = mode === k;
             return (
@@ -71,38 +71,35 @@ export function TutorDemo() {
                 onClick={() => switchMode(k)}
                 type="button"
                 aria-pressed={on}
-                style={{ padding: '7px 14px', borderRadius: 7, border: 'none', ...LABEL, fontSize: 11.5, letterSpacing: '0.01em', cursor: 'pointer', transition: 'all 200ms', background: on ? '#191F13' : 'transparent', color: on ? '#FDFCF9' : '#697062', fontWeight: on ? 600 : 400 }}
+                className={cn("py-[7px] px-3.5 rounded-[7px] border-0 font-sans text-[11.5px] tracking-[0.01em] cursor-pointer [transition:all_200ms]", on ? "bg-moss-900" : "bg-transparent", on ? "text-bg-panel" : "text-moss-500", on ? "font-semibold" : "font-normal")}
               >
                 {TUTOR[k].label}
               </button>
             );
           })}
         </div>
-        <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 7 }}>
-          <span style={{ width: 7, height: 7, borderRadius: 99, background: T.tone }} />
-          <span style={{ ...LABEL, fontSize: 11, letterSpacing: '0.01em', color: '#91978B' }}>{T.topic}</span>
+        <span className="ml-auto flex items-center gap-[7px]">
+          <span className="w-[7px] h-[7px] rounded-[99px]" style={{ background: T.tone }} />
+          <span className="font-sans text-xs tracking-[0.01em] text-moss-400">{T.topic}</span>
         </span>
       </div>
 
-      <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '16px 22px', display: 'flex', flexDirection: 'column', gap: 10 }}>
-        <span style={{ fontSize: 12, color: '#91978B' }}>{T.blurb}</span>
+      <div className="flex-1 min-h-0 overflow-auto py-4 px-5.5 flex flex-col gap-2.5">
+        <span className="text-sm text-moss-400">{T.blurb}</span>
 
         {msgs.map((m, i) => (
-          <div key={i} style={{ display: 'flex', gap: 9, animation: 'labIn 460ms cubic-bezier(0.22,1,0.36,1) both', justifyContent: m.isBot ? 'flex-start' : 'flex-end' }}>
+          <div key={i} className={cn("flex gap-[9px] [animation:labIn_460ms_cubic-bezier(0.22,1,0.36,1)_both]", m.isBot ? "justify-start" : "justify-end")}>
             {m.isBot && (
-              <span style={{ width: 26, height: 26, flex: '0 0 auto', borderRadius: 99, background: '#EAF1E4', border: '1px solid #C5D7B2', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <span className="w-6.5 h-6.5 flex-[0_0_auto] rounded-[99px] bg-leaf-50 border border-sap-200 flex items-center justify-center">
                 <svg viewBox="0 0 16 16" width="12" height="12" fill="#445D22">
                   <path d="M8 0.9c.55 3.35 1.8 4.6 5.15 5.15C9.8 6.6 8.55 7.85 8 11.2 7.45 7.85 6.2 6.6 2.85 6.05 6.2 5.5 7.45 4.25 8 .9z" />
                 </svg>
               </span>
             )}
             <span
-              style={{
-                padding: '11px 14px', fontSize: 13, lineHeight: 1.6, maxWidth: '74%',
-                ...(m.isBot
+              className="py-[11px] px-3.5 text-md leading-[1.6] max-w-[74%]" style={{ ...(m.isBot
                   ? { background: '#F6F8F4', border: '1px solid #E6EAE2', borderRadius: '14px 14px 14px 4px', color: '#191F13' }
-                  : { background: '#445D22', color: '#EAF1E4', borderRadius: '14px 14px 4px 14px' }),
-              }}
+                  : { background: '#445D22', color: '#EAF1E4', borderRadius: '14px 14px 4px 14px' }) }}
             >
               {m.text}
             </span>
@@ -110,20 +107,20 @@ export function TutorDemo() {
         ))}
 
         {thinking && (
-          <span style={{ display: 'flex', alignItems: 'center', gap: 5, paddingLeft: 35 }}>
+          <span className="flex items-center gap-[5px] pl-[35px]">
             {[0, 0.15, 0.3].map((d) => (
-              <span key={d} style={{ width: 5, height: 5, borderRadius: 99, background: '#9FA49A', animation: `typingDot 1.2s ease-in-out ${d}s infinite` }} />
+              <span key={d} className="w-[5px] h-[5px] rounded-[99px] bg-moss-300" style={{ animation: `typingDot 1.2s ease-in-out ${d}s infinite` }} />
             ))}
           </span>
         )}
 
         {sources.length > 0 && !thinking && (
-          <div style={{ marginLeft: 35, display: 'flex', flexDirection: 'column', gap: 5 }}>
-            <span style={{ ...LABEL, fontSize: 10, letterSpacing: '0.01em', color: '#9FA49A' }}>Grounded in your uploads</span>
-            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          <div className="ml-[35px] flex flex-col gap-[5px]">
+            <span className="font-sans text-2xs tracking-[0.01em] text-moss-300">Grounded in your uploads</span>
+            <div className="flex gap-1.5 flex-wrap">
               {sources.map((src) => (
-                <span key={src} style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '4px 9px', borderRadius: 6, background: '#F6F8F4', border: '1px solid #E0E6DA', ...LABEL, fontSize: 9, color: '#3B4233' }}>
-                  <span style={{ width: 5, height: 5, borderRadius: 99, background: '#68951F' }} />
+                <span key={src} className="flex items-center gap-[5px] py-1 px-[9px] rounded-sm bg-moss-25 border border-moss-100 font-sans text-[9px] text-moss-700">
+                  <span className="w-[5px] h-[5px] rounded-[99px] bg-leaf-500" />
                   {src}
                 </span>
               ))}
@@ -132,27 +129,26 @@ export function TutorDemo() {
         )}
       </div>
 
-      <div style={{ flex: '0 0 auto', borderTop: '1px solid #ECE9DE', padding: '12px 22px 14px', display: 'flex', flexDirection: 'column', gap: 9 }}>
-        <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap' }}>
+      <div className="flex-[0_0_auto] border-t border-t-paper-100 pt-3 px-5.5 pb-3.5 flex flex-col gap-[9px]">
+        <div className="flex gap-[7px] flex-wrap">
           {current && !thinking && current.replies.map((r, i) => (
             <button
               key={r.text}
               onClick={() => pick(i)}
               type="button"
-              className="ld-labreply"
-              style={{ padding: '8px 13px', borderRadius: 99, border: '1px solid #E0E6DA', background: '#FDFCF9', fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif", fontSize: 12.5, color: '#3B4233', cursor: 'pointer', transition: 'all 180ms' }}
+              className="ld-labreply py-2 px-[13px] rounded-[99px] border border-moss-100 [background:#FDFCF9] font-sans text-[12.5px] text-moss-700 cursor-pointer [transition:all_180ms]"
             >
               {r.text}
             </button>
           ))}
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
-          <span style={{ ...LABEL, fontSize: 10, letterSpacing: '0.01em', color: '#9FA49A' }}>
+        <div className="flex items-center justify-between gap-3">
+          <span className="font-sans text-2xs tracking-[0.01em] text-moss-300">
             {current
               ? (mode === 'teachback' ? 'It listens for what you skipped' : 'It never hands over the answer')
               : 'Session complete · Mastery written back to your graph'}
           </span>
-          <button onClick={reset} type="button" className="ld-labrecent" style={{ padding: '7px 14px', borderRadius: 8, border: '1px solid #E0E6DA', background: '#FDFCF9', fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif", fontSize: 12, color: '#697062', cursor: 'pointer' }}>
+          <button onClick={reset} type="button" className="ld-labrecent py-[7px] px-3.5 rounded-[8px] border border-moss-100 [background:#FDFCF9] font-sans text-sm text-moss-500 cursor-pointer">
             Start over
           </button>
         </div>

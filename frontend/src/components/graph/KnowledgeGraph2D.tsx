@@ -428,20 +428,6 @@ const THIN_ARROW = { markerWidth: 5, markerHeight: 5, refX: 9 } as const;
 const ARROW_GAP = 2;
 const MAX_ZOOM = 3;
 
-// Visually-hidden but screen-reader-available, so the pointer-only SVG graph
-// still exposes its nodes as a navigable text list.
-const SR_ONLY: React.CSSProperties = {
-  position: "absolute",
-  width: 1,
-  height: 1,
-  padding: 0,
-  margin: -1,
-  overflow: "hidden",
-  clip: "rect(0,0,0,0)",
-  whiteSpace: "nowrap",
-  border: 0,
-};
-
 /**
  * The hover tooltip: name, course, mastery bar, tier and last studied. Its
  * position is seeded from `pos` when it mounts; pointer moves then write it
@@ -457,63 +443,32 @@ function renderTooltip(
   return (
     <div
       ref={ref}
-      style={{
-        position: "fixed",
-        left: pos.x + 14,
-        top: pos.y + 14,
-        background: "var(--bg-panel)",
-        border: "1px solid var(--border-strong)",
-        borderRadius: "var(--r-md)",
-        padding: "10px 12px",
-        boxShadow: "var(--shadow-md)",
-        pointerEvents: "none",
-        zIndex: 50,
-        fontSize: 12,
-        minWidth: 200,
-      }}
+      className="fixed bg-bg-panel border border-border-strong rounded-md py-2.5 px-3 shadow-md pointer-events-none z-50 text-sm min-w-50" style={{ left: pos.x + 14, top: pos.y + 14 }}
     >
-      <div style={{ fontFamily: "var(--font-display)", fontSize: 14, marginBottom: 4 }}>{hovered.name}</div>
-      <div style={{ display: "flex", alignItems: "center", gap: 6, color: "var(--text-dim)" }}>
-        <span style={{ width: 8, height: 8, borderRadius: "50%", background: color }} />
+      <div className="font-display text-base mb-1">{hovered.name}</div>
+      <div className="flex items-center gap-1.5 text-text-dim">
+        <span className="w-2 h-2 rounded-[50%]" style={{ background: color }} />
         {hovered.is_subject_root ? "Course" : hovered.subject}
       </div>
-      <div style={{ marginTop: 8 }}>
+      <div className="mt-2">
         <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            fontSize: 11,
-            color: "var(--text-muted)",
-            marginBottom: 4,
-          }}
+          className="flex justify-between text-xs text-text-muted mb-1"
         >
           <span>{hovered.is_subject_root ? "Avg. mastery" : "Mastery"}</span>
-          <span className="mono" style={{ color: "var(--text)" }}>
+          <span className="mono text-text">
             {Math.round(mastery * 100)}%
           </span>
         </div>
         <div
-          style={{
-            height: 4,
-            background: "var(--bg-soft)",
-            borderRadius: "var(--r-full)",
-            overflow: "hidden",
-          }}
+          className="h-1 bg-bg-soft rounded-[var(--r-full)] overflow-hidden"
         >
           <div
-            style={{
-              width: "100%",
-              height: "100%",
-              background: color,
-              transformOrigin: "left",
-              transform: `scaleX(${mastery})`,
-              transition: "transform var(--dur) var(--ease)",
-            }}
+            className="w-full h-full [transform-origin:left] [transition:transform_var(--dur)_var(--ease)]" style={{ background: color, transform: `scaleX(${mastery})` }}
           />
         </div>
       </div>
       {!hovered.is_subject_root && (
-        <div style={{ marginTop: 6, color: "var(--text-dim)", fontSize: 11, textTransform: "capitalize" }}>
+        <div className="mt-1.5 text-text-dim text-xs capitalize">
           {hovered.mastery_tier}
           {hovered.last_studied_at && <> · {hovered.last_studied_at}</>}
         </div>
@@ -1732,7 +1687,7 @@ function KnowledgeGraph2DImpl({
   const arrowBox = organic ? ORGANIC_ARROW : THIN_ARROW;
 
   return (
-    <div style={{ position: "relative", width, height, overflow: "hidden", background: "transparent" }}>
+    <div className="relative overflow-hidden bg-transparent" style={{ width, height }}>
       <svg
         ref={svgRef}
         width={width}
@@ -1740,11 +1695,7 @@ function KnowledgeGraph2DImpl({
         role="img"
         aria-label="Knowledge graph"
         data-color-mode={colorMode}
-        style={{
-          display: "block",
-          cursor: "grab",
-          touchAction: "none",
-        }}
+        className="block cursor-grab touch-none"
         onPointerDown={onSvgPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
@@ -1779,24 +1730,11 @@ function KnowledgeGraph2DImpl({
 
       <div
         data-testid="graph-zoom-controls"
-        style={{
-          position: "absolute",
-          top: zoomControlsTop,
-          right: 12,
-          display: "flex",
-          flexDirection: "column",
-          gap: 4,
-          background: "var(--bg-panel)",
-          border: "1px solid var(--border)",
-          borderRadius: "var(--r-sm)",
-          padding: 4,
-          boxShadow: "var(--shadow-sm)",
-        }}
+        className="absolute right-3 flex flex-col gap-1 bg-bg-panel border border-border rounded-sm p-1 shadow-sm" style={{ top: zoomControlsTop }}
       >
         <button
           data-testid="graph-zoom-in"
-          className="btn btn--ghost btn--sm"
-          style={{ padding: "2px 8px", fontFamily: "var(--font-sans)" }}
+          className="btn btn--ghost btn--sm py-0.5 px-2 font-sans"
           // About the window's centre in every mode. The plain mode used to
           // scale about the content origin, so each press slid what you were
           // looking at toward a corner (quiz home's preview lost its focus
@@ -1811,8 +1749,7 @@ function KnowledgeGraph2DImpl({
         </button>
         <button
           data-testid="graph-zoom-out"
-          className="btn btn--ghost btn--sm"
-          style={{ padding: "2px 8px", fontFamily: "var(--font-sans)" }}
+          className="btn btn--ghost btn--sm py-0.5 px-2 font-sans"
           onClick={() => {
             viewTouchedRef.current = true;
             zoomAbout(1 / 1.25, width / 2, height / 2);
@@ -1823,8 +1760,7 @@ function KnowledgeGraph2DImpl({
         </button>
         <button
           data-testid="graph-zoom-reset"
-          className="btn btn--ghost btn--sm"
-          style={{ padding: "2px 8px", fontSize: 10 }}
+          className="btn btn--ghost btn--sm py-0.5 px-2 text-2xs"
           onClick={resetView}
           title="Reset view"
         >
@@ -1838,7 +1774,7 @@ function KnowledgeGraph2DImpl({
           id as `data-node-id` so tests assert by identity, never by label
           (concept names are only unique per course). Registered in
           docs/frontend-testids.md. */}
-      <ul style={SR_ONLY} aria-label="Knowledge graph nodes" data-testid="graph-node-items">
+      <ul className="absolute w-px h-px p-0 -m-px overflow-hidden [clip:rect(0,0,0,0)] whitespace-nowrap border-0" aria-label="Knowledge graph nodes" data-testid="graph-node-items">
         {nodes.map((n) =>
           onNodeClick ? (
             <li key={n.id} data-testid="graph-node-item" data-node-id={n.id}>

@@ -4,6 +4,7 @@ import React from "react";
 import Dialog from "@/components/Dialog";
 import { useToast } from "@/components/ToastProvider";
 import { adminListFlags, adminUpdateFlag } from "@/lib/api";
+import { cn } from "@/lib/cn";
 
 /**
  * The waitlist gate on the Allowlist tab: whether `open_access` is on, and a
@@ -79,16 +80,9 @@ export function OpenAccessBanner({ onChanged }: { onChanged?: (open: boolean | n
         data-testid="open-access-banner"
         data-open={effective ? "true" : "false"}
         data-forced={forced ? "true" : "false"}
-        style={{
-          display: "flex", flexWrap: "wrap", alignItems: "center", gap: 12,
-          marginBottom: 16, padding: "10px 14px", borderRadius: "var(--r-sm)",
-          background: effective ? "var(--warn-soft)" : "var(--bg-soft)",
-          color: effective ? "var(--warn)" : "var(--text-dim)",
-          border: effective ? "1px solid transparent" : "1px solid var(--border)",
-          fontSize: 13,
-        }}
+        className={cn("flex flex-wrap items-center gap-3 mb-4 py-2.5 px-3.5 rounded-sm text-md", effective ? "bg-warn-soft" : "bg-bg-soft", effective ? "text-warn" : "text-text-dim", effective ? "border border-transparent" : "border border-border")}
       >
-        <span style={{ flex: 1, minWidth: 220 }}>
+        <span className="flex-1 min-w-55">
           {effective ? (
             <><strong>Open access is on.</strong> Anyone who signs in gets in without approval. They show here as
               “open access” and go back to waiting when {forced ? "it is turned off" : "you turn this off"}.</>
@@ -96,7 +90,7 @@ export function OpenAccessBanner({ onChanged }: { onChanged?: (open: boolean | n
             <><strong>Waitlist required.</strong> Only approved addresses can sign in.</>
           )}
           {forced && (
-            <span data-testid="open-access-forced" style={{ display: "block", marginTop: 4 }}>
+            <span data-testid="open-access-forced" className="block mt-1">
               Set by <code>SAPLING_FLAG_OPEN_ACCESS={forced}</code> on the server, which overrides this switch.
               Remove that variable to control it here.
             </span>
@@ -120,7 +114,7 @@ export function OpenAccessBanner({ onChanged }: { onChanged?: (open: boolean | n
         size="sm"
         title={open ? "Require the waitlist again?" : "Open access to everyone?"}
       >
-        <p className="flags__confirm-text" style={{ marginBottom: 20 }} data-testid="open-access-confirm-text">
+        <p className="flags__confirm-text mb-5" data-testid="open-access-confirm-text">
           {open
             ? "People who joined through open access lose access within a minute and are back on the waitlist. Approved people are not affected. You can approve anyone to keep them in."
             : "Anyone with a Google account, BU or not, can sign in and use Sapling without approval. They are added to this list unapproved. Accounts you removed stay out."}

@@ -12,8 +12,9 @@
  */
 
 import { useState } from 'react';
-import { LAB_TIER, LABEL, PRIMARY_BTN } from './LabShell';
+import { LAB_TIER } from './LabShell';
 import { QUESTIONS } from './labData';
+import { cn } from "@/lib/cn";
 
 type Phase = 'active' | 'review' | 'results';
 
@@ -52,25 +53,25 @@ export function QuizDemo() {
 
   if (done) {
     return (
-      <div style={{ padding: '22px 26px', display: 'flex', flexDirection: 'column', gap: 14, minHeight: '100%', boxSizing: 'border-box' }}>
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 16, animation: 'labIn 320ms ease both' }}>
-          <span style={{ fontFamily: "var(--font-aleo), 'Aleo', Georgia, serif", fontSize: 54, fontWeight: 600, lineHeight: 1 }}>
+      <div className="py-5.5 px-6.5 flex flex-col gap-3.5 min-h-full box-border">
+        <div className="flex-1 flex flex-col items-center justify-center gap-4 [animation:labIn_320ms_ease_both]">
+          <span className="font-serif text-[54px] font-semibold leading-none">
             {correctCount} / {QUESTIONS.length}
           </span>
-          <span style={{ ...LABEL, fontSize: 13, letterSpacing: '0.01em', color: '#91978B' }}>
+          <span className="font-sans text-md tracking-[0.01em] text-moss-400">
             {Math.round((correctCount / QUESTIONS.length) * 100)}% CORRECT
           </span>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '9px 16px', borderRadius: 99, background: '#EAF1E4', border: '1px solid #E0E6DA' }}>
-            <span style={{ fontSize: 13, color: '#3B4233' }}>Eigenvalues mastery</span>
-            <span style={{ ...LABEL, fontSize: 13, fontWeight: 700, color: '#445D22' }}>
+          <div className="flex items-center gap-[9px] py-[9px] px-4 rounded-[99px] bg-leaf-50 border border-moss-100">
+            <span className="text-md text-moss-700">Eigenvalues mastery</span>
+            <span className="font-sans text-md font-bold text-brand-forest">
               41% → {41 + correctCount * 7}%  (+{correctCount * 7})
             </span>
           </div>
-          <div style={{ display: 'flex', gap: 10, marginTop: 6 }}>
-            <button onClick={retake} type="button" style={{ padding: '10px 20px', borderRadius: 10, border: '1px solid #E0E6DA', background: '#FDFCF9', fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif", fontSize: 13, color: '#3B4233', cursor: 'pointer' }}>
+          <div className="flex gap-2.5 mt-1.5">
+            <button onClick={retake} type="button" className="py-2.5 px-5 rounded-md border border-moss-100 bg-bg-panel font-sans text-md text-moss-700 cursor-pointer">
               Retake
             </button>
-            <button onClick={retake} type="button" style={{ padding: '10px 20px', borderRadius: 10, border: 'none', background: '#445D22', color: '#FDFCF9', fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif", fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
+            <button onClick={retake} type="button" className="py-2.5 px-5 rounded-md border-0 bg-brand-forest text-bg-panel font-sans text-md font-semibold cursor-pointer">
               Learn weak areas
             </button>
           </div>
@@ -80,28 +81,28 @@ export function QuizDemo() {
   }
 
   return (
-    <div style={{ padding: '22px 26px', display: 'flex', flexDirection: 'column', gap: 14, minHeight: '100%', boxSizing: 'border-box' }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <span style={{ ...LABEL, fontSize: 12, letterSpacing: '0.01em', color: '#91978B' }}>
+    <div className="py-5.5 px-6.5 flex flex-col gap-3.5 min-h-full box-border">
+      <div className="flex items-center justify-between">
+        <span className="font-sans text-sm tracking-[0.01em] text-moss-400">
           QUESTION {Math.min(qi + 1, QUESTIONS.length)} of {QUESTIONS.length}
         </span>
-        <span style={{ padding: '4px 11px', borderRadius: 99, ...LABEL, fontSize: 11.5, letterSpacing: '0.01em', border: `1px solid ${diffBg}`, background: `${diffBg}1f`, color: diffFg, transition: 'all 300ms' }}>
+        <span className="py-1 px-[11px] rounded-[99px] font-sans text-[11.5px] tracking-[0.01em] [transition:all_300ms]" style={{ border: `1px solid ${diffBg}`, background: `${diffBg}1f`, color: diffFg }}>
           {diff}
         </span>
       </div>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-        <span style={{ width: 8, height: 8, borderRadius: 99, background: LAB_TIER[tier] }} />
-        <span style={{ fontSize: 13, fontWeight: 600, color: '#3B4233' }}>Eigenvalues</span>
-        <span style={{ ...LABEL, fontSize: 9.5, color: '#9FA49A' }}>MA 242</span>
-        <span style={{ marginLeft: 'auto', ...LABEL, fontSize: 11.5, color: '#91978B' }}>
+      <div className="flex items-center gap-[7px]">
+        <span className="w-2 h-2 rounded-[99px]" style={{ background: LAB_TIER[tier] }} />
+        <span className="text-md font-semibold text-moss-700">Eigenvalues</span>
+        <span className="font-sans text-[9.5px] text-moss-300">MA 242</span>
+        <span className="ml-auto font-sans text-[11.5px] text-moss-400">
           MASTERY {41 + correctCount * 7}%
         </span>
       </div>
 
       <div>
-        <p style={{ margin: 0, fontFamily: "var(--font-aleo), 'Aleo', Georgia, serif", fontSize: 20, lineHeight: 1.4, color: '#191F13' }}>{q.text}</p>
-        <div role="radiogroup" style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <p className="m-0 font-serif text-[20px] leading-[1.4] text-moss-900">{q.text}</p>
+        <div role="radiogroup" className="mt-4 flex flex-col gap-2">
           {q.options.map((o) => {
             const isPicked = o.label === picked;
             const correct = 'correct' in o && o.correct;
@@ -114,11 +115,11 @@ export function QuizDemo() {
                 key={o.label}
                 type="button"
                 onClick={() => { if (!reviewing) setPicked(o.label); }}
-                style={{ textAlign: 'left', display: 'flex', gap: 10, alignItems: 'flex-start', padding: '12px 14px', borderRadius: 10, fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif", fontSize: 14, transition: 'all 180ms', border: `1px solid ${bd}`, background: bg, color: fg, cursor: reviewing ? 'default' : 'pointer' }}
+                className={cn("text-left flex gap-2.5 items-start py-3 px-3.5 rounded-md font-sans text-base [transition:all_180ms]", reviewing ? "cursor-default" : "cursor-pointer")} style={{ border: `1px solid ${bd}`, background: bg, color: fg }}
               >
-                <span style={{ ...LABEL, fontSize: 12, color: isPicked || (reviewing && correct) ? '#68951F' : '#9FA49A' }}>{o.label}.</span>
+                <span className={cn("font-sans text-sm", isPicked || (reviewing && correct) ? "text-leaf-500" : "text-moss-300")}>{o.label}.</span>
                 <span>{o.text}</span>
-                <span style={{ marginLeft: 'auto', ...LABEL, fontSize: 13, letterSpacing: '0.01em', color: markCol }}>{mark}</span>
+                <span className="ml-auto font-sans text-md tracking-[0.01em]" style={{ color: markCol }}>{mark}</span>
               </button>
             );
           })}
@@ -126,19 +127,19 @@ export function QuizDemo() {
       </div>
 
       {reviewing && (
-        <div style={{ borderRadius: 12, background: '#F6F8F4', border: '1px solid #E6EAE2', padding: '14px 16px', animation: 'labIn 300ms ease both' }}>
-          <span style={{ ...LABEL, fontSize: 11.5, letterSpacing: '0.01em', color: right ? '#445D22' : '#9c4b48' }}>
+        <div className="rounded-[12px] bg-moss-25 border border-moss-75 py-3.5 px-4 [animation:labIn_300ms_ease_both]">
+          <span className={cn("font-sans text-[11.5px] tracking-[0.01em]", right ? "text-brand-forest" : "text-[#9c4b48]")}>
             {right ? 'Correct' : 'Not quite'}
           </span>
-          <p style={{ margin: '7px 0 0', fontSize: 13.5, lineHeight: 1.65, color: '#3B4233' }}>{q.explain}</p>
+          <p className="mt-[7px] mx-0 mb-0 text-[13.5px] leading-[1.65] text-moss-700">{q.explain}</p>
         </div>
       )}
 
-      <div style={{ marginTop: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderTop: '1px solid #ECE9DE', paddingTop: 14 }}>
-        <span style={{ fontSize: 12, color: '#91978B' }}>
+      <div className="mt-auto flex items-center justify-between border-t border-t-paper-100 pt-3.5">
+        <span className="text-sm text-moss-400">
           {streak > 0 ? `${streak} right in a row — next question moves up` : 'Difficulty follows your last answer'}
         </span>
-        <button onClick={submit} type="button" className="ld-labprimary" style={PRIMARY_BTN}>
+        <button onClick={submit} type="button" className="ld-labprimary py-[11px] px-6 rounded-md border-0 [background:#445D22] text-bg-panel font-sans text-[13.5px] font-semibold cursor-pointer [transition:background_200ms]">
           {reviewing ? (qi === QUESTIONS.length - 1 ? 'See results' : 'Next question') : 'Submit answer'}
         </button>
       </div>

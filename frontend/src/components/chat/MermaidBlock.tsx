@@ -67,17 +67,7 @@ export function MermaidBlock({ code }: { code: string }) {
   if (err) {
     return (
       <pre
-        className="mono"
-        style={{
-          padding: "10px 12px",
-          color: "var(--err)",
-          border: "1px solid var(--border)",
-          borderRadius: "var(--r-sm)",
-          background: "var(--bg-inset)",
-          fontSize: 12,
-          margin: "8px 0 12px",
-          whiteSpace: "pre-wrap",
-        }}
+        className="mono py-2.5 px-3 text-err border border-border rounded-sm bg-bg-inset text-sm mt-2 mx-0 mb-3 whitespace-pre-wrap"
       >
         {`Mermaid error: ${err}\n\n${code}`}
       </pre>
@@ -86,7 +76,7 @@ export function MermaidBlock({ code }: { code: string }) {
 
   if (!svg) {
     return (
-      <div style={{ padding: "10px 0", color: "var(--text-dim)", fontSize: 12, fontStyle: "italic" }}>
+      <div className="py-2.5 px-0 text-text-dim text-sm italic">
         Rendering diagram…
       </div>
     );
@@ -96,7 +86,7 @@ export function MermaidBlock({ code }: { code: string }) {
     <div
       role="img"
       aria-label={`Diagram: ${code.replace(/\s+/g, " ").trim()}`}
-      style={{ margin: "10px 0 14px", overflowX: "auto", textAlign: "center" }}
+      className="mt-2.5 mx-0 mb-3.5 overflow-x-auto text-center"
       dangerouslySetInnerHTML={{ __html: svg }}
     />
   );

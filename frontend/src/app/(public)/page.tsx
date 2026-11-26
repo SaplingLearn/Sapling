@@ -76,23 +76,13 @@ export default function LandingPage() {
   return (
     <div
       ref={rootRef}
-      className="landing-dc landing-v5"
-      style={{
-        fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif", color: '#191F13', fontSize: 14,
-        lineHeight: 1.6, backgroundColor: '#f2f4f0',
-        backgroundImage:
-          'radial-gradient(ellipse 100% 60% at 50% -10%, rgba(255,255,255,0.55) 0%, transparent 50%), radial-gradient(ellipse 80% 50% at 100% 40%, rgba(255,255,255,0.2) 0%, transparent 45%)',
-        minHeight: '100vh', overflowX: 'clip',
-      }}
+      className="landing-dc landing-v5 font-sans text-moss-900 text-base leading-[1.6] bg-[#f2f4f0] [background-image:radial-gradient(ellipse_100%_60%_at_50%_-10%,_rgba(255,255,255,0.55)_0%,_transparent_50%),_radial-gradient(ellipse_80%_50%_at_100%_40%,_rgba(255,255,255,0.2)_0%,_transparent_45%)] min-h-screen overflow-x-clip"
     >
       {/* ambient constellation, behind everything */}
       <canvas
         ref={ambientCanvasRef}
         aria-hidden="true"
-        style={{
-          position: 'fixed', inset: 0, zIndex: -1, width: '100%', height: '100%',
-          pointerEvents: 'none',
-        }}
+        className="fixed inset-0 -z-1 w-full h-full pointer-events-none"
       />
 
       <IntroOverlay
@@ -148,11 +138,7 @@ export default function LandingPage() {
           match. */}
       <div
         aria-hidden="true"
-        style={{
-          position: 'relative', height: '38vh',
-          background:
-            'linear-gradient(180deg, #F2F4F0 0%, #EFF1ED 35%, #E9EDE4 70%, #E0E6DB 100%)',
-        }}
+        className="relative h-[38vh] [background:linear-gradient(180deg,_#F2F4F0_0%,_#EFF1ED_35%,_#E9EDE4_70%,_#E0E6DB_100%)]"
       />
 
       <ActGraph

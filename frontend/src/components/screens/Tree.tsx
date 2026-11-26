@@ -366,30 +366,17 @@ export function Tree() {
           never wraps however many courses a student has. */}
       <div
         data-testid="tree-toolbar"
-        style={{
-          padding: "14px 32px",
-          display: "flex",
-          gap: 10,
-          borderBottom: "1px solid var(--border)",
-          flexWrap: "wrap",
-          alignItems: "center",
-          // Intrinsic height: the graph row below is the only flexible child.
-          flexShrink: 0,
-        }}
+        className="py-3.5 px-8 flex gap-2.5 border-b border-b-border flex-wrap items-center shrink-0"
       >
-        <div style={{ position: "relative", flex: "0 1 220px" }}>
+        <div className="relative flex-[0_1_220px]">
           <input
             value={query}
             onChange={e => setQuery(e.target.value)}
             placeholder="Search concepts…"
             aria-label="Search concepts"
-            style={{
-              width: "100%", padding: "5px 10px 5px 28px", fontSize: 12,
-              border: "1px solid var(--border)", borderRadius: "var(--r-full)",
-              background: "var(--bg-panel)",
-            }}
+            className="w-full pt-[5px] pr-2.5 pb-[5px] pl-7 text-sm border border-border rounded-[var(--r-full)] bg-bg-panel"
           />
-          <span style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "var(--text-muted)", pointerEvents: "none" }}>
+          <span className="absolute left-2.5 top-1/2 [transform:translateY(-50%)] text-text-muted pointer-events-none">
             <Icon name="search" size={12} />
           </span>
         </div>
@@ -405,7 +392,7 @@ export function Tree() {
           />
         )}
         {/* Right side: the mastery-status filter (its colours are the legend). */}
-        <div style={{ marginLeft: "auto" }}>
+        <div className="ml-auto">
           <FilterPills
             options={[
               { value: "all" as Tier, label: "All" },
@@ -428,8 +415,8 @@ export function Tree() {
           contentRect becomes <KnowledgeGraph width height>, so a hardcoded
           `calc(100vh - …)` mis-sized the CANVAS in whichever shell layout the
           constant wasn't calibrated for (#341). */}
-      <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
-        <div ref={ref} style={{ flex: 1, minWidth: 0, position: "relative" }}>
+      <div className="flex flex-1 min-h-0">
+        <div ref={ref} className="flex-1 min-w-0 relative">
           {loading || !size ? (
             <GraphPanelSkeleton />
           ) : (
@@ -469,15 +456,8 @@ export function Tree() {
                 data-testid="graph-fullscreen"
                 aria-label="Fullscreen"
                 title="Fullscreen"
-                className="btn btn--ghost btn--sm"
+                className="btn btn--ghost btn--sm absolute top-3 right-3 z-5 w-9 h-8 p-0 inline-flex items-center justify-center bg-bg-panel border border-border rounded-sm shadow-sm"
                 onClick={() => setFullscreen(true)}
-                style={{
-                  position: "absolute", top: FULLSCREEN_BTN.top, right: 12, zIndex: 5,
-                  width: FULLSCREEN_BTN.w, height: FULLSCREEN_BTN.h, padding: 0,
-                  display: "inline-flex", alignItems: "center", justifyContent: "center",
-                  background: "var(--bg-panel)", border: "1px solid var(--border)",
-                  borderRadius: "var(--r-sm)", boxShadow: "var(--shadow-sm)",
-                }}
               >
                 <Icon name="max" size={13} />
               </button>
@@ -486,13 +466,7 @@ export function Tree() {
         </div>
         {selected && !isMobile && (
           <aside
-            style={{
-              width: 320,
-              borderLeft: "1px solid var(--border)",
-              padding: 20,
-              background: "var(--bg-subtle)",
-              overflowY: "auto",
-            }}
+            className="w-80 border-l border-l-border p-5 bg-bg-subtle overflow-y-auto"
           >
             {detailPanel}
           </aside>
@@ -502,18 +476,11 @@ export function Tree() {
       {selected && isMobile && (
         <div
           onClick={() => setSelected(null)}
-          style={{
-            position: "fixed", inset: 0, zIndex: 90, background: "rgba(25, 37, 11,0.35)",
-            display: "flex", flexDirection: "column", justifyContent: "flex-end",
-          }}
+          className="fixed inset-0 z-90 bg-[rgba(25,_37,_11,0.35)] flex flex-col justify-end"
         >
           <div
             onClick={e => e.stopPropagation()}
-            className="slide-up"
-            style={{
-              background: "var(--bg-panel)", borderTopLeftRadius: "var(--r-lg)", borderTopRightRadius: "var(--r-lg)",
-              padding: 20, maxHeight: "80vh", overflowY: "auto",
-            }}
+            className="slide-up [background:var(--bg-panel)] [border-top-left-radius:var(--r-lg)] [border-top-right-radius:var(--r-lg)] p-5 max-h-[80vh] overflow-y-auto"
           >
             {detailPanel}
           </div>
@@ -521,11 +488,11 @@ export function Tree() {
       )}
 
       {fullscreen && (
-        <div style={{ position: "fixed", inset: 0, zIndex: 150, background: "var(--bg)", display: "flex", flexDirection: "column" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 20px", borderBottom: "1px solid var(--border)" }}>
+        <div className="fixed inset-0 z-150 bg-bg flex flex-col">
+          <div className="flex justify-between items-center py-3.5 px-5 border-b border-b-border">
             <div>
               <div className="label-micro">Knowledge tree — fullscreen</div>
-              <div className="h-serif" style={{ fontSize: 18 }}>Press Esc to exit</div>
+              <div className="h-serif text-xl">Press Esc to exit</div>
             </div>
             <button className="btn btn--ghost btn--sm" onClick={() => setFullscreen(false)}>
               <Icon name="x" size={14} />
@@ -557,7 +524,7 @@ function AddConceptControl({
   onCancel: () => void;
 }) {
   return adding ? (
-    <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
+    <span className="inline-flex gap-1.5 items-center">
       <input
         data-testid="graph-add-concept-input"
         autoFocus
@@ -568,10 +535,7 @@ function AddConceptControl({
           if (e.key === "Enter") onSubmit();
           if (e.key === "Escape") onCancel();
         }}
-        style={{
-          fontSize: 12, padding: "5px 10px", border: "1px solid var(--border)",
-          borderRadius: "var(--r-full)", background: "var(--bg-panel)", width: 180,
-        }}
+        className="text-sm py-[5px] px-2.5 border border-border rounded-[var(--r-full)] bg-bg-panel w-45"
       />
       <button
         data-testid="graph-add-concept-submit"
@@ -611,49 +575,48 @@ function NodeDetailPanel({
   return (
     <>
       {/* Course on the left, close in the top-right corner. */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-          <span style={{ width: 10, height: 10, borderRadius: "50%", background: node.color, flexShrink: 0 }} />
-          <span className="label-micro" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="w-2.5 h-2.5 rounded-[50%] shrink-0" style={{ background: node.color }} />
+          <span className="label-micro overflow-hidden text-ellipsis whitespace-nowrap">
             {node.subject}
           </span>
         </div>
         <button
-          className="btn btn--ghost btn--sm"
+          className="btn btn--ghost btn--sm shrink-0 -mr-1.5 w-7 h-7 p-0 justify-center"
           onClick={onClose}
           aria-label="Close detail panel"
-          style={{ flexShrink: 0, marginRight: -6, width: 28, height: 28, padding: 0, justifyContent: "center" }}
         >
           <Icon name="x" size={14} />
         </button>
       </div>
-      <h2 className="h-serif" style={{ fontSize: 24, margin: "6px 0 12px", fontWeight: 500 }}>
+      <h2 className="h-serif text-[24px] mt-1.5 mx-0 mb-3 font-medium">
         {node.name}
       </h2>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 16 }}>
-        <div className="card" style={{ padding: 12 }}>
+      <div className="grid grid-cols-[1fr_1fr] gap-2.5 mb-4">
+        <div className="card p-3">
           <div className="label-micro">Mastery</div>
-          <div className="mono" style={{ fontSize: 22, color: node.color }}>
+          <div className="mono text-2xl" style={{ color: node.color }}>
             {Math.round((node.mastery_score || 0) * 100)}%
           </div>
         </div>
-        <div className="card" style={{ padding: 12 }}>
+        <div className="card p-3">
           <div className="label-micro">Tier</div>
-          <div style={{ fontSize: 14, fontWeight: 500, marginTop: 4, textTransform: "capitalize" }}>
+          <div className="text-base font-medium mt-1 capitalize">
             {node.mastery_tier}
           </div>
         </div>
       </div>
-      <div style={{ marginBottom: 12 }}>
-        <div className="label-micro" style={{ marginBottom: 6 }}>Last studied</div>
-        <div style={{ fontSize: 13 }}>
+      <div className="mb-3">
+        <div className="label-micro mb-1.5">Last studied</div>
+        <div className="text-md">
           {node.last_studied_at ? new Date(node.last_studied_at).toLocaleString() : "never"}
         </div>
       </div>
-      <button className="btn btn--primary" style={{ width: "100%" }} onClick={() => onLearn(node)}>
+      <button className="btn btn--primary w-full" onClick={() => onLearn(node)}>
         <Icon name="brain" size={14} /> Learn this
       </button>
-      <button className="btn" style={{ width: "100%", marginTop: 8 }} onClick={() => onQuiz(node)}>
+      <button className="btn w-full mt-2" onClick={() => onQuiz(node)}>
         <Icon name="bolt" size={14} /> Quick quiz
       </button>
       {!node.is_subject_root && (
@@ -669,22 +632,17 @@ function NodeDetailPanel({
         <RecentQuizzes attempts={attempts} recentQuizzes={recentQuizzes} />
       )}
       {sessions.length > 0 && (
-        <div style={{ marginTop: 18 }}>
-          <div className="label-micro" style={{ marginBottom: 8 }}>Sessions for this concept</div>
+        <div className="mt-4.5">
+          <div className="label-micro mb-2">Sessions for this concept</div>
           {sessions.slice(0, 4).map(s => (
             <button
               key={s.id}
               onClick={() => onOpenSession(s.id)}
-              style={{
-                display: "flex", justifyContent: "space-between", alignItems: "center",
-                width: "100%", padding: "8px 10px",
-                background: "var(--bg-panel)", border: "1px solid var(--border)",
-                borderRadius: "var(--r-sm)", marginBottom: 6, textAlign: "left",
-              }}
+              className="flex justify-between items-center w-full py-2 px-2.5 bg-bg-panel border border-border rounded-sm mb-1.5 text-left"
             >
-              <div style={{ fontSize: 12, minWidth: 0, overflow: "hidden" }}>
-                <div style={{ fontWeight: 500, textTransform: "capitalize" }}>{s.mode}</div>
-                <div style={{ fontSize: 10, color: "var(--text-muted)" }}>
+              <div className="text-sm min-w-0 overflow-hidden">
+                <div className="font-medium capitalize">{s.mode}</div>
+                <div className="text-2xs text-text-muted">
                   {s.message_count} msgs · {new Date(s.started_at).toLocaleDateString()}
                 </div>
               </div>
@@ -706,34 +664,29 @@ function RecentQuizzes({
   recentQuizzes: AttemptSummary[];
 }) {
   return (
-    <div data-testid="tree-node-recent-quizzes" style={{ marginTop: 18 }}>
-      <div className="label-micro" style={{ marginBottom: 8 }}>Recent quizzes</div>
+    <div data-testid="tree-node-recent-quizzes" className="mt-4.5">
+      <div className="label-micro mb-2">Recent quizzes</div>
       {attempts === null ? (
-        <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Loading…</div>
+        <div className="text-sm text-text-muted">Loading…</div>
       ) : recentQuizzes.length === 0 ? (
         // No second CTA here on purpose: "Quick quiz" is a few pixels up
         // and is the action this empty state would ask for.
-        <div style={{ fontSize: 12, color: "var(--text-muted)" }}>No quizzes yet</div>
+        <div className="text-sm text-text-muted">No quizzes yet</div>
       ) : (
         recentQuizzes.map(a => (
           <div
             key={a.quiz_id}
             data-testid={`tree-node-recent-quiz-${a.quiz_id}`}
-            style={{
-              display: "flex", justifyContent: "space-between", alignItems: "center",
-              gap: 8, padding: "8px 10px",
-              background: "var(--bg-panel)", border: "1px solid var(--border)",
-              borderRadius: "var(--r-sm)", marginBottom: 6,
-            }}
+            className="flex justify-between items-center gap-2 py-2 px-2.5 bg-bg-panel border border-border rounded-sm mb-1.5"
           >
             {/* Not a link: there is no finished-attempt review endpoint —
                 `GET /attempts/{id}` answers `resumable: false, questions: []`
                 for a completed row (gap G5). A row that navigated nowhere
                 would be a broken promise. */}
-            <span style={{ fontSize: 12 }}>
+            <span className="text-sm">
               {relativeStudied(a.completed_at || a.created_at)}
             </span>
-            <span className="mono" style={{ fontSize: 11, color: "var(--text-muted)" }}>
+            <span className="mono text-xs text-text-muted">
               {a.score ?? "—"}/{a.total ?? "—"} · {formatMasteryDelta(a.mastery_delta)} mastery
             </span>
           </div>
@@ -752,7 +705,7 @@ function FullscreenGraph({
 }) {
   const [ref, size] = useGraphSize<HTMLDivElement>({ w: 1200, h: 700 });
   return (
-    <div ref={ref} style={{ flex: 1, position: "relative" }}>
+    <div ref={ref} className="flex-1 relative">
       {size && (
         <KnowledgeGraph
           nodes={nodes}

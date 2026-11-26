@@ -1,10 +1,11 @@
 'use client';
 
-import { useEffect, useRef, type CSSProperties } from 'react';
+import { useEffect, useRef } from 'react';
 import { PenSquare, Users } from 'lucide-react';
 import { Button } from '@/components/ui';
 import { IS_TEST_MODE, now, random } from '@/lib/testMode';
 import { SaplingWordmark } from '@/components/SaplingWordmark';
+import { cn } from "@/lib/cn";
 
 // Hand-tuned atmospheric orb palettes, hardcoded because they feed canvas
 // fillStyle where CSS var() doesn't resolve. Anchored on the olive brand
@@ -12,14 +13,6 @@ import { SaplingWordmark } from '@/components/SaplingWordmark';
 // amber/coral as the warm complement and warm greys for the quiet points.
 // OnboardingGraph uses the same colors, so the landing and onboarding match.
 const CLUSTER_COLORS = ['#A39E8F', '#D97706', '#7B9E51', '#445D22', '#B1D28B', '#E27A63'];
-/** See the legibility-glow comment in the hero content. */
-const HERO_SCRIM: CSSProperties = {
-  position: 'absolute', left: 0, right: 0, top: '-6%', bottom: '-4%',
-  pointerEvents: 'none', zIndex: -1,
-  background:
-    'radial-gradient(ellipse 50% 50% at 50% 46%, rgba(242,244,240,0.86) 0%, rgba(242,244,240,0.7) 45%, rgba(242,244,240,0.3) 75%, rgba(242,244,240,0) 100%)',
-  filter: 'blur(18px)',
-};
 const CLUSTER_SEEDS_BG = [10.0, 11.3, 12.6, 13.9, 15.2, 16.5];
 const CLUSTER_INIT_POS = [
   { ox: -222, oy: -29, oz:  15 },
@@ -298,8 +291,7 @@ export function Hero({
 
   return (
     <section
-      className="landing-page antialiased relative min-h-svh flex flex-col items-center justify-center gap-12 pt-28 pb-8"
-      style={{ fontFamily: 'var(--font-inter), sans-serif', color: 'var(--text, #1a1a1a)', background: 'transparent' }}
+      className="landing-page antialiased relative min-h-svh flex flex-col items-center justify-center gap-12 pt-28 pb-8 [font-family:var(--font-inter),_sans-serif] [color:var(--text,_#1a1a1a)] [background:transparent]"
     >
       <div aria-hidden className="absolute inset-0 pointer-events-none z-0">
         <div className="sapling-mesh-blob sapling-mesh-blob--1" />
@@ -310,8 +302,7 @@ export function Hero({
       {/* Floating Glass Accent Cards */}
       <div ref={floatingCardsRef} className="absolute inset-0 z-10 hidden lg:block pointer-events-none">
         <div
-          className="floating-card absolute w-52 liquid-glass rounded-2xl p-5"
-          style={{ position: 'absolute', top: '24%', right: '12%', opacity: heroMounted ? 1 : 0, transition: 'opacity 0.6s ease 1.0s' }}
+          className={cn("floating-card absolute w-52 liquid-glass rounded-lg p-5", "absolute top-[24%] right-[12%] [transition:opacity_0.6s_ease_1.0s]", heroMounted ? "opacity-100" : "opacity-0")}
           data-base-rot="4" data-float-delay="1000" data-float-dur="6000"
         >
           {/*
@@ -322,25 +313,24 @@ export function Hero({
             product actually uses. Colours only; nothing else in the hero moves.
           */}
           <div className="flex flex-col gap-3">
-            <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-[var(--state-mastery)]" /><span className="text-xs text-[var(--text-dim)]">Mastered</span></div>
-            <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-[var(--state-progress)]" /><span className="text-xs text-[var(--text-dim)]">Learning</span></div>
-            <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-[var(--state-struggle)]" /><span className="text-xs text-[var(--text-dim)]">Struggling</span></div>
-            <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-[var(--state-neutral)]" /><span className="text-xs text-[var(--text-dim)]">Unexplored</span></div>
+            <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-[var(--state-mastery)]" /><span className="text-[12px]/[16px] text-[var(--text-dim)]">Mastered</span></div>
+            <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-[var(--state-progress)]" /><span className="text-[12px]/[16px] text-[var(--text-dim)]">Learning</span></div>
+            <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-[var(--state-struggle)]" /><span className="text-[12px]/[16px] text-[var(--text-dim)]">Struggling</span></div>
+            <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-[var(--state-neutral)]" /><span className="text-[12px]/[16px] text-[var(--text-dim)]">Unexplored</span></div>
           </div>
         </div>
 
         <div
-          className="floating-card absolute w-44 liquid-glass rounded-2xl p-4 flex flex-col gap-2"
-          style={{ position: 'absolute', bottom: '34%', left: '14%', opacity: heroMounted ? 1 : 0, transition: 'opacity 0.6s ease 1.2s' }}
+          className={cn("floating-card absolute w-44 liquid-glass rounded-lg p-4 flex flex-col gap-2", "absolute bottom-[34%] left-[14%] [transition:opacity_0.6s_ease_1.2s]", heroMounted ? "opacity-100" : "opacity-0")}
           data-base-rot="-6" data-float-delay="500" data-float-dur="4500"
         >
-          <div className="liquid-glass-subtle rounded-xl py-2 flex items-center justify-center gap-2">
+          <div className="liquid-glass-subtle rounded-[12px] py-2 flex items-center justify-center gap-2">
             <PenSquare className="text-[var(--text-dim)] w-4 h-4" strokeWidth={1.5} />
-            <span className="text-xs text-[var(--text-dim)]">Quick Quiz</span>
+            <span className="text-[12px]/[16px] text-[var(--text-dim)]">Quick Quiz</span>
           </div>
-          <div className="liquid-glass-subtle rounded-xl py-2 flex items-center justify-center gap-2">
+          <div className="liquid-glass-subtle rounded-[12px] py-2 flex items-center justify-center gap-2">
             <Users className="text-[var(--text-dim)] w-4 h-4" strokeWidth={1.5} />
-            <span className="text-xs text-[var(--text-dim)]">Study Room</span>
+            <span className="text-[12px]/[16px] text-[var(--text-dim)]">Study Room</span>
           </div>
         </div>
       </div>
@@ -353,11 +343,7 @@ export function Hero({
           the boundary instead. Above the canvas and the cards, below the copy. */}
       <div
         aria-hidden
-        className="absolute inset-x-0 bottom-0 z-10 pointer-events-none"
-        style={{
-          height: '26%',
-          background: 'linear-gradient(0deg, #F2F4F0 0%, rgba(242,244,240,0.9) 22%, rgba(242,244,240,0.55) 55%, rgba(242,244,240,0) 100%)',
-        }}
+        className="absolute inset-x-0 bottom-0 z-10 pointer-events-none h-[26%] [background:linear-gradient(0deg,_#F2F4F0_0%,_rgba(242,244,240,0.9)_22%,_rgba(242,244,240,0.55)_55%,_rgba(242,244,240,0)_100%)]"
       />
 
       {/* Hero Content */}
@@ -370,22 +356,12 @@ export function Hero({
             and left them hazy, and was removed for it. This wash calms the
             point cloud behind the letterforms only: it reaches zero before
             the column's edges, so the cards keep their focus. */}
-        <span aria-hidden="true" style={HERO_SCRIM} />
-        <h1 aria-label="Sapling" style={{
-          opacity: heroMounted ? 1 : 0,
-          transform: heroMounted ? 'translateY(0)' : 'translateY(25px)',
-          transition: 'opacity 700ms ease 300ms, transform 700ms ease 300ms',
-          margin: '0 auto',
-          width: 'min(78vw, 700px)',
-        }}>
+        <span aria-hidden="true" className="absolute left-0 right-0 top-[-6%] bottom-[-4%] pointer-events-none -z-1 [background:radial-gradient(ellipse_50%_50%_at_50%_46%,_rgba(242,244,240,0.86)_0%,_rgba(242,244,240,0.7)_45%,_rgba(242,244,240,0.3)_75%,_rgba(242,244,240,0)_100%)] [filter:blur(18px)]" />
+        <h1 aria-label="Sapling" className={cn("[transition:opacity_700ms_ease_300ms,_transform_700ms_ease_300ms] my-0 mx-auto w-[min(78vw,_700px)]", heroMounted ? "opacity-100" : "opacity-0", heroMounted ? "[transform:translateY(0)]" : "[transform:translateY(25px)]")}>
           <SaplingWordmark width={700} decorative style={{ width: '100%' }} />
         </h1>
 
-        <p style={{
-          opacity: heroMounted ? 1 : 0,
-          transform: heroMounted ? 'translateY(0)' : 'translateY(25px)',
-          transition: 'all 700ms cubic-bezier(0.22,1,0.36,1) 500ms',
-        }} className="font-gummi text-2xl sm:text-3xl md:text-4xl text-[var(--text-dim)] max-w-xl mx-auto mt-2 leading-[1.2] tracking-tight font-medium">
+        <p className={cn("font-gummi text-[24px] sm:text-[30px] md:text-[36px] text-[var(--text-dim)] max-w-xl mx-auto mt-2 leading-[1.2] tracking-tight font-medium", "[transition:all_700ms_cubic-bezier(0.22,1,0.36,1)_500ms]", heroMounted ? "opacity-100" : "opacity-0", heroMounted ? "[transform:translateY(0)]" : "[transform:translateY(25px)]")}>
           {heroText2 || ' '}
         </p>
 
@@ -401,21 +377,13 @@ export function Hero({
             the lede, 52 to the CTA. The tagline is display type at 1.2, not
             body leading. The wordmark is fluid and capped at 13rem because a
             fixed 208px ran into the right-hand card at 1440px wide. */}
-        <p style={{
-          opacity: heroMounted ? 1 : 0,
-          transform: heroMounted ? 'translateY(0)' : 'translateY(25px)',
-          transition: 'all 700ms cubic-bezier(0.22,1,0.36,1) 650ms',
-        }} className="font-suse text-base md:text-lg font-medium text-[var(--text)] max-w-[560px] mx-auto mt-6 md:mt-8 leading-[1.55] text-pretty">
+        <p className={cn("font-suse text-[16px] md:text-[18px] font-medium text-[var(--text)] max-w-[560px] mx-auto mt-6 md:mt-8 leading-[1.55] text-pretty", "[transition:all_700ms_cubic-bezier(0.22,1,0.36,1)_650ms]", heroMounted ? "opacity-100" : "opacity-0", heroMounted ? "[transform:translateY(0)]" : "[transform:translateY(25px)]")}>
           Start with the syllabus for the class you&apos;re taking right now. Sapling reads your
           whole course, learns what you know, and drills what is slipping.
         </p>
 
-        <div style={{
-          opacity: heroMounted ? 1 : 0,
-          transform: heroMounted ? 'translateY(0)' : 'translateY(25px)',
-          transition: 'all 700ms cubic-bezier(0.22,1,0.36,1) 800ms',
-        }} className="flex flex-col items-center gap-4 mt-10 md:mt-[52px]">
-          <div style={{ position: 'relative', display: 'inline-flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
+        <div className={cn("flex flex-col items-center gap-4 mt-10 md:mt-[52px]", "[transition:all_700ms_cubic-bezier(0.22,1,0.36,1)_800ms]", heroMounted ? "opacity-100" : "opacity-0", heroMounted ? "[transform:translateY(0)]" : "[transform:translateY(25px)]")}>
+          <div className="relative inline-flex flex-col items-center gap-1.5">
             <Button variant="primary" size="xl" onClick={onBeta}>
               {ctaLabel}
             </Button>
@@ -424,9 +392,9 @@ export function Hero({
       </div>
 
       {/* Scroll Indicator */}
-      <div style={{ opacity: heroMounted ? 1 : 0, transition: 'opacity 1s ease 1.2s' }} className="relative z-20 flex shrink-0 flex-col items-center">
+      <div className={cn("relative z-20 flex shrink-0 flex-col items-center", "[transition:opacity_1s_ease_1.2s]", heroMounted ? "opacity-100" : "opacity-0")}>
         <div className="w-px h-14 landing-divider-v" />
-        <span className="font-suse text-xs whitespace-nowrap text-[var(--text-dim)] opacity-70 mt-3">See what&apos;s inside</span>
+        <span className="font-suse text-[12px]/[16px] whitespace-nowrap text-[var(--text-dim)] opacity-70 mt-3">See what&apos;s inside</span>
       </div>
     </section>
   );

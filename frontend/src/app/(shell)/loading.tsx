@@ -9,12 +9,12 @@ export default function ShellLoading() {
     <div
       data-testid="shell-loading"
       aria-busy
-      style={{ minHeight: "100%", background: "var(--bg)", padding: "24px" }}
+      className="min-h-full bg-bg p-6"
     >
-      <div style={{ maxWidth: 1080, margin: "0 auto", display: "flex", flexDirection: "column", gap: 14 }}>
+      <div className="max-w-270 my-0 mx-auto flex flex-col gap-3.5">
         <Skeleton width="38%" height={26} />
         <Skeleton width="100%" height={110} radius="var(--r-md)" />
-        <div style={{ display: "flex", gap: 14 }}>
+        <div className="flex gap-3.5">
           <Skeleton width="50%" height={180} radius="var(--r-md)" />
           <Skeleton width="50%" height={180} radius="var(--r-md)" />
         </div>

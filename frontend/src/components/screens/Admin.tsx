@@ -28,8 +28,9 @@ import { AllowlistTab } from "./admin/AllowlistTab";
 import { EmailBroadcastsTab } from "./admin/EmailBroadcasts";
 import { AccountToolsDialog } from "./admin/AccountToolsDialog";
 import { AdminReauthBanner } from "./admin/AdminReauthBanner";
-import { fieldStyle } from "./admin/adminStyles";
 import { sentenceCase } from "@/lib/sentenceCase";
+import { cn } from "@/lib/cn";
+import { fieldClass } from "@/components/ui/field";
 
 type Tab = "users" | "allowlist" | "email" | "roles" | "flags" | "achievements" | "cosmetics" | "analytics" | "audit" | "feedback";
 
@@ -44,7 +45,7 @@ export function Admin() {
     return (
       <div>
         <TopBar breadcrumb="Admin" title="Admin Console" subtitle="Staff only" />
-        <div style={{ padding: 60, textAlign: "center", color: "var(--text-muted)" }}>
+        <div className="p-15 text-center text-text-muted">
           You don&apos;t have admin access.
         </div>
       </div>
@@ -62,27 +63,19 @@ export function Admin() {
         actions={<span className="chip chip--err">Staff only</span>}
       />
       <AdminReauthBanner />
-      <div style={{ padding: "12px 32px", borderBottom: "1px solid var(--border)", display: "flex", gap: 4, overflowX: "auto" }}>
+      <div className="py-3 px-8 border-b border-b-border flex gap-1 overflow-x-auto">
         {tabs.map((t) => (
           <button
             key={t}
             data-testid={`admin-tab-${t}`}
             onClick={() => setTab(t)}
-            style={{
-              padding: "8px 16px",
-              fontSize: 13,
-              fontWeight: tab === t ? 600 : 400,
-              color: tab === t ? "var(--text)" : "var(--text-dim)",
-              borderBottom: tab === t ? "2px solid var(--accent)" : "2px solid transparent",
-              textTransform: "capitalize",
-              whiteSpace: "nowrap",
-            }}
+            className={cn("py-2 px-4 text-md capitalize whitespace-nowrap", tab === t ? "font-semibold" : "font-normal", tab === t ? "text-text" : "text-text-dim", tab === t ? "border-b-2 border-b-accent" : "border-b-2 border-b-transparent")}
           >
             {t}
           </button>
         ))}
       </div>
-      <div style={{ padding: "24px 32px" }}>
+      <div className="py-6 px-8">
         {tab === "users" && <UsersTab />}
         {tab === "allowlist" && <AllowlistTab />}
         {tab === "email" && <EmailBroadcastsTab />}
@@ -99,13 +92,6 @@ export function Admin() {
 }
 
 // ── Users ────────────────────────────────────────────────────────────────────
-
-// One-line, ellipsized cell text: a long name or email (or an unreadable
-// ciphertext blob) must not stretch its column and push the actions off-card.
-const clipCell: React.CSSProperties = {
-  display: "block", minWidth: 0, maxWidth: 240,
-  overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-};
 
 function UsersTab() {
   const toast = useToast();
@@ -195,36 +181,30 @@ function UsersTab() {
 
   return (
     <>
-      <div className="body-serif" data-testid="admin-users-summary" style={{
-        fontSize: 15, marginBottom: 22, color: "var(--text-dim)", maxWidth: 680,
-      }}>
-        <span style={{ color: "var(--text)" }}>{total}</span> user{total === 1 ? "" : "s"}
-        {committedQuery && <> · <span style={{ color: "var(--text-muted)" }}>filter "{committedQuery}"</span></>}
+      <div className="body-serif text-[15px] mb-5.5 text-text-dim max-w-170" data-testid="admin-users-summary">
+        <span className="text-text">{total}</span> user{total === 1 ? "" : "s"}
+        {committedQuery && <> · <span className="text-text-muted">filter "{committedQuery}"</span></>}
       </div>
-      <div className="card" style={{ padding: 0 }}>
-        <div style={{ display: "flex", padding: "12px 16px", borderBottom: "1px solid var(--border)", alignItems: "center", gap: 12 }}>
-          <div style={{ position: "relative", flex: 1, maxWidth: 300 }}>
-            <div style={{ position: "absolute", left: 10, top: 8, color: "var(--text-muted)" }}>
+      <div className="card p-0">
+        <div className="flex py-3 px-4 border-b border-b-border items-center gap-3">
+          <div className="relative flex-1 max-w-75">
+            <div className="absolute left-2.5 top-2 text-text-muted">
               <Icon name="search" size={14} />
             </div>
             <input
               placeholder="Search users…"
               value={query}
               onChange={e => setQuery(e.target.value)}
-              style={{
-                width: "100%", padding: "7px 12px 7px 32px",
-                border: "1px solid var(--border)", borderRadius: "var(--r-sm)",
-                fontSize: 13, background: "var(--bg-input)",
-              }}
+              className="w-full pt-[7px] pr-3 pb-[7px] pl-8 border border-border rounded-sm text-md bg-bg-input"
             />
           </div>
         </div>
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+        <div className="overflow-x-auto">
+          <table className="w-full border-collapse text-md">
             <thead>
-              <tr style={{ background: "var(--bg-subtle)" }}>
+              <tr className="bg-bg-subtle">
                 {["User", "Email", "Roles", "Last seen", "Joined", ""].map(h => (
-                  <th key={h} style={{ textAlign: "left", padding: "10px 16px", fontWeight: 500, fontSize: 13, color: "var(--text-muted)" }}>
+                  <th key={h} className="text-left py-2.5 px-4 font-medium text-md text-text-muted">
                     {h}
                   </th>
                 ))}
@@ -232,22 +212,21 @@ function UsersTab() {
             </thead>
             <tbody>
               {users.map(u => (
-                <tr key={u.id} style={{ borderTop: "1px solid var(--border)" }}>
-                  <td style={{ padding: "10px 16px" }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <tr key={u.id} className="border-t border-t-border">
+                  <td className="py-2.5 px-4">
+                    <div className="flex items-center gap-2.5">
                       <Avatar name={u.name || u.email || "?"} size={28} />
                       {u.undecryptable ? (
                         <span
                           data-testid="admin-user-undecryptable"
                           title={`Encrypted with a different key than this server's; can't be read. User id: ${u.id}`}
-                          style={{ fontStyle: "italic", color: "var(--text-muted)" }}
-                        >
+                          className="italic text-text-muted">
                           Unreadable record
                         </span>
                       ) : u.name ? (
-                        <span title={u.name} style={{ ...clipCell, fontWeight: 500 }}>{u.name}</span>
+                        <span title={u.name} className="block min-w-0 max-w-60 overflow-hidden text-ellipsis whitespace-nowrap font-medium">{u.name}</span>
                       ) : (
-                        <span style={{ fontStyle: "italic", color: "var(--text-muted)" }}>No profile name</span>
+                        <span className="italic text-text-muted">No profile name</span>
                       )}
                       {!u.is_approved && u.open_access_at && (
                         <span
@@ -260,25 +239,25 @@ function UsersTab() {
                       )}
                     </div>
                   </td>
-                  <td style={{ padding: "10px 16px", color: "var(--text-dim)" }}>
-                    <span title={u.email ?? undefined} style={clipCell}>{u.email ?? "—"}</span>
+                  <td className="py-2.5 px-4 text-text-dim">
+                    <span title={u.email ?? undefined} className="block min-w-0 max-w-60 overflow-hidden text-ellipsis whitespace-nowrap">{u.email ?? "—"}</span>
                   </td>
-                  <td style={{ padding: "10px 16px" }}>
-                    <div style={{ display: "flex", gap: 4, flexWrap: "wrap", alignItems: "center" }}>
+                  <td className="py-2.5 px-4">
+                    <div className="flex gap-1 flex-wrap items-center">
                       {(u.roles || []).map(r => (
-                        <span key={r.id} style={{ display: "inline-flex", alignItems: "center", gap: 3 }}>
+                        <span key={r.id} className="inline-flex items-center gap-[3px]">
                           <RoleBadge role={r} />
                           <button
                             title="Revoke"
                             onClick={() => revoke(u.id, r.id)}
-                            style={{ color: "var(--text-muted)", padding: "1px 4px" }}
+                            className="text-text-muted py-px px-1"
                           >
                             ×
                           </button>
                         </span>
                       ))}
                       {assignFor === u.id ? (
-                        <span style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
+                        <span className="inline-flex gap-1 items-center">
                           <CustomSelect
                             size="sm"
                             value={assignRoleId}
@@ -293,22 +272,21 @@ function UsersTab() {
                         </span>
                       ) : (
                         <button
-                          className="btn btn--sm btn--ghost"
+                          className="btn btn--sm btn--ghost text-xs"
                           onClick={() => { setAssignFor(u.id); setAssignRoleId(""); }}
-                          style={{ fontSize: 11 }}
                         >
                           + role
                         </button>
                       )}
                     </div>
                   </td>
-                  <td style={{ padding: "10px 16px", color: "var(--text-muted)" }}>
+                  <td className="py-2.5 px-4 text-text-muted">
                     {u.last_sign_in_at ? new Date(u.last_sign_in_at).toLocaleDateString() : "—"}
                   </td>
-                  <td style={{ padding: "10px 16px", color: "var(--text-muted)" }}>
+                  <td className="py-2.5 px-4 text-text-muted">
                     {u.created_at ? new Date(u.created_at).toLocaleDateString() : "—"}
                   </td>
-                  <td style={{ padding: "10px 16px", textAlign: "right", whiteSpace: "nowrap" }}>
+                  <td className="py-2.5 px-4 text-right whitespace-nowrap">
                     <button
                       className="btn btn--sm btn--ghost"
                       data-testid={`admin-user-account-tools-${u.id}`}
@@ -329,12 +307,9 @@ function UsersTab() {
             </tbody>
           </table>
         </div>
-        <div style={{
-          display: "flex", justifyContent: "space-between", alignItems: "center",
-          padding: "10px 16px", borderTop: "1px solid var(--border)", fontSize: 12, color: "var(--text-muted)",
-        }}>
+        <div className="flex justify-between items-center py-2.5 px-4 border-t border-t-border text-sm text-text-muted">
           <div>Page {page} of {totalPages} · {total} total</div>
-          <div style={{ display: "flex", gap: 6 }}>
+          <div className="flex gap-1.5">
             <button className="btn btn--sm btn--ghost" disabled={page <= 1} onClick={() => setPage(p => Math.max(1, p - 1))}>Prev</button>
             <button className="btn btn--sm btn--ghost" disabled={page >= totalPages} onClick={() => setPage(p => Math.min(totalPages, p + 1))}>Next</button>
           </div>
@@ -373,13 +348,13 @@ function RemoveAccessDialog({ user, onCancel, onConfirm }: {
     <Dialog open onClose={onCancel} size="sm" title={`Remove ${who}'s access?`}>
       <p
         data-testid="admin-user-remove-body"
-        style={{ margin: "0 0 24px", color: "var(--text-dim)", fontSize: "var(--fs-base)", lineHeight: 1.55 }}
+        className="mt-0 mx-0 mb-6 text-text-dim text-base leading-[1.55]"
       >
         They&apos;ll lose access to Sapling the next time they load a page, and move to the Allowlist as a
         signup. Their account and data are kept, and approving them on the Allowlist lets them back in when
         they next sign in.
       </p>
-      <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+      <div className="flex justify-end gap-2.5">
         <button type="button" className="btn" data-testid="admin-user-remove-cancel" onClick={onCancel}>
           Cancel
         </button>
@@ -472,8 +447,8 @@ function RolesTab() {
 
   return (
     <div className="pane-split">
-      <div className="card" style={{ padding: "var(--pad-lg)" }}>
-        <div className="label-micro" style={{ marginBottom: 10 }}>Preview</div>
+      <div className="card p-(--pad-lg)">
+        <div className="label-micro mb-2.5">Preview</div>
         <RoleProfilePreview
           draftRole={previewRole}
           draftActive={Boolean(form.name.trim())}
@@ -482,7 +457,7 @@ function RolesTab() {
           username={username}
           avatarUrl={avatarUrl}
         />
-        <div className="label-micro" style={{ marginTop: 18, marginBottom: 10 }}>Create role</div>
+        <div className="label-micro mt-4.5 mb-2.5">Create role</div>
         <LabeledField label="Name">
           <input
             value={form.name}
@@ -494,7 +469,7 @@ function RolesTab() {
                 slug: slugEdited ? f.slug : name.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, ''),
               }));
             }}
-            style={fieldStyle}
+            className={fieldClass}
           />
         </LabeledField>
         <LabeledField label="Slug">
@@ -504,39 +479,39 @@ function RolesTab() {
               setSlugEdited(true);
               setForm(f => ({ ...f, slug: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '-') }));
             }}
-            style={fieldStyle}
+            className={fieldClass}
           />
-          <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>
+          <div className="text-xs text-text-muted mt-1">
             URL-friendly ID. Auto-filled from name; edit to override.
           </div>
         </LabeledField>
         <LabeledField label="Color">
-          <input type="color" value={form.color} onChange={e => setForm(f => ({ ...f, color: e.target.value }))} style={{ ...fieldStyle, height: 36, padding: 2 }} />
+          <input type="color" value={form.color} onChange={e => setForm(f => ({ ...f, color: e.target.value }))} className="w-full border border-border rounded-sm text-md bg-bg-input [font-family:inherit] h-9 p-0.5" />
         </LabeledField>
         <LabeledField label="Icon (emoji, optional)">
-          <input value={form.icon} onChange={e => setForm(f => ({ ...f, icon: e.target.value }))} placeholder="🛡️ (leave blank to skip)" style={fieldStyle} />
+          <input value={form.icon} onChange={e => setForm(f => ({ ...f, icon: e.target.value }))} placeholder="🛡️ (leave blank to skip)" className={fieldClass} />
         </LabeledField>
         <LabeledField label="Description">
-          <textarea value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} rows={2} style={fieldStyle} />
+          <textarea value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} rows={2} className={fieldClass} />
         </LabeledField>
-        <div style={{ display: "flex", gap: 12, marginTop: 6 }}>
-          <label style={checkLabel}>
+        <div className="flex gap-3 mt-1.5">
+          <label className="inline-flex items-center gap-1.5 text-sm text-text-dim">
             <input type="checkbox" checked={form.is_staff_assigned} onChange={e => setForm(f => ({ ...f, is_staff_assigned: e.target.checked }))} /> Staff-assigned
           </label>
-          <label style={checkLabel}>
+          <label className="inline-flex items-center gap-1.5 text-sm text-text-dim">
             <input type="checkbox" checked={form.is_earnable} onChange={e => setForm(f => ({ ...f, is_earnable: e.target.checked }))} /> Earnable
           </label>
         </div>
-        <button className="btn btn--primary" onClick={create} disabled={saving} style={{ marginTop: 14, width: "100%" }}>
+        <button className="btn btn--primary mt-3.5 w-full" onClick={create} disabled={saving}>
           {saving ? "Creating…" : "Create role"}
         </button>
       </div>
-      <div className="card" style={{ padding: 0 }}>
-        <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--border)" }}>
+      <div className="card p-0">
+        <div className="py-3 px-4 border-b border-b-border">
           <div className="label-micro">Roles · {roles.length}</div>
         </div>
         {roles.length === 0 && (
-          <div style={{ padding: 28, textAlign: "center", color: "var(--text-muted)", fontSize: 13 }}>No roles yet.</div>
+          <div className="p-7 text-center text-text-muted text-md">No roles yet.</div>
         )}
         {roles.map(r => <CatalogRow key={r.id} left={<RoleBadge role={r} />} middle={r.description || r.slug} onDelete={() => del(r.id)} />)}
       </div>
@@ -678,8 +653,8 @@ function CosmeticsTab() {
 
   return (
     <div className="pane-split pane-split--wide">
-      <div className="card" style={{ padding: "var(--pad-lg)" }}>
-        <div className="label-micro" style={{ marginBottom: 10 }}>Create cosmetic</div>
+      <div className="card p-(--pad-lg)">
+        <div className="label-micro mb-2.5">Create cosmetic</div>
         <LabeledField label="Type">
           <CustomSelect<CosmeticType>
             value={form.type}
@@ -687,16 +662,16 @@ function CosmeticsTab() {
             options={COSMETIC_TYPES.map(t => ({ value: t, label: t.replace("_", " ") }))}
           />
         </LabeledField>
-        <LabeledField label="Name"><input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} style={fieldStyle} /></LabeledField>
-        <LabeledField label="Slug"><input value={form.slug} onChange={e => setForm(f => ({ ...f, slug: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '-') }))} style={fieldStyle} /></LabeledField>
+        <LabeledField label="Name"><input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} className={fieldClass} /></LabeledField>
+        <LabeledField label="Slug"><input value={form.slug} onChange={e => setForm(f => ({ ...f, slug: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '-') }))} className={fieldClass} /></LabeledField>
         {needsAsset && (
           <LabeledField label="Asset (PNG/SVG)">
-            <div style={{ display: "flex", gap: 6 }}>
+            <div className="flex gap-1.5">
               <input
                 value={form.asset_url}
                 onChange={e => setForm(f => ({ ...f, asset_url: e.target.value }))}
                 placeholder="Upload or paste URL"
-                style={{ ...fieldStyle, flex: 1 }}
+                className="w-full py-[7px] px-2.5 border border-border rounded-sm text-md bg-bg-input [font-family:inherit] flex-1"
               />
               <button
                 className="btn btn--sm"
@@ -709,12 +684,12 @@ function CosmeticsTab() {
                 ref={fileRef}
                 type="file"
                 accept={COSMETIC_ASSET_TYPES.join(",")}
-                style={{ display: "none" }}
+                className="hidden"
                 onChange={e => onFilePicked(e.target.files?.[0] ?? null)}
               />
             </div>
             {form.asset_url && (
-              <img src={form.asset_url} alt="" loading="lazy" decoding="async" style={{ maxHeight: 56, marginTop: 6, borderRadius: "var(--r-sm)", border: "1px solid var(--border)" }} />
+              <img src={form.asset_url} alt="" loading="lazy" decoding="async" className="max-h-14 mt-1.5 rounded-sm border border-border" />
             )}
           </LabeledField>
         )}
@@ -724,7 +699,7 @@ function CosmeticsTab() {
               value={form.css_value}
               onChange={e => setForm(f => ({ ...f, css_value: e.target.value }))}
               placeholder={form.type === "name_color" ? "linear-gradient(90deg, #ff7e5f, #feb47b)" : "Grandmaster"}
-              style={fieldStyle}
+              className={fieldClass}
             />
           </LabeledField>
         )}
@@ -740,39 +715,39 @@ function CosmeticsTab() {
             value={form.unlock_source}
             onChange={e => setForm(f => ({ ...f, unlock_source: e.target.value }))}
             placeholder="achievement:slug or shop"
-            style={fieldStyle}
+            className={fieldClass}
           />
         </LabeledField>
-        <button className="btn btn--primary" onClick={create} disabled={saving || uploading} style={{ marginTop: 14, width: "100%" }}>
+        <button className="btn btn--primary mt-3.5 w-full" onClick={create} disabled={saving || uploading}>
           {saving ? "Creating…" : "Create cosmetic"}
         </button>
       </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      <div className="flex flex-col gap-3.5">
         {COSMETIC_TYPES.map(t => (
-          <div key={t} className="card" style={{ padding: 0 }}>
-            <div style={{ padding: "10px 16px", borderBottom: "1px solid var(--border)", display: "flex", justifyContent: "space-between" }}>
+          <div key={t} className="card p-0">
+            <div className="py-2.5 px-4 border-b border-b-border flex justify-between">
               <div className="label-micro" style={{ }}>{sentenceCase(t.replace("_", " "))}</div>
-              <span style={{ fontSize: 11, color: "var(--text-muted)" }}>{grouped[t].length}</span>
+              <span className="text-xs text-text-muted">{grouped[t].length}</span>
             </div>
             {grouped[t].length === 0 && (
-              <div style={{ padding: 16, fontSize: 12, color: "var(--text-muted)", textAlign: "center" }}>None.</div>
+              <div className="p-4 text-sm text-text-muted text-center">None.</div>
             )}
             {grouped[t].map(c => (
               <CatalogRow
                 key={c.id}
                 left={c.asset_url ? (
-                  <img src={c.asset_url} alt="" width={28} height={28} loading="lazy" decoding="async" style={{ width: 28, height: 28, borderRadius: "var(--r-sm)", objectFit: "cover", border: "1px solid var(--border)" }} />
+                  <img src={c.asset_url} alt="" width={28} height={28} loading="lazy" decoding="async" className="w-7 h-7 rounded-sm object-cover border border-border" />
                 ) : c.css_value ? (
-                  <span style={{ padding: "2px 6px", fontSize: 10, borderRadius: "var(--r-sm)", background: c.css_value, color: "#fff", border: "1px solid var(--border)" }}>
+                  <span className="py-0.5 px-1.5 text-2xs rounded-sm text-accent-fg border border-border" style={{ background: c.css_value }}>
                     sample
                   </span>
                 ) : (
-                  <span style={{ fontSize: 16 }}>◇</span>
+                  <span className="text-lg">◇</span>
                 )}
                 middle={
-                  <span style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                    <span style={{ fontWeight: 600 }}>{c.name}</span>
-                    <span className="chip" style={{ fontSize: 12 }}>{sentenceCase(c.rarity)}</span>
+                  <span className="flex gap-2 items-center">
+                    <span className="font-semibold">{c.name}</span>
+                    <span className="chip text-sm">{sentenceCase(c.rarity)}</span>
                   </span>
                 }
                 sub={c.slug}
@@ -781,22 +756,21 @@ function CosmeticsTab() {
                 expanded={openId === c.id}
                 expandedContent={
                   <div>
-                    <div className="label-micro" style={{ marginBottom: 6 }}>Roles that grant this</div>
-                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                    <div className="label-micro mb-1.5">Roles that grant this</div>
+                    <div className="flex gap-1.5 flex-wrap">
                       {allRoles.map(r => {
                         const on = (linkedRoleIdsByCosmetic[c.id] || []).includes(r.id);
                         return (
                           <button
                             key={r.id}
-                            className={`chip ${on ? "chip--accent" : ""}`}
+                            className={cn(`chip ${on ? "chip--accent" : ""}`, "cursor-pointer", on ? "" : "border border-dashed border-border")}
                             onClick={() => toggleRoleLink(r.id, c.id)}
-                            style={{ cursor: "pointer", border: on ? undefined : "1px dashed var(--border)" }}
                           >
                             {r.name}
                           </button>
                         );
                       })}
-                      {allRoles.length === 0 && <span style={{ fontSize: 12, color: "var(--text-muted)" }}>No roles defined yet.</span>}
+                      {allRoles.length === 0 && <span className="text-sm text-text-muted">No roles defined yet.</span>}
                     </div>
                   </div>
                 }
@@ -831,41 +805,35 @@ function AnalyticsTab() {
   const { totals, signups_by_day, approvals_by_day, role_counts } = data;
 
   return (
-    <div style={{ display: "grid", gap: 14 }}>
+    <div className="grid gap-3.5">
       <div className="metric-grid">
         <MetricCard label="Users" value={totals.users} />
         <MetricCard label="Approved" value={totals.approved} accent />
         <MetricCard label="Awaiting approval" value={totals.pending} warn={totals.pending > 0} />
         <MetricCard label="Admins" value={totals.admins} />
       </div>
-      <div className="card" style={{ padding: "var(--pad-lg)" }}>
-        <div className="label-micro" style={{ marginBottom: 10 }}>Signups · last 30 days</div>
+      <div className="card p-(--pad-lg)">
+        <div className="label-micro mb-2.5">Signups · last 30 days</div>
         <Sparkline points={signups_by_day} accent />
       </div>
-      <div className="card" style={{ padding: "var(--pad-lg)" }}>
-        <div className="label-micro" style={{ marginBottom: 10 }}>Approvals · last 30 days</div>
+      <div className="card p-(--pad-lg)">
+        <div className="label-micro mb-2.5">Approvals · last 30 days</div>
         <Sparkline points={approvals_by_day} />
       </div>
-      <div className="card" style={{ padding: 0 }}>
-        <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--border)" }}>
+      <div className="card p-0">
+        <div className="py-3 px-4 border-b border-b-border">
           <div className="label-micro">Role membership · {role_counts.length}</div>
         </div>
         {role_counts.length === 0 && (
-          <div style={{ padding: 28, textAlign: "center", color: "var(--text-muted)", fontSize: 13 }}>
+          <div className="p-7 text-center text-text-muted text-md">
             Nobody has any roles yet.
           </div>
         )}
         {role_counts.map(rc => (
-          <div key={rc.slug} style={{
-            display: "flex", alignItems: "center", gap: 12,
-            padding: "10px 16px", borderTop: "1px solid var(--border)", fontSize: 13,
-          }}>
-            <span style={{
-              display: "inline-block", width: 10, height: 10, borderRadius: 3,
-              background: rc.color, border: "1px solid var(--border)",
-            }} />
-            <span style={{ flex: 1, fontWeight: 500 }}>{rc.name}</span>
-            <span style={{ fontFamily: "var(--font-sans)", color: "var(--text-dim)" }}>{rc.count}</span>
+          <div key={rc.slug} className="flex items-center gap-3 py-2.5 px-4 border-t border-t-border text-md">
+            <span className="inline-block w-2.5 h-2.5 rounded-[3px] border border-border" style={{ background: rc.color }} />
+            <span className="flex-1 font-medium">{rc.name}</span>
+            <span className="font-sans text-text-dim">{rc.count}</span>
           </div>
         ))}
       </div>
@@ -876,15 +844,15 @@ function AnalyticsTab() {
 function MetricCard({ label, value, accent, warn }: { label: string; value: number; accent?: boolean; warn?: boolean }) {
   const color = accent ? "var(--accent)" : warn ? "var(--warn)" : "var(--text)";
   return (
-    <div className="card" style={{ padding: "var(--pad-lg)" }}>
+    <div className="card p-(--pad-lg)">
       <div className="label-micro">{label}</div>
-      <div className="h-serif" style={{ fontSize: 32, marginTop: 4, color }}>{value}</div>
+      <div className="h-serif text-5xl mt-1" style={{ color }}>{value}</div>
     </div>
   );
 }
 
 function Sparkline({ points, accent }: { points: { date: string; count: number }[]; accent?: boolean }) {
-  if (points.length === 0) return <div style={{ fontSize: 12, color: "var(--text-muted)" }}>No data.</div>;
+  if (points.length === 0) return <div className="text-sm text-text-muted">No data.</div>;
   const w = 600, h = 80, pad = 4;
   const max = Math.max(1, ...points.map(p => p.count));
   const stepX = (w - pad * 2) / Math.max(1, points.length - 1);
@@ -895,7 +863,7 @@ function Sparkline({ points, accent }: { points: { date: string; count: number }
   }).join(" ");
   const stroke = accent ? "var(--accent)" : "var(--text-dim)";
   return (
-    <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" style={{ width: "100%", height: 80 }}>
+    <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" className="w-full h-20">
       <path d={path} fill="none" stroke={stroke} strokeWidth={2} />
       {points.map((p, i) => (
         <circle key={p.date} cx={pad + i * stepX} cy={h - pad - (p.count / max) * (h - pad * 2)} r={2} fill={stroke}>
@@ -922,14 +890,11 @@ function CatalogRow({
   const del = useConfirm(onDelete);
   return (
     <div>
-      <div style={{
-        display: "flex", alignItems: "center", gap: 12,
-        padding: "10px 16px", borderTop: "1px solid var(--border)",
-      }}>
-        <div style={{ flexShrink: 0 }}>{left}</div>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 13 }}>{middle}</div>
-          {sub && <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>{sub}</div>}
+      <div className="flex items-center gap-3 py-2.5 px-4 border-t border-t-border">
+        <div className="shrink-0">{left}</div>
+        <div className="flex-1 min-w-0">
+          <div className="text-md">{middle}</div>
+          {sub && <div className="text-xs text-text-muted mt-0.5">{sub}</div>}
         </div>
         {onExpand && (
           <button className="btn btn--sm btn--ghost" onClick={onExpand}>
@@ -945,7 +910,7 @@ function CatalogRow({
         </button>
       </div>
       {expanded && expandedContent && (
-        <div style={{ padding: "10px 16px 14px 56px", borderTop: "1px dashed var(--border)", background: "var(--bg-subtle)" }}>
+        <div className="pt-2.5 pr-4 pb-3.5 pl-14 [border-top:1px_dashed_var(--border)] bg-bg-subtle">
           {expandedContent}
         </div>
       )}
@@ -966,34 +931,22 @@ function RoleProfilePreview({
   const displayName = userName || "Your Name";
   const handle = username ? `@${username}` : "@you";
   return (
-    <div style={{
-      border: "1px solid var(--border)",
-      borderRadius: "var(--r-md)",
-      padding: 14,
-      background: "var(--bg-subtle)",
-      display: "flex",
-      alignItems: "flex-start",
-      gap: 12,
-    }}>
+    <div className="border border-border rounded-md p-3.5 bg-bg-subtle flex items-start gap-3">
       <Avatar name={displayName} img={avatarUrl || undefined} size={44} />
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", rowGap: 4 }}>
-          <span style={{ fontWeight: 600, fontSize: 14 }}>{displayName}</span>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-1.5 flex-wrap gap-y-1">
+          <span className="font-semibold text-base">{displayName}</span>
           {draftActive && (
-            <span style={{ position: "relative", display: "inline-flex" }}>
+            <span className="relative inline-flex">
               <RoleBadge role={draftRole} />
-              <span style={{
-                position: "absolute", top: -6, right: -6,
-                fontSize: 9.5, fontWeight: 600, 
-                padding: "1px 4px", borderRadius: 4,
-                background: "var(--accent)", color: "#fff" }}>
+              <span className="absolute -top-1.5 -right-1.5 text-[9.5px] font-semibold py-px px-1 rounded-xs bg-accent text-accent-fg">
                 draft
               </span>
             </span>
           )}
           {existingRoles.map(r => <RoleBadge key={r.id} role={r} />)}
         </div>
-        <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 2 }}>{handle}</div>
+        <div className="text-sm text-text-muted mt-0.5">{handle}</div>
       </div>
     </div>
   );
@@ -1001,16 +954,12 @@ function RoleProfilePreview({
 
 function LabeledField({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div style={{ marginBottom: 10 }}>
-      <div className="label-micro" style={{ marginBottom: 4 }}>{label}</div>
+    <div className="mb-2.5">
+      <div className="label-micro mb-1">{label}</div>
       {children}
     </div>
   );
 }
-
-const checkLabel: React.CSSProperties = {
-  display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text-dim)",
-};
 
 // ── Audit ─────────────────────────────────────────────────────────────────────
 function AuditTab() {
@@ -1047,29 +996,29 @@ function AuditTab() {
 
   return (
     <>
-      <div className="body-serif" style={{ fontSize: 15, marginBottom: 22, color: "var(--text-dim)", maxWidth: 680 }}>
-        <span style={{ color: "var(--text)" }}>{total}</span> recorded action{total === 1 ? "" : "s"}
+      <div className="body-serif text-[15px] mb-5.5 text-text-dim max-w-170">
+        <span className="text-text">{total}</span> recorded action{total === 1 ? "" : "s"}
       </div>
-      <div className="card" style={{ padding: 0 }}>
-        <div style={{ display: "flex", padding: "12px 16px", borderBottom: "1px solid var(--border)", alignItems: "center", gap: 12 }}>
+      <div className="card p-0">
+        <div className="flex py-3 px-4 border-b border-b-border items-center gap-3">
           <input
             placeholder="action (e.g. user.approve)"
             value={actionFilter}
             onChange={e => { setActionFilter(e.target.value); setPage(1); }}
-            style={{ ...fieldStyle, maxWidth: 220 }}
+            className="w-full py-[7px] px-2.5 border border-border rounded-sm text-md bg-bg-input [font-family:inherit] max-w-55"
           />
           <input
             placeholder="target_type (e.g. user)"
             value={targetFilter}
             onChange={e => { setTargetFilter(e.target.value); setPage(1); }}
-            style={{ ...fieldStyle, maxWidth: 220 }}
+            className="w-full py-[7px] px-2.5 border border-border rounded-sm text-md bg-bg-input [font-family:inherit] max-w-55"
           />
         </div>
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+        <table className="w-full border-collapse text-md">
           <thead>
-            <tr style={{ background: "var(--bg-subtle)" }}>
+            <tr className="bg-bg-subtle">
               {["When", "Actor", "Action", "Target", "Payload"].map(h => (
-                <th key={h} style={{ textAlign: "left", padding: "10px 16px", fontWeight: 500, fontSize: 13, color: "var(--text-muted)" }}>
+                <th key={h} className="text-left py-2.5 px-4 font-medium text-md text-text-muted">
                   {h}
                 </th>
               ))}
@@ -1077,19 +1026,19 @@ function AuditTab() {
           </thead>
           <tbody>
             {entries.map(e => (
-              <tr key={e.id} style={{ borderTop: "1px solid var(--border)" }}>
-                <td style={{ padding: "10px 16px", color: "var(--text-muted)", whiteSpace: "nowrap" }}>
+              <tr key={e.id} className="border-t border-t-border">
+                <td className="py-2.5 px-4 text-text-muted whitespace-nowrap">
                   {new Date(e.created_at).toLocaleString()}
                 </td>
-                <td style={{ padding: "10px 16px", fontFamily: "var(--font-code)", fontSize: 12 }}>{e.actor_id}</td>
-                <td style={{ padding: "10px 16px" }}>
+                <td className="py-2.5 px-4 font-code text-sm">{e.actor_id}</td>
+                <td className="py-2.5 px-4">
                   <span className="chip">{e.action}</span>
                 </td>
-                <td style={{ padding: "10px 16px", color: "var(--text-dim)" }}>
+                <td className="py-2.5 px-4 text-text-dim">
                   <span className="chip">{e.target_type}</span>
-                  <span style={{ marginLeft: 6, fontFamily: "var(--font-code)", fontSize: 12 }}>{e.target_id || "—"}</span>
+                  <span className="ml-1.5 font-code text-sm">{e.target_id || "—"}</span>
                 </td>
-                <td style={{ padding: "10px 16px", fontFamily: "var(--font-code)", fontSize: 11, color: "var(--text-muted)", maxWidth: 360, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                <td className="py-2.5 px-4 font-code text-xs text-text-muted max-w-90 overflow-hidden text-ellipsis whitespace-nowrap"
                     title={JSON.stringify(e.payload)}>
                   {Object.keys(e.payload || {}).length ? JSON.stringify(e.payload) : "—"}
                 </td>
@@ -1097,12 +1046,9 @@ function AuditTab() {
             ))}
           </tbody>
         </table>
-        <div style={{
-          display: "flex", justifyContent: "space-between", alignItems: "center",
-          padding: "10px 16px", borderTop: "1px solid var(--border)", fontSize: 12, color: "var(--text-muted)",
-        }}>
+        <div className="flex justify-between items-center py-2.5 px-4 border-t border-t-border text-sm text-text-muted">
           <div>Page {page} of {totalPages}</div>
-          <div style={{ display: "flex", gap: 6 }}>
+          <div className="flex gap-1.5">
             <button className="btn btn--sm btn--ghost" disabled={page <= 1} onClick={() => setPage(p => Math.max(1, p - 1))}>Prev</button>
             <button className="btn btn--sm btn--ghost" disabled={page >= totalPages} onClick={() => setPage(p => Math.min(totalPages, p + 1))}>Next</button>
           </div>
@@ -1139,27 +1085,27 @@ function FeedbackTab() {
 
   return (
     <>
-      <div className="card" style={{ padding: 0, marginBottom: 22 }} data-testid="adminfb-feedback-card">
-        <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--border)", fontWeight: 600 }}>
+      <div className="card p-0 mb-5.5" data-testid="adminfb-feedback-card">
+        <div className="py-3 px-4 border-b border-b-border font-semibold">
           Feedback ({feedback.length})
         </div>
         {feedback.length === 0 && (
-          <div style={{ padding: 16, color: "var(--text-dim)" }}>No feedback yet.</div>
+          <div className="p-4 text-text-dim">No feedback yet.</div>
         )}
         {feedback.map((f) => {
           const stars = Math.max(0, Math.min(5, f.rating));
           return (
-          <div key={f.id} style={{ padding: "12px 16px", borderBottom: "1px solid var(--border)" }} data-testid="adminfb-feedback-row">
-            <div style={{ display: "flex", gap: 12, color: "var(--text-dim)", fontSize: 13 }}>
+          <div key={f.id} className="py-3 px-4 border-b border-b-border" data-testid="adminfb-feedback-row">
+            <div className="flex gap-3 text-text-dim text-md">
               <span>{when(f.created_at)}</span>
-              <span style={{ color: "var(--text)" }}>{f.user_name || f.user_id}</span>
+              <span className="text-text">{f.user_name || f.user_id}</span>
               <span>{f.type}</span>
               <span>{"★".repeat(stars)}{"☆".repeat(5 - stars)}</span>
               {f.topic && <span>{f.topic}</span>}
             </div>
-            {f.comment && <div style={{ marginTop: 6 }}>{f.comment}</div>}
+            {f.comment && <div className="mt-1.5">{f.comment}</div>}
             {f.selected_options.length > 0 && (
-              <div style={{ marginTop: 4, fontSize: 13, color: "var(--text-dim)" }}>
+              <div className="mt-1 text-md text-text-dim">
                 {f.selected_options.join(" · ")}
               </div>
             )}
@@ -1167,22 +1113,22 @@ function FeedbackTab() {
           );
         })}
       </div>
-      <div className="card" style={{ padding: 0 }} data-testid="adminfb-issues-card">
-        <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--border)", fontWeight: 600 }}>
+      <div className="card p-0" data-testid="adminfb-issues-card">
+        <div className="py-3 px-4 border-b border-b-border font-semibold">
           Issue reports ({reports.length})
         </div>
         {reports.length === 0 && (
-          <div style={{ padding: 16, color: "var(--text-dim)" }}>No issue reports yet.</div>
+          <div className="p-4 text-text-dim">No issue reports yet.</div>
         )}
         {reports.map((r) => (
-          <div key={r.id} style={{ padding: "12px 16px", borderBottom: "1px solid var(--border)" }} data-testid="adminfb-issue-row">
-            <div style={{ display: "flex", gap: 12, color: "var(--text-dim)", fontSize: 13 }}>
+          <div key={r.id} className="py-3 px-4 border-b border-b-border" data-testid="adminfb-issue-row">
+            <div className="flex gap-3 text-text-dim text-md">
               <span>{when(r.created_at)}</span>
-              <span style={{ color: "var(--text)" }}>{r.user_name || r.user_id}</span>
+              <span className="text-text">{r.user_name || r.user_id}</span>
               <span>{r.topic}</span>
               {r.screenshot_urls.length > 0 && <span>{r.screenshot_urls.length} screenshot(s)</span>}
             </div>
-            <div style={{ marginTop: 6 }}>{r.description}</div>
+            <div className="mt-1.5">{r.description}</div>
           </div>
         ))}
       </div>

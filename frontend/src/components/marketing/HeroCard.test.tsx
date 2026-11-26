@@ -15,10 +15,10 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { render, screen, cleanup } from '@testing-library/react';
 
 import { HeroCard } from './HeroCard';
+import { readAppCss } from "@/test-utils/appCss";
 
 // __dirname is components/marketing/, so src/ is two levels up.
 const SRC = path.resolve(__dirname, '../..');
-const GLOBALS = path.join(SRC, 'app/globals.css');
 
 /** The literal that used to be inlined at all five sites. */
 const GRADIENT = 'linear-gradient(145deg, #d5e8d8 0%, #e8f0e3 45%, #f0ebe0 100%)';
@@ -72,7 +72,7 @@ describe('#288 hero surface', () => {
   });
 
   it('gives both hero rules a literal fallback, so an out-of-scope mount still paints', () => {
-    const css = fs.readFileSync(GLOBALS, 'utf8');
+    const css = readAppCss();
     // --surface-hero is scoped to .public-surface/.landing-page. A hero card
     // mounted outside that subtree resolves the var to nothing, so the
     // fallback is the only thing standing between it and a transparent card.

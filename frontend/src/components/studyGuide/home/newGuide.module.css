@@ -1,3 +1,4 @@
+@layer components {
 /* The New study guide dialog: the form on the left, the outline it plans on
    the right. Under ~700px of dialog the outline goes below the form. The
    dialog is portalled to <body>, so it sets its own text defaults. */
@@ -98,4 +99,6 @@
 
 @media (prefers-reduced-motion: reduce) {
   .tile, .outlineBody { transition: none; }
+}
+
 }

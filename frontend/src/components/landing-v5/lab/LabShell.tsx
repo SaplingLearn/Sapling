@@ -1,5 +1,7 @@
 'use client';
 
+import { cn } from "@/lib/cn";
+
 /**
  * The browser-chrome frame every feature-lab demo sits in.
  *
@@ -18,19 +20,19 @@ export const LAB_TIER = {
 
 export function LabShell({ route, children }: { route: string; children: React.ReactNode }) {
   return (
-    <div style={{ width: '100%', height: '100%', overflow: 'hidden', fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif", color: '#191F13', background: '#FDFCF9', display: 'flex', flexDirection: 'column' }}>
-      <div style={{ flex: '0 0 auto', height: 38, borderBottom: '1px solid #ECE9DE', background: '#F6F8F4', display: 'flex', alignItems: 'center', gap: 10, padding: '0 14px' }}>
-        <span style={{ display: 'flex', gap: 5 }}>
+    <div className="w-full h-full overflow-hidden font-sans text-moss-900 bg-bg-panel flex flex-col">
+      <div className="flex-[0_0_auto] h-9.5 border-b border-b-paper-100 bg-moss-25 flex items-center gap-2.5 py-0 px-3.5">
+        <span className="flex gap-[5px]">
           {[0, 1, 2].map((i) => (
-            <span key={i} style={{ width: 8, height: 8, borderRadius: 99, background: '#E3E0D5' }} />
+            <span key={i} className="w-2 h-2 rounded-[99px] bg-paper-300" />
           ))}
         </span>
-        <span style={{ ...LABEL, fontSize: 11.5, letterSpacing: '0.01em', color: '#91978B' }}>{route}</span>
-        <span style={{ marginLeft: 'auto', ...LABEL, fontSize: 11, letterSpacing: '0.01em', color: '#445D22', background: '#EAF1E4', border: '1px solid #E0E6DA', borderRadius: 99, padding: '3px 9px' }}>
+        <span className="font-sans text-[11.5px] tracking-[0.01em] text-moss-400">{route}</span>
+        <span className="ml-auto font-sans text-xs tracking-[0.01em] text-brand-forest bg-leaf-50 border border-moss-100 rounded-[99px] py-[3px] px-[9px]">
           Interactive
         </span>
       </div>
-      <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>{children}</div>
+      <div className="flex-1 min-h-0 overflow-auto">{children}</div>
     </div>
   );
 }
@@ -66,7 +68,7 @@ export function Segmented<T extends string>({
   onChange: (k: T) => void;
 }) {
   return (
-    <div style={{ display: 'flex', gap: 2, padding: 3, borderRadius: 9, background: '#F6F8F4', border: '1px solid #E6EAE2' }}>
+    <div className="flex gap-0.5 p-[3px] rounded-[9px] bg-moss-25 border border-moss-75">
       {options.map((o) => {
         const on = o.key === value;
         return (
@@ -75,14 +77,7 @@ export function Segmented<T extends string>({
             onClick={() => onChange(o.key)}
             type="button"
             aria-pressed={on}
-            style={{
-              padding: '6px 13px', borderRadius: 7, border: 'none', cursor: 'pointer',
-              ...LABEL, fontSize: 11.5, letterSpacing: '0.01em',
-              background: on ? '#191F13' : 'transparent',
-              color: on ? '#FDFCF9' : '#697062',
-              fontWeight: on ? 600 : 400,
-              transition: 'all 200ms',
-            }}
+            className={cn("py-1.5 px-[13px] rounded-[7px] border-0 cursor-pointer font-sans text-[11.5px] tracking-[0.01em] [transition:all_200ms]", on ? "bg-moss-900" : "bg-transparent", on ? "text-bg-panel" : "text-moss-500", on ? "font-semibold" : "font-normal")}
           >
             {o.label}
           </button>

@@ -77,44 +77,32 @@ export default function SettingUpPage() {
   return (
     <div
       data-testid="setup-gate"
-      style={{
-        minHeight: '100vh',
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: 10,
-        padding: 24,
-        textAlign: 'center',
-        background: 'var(--bg)',
-        color: 'var(--text-dim)',
-        fontSize: 14,
-      }}
+      className="min-h-screen flex flex-col items-center justify-center gap-2.5 p-6 text-center bg-bg text-text-dim text-base"
     >
       {error === null ? (
         <>
           <div role="status">Setting up your sample data…</div>
-          <div style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>
+          <div className="text-[12.5px] text-text-muted">
             Copying the local demo courses onto your account. This takes a few seconds.
           </div>
         </>
       ) : (
         <>
-          <div style={{ color: 'var(--text)' }}>Your sample data could not be set up.</div>
+          <div className="text-text">Your sample data could not be set up.</div>
           <div
             data-testid="setup-error"
             role="alert"
-            style={{ color: 'var(--err)', fontSize: 12.5, maxWidth: 520, wordBreak: 'break-word' }}
+            className="text-err text-[12.5px] max-w-130 [word-break:break-word]"
           >
             {error}
           </div>
-          <div style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>
+          <div className="text-[12.5px] text-text-muted">
             Retrying in the background; this page moves on by itself if it works.
           </div>
           <a
             data-testid="setup-continue"
             href="/onboarding"
-            style={{ marginTop: 6, color: 'var(--accent)', textDecoration: 'underline' }}
+            className="mt-1.5 text-accent underline"
           >
             Continue anyway
           </a>

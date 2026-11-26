@@ -59,7 +59,7 @@ describe("while one block is being regenerated", () => {
     expect(screen.getByTestId("guide-block-regenerate-s1-i2")).toBeDisabled();
     expect(screen.getByTestId("guide-block-regenerate-s1-i6")).toBeDisabled();
     await user.click(screen.getByTestId("guide-menu"));
-    expect(screen.getByTestId("guide-menu-regenerate")).toBeDisabled();
+    expect(screen.getByTestId("guide-menu-regenerate")).toHaveAttribute("aria-disabled", "true");
 
     // Nothing was sent that the server would turn away.
     await user.click(screen.getByTestId("guide-block-regenerate-s1-i2"));
@@ -72,7 +72,7 @@ describe("while one block is being regenerated", () => {
     expect(screen.getByTestId("guide-update")).toBeEnabled();
     expect(screen.getByTestId("guide-block-regenerate-s1-i2")).toBeEnabled();
     await user.click(screen.getByTestId("guide-menu"));
-    expect(screen.getByTestId("guide-menu-regenerate")).toBeEnabled();
+    expect(screen.getByTestId("guide-menu-regenerate")).not.toHaveAttribute("aria-disabled");
   });
 
   it("holds a failed section's Try again and the banner's Retry as well", async () => {

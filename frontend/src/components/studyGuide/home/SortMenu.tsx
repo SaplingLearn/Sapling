@@ -1,7 +1,7 @@
 "use client";
 import { Icon } from "@/components/Icon";
+import { Menu, MenuContent, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "@/components/ui/Menu";
 
-import { useMenu } from "../shared/useMenu";
 import { SORTS, sortLabel, type SortKey } from "./guidesModel";
 import s from "./home.module.css";
 
@@ -16,46 +16,31 @@ function SortGlyph() {
 
 /** The sort button shows only the current choice; the menu holds the rest. */
 export function SortMenu({ value, onChange }: { value: SortKey; onChange: (sort: SortKey) => void }) {
-  const { open, toggle, close, owner, onKeyDown, onBlur } = useMenu();
-
-  const pick = (sort: SortKey) => {
-    close();
-    onChange(sort);
-  };
-
   return (
-    <div ref={owner} className={s.sortOwner} onKeyDown={onKeyDown} onBlur={onBlur}>
-      <button
-        type="button"
-        className={`btn ${s.sort}`}
-        data-testid="guides-sort"
-        aria-label={`Sort: ${sortLabel(value)}`}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        onClick={toggle}
-      >
-        <SortGlyph />
-        {sortLabel(value)}
-        <span aria-hidden="true" className={s.sortChevron}><Icon name="chevron-down" size={10} /></span>
-      </button>
-      {open && (
-        <div role="menu" aria-label="Sort guides" className={`${s.menu} fade-in`}>
-          {SORTS.map(sort => (
-            <button
-              key={sort.key}
-              type="button"
-              role="menuitemradio"
-              aria-checked={sort.key === value}
-              className={s.menuItem}
-              data-testid={`guides-sort-${sort.key}`}
-              onClick={() => pick(sort.key)}
-            >
-              {sort.label}
-              {sort.key === value && <Icon name="check" size={14} />}
-            </button>
-          ))}
-        </div>
-      )}
+    <div className={s.sortOwner}>
+      <Menu>
+        <MenuTrigger asChild>
+          <button
+            type="button"
+            className={`btn ${s.sort}`}
+            data-testid="guides-sort"
+            aria-label={`Sort: ${sortLabel(value)}`}
+          >
+            <SortGlyph />
+            {sortLabel(value)}
+            <span aria-hidden="true" className={s.sortChevron}><Icon name="chevron-down" size={10} /></span>
+          </button>
+        </MenuTrigger>
+        <MenuContent label="Sort guides">
+          <MenuRadioGroup value={value} onValueChange={v => onChange(v as SortKey)}>
+            {SORTS.map(sort => (
+              <MenuRadioItem key={sort.key} value={sort.key} data-testid={`guides-sort-${sort.key}`} check={<Icon name="check" size={14} />}>
+                {sort.label}
+              </MenuRadioItem>
+            ))}
+          </MenuRadioGroup>
+        </MenuContent>
+      </Menu>
     </div>
   );
 }

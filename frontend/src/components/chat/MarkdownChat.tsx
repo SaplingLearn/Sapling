@@ -19,6 +19,7 @@ import {
 } from "@/lib/markdownImages";
 import { MermaidBlock } from "./MermaidBlock";
 import { FunctionPlot } from "./FunctionPlot";
+import { cn } from "@/lib/cn";
 
 // Castel-style shortcuts. Tutor can write `\R` instead of `\mathbb{R}`.
 const KATEX_MACROS: Record<string, string> = {
@@ -161,25 +162,21 @@ function rehypeExtractDiagramBlocks() {
 }
 
 const COMPONENTS: Components = {
-  p: ({ children }) => <p style={{ margin: "0 0 8px" }}>{children}</p>,
+  p: ({ children }) => <p className="mt-0 mx-0 mb-2">{children}</p>,
   strong: ({ children }) => (
-    <strong style={{ color: "var(--text)", fontWeight: 600 }}>{children}</strong>
+    <strong className="text-text font-semibold">{children}</strong>
   ),
-  em: ({ children }) => <em style={{ fontStyle: "italic" }}>{children}</em>,
+  em: ({ children }) => <em className="italic">{children}</em>,
   del: ({ children }) => (
-    <del style={{ textDecoration: "line-through", color: "var(--text-dim)" }}>{children}</del>
+    <del className="line-through text-text-dim">{children}</del>
   ),
-  ul: ({ children }) => <ul style={{ margin: "4px 0 10px 18px", padding: 0 }}>{children}</ul>,
-  ol: ({ children }) => <ol style={{ margin: "4px 0 10px 20px", padding: 0 }}>{children}</ol>,
+  ul: ({ children }) => <ul className="mt-1 mr-0 mb-2.5 ml-4.5 p-0">{children}</ul>,
+  ol: ({ children }) => <ol className="mt-1 mr-0 mb-2.5 ml-5 p-0">{children}</ol>,
   li: ({ children, className }) => {
     const isTask = className?.includes("task-list-item");
     return (
       <li
-        style={{
-          margin: "2px 0",
-          listStyle: isTask ? "none" : undefined,
-          marginLeft: isTask ? -18 : undefined,
-        }}
+        className={cn("my-0.5 mx-0", isTask ? "list-none" : "", isTask ? "-ml-4.5" : "")}
       >
         {children}
       </li>
@@ -193,12 +190,12 @@ const COMPONENTS: Components = {
         checked={!!checked}
         disabled={disabled}
         readOnly
-        style={{ marginRight: 6, verticalAlign: "middle" }}
+        className="mr-1.5 align-middle"
       />
     );
   },
   a: ({ children, href }) => (
-    <a href={href} target="_blank" rel="noreferrer" style={{ color: "var(--accent)", textDecoration: "underline" }}>
+    <a href={href} target="_blank" rel="noreferrer" className="text-accent underline">
       {children}
     </a>
   ),
@@ -213,14 +210,7 @@ const COMPONENTS: Components = {
           src={url}
           alt={alt || ""}
           loading="lazy"
-          style={{
-            maxWidth: "100%",
-            height: "auto",
-            borderRadius: "var(--r-sm)",
-            border: "1px solid var(--border)",
-            margin: "6px 0",
-            display: "block",
-          }}
+          className="max-w-full h-auto rounded-sm border border-border my-1.5 mx-0 block"
         />
       );
     }
@@ -234,7 +224,7 @@ const COMPONENTS: Components = {
         target="_blank"
         rel="noopener noreferrer nofollow"
         referrerPolicy="no-referrer"
-        style={{ color: "var(--accent)", textDecoration: "underline" }}
+        className="text-accent underline"
       >
         {label}
       </a>
@@ -245,13 +235,7 @@ const COMPONENTS: Components = {
     if (inline) {
       return (
         <code
-          className="mono"
-          style={{
-            padding: "1px 5px",
-            borderRadius: "var(--r-xs)",
-            background: "var(--bg-soft)",
-            fontSize: "0.9em",
-          }}
+          className="mono py-px px-[5px] rounded-xs bg-bg-soft text-[length:0.9em]"
         >
           {children}
         </code>
@@ -261,16 +245,7 @@ const COMPONENTS: Components = {
   },
   pre: ({ children }) => (
     <pre
-      className="mono"
-      style={{
-        padding: "10px 12px",
-        borderRadius: "var(--r-sm)",
-        background: "var(--bg-inset)",
-        border: "1px solid var(--border)",
-        overflowX: "auto",
-        fontSize: 12,
-        margin: "6px 0 10px",
-      }}
+      className="mono py-2.5 px-3 rounded-sm bg-bg-inset border border-border overflow-x-auto text-sm mt-1.5 mx-0 mb-2.5"
     >
       {children}
     </pre>
@@ -279,57 +254,35 @@ const COMPONENTS: Components = {
     // Italic body-serif instead of a side-tab accent border (which is the
     // #1 AI-dashboard tell). The brand's hierarchy should come from type.
     <blockquote
-      className="body-serif"
-      style={{
-        margin: "6px 0 12px",
-        padding: "2px 0 2px 12px",
-        color: "var(--text-dim)",
-        fontStyle: "italic",
-      }}
+      className="body-serif mt-1.5 mx-0 mb-3 pt-0.5 pr-0 pb-0.5 pl-3 text-text-dim italic"
     >
       {children}
     </blockquote>
   ),
-  h1: ({ children }) => <h1 className="h-serif" style={{ fontSize: 18, margin: "8px 0 6px" }}>{children}</h1>,
-  h2: ({ children }) => <h2 className="h-serif" style={{ fontSize: 16, margin: "8px 0 6px" }}>{children}</h2>,
-  h3: ({ children }) => <h3 className="h-serif" style={{ fontSize: 14, margin: "6px 0 4px" }}>{children}</h3>,
-  hr: () => <hr style={{ border: 0, borderTop: "1px solid var(--border)", margin: "12px 0" }} />,
+  h1: ({ children }) => <h1 className="h-serif text-xl mt-2 mx-0 mb-1.5">{children}</h1>,
+  h2: ({ children }) => <h2 className="h-serif text-lg mt-2 mx-0 mb-1.5">{children}</h2>,
+  h3: ({ children }) => <h3 className="h-serif text-base mt-1.5 mx-0 mb-1">{children}</h3>,
+  hr: () => <hr className="border-0 border-t border-t-border my-3 mx-0" />,
   table: ({ children }) => (
-    <div style={{ overflowX: "auto", margin: "8px 0 12px" }}>
+    <div className="overflow-x-auto mt-2 mx-0 mb-3">
       <table
-        style={{
-          borderCollapse: "collapse",
-          width: "100%",
-          fontSize: 13,
-          fontFamily: "var(--font-sans)",
-        }}
+        className="border-collapse w-full text-md font-sans"
       >
         {children}
       </table>
     </div>
   ),
-  thead: ({ children }) => <thead style={{ background: "var(--bg-subtle)" }}>{children}</thead>,
+  thead: ({ children }) => <thead className="bg-bg-subtle">{children}</thead>,
   th: ({ children, style }) => (
     <th
-      style={{
-        textAlign: "left",
-        padding: "6px 10px",
-        borderBottom: "1px solid var(--border-strong)",
-        fontWeight: 600,
-        ...style,
-      }}
+      className="text-left py-1.5 px-2.5 border-b border-b-border-strong font-semibold" style={{ ...style }}
     >
       {children}
     </th>
   ),
   td: ({ children, style }) => (
     <td
-      style={{
-        padding: "6px 10px",
-        borderBottom: "1px solid var(--border)",
-        verticalAlign: "top",
-        ...style,
-      }}
+      className="py-1.5 px-2.5 border-b border-b-border align-top" style={{ ...style }}
     >
       {children}
     </td>
@@ -343,24 +296,11 @@ const COMPONENTS: Components = {
       const isProof = name === "proof";
       return (
         <div
-          style={{
-            margin: "10px 0 14px",
-            padding: "10px 14px",
-            background: isWarn ? "var(--warn-soft)" : isProof ? "transparent" : "var(--bg-subtle)",
-            border: `1px ${isProof ? "dashed" : "solid"} ${isWarn ? "var(--warn)" : "var(--border)"}`,
-            borderRadius: "var(--r-sm)",
-          }}
+          className="mt-2.5 mx-0 mb-3.5 py-2.5 px-3.5 rounded-sm" style={{ background: isWarn ? "var(--warn-soft)" : isProof ? "transparent" : "var(--bg-subtle)", border: `1px ${isProof ? "dashed" : "solid"} ${isWarn ? "var(--warn)" : "var(--border)"}` }}
         >
           {!classes.includes("sap-callout__rendered-title") && label ? (
             <div
-              style={{
-                fontFamily: "var(--font-sans)",
-                fontSize: 13,
-                
-                
-                color: isWarn ? "var(--warn)" : "var(--accent)",
-                fontWeight: 700,
-                marginBottom: 4 }}
+              className={cn("font-sans text-md font-bold mb-1", isWarn ? "text-warn" : "text-accent")}
             >
               {label}
             </div>
@@ -372,14 +312,7 @@ const COMPONENTS: Components = {
     if (classes.includes("sap-callout__title")) {
       return (
         <div
-          style={{
-            fontFamily: "var(--font-sans)",
-            fontSize: 12,
-            fontWeight: 600,
-            color: "var(--text)",
-            marginBottom: 4,
-            fontStyle: "italic",
-          }}
+          className="font-sans text-sm font-semibold text-text mb-1 italic"
         >
           {children}
         </div>
@@ -397,13 +330,7 @@ const COMPONENTS: Components = {
         height={height}
         loading="lazy"
         allowFullScreen
-        style={{
-          border: "1px solid var(--border)",
-          borderRadius: "var(--r-sm)",
-          maxWidth: "100%",
-          margin: isGeo ? "10px 0 14px" : undefined,
-          display: "block",
-        }}
+        className={cn("border border-border rounded-sm max-w-full block", isGeo ? "mt-2.5 mx-0 mb-3.5" : "")}
       />
     );
   },
@@ -427,7 +354,7 @@ export const MarkdownChat = React.memo(function MarkdownChat({
   components?: Components;
 }) {
   return (
-    <div style={{ lineHeight: 1.55 }}>
+    <div className="leading-[1.55]">
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkMath, remarkDirective, remarkSaplingDirectives]}
         rehypePlugins={[

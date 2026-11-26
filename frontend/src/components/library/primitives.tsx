@@ -8,6 +8,7 @@
  */
 import React from "react";
 import { GLYPHS, type GlyphName } from "./glyphs";
+import { cn } from "@/lib/cn";
 
 export const FONT_SERIF = "var(--font-serif)";
 export const FONT_SANS = "var(--font-sans)";
@@ -86,7 +87,7 @@ export function TrashIcon({ size }: { size: number }) {
     <svg
       width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="#6F6857"
       strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"
-      style={{ display: "block", flexShrink: 0 }}
+      className="block shrink-0"
     >
       <path d="M4 7h16" />
       <path d="M9 7V4.5h6V7" />
@@ -109,16 +110,7 @@ export function CourseDot({
   style?: React.CSSProperties;
 }) {
   return (
-    <span style={{
-      width: size,
-      height: size,
-      borderRadius: "50%",
-      background: color || "transparent",
-      border: color ? "0" : "1.5px dashed #8A8372",
-      boxSizing: "border-box",
-      flexShrink: 0,
-      ...style,
-    }} />
+    <span className={cn("rounded-[50%] box-border shrink-0", color ? "border-0" : "border-[1.5px] border-dashed border-ink-400")} style={{ width: size, height: size, background: color || "transparent", ...style }} />
   );
 }
 
@@ -139,18 +131,7 @@ export function CheckBox({
       onClick={onClick}
       aria-label={label}
       aria-pressed={checked}
-      style={{
-        width: size,
-        height: size,
-        borderRadius: radius,
-        border: `1.5px solid ${checked ? "#445D22" : "rgba(42,39,31,0.28)"}`,
-        background: checked ? "#445D22" : background || "#FDFCF9",
-        color: "#FFFFFF",
-        display: "grid",
-        placeItems: "center",
-        padding: 0,
-        cursor: "pointer",
-      }}
+      className={cn("text-accent-fg grid place-items-center p-0 cursor-pointer", checked ? "border-[1.5px] border-brand-forest" : "border-[1.5px] border-[rgba(42,39,31,0.28)]")} style={{ width: size, height: size, borderRadius: radius, background: checked ? "#445D22" : background || "#FDFCF9" }}
     >
       <Glyph name="check" size={11} style={{ opacity: checked ? 1 : 0 }} />
     </button>
@@ -188,7 +169,7 @@ export const MENU_ITEM: React.CSSProperties = {
 
 /** The hairline the menus put between groups. */
 export function MenuDivider() {
-  return <span style={{ height: 1, margin: "4px 6px", background: "rgba(42,39,31,0.10)" }} />;
+  return <span className="h-px my-1 mx-1.5 bg-[rgba(42,39,31,0.10)]" />;
 }
 
 /** A menu's group heading: sentence case, no tracking (#928 retired the mono caps). */
@@ -201,7 +182,7 @@ export const MENU_HEADING: React.CSSProperties = {
 
 /** A click-anywhere-else backdrop, under a popover and over everything else. */
 export function MenuScrim({ onClick, zIndex = 30 }: { onClick: () => void; zIndex?: number }) {
-  return <div onClick={onClick} style={{ position: "fixed", inset: 0, zIndex }} />;
+  return <div onClick={onClick} className="fixed inset-0" style={{ zIndex }} />;
 }
 
 export const MENU_IN = "sapMenuIn 170ms cubic-bezier(0.2, 0.7, 0.2, 1) both";

@@ -14,8 +14,8 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
-import { LABEL } from './LabShell';
 import { CAL_BASE, CAL_SYLLABUS, TYPE } from './labData';
+import { cn } from "@/lib/cn";
 
 type View = 'month' | 'week' | 'day';
 const VIEWS: { key: View; label: string }[] = [
@@ -54,11 +54,11 @@ export function CalendarDemo() {
   };
 
   return (
-    <div className="ld-lab-split" style={{ display: 'grid', gridTemplateColumns: '1fr 250px', minHeight: '100%', boxSizing: 'border-box' }}>
-      <div style={{ padding: '18px 22px', display: 'flex', flexDirection: 'column', gap: 12, borderRight: '1px solid #ECE9DE' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <span style={{ fontFamily: "var(--font-aleo), 'Aleo', Georgia, serif", fontSize: 20, fontWeight: 600 }}>October 2026</span>
-          <div style={{ marginLeft: 'auto', display: 'flex', gap: 4, padding: 3, borderRadius: 9, background: '#F6F8F4', border: '1px solid #E6EAE2' }}>
+    <div className="ld-lab-split grid grid-cols-[1fr_250px] min-h-full box-border">
+      <div className="py-4.5 px-5.5 flex flex-col gap-3 border-r border-r-paper-100">
+        <div className="flex items-center gap-2.5">
+          <span className="font-serif text-[20px] font-semibold">October 2026</span>
+          <div className="ml-auto flex gap-1 p-[3px] rounded-[9px] bg-moss-25 border border-moss-75">
             {VIEWS.map((v) => {
               const on = view === v.key;
               return (
@@ -67,7 +67,7 @@ export function CalendarDemo() {
                   onClick={() => setView(v.key)}
                   type="button"
                   aria-pressed={on}
-                  style={{ padding: '6px 13px', borderRadius: 7, border: 'none', fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif", fontSize: 12, cursor: 'pointer', transition: 'all 180ms', background: on ? '#191F13' : 'transparent', color: on ? '#FDFCF9' : '#697062', fontWeight: on ? 600 : 400 }}
+                  className={cn("py-1.5 px-[13px] rounded-[7px] border-0 font-sans text-sm cursor-pointer [transition:all_180ms]", on ? "bg-moss-900" : "bg-transparent", on ? "text-bg-panel" : "text-moss-500", on ? "font-semibold" : "font-normal")}
                 >
                   {v.label}
                 </button>
@@ -76,13 +76,13 @@ export function CalendarDemo() {
           </div>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7,1fr)', gap: 5 }}>
+        <div className="grid grid-cols-[repeat(7,1fr)] gap-[5px]">
           {DOWS.map((d, i) => (
-            <span key={i} style={{ ...LABEL, fontSize: 10, letterSpacing: '0.01em', color: '#9FA49A', textAlign: 'center' }}>{d}</span>
+            <span key={i} className="font-sans text-2xs tracking-[0.01em] text-moss-300 text-center">{d}</span>
           ))}
         </div>
 
-        <div style={{ flex: 1, display: 'grid', gridTemplateColumns: 'repeat(7,1fr)', gap: 5, alignContent: 'start' }}>
+        <div className="flex-1 grid grid-cols-[repeat(7,1fr)] gap-[5px] [align-content:start]">
           {shown.map((c, i) => {
             const selected = c.day === day;
             return (
@@ -90,22 +90,17 @@ export function CalendarDemo() {
                 key={i}
                 onClick={() => { if (!c.blank) setDay(c.day as number); }}
                 type="button"
-                style={{
-                  position: 'relative', minHeight: 44, borderRadius: 8, padding: 5,
-                  display: 'flex', flexDirection: 'column', gap: 3, alignItems: 'flex-start',
-                  fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif", transition: 'all 160ms',
-                  ...(c.blank
+                className="relative min-h-11 rounded-[8px] p-[5px] flex flex-col gap-[3px] items-start font-sans [transition:all_160ms]" style={{ ...(c.blank
                     ? { background: 'transparent', border: 'none', cursor: 'default' }
                     : {
                         border: `1px solid ${selected ? '#68951F' : '#EDF0EA'}`,
                         background: selected ? '#EAF1E4' : '#FDFCF9',
                         cursor: 'pointer',
-                      }),
-                }}
+                      }) }}
               >
-                <span style={{ ...LABEL, fontSize: 9, color: selected ? '#445D22' : '#9FA49A' }}>{c.day}</span>
+                <span className={cn("font-sans text-[9px]", selected ? "text-brand-forest" : "text-moss-300")}>{c.day}</span>
                 {c.chips.map((ch, j) => (
-                  <span key={j} style={{ width: '100%', height: 5, borderRadius: 2, animation: 'labIn 300ms ease both', background: TYPE[ch.type as keyof typeof TYPE] }} />
+                  <span key={j} className="w-full h-[5px] rounded-[2px] [animation:labIn_300ms_ease_both]" style={{ background: TYPE[ch.type as keyof typeof TYPE] }} />
                 ))}
               </button>
             );
@@ -113,35 +108,34 @@ export function CalendarDemo() {
         </div>
       </div>
 
-      <div style={{ padding: '18px 16px', background: '#F6F8F4', display: 'flex', flexDirection: 'column', gap: 10 }}>
-        <span style={{ ...LABEL, fontSize: 11, letterSpacing: '0.01em', color: '#91978B' }}>OCTOBER {day}</span>
+      <div className="py-4.5 px-4 bg-moss-25 flex flex-col gap-2.5">
+        <span className="font-sans text-xs tracking-[0.01em] text-moss-400">OCTOBER {day}</span>
 
         {sideItems.map((a, i) => (
-          <div key={i} style={{ padding: '10px 12px', borderRadius: 10, background: '#FDFCF9', border: '1px solid #E0E6DA', display: 'flex', flexDirection: 'column', gap: 3, animation: 'labIn 280ms ease both' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-              <span style={{ width: 8, height: 8, borderRadius: 2, flex: '0 0 auto', background: TYPE[a.type as keyof typeof TYPE] }} />
-              <span style={{ fontSize: 12.5, fontWeight: 600, color: '#191F13' }}>{a.title}</span>
+          <div key={i} className="py-2.5 px-3 rounded-md bg-bg-panel border border-moss-100 flex flex-col gap-[3px] [animation:labIn_280ms_ease_both]">
+            <div className="flex items-center gap-[7px]">
+              <span className="w-2 h-2 rounded-[2px] flex-[0_0_auto]" style={{ background: TYPE[a.type as keyof typeof TYPE] }} />
+              <span className="text-[12.5px] font-semibold text-moss-900">{a.title}</span>
             </div>
-            <span style={{ ...LABEL, fontSize: 11, letterSpacing: '0.01em', color: '#91978B' }}>
+            <span className="font-sans text-xs tracking-[0.01em] text-moss-400">
               {a.course} · {a.type}
             </span>
           </div>
         ))}
 
         {sideItems.length === 0 && (
-          <span style={{ fontSize: 12, color: '#9FA49A' }}>Nothing due. Click another day.</span>
+          <span className="text-sm text-moss-300">Nothing due. Click another day.</span>
         )}
 
-        <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <div className="mt-auto flex flex-col gap-2">
           <button
             onClick={upload}
             type="button"
-            className="ld-labupload"
-            style={{ padding: '10px 12px', borderRadius: 9, border: '1px dashed #68951F', background: '#EAF1E4', ...LABEL, fontSize: 11.5, letterSpacing: '0.01em', color: '#445D22', cursor: 'pointer' }}
+            className="ld-labupload py-2.5 px-3 rounded-[9px] border border-dashed border-leaf-500 [background:#EAF1E4] font-sans text-[11.5px] tracking-[0.01em] text-brand-forest cursor-pointer"
           >
             {uploading ? 'Reading syllabus…' : uploaded ? 'Syllabus applied' : '+ Upload ma242_syllabus.pdf'}
           </button>
-          <span style={{ fontSize: 11, lineHeight: 1.6, color: '#9FA49A' }}>
+          <span className="text-xs leading-[1.6] text-moss-300">
             {uploaded
               ? '6 assignments extracted and synced to Google Calendar.'
               : 'One upload fills the month — every pset, quiz, and exam, dated.'}

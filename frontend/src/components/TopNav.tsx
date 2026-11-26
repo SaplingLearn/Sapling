@@ -34,6 +34,7 @@ import { useIsMobile } from "@/lib/useIsMobile";
 import type { NavSection } from "@/lib/navFeatures";
 import { useVisibleNavSections } from "@/lib/useNavSections";
 import { STUDY_TOOL_PATHS } from "@/lib/toolHrefs";
+import { cn } from "@/lib/cn";
 
 type NavGroup = NavSection;
 
@@ -81,47 +82,23 @@ export function TopNav() {
     <nav
       role="navigation"
       aria-label="Primary"
-      style={{
-        height: TOP_NAV_HEIGHT,
-        minHeight: TOP_NAV_HEIGHT,
-        // --bg-topbar from the pre-revamp palette is a deliberately
-        // greener tint than --bg-subtle so the nav reads as its own
-        // surface without needing a border or shadow to announce it.
-        background: "var(--bg-topbar)",
-        borderBottom: "1px solid var(--border)",
-        display: "flex",
-        alignItems: "center",
-        gap: isMobile ? 8 : 20,
-        padding: isMobile ? "0 12px" : "0 20px",
-        position: "sticky",
-        top: 0,
-        zIndex: 20,
-      }}
+      className={cn("h-14 min-h-14 bg-bg-topbar border-b border-b-border flex items-center sticky top-0 z-20", isMobile ? "gap-2" : "gap-5", isMobile ? "py-0 px-3" : "py-0 px-5")}
     >
       {/* Mobile hamburger */}
       {isMobile && (
-        <div ref={mobileRef} style={{ position: "relative" }}>
+        <div ref={mobileRef} className="relative">
           <button
             aria-label="Navigation menu"
             aria-expanded={mobileOpen}
             onClick={() => setMobileOpen((o) => !o)}
-            style={{
-              padding: 6, display: "flex", flexDirection: "column", justifyContent: "center", gap: 4,
-              minWidth: 44, minHeight: 44, alignItems: "center",
-            }}
+            className="p-1.5 flex flex-col justify-center gap-1 min-w-11 min-h-11 items-center"
           >
             {[0, 1, 2].map((i) => (
               <span
                 key={i}
-                style={{
-                  width: 18, height: 2, borderRadius: 1,
-                  background: "var(--text-dim)",
-                  transition: "transform var(--dur-fast) var(--ease), opacity var(--dur-fast) var(--ease)",
-                  transform:
+                className={cn("w-4.5 h-0.5 rounded-[1px] bg-text-dim [transition:transform_var(--dur-fast)_var(--ease),_opacity_var(--dur-fast)_var(--ease)]", mobileOpen && i === 1 ? "opacity-0" : "opacity-100")} style={{ transform:
                     mobileOpen && i === 0 ? "rotate(45deg) translateY(4px)" :
-                    mobileOpen && i === 2 ? "rotate(-45deg) translateY(-4px)" : "none",
-                  opacity: mobileOpen && i === 1 ? 0 : 1,
-                }}
+                    mobileOpen && i === 2 ? "rotate(-45deg) translateY(-4px)" : "none" }}
               />
             ))}
           </button>
@@ -130,14 +107,14 @@ export function TopNav() {
       )}
 
       {/* Logo — the approved wordmark (#728). */}
-      <Link href="/dashboard" aria-label="Sapling — home" style={{ display: "flex", alignItems: "center", textDecoration: "none" }}>
+      <Link href="/dashboard" aria-label="Sapling — home" className="flex items-center no-underline">
         <SaplingWordmark width={isMobile ? 88 : 104} decorative />
       </Link>
 
       {/* Desktop group row — hover/focus reveals each group's items */}
       {!isMobile && <DesktopGroups pathname={pathname} groups={groups} />}
 
-      <div style={{ marginLeft: isMobile ? "auto" : 0, display: "flex", alignItems: "center", gap: 8 }}>
+      <div className={cn("flex items-center gap-2", isMobile ? "ml-auto" : "ml-0")}>
         {isAuthenticated && (
           <>
             <ShellActions />
@@ -146,12 +123,7 @@ export function TopNav() {
                 href="/admin"
                 aria-label="Admin"
                 title="Admin"
-                style={{
-                  display: "inline-flex", alignItems: "center", justifyContent: "center",
-                  width: 44, height: 44, borderRadius: "var(--r-sm)",
-                  color: pathname.startsWith("/admin") ? "var(--text)" : "var(--text-muted)",
-                  transition: "background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease)",
-                }}
+                className={cn("inline-flex items-center justify-center w-11 h-11 rounded-sm [transition:background_var(--dur-fast)_var(--ease),_color_var(--dur-fast)_var(--ease)]", pathname.startsWith("/admin") ? "text-text" : "text-text-muted")}
                 onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-soft)"; e.currentTarget.style.color = "var(--text)"; }}
                 onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = pathname.startsWith("/admin") ? "var(--text)" : "var(--text-muted)"; }}
               >
@@ -161,10 +133,7 @@ export function TopNav() {
             <div
               aria-label={userName || "Account"}
               title={userName || "Account"}
-              style={{
-                display: "flex", alignItems: "center", gap: 8,
-                padding: 3, borderRadius: "var(--r-full)",
-              }}
+              className="flex items-center gap-2 p-[3px] rounded-[var(--r-full)]"
             >
               <Avatar name={userName || "?"} size={30} img={avatarUrl || undefined} />
             </div>
@@ -254,7 +223,7 @@ function DesktopGroups({ pathname, groups }: { pathname: string; groups: NavGrou
   }, [openIndex]);
 
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 4, flex: 1, minWidth: 0 }}>
+    <div className="flex items-center gap-1 flex-1 min-w-0">
       {groups.map((g, i) => (
         <NavGroupTrigger
           key={g.label}
@@ -312,7 +281,7 @@ function NavGroupTrigger({
           onClose();
         }
       }}
-      style={{ position: "relative" }}
+      className="relative"
     >
       <button
         type="button"
@@ -320,21 +289,7 @@ function NavGroupTrigger({
         aria-expanded={open}
         onClick={() => (open ? onClose() : onOpen())}
         onFocus={onOpen}
-        style={{
-          display: "inline-flex",
-          alignItems: "center",
-          gap: 4,
-          padding: "6px 10px",
-          borderRadius: "var(--r-sm)",
-          fontSize: 13,
-          fontWeight: active ? 700 : 500,
-          color: active || open ? "var(--text)" : "var(--text-muted)",
-          whiteSpace: "nowrap",
-          transition: "color var(--dur-fast) var(--ease)",
-          cursor: "pointer",
-          background: "transparent",
-          border: "none",
-        }}
+        className={cn("inline-flex items-center gap-1 py-1.5 px-2.5 rounded-sm text-md whitespace-nowrap [transition:color_var(--dur-fast)_var(--ease)] cursor-pointer bg-transparent border-0", active ? "font-bold" : "font-medium", active || open ? "text-text" : "text-text-muted")}
         onMouseEnter={(e) => {
           if (!active) e.currentTarget.style.color = "var(--text-dim)";
         }}
@@ -345,14 +300,7 @@ function NavGroupTrigger({
         {group.label}
         <span
           aria-hidden
-          style={{
-            display: "inline-flex",
-            transition: "transform var(--dur-fast) var(--ease)",
-            transform: open ? "rotate(180deg)" : "rotate(90deg)",
-            color: "currentColor",
-            opacity: 0.6,
-            marginTop: 1,
-          }}
+          className={cn("inline-flex [transition:transform_var(--dur-fast)_var(--ease)] text-current opacity-60 mt-px", open ? "[transform:rotate(180deg)]" : "[transform:rotate(90deg)]")}
         >
           <Icon name="chev" size={10} />
         </span>
@@ -370,21 +318,7 @@ function NavGroupTrigger({
           // navigation between items, which we don't implement. Linear
           // tab order through Links is the actual UX, so we leave the
           // semantics as "nav with links" rather than over-claim.
-          style={{
-            position: "absolute",
-            top: "100%",
-            left: 0,
-            minWidth: 200,
-            padding: 6,
-            background: "var(--bg-panel)",
-            border: "1px solid var(--border)",
-            borderRadius: "var(--r-md)",
-            boxShadow: "var(--shadow-md)",
-            display: "flex",
-            flexDirection: "column",
-            gap: 2,
-            zIndex: 100,
-          }}
+          className="absolute top-full left-0 min-w-50 p-1.5 bg-bg-panel border border-border rounded-md shadow-md flex flex-col gap-0.5 z-100"
         >
           {group.items.map((item) => {
             const itemActive = isActiveItem(pathname, item.href);
@@ -392,19 +326,7 @@ function NavGroupTrigger({
               <Link
                 key={item.href}
                 href={item.href}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 10,
-                  padding: "8px 10px",
-                  borderRadius: "var(--r-sm)",
-                  background: itemActive ? "var(--bg-soft)" : "transparent",
-                  color: itemActive ? "var(--text)" : "var(--text-dim)",
-                  fontSize: 13,
-                  fontWeight: itemActive ? 600 : 400,
-                  textDecoration: "none",
-                  transition: "background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease)",
-                }}
+                className={cn("flex items-center gap-2.5 py-2 px-2.5 rounded-sm text-md no-underline [transition:background_var(--dur-fast)_var(--ease),_color_var(--dur-fast)_var(--ease)]", itemActive ? "bg-bg-soft" : "bg-transparent", itemActive ? "text-text" : "text-text-dim", itemActive ? "font-semibold" : "font-normal")}
                 onMouseEnter={(e) => {
                   e.currentTarget.style.background = "var(--bg-soft)";
                   e.currentTarget.style.color = "var(--text)";
@@ -415,7 +337,7 @@ function NavGroupTrigger({
                 }}
               >
                 <Icon name={item.icon} size={15} />
-                <span style={{ flex: 1 }}>{item.label}</span>
+                <span className="flex-1">{item.label}</span>
               </Link>
             );
           })}
@@ -428,20 +350,13 @@ function NavGroupTrigger({
 function MobilePanel({ pathname, groups }: { pathname: string; groups: NavGroup[] }) {
   return (
     <div
-      style={{
-        position: "absolute", top: "calc(100% + 6px)", left: 0,
-        minWidth: 240, padding: "6px 0",
-        background: "var(--bg-panel)", border: "1px solid var(--border)",
-        borderRadius: "var(--r-md)", boxShadow: "var(--shadow-md)",
-        zIndex: 100,
-      }}
+      className="absolute top-[calc(100%_+_6px)] left-0 min-w-60 py-1.5 px-0 bg-bg-panel border border-border rounded-md shadow-md z-100"
     >
       {groups.map((g, i) => (
         <React.Fragment key={g.label}>
-          {i > 0 && <div style={{ height: 1, background: "var(--border)", margin: "6px 8px" }} aria-hidden />}
+          {i > 0 && <div className="h-px bg-border my-1.5 mx-2" aria-hidden />}
           <div
-            className="label-micro"
-            style={{ padding: "8px 14px 4px" }}
+            className="label-micro pt-2 px-3.5 pb-1"
           >
             {g.label}
           </div>
@@ -451,14 +366,7 @@ function MobilePanel({ pathname, groups }: { pathname: string; groups: NavGroup[
               <Link
                 key={item.href}
                 href={item.href}
-                style={{
-                  display: "flex", alignItems: "center", gap: 10,
-                  padding: "10px 14px", minHeight: 44, boxSizing: "border-box",
-                  fontSize: 14, fontWeight: itemActive ? 700 : 500,
-                  color: itemActive ? "var(--text)" : "var(--text-dim)",
-                  textDecoration: "none",
-                  transition: "background var(--dur-fast) var(--ease)",
-                }}
+                className={cn("flex items-center gap-2.5 py-2.5 px-3.5 min-h-11 box-border text-base no-underline [transition:background_var(--dur-fast)_var(--ease)]", itemActive ? "font-bold" : "font-medium", itemActive ? "text-text" : "text-text-dim")}
                 onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-soft)"; }}
                 onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
               >

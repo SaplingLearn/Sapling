@@ -1,6 +1,7 @@
 "use client";
 import React from "react";
 import { createPortal } from "react-dom";
+import { useOverlayBehaviour } from "@/components/Dialog";
 import Link from "next/link";
 import { TopBar } from "@/components/TopBar";
 import { FullHeightScreen } from "@/components/FullHeightScreen";
@@ -37,6 +38,7 @@ import type {
   GradedAssignment,
   LetterScaleTier,
 } from "@/lib/types";
+import { cn } from "@/lib/cn";
 
 const DEFAULT_SCALE: LetterScaleTier[] = [
   { letter: "A",  min: 93 },
@@ -126,7 +128,6 @@ export function CurveSettingsModal({
   }) => Promise<void>;
 }) {
   const toast = useToast();
-  const [mounted, setMounted] = React.useState(false);
   const [avgTarget, setAvgTarget] = React.useState<string>(
     course.curve_avg_target != null ? (course.curve_avg_target * 100).toFixed(0) : "83"
   );
@@ -134,7 +135,9 @@ export function CurveSettingsModal({
     course.curve_sd_delta != null ? (course.curve_sd_delta * 100).toFixed(0) : "10"
   );
   const [saving, setSaving] = React.useState(false);
-  React.useEffect(() => setMounted(true), []);
+  // Dialog's modal engine (scroll lock, focus, Escape, Tab trap) with this
+  // panel's own chrome.
+  const { mounted, panelRef, onKeyDown } = useOverlayBehaviour({ open, onClose });
   React.useEffect(() => {
     if (!open) return;
     setAvgTarget(course.curve_avg_target != null ? (course.curve_avg_target * 100).toFixed(0) : "83");
@@ -147,45 +150,44 @@ export function CurveSettingsModal({
 
   return createPortal(
     <div
-      role="dialog"
-      aria-modal="true"
-      style={{
-        position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)",
-        display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100,
-      }}
+      className="fixed inset-0 bg-[rgba(0,0,0,0.4)] flex items-center justify-center z-100"
       onClick={onClose}
+      onKeyDown={onKeyDown}
     >
-      <div onClick={(e) => e.stopPropagation()} style={{
-        background: "var(--bg)", borderRadius: 12, padding: 24,
-        minWidth: 400, maxWidth: 480,
-      }}>
-        <h3 style={{ margin: "0 0 4px" }}>Bell Curve Settings</h3>
-        <p style={{ margin: "0 0 16px", fontSize: 12, color: "var(--text-dim)", lineHeight: 1.5 }}>
+      <div
+        ref={panelRef}
+        tabIndex={-1}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="curve-settings-title"
+        onClick={(e) => e.stopPropagation()}
+        className="bg-bg rounded-[12px] p-6 min-w-100 max-w-120 outline-none"
+      >
+        <h3 id="curve-settings-title" className="mt-0 mx-0 mb-1">Bell Curve Settings</h3>
+        <p className="mt-0 mx-0 mb-4 text-sm text-text-dim leading-[1.5]">
           The curve policy comes from your syllabus. The class average maps to a target
           grade; each standard deviation above or below shifts the grade by a fixed amount.
         </p>
-        <div style={{ display: "grid", gap: 10, marginBottom: 16 }}>
-          <p style={{ margin: 0, fontSize: 13, color: "var(--text-muted)", 
-            fontFamily: "var(--font-sans)" }}>
+        <div className="grid gap-2.5 mb-4">
+          <p className="m-0 text-md text-text-muted font-sans">
             Course Policy (from syllabus)
           </p>
-          <div style={{ display: "flex", gap: 8 }}>
-            <label style={{ flex: 1 }}>
+          <div className="flex gap-2">
+            <label className="flex-1">
               Average maps to (%)
               <input type="number" min={0} max={100} value={avgTarget}
                 onChange={(e) => setAvgTarget(e.target.value)}
-                style={{ width: "100%", padding: 6, border: "1px solid var(--border)", borderRadius: 6 }} />
+                className="w-full p-1.5 border border-border rounded-sm" />
             </label>
-            <label style={{ flex: 1 }}>
+            <label className="flex-1">
               Grade per SD (%)
               <input type="number" min={0} max={50} value={sdDelta}
                 onChange={(e) => setSdDelta(e.target.value)}
-                style={{ width: "100%", padding: 6, border: "1px solid var(--border)", borderRadius: 6 }} />
+                className="w-full p-1.5 border border-border rounded-sm" />
             </label>
           </div>
         </div>
-        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 20,
-          paddingTop: 12, borderTop: "1px solid var(--border)" }}>
+        <div className="flex justify-end gap-2 mt-5 pt-3 border-t border-t-border">
           <button type="button" onClick={onClose}>Cancel</button>
           <Button
             variant="primary"
@@ -571,32 +573,22 @@ export function GradebookCourseScreen({ courseId }: Props) {
     <FullHeightScreen>
       <TopBar
         breadcrumb={
-          <Link href="/gradebook" style={{ color: "var(--text-dim)", textDecoration: "none" }}>
+          <Link href="/gradebook" className="text-text-dim no-underline">
             ← Gradebook
           </Link>
         }
         actions={
-          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <div className="flex gap-2 items-center">
             {data && (
               <>
                 {hasCurve && (
-                  <div style={{ display: "flex", background: "var(--bg-subtle)", borderRadius: 20, padding: 2 }}>
+                  <div className="flex bg-bg-subtle rounded-[20px] p-0.5">
                     {(["raw", "curved"] as const).map((mode) => (
                       <button
                         key={mode}
                         type="button"
                         onClick={data.curve_mode !== mode ? handleToggleCurveMode : undefined}
-                        style={{
-                          padding: "4px 12px",
-                          borderRadius: 18,
-                          fontSize: 11,
-                          fontWeight: 500,
-                          background: data.curve_mode === mode ? "var(--accent)" : "transparent",
-                          color: data.curve_mode === mode ? "#fff" : "var(--text-dim)",
-                          border: 0,
-                          cursor: data.curve_mode !== mode ? "pointer" : "default",
-                          fontFamily: "var(--font-sans)",
-                        }}
+                        className={cn("py-1 px-3 rounded-[18px] text-xs font-medium border-0 font-sans", data.curve_mode === mode ? "bg-accent" : "bg-transparent", data.curve_mode === mode ? "text-accent-fg" : "text-text-dim", data.curve_mode !== mode ? "cursor-pointer" : "cursor-default")}
                       >
                         {mode === "raw" ? "Raw" : "Curved"}
                       </button>
@@ -606,9 +598,8 @@ export function GradebookCourseScreen({ courseId }: Props) {
                 <button
                   type="button"
                   onClick={() => setCurveSettingsOpen(true)}
-                  className="btn"
+                  className="btn py-1 px-3 text-sm flex items-center gap-[5px]"
                   title="Bell curve policy"
-                  style={{ padding: "4px 12px", fontSize: 12, display: "flex", alignItems: "center", gap: 5 }}
                 >
                   <span>⚙</span>
                   <span>Curve</span>
@@ -618,8 +609,7 @@ export function GradebookCourseScreen({ courseId }: Props) {
             <button
               type="button"
               onClick={() => setEditScale(true)}
-              className="btn"
-              style={{ padding: "4px 12px", fontSize: 12 }}
+              className="btn py-1 px-3 text-sm"
             >
               Letter Scale
             </button>
@@ -627,21 +617,10 @@ export function GradebookCourseScreen({ courseId }: Props) {
         }
       />
       <main
-        style={{
-          padding: "var(--pad-xl)",
-          position: "relative",
-          // See Gradebook/Landing.tsx — same `calc(100vh - var(--row-h))`
-          // density-token-as-nav-height mistake, same flex fix (#341).
-          flex: "1 0 auto",
-        }}
+        className="p-(--pad-xl) relative flex-[1_0_auto]"
       >
         <div
-          style={{
-            position: "relative",
-            zIndex: 1,
-            maxWidth: 1240,
-            margin: "0 auto",
-          }}
+          className="relative z-1 max-w-310 my-0 mx-auto"
         >
           {loading && !data ? (
             <CoursePageSkeleton segmentCount={skeletonCount} />
@@ -807,76 +786,33 @@ function Masthead({ data }: { data: GradebookCourse }) {
   const letterColor = percentColor(data.percent);
   return (
     <header
-      style={{
-        display: "flex",
-        alignItems: "flex-end",
-        justifyContent: "space-between",
-        gap: 32,
-        marginBottom: 32,
-        paddingBottom: 20,
-        borderBottom: "1px solid var(--border)",
-      }}
+      className="flex items-end justify-between gap-8 mb-8 pb-5 border-b border-b-border"
     >
-      <div style={{ minWidth: 0 }}>
+      <div className="min-w-0">
         <div
-          className="mono"
-          style={{
-            fontSize: 13,
-            
-            
-            color: "var(--text-muted)",
-            marginBottom: 8 }}
+          className="mono text-md text-text-muted mb-2"
         >
           {data.course_code}
           {data.semester ? ` · ${data.semester}` : ""}
         </div>
         <h1
-          style={{
-            fontFamily: "var(--font-display), 'Aleo', Georgia, serif",
-            fontWeight: 500,
-            fontSize: "clamp(26px, 3vw, 38px)",
-            lineHeight: 1.08,
-            letterSpacing: "-0.02em",
-            color: "var(--text)",
-            margin: 0,
-          }}
+          className="font-display font-medium text-[length:clamp(26px,_3vw,_38px)] leading-[1.08] tracking-[-0.02em] text-text m-0"
         >
           {data.course_name}
         </h1>
       </div>
       <div
         title={`Letter scale: ${scaleText}`}
-        style={{
-          display: "flex",
-          alignItems: "baseline",
-          gap: 10,
-          flexShrink: 0,
-          cursor: "help",
-        }}
+        className="flex items-baseline gap-2.5 shrink-0 cursor-help"
       >
         <span
-          style={{
-            fontFamily: "var(--font-display), 'Aleo', Georgia, serif",
-            fontWeight: 500,
-            fontSize: 42,
-            lineHeight: 1,
-            letterSpacing: "-0.03em",
-            color: letterColor,
-            fontStyle: isEmpty ? "italic" : "normal",
-            opacity: isEmpty ? 0.5 : 1,
-          }}
+          className={cn("font-display font-medium text-[42px] leading-none tracking-[-0.03em]", isEmpty ? "italic" : "not-italic", isEmpty ? "opacity-50" : "opacity-100")} style={{ color: letterColor }}
         >
           {isEmpty ? "—" : (data.letter ?? "—")}
         </span>
         <span
-          className="mono"
-          style={{
-            fontSize: 15,
-            fontWeight: 600,
-            color: letterColor,
-            letterSpacing: "-0.02em",
-            opacity: isEmpty ? 0.5 : 0.85,
-          }}
+          className={cn("mono", "text-[15px] font-semibold tracking-[-0.02em]", isEmpty ? "opacity-50" : "opacity-85")}
+          style={{ color: letterColor }}
         >
           {data.percent === null ? "—" : `${data.percent.toFixed(1)}%`}
         </span>
@@ -959,23 +895,11 @@ function GradeCompositionBar({
   if (sorted.length === 0) {
     return (
       <section
-        style={{
-          marginBottom: 40,
-          padding: "28px 24px",
-          borderRadius: "var(--r-md)",
-          background: "var(--bg-panel)",
-          border: "1px solid var(--border)",
-        }}
+        className="mb-10 py-7 px-6 rounded-md bg-bg-panel border border-border"
       >
         <SectionHead label="Composition" onEdit={onEditWeights} />
         <div
-          style={{
-            fontFamily: "var(--font-serif), var(--font-aleo), 'Aleo', Georgia, serif",
-            color: "var(--text-dim)",
-            fontSize: 15,
-            lineHeight: 1.55,
-            marginTop: 8,
-          }}
+          className="font-serif text-text-dim text-[15px] leading-[1.55] mt-2"
         >
           No categories yet. Upload a syllabus or add them by hand to break
           your grade into pieces.
@@ -985,7 +909,7 @@ function GradeCompositionBar({
   }
 
   return (
-    <section style={{ marginBottom: 44 }}>
+    <section className="mb-11">
       <SectionHead
         label="Composition"
         onEdit={onEditWeights}
@@ -1010,39 +934,19 @@ function GradeCompositionBar({
       />
 
       {/* Letter-tick scale above the bar */}
-      <div style={{ position: "relative", height: 24, marginTop: 18, marginBottom: 8 }}>
+      <div className="relative h-6 mt-4.5 mb-2">
         {ticks.map(({ letter, min }) => (
           <div
             key={letter}
-            style={{
-              position: "absolute",
-              left: `${min}%`,
-              top: 0,
-              transform: "translateX(-50%)",
-              textAlign: "center",
-              pointerEvents: "none",
-            }}
+            className="absolute top-0 [transform:translateX(-50%)] text-center pointer-events-none" style={{ left: `${min}%` }}
           >
             <div
-              className="mono"
-              style={{
-                fontSize: 10,
-                fontWeight: 700,
-                color: "var(--text-dim)",
-                lineHeight: 1,
-                letterSpacing: "-0.01em",
-              }}
+              className="mono text-2xs font-bold text-text-dim leading-none tracking-[-0.01em]"
             >
               {letter}
             </div>
             <div
-              className="mono"
-              style={{
-                fontSize: 9,
-                color: "var(--text-muted)",
-                lineHeight: 1.2,
-                marginTop: 2,
-              }}
+              className="mono text-[9px] text-text-muted leading-[1.2] mt-0.5"
             >
               {min}
             </div>
@@ -1052,21 +956,11 @@ function GradeCompositionBar({
 
       {/* The composition bar itself */}
       <div
-        style={{ position: "relative", width: "100%" }}
+        className="relative w-full"
         onMouseLeave={() => setTip(null)}
       >
         <div
-          style={{
-            display: "flex",
-            height: 46,
-            width: "100%",
-            background: "var(--bg-subtle)",
-            borderRadius: "var(--r-md)",
-            overflow: "hidden",
-            border: isPredicted
-              ? "1.5px dashed var(--accent-border)"
-              : "1px solid var(--border)",
-          }}
+          className={cn("flex h-11.5 w-full bg-bg-subtle rounded-md overflow-hidden", isPredicted ? "border-[1.5px] border-dashed border-accent-border" : "border border-border")}
         >
           {barSorted.map((c, i) => {
             const pts = categoryPoints(c.id, assignments, c.drop_lowest ?? 0);
@@ -1104,25 +998,11 @@ function GradeCompositionBar({
                 key={c.id}
                 onClick={() => onSegmentClick(c.id)}
                 title={`Jump to ${c.name} assignments`}
-                style={{
-                  flex: `${c.weight} 0 0`,
-                  display: "flex",
-                  cursor: "pointer",
-                  borderRight:
-                    i < sorted.length - 1
-                      ? "1px solid var(--bg-panel)"
-                      : "none",
-                  minWidth: 0,
-                }}
+                className={cn("flex cursor-pointer min-w-0", i < sorted.length - 1 ? "border-r border-r-bg-panel" : "border-r-0")} style={{ flex: `${c.weight} 0 0` }}
               >
                 {isEmptyCat ? (
                   <div
-                    style={{
-                      width: "100%",
-                      height: "100%",
-                      backgroundImage:
-                        "repeating-linear-gradient(135deg, color-mix(in oklch, var(--sap-500), transparent 70%) 0 6px, transparent 6px 12px)",
-                    }}
+                    className="w-full h-full [background-image:repeating-linear-gradient(135deg,_color-mix(in_oklch,_var(--sap-500),_transparent_70%)_0_6px,_transparent_6px_12px)]"
                     onMouseEnter={onMove("empty", contribRemaining)}
                     onMouseMove={onMove("empty", contribRemaining)}
                   />
@@ -1130,35 +1010,21 @@ function GradeCompositionBar({
                   <>
                     {earnedPctOfSlot > 0 && (
                       <div
-                        style={{
-                          width: `${earnedPctOfSlot}%`,
-                          height: "100%",
-                          background: "var(--sap-500)",
-                        }}
+                        className="h-full bg-sap-500" style={{ width: `${earnedPctOfSlot}%` }}
                         onMouseEnter={onMove("earned", contribEarned)}
                         onMouseMove={onMove("earned", contribEarned)}
                       />
                     )}
                     {lostPctOfSlot > 0 && (
                       <div
-                        style={{
-                          width: `${lostPctOfSlot}%`,
-                          height: "100%",
-                          background:
-                            "color-mix(in oklch, var(--sap-500), var(--bg-panel) 70%)",
-                        }}
+                        className="h-full bg-[color-mix(in_oklch,_var(--sap-500),_var(--bg-panel)_70%)]" style={{ width: `${lostPctOfSlot}%` }}
                         onMouseEnter={onMove("lost", contribLost)}
                         onMouseMove={onMove("lost", contribLost)}
                       />
                     )}
                     {remainingPctOfSlot > 0 && (
                       <div
-                        style={{
-                          width: `${remainingPctOfSlot}%`,
-                          height: "100%",
-                          backgroundImage:
-                            "repeating-linear-gradient(135deg, color-mix(in oklch, var(--sap-500), transparent 65%) 0 6px, transparent 6px 12px)",
-                        }}
+                        className="h-full [background-image:repeating-linear-gradient(135deg,_color-mix(in_oklch,_var(--sap-500),_transparent_65%)_0_6px,_transparent_6px_12px)]" style={{ width: `${remainingPctOfSlot}%` }}
                         onMouseEnter={onMove("remaining", contribRemaining)}
                         onMouseMove={onMove("remaining", contribRemaining)}
                       />
@@ -1175,16 +1041,7 @@ function GradeCompositionBar({
           <div
             key={`tick-line-${letter}`}
             aria-hidden="true"
-            style={{
-              position: "absolute",
-              left: `${min}%`,
-              top: -6,
-              bottom: -6,
-              width: 1,
-              background: "var(--border-strong)",
-              transform: "translateX(-0.5px)",
-              pointerEvents: "none",
-            }}
+            className="absolute -top-1.5 -bottom-1.5 w-px bg-border-strong [transform:translateX(-0.5px)] pointer-events-none" style={{ left: `${min}%` }}
           />
         ))}
 
@@ -1192,24 +1049,13 @@ function GradeCompositionBar({
         {current !== null && (
           <div
             aria-hidden="true"
-            style={{
-              position: "absolute",
-              left: `${current}%`,
-              top: -8,
-              bottom: -8,
-              width: 3,
-              background: "var(--text)",
-              borderRadius: 1,
-              transform: "translateX(-50%)",
-              pointerEvents: "none",
-              boxShadow: "0 0 0 2px var(--bg)",
-            }}
+            className="absolute -top-2 -bottom-2 w-[3px] bg-text rounded-[1px] [transform:translateX(-50%)] pointer-events-none [box-shadow:0_0_0_2px_var(--bg)]" style={{ left: `${current}%` }}
           />
         )}
       </div>
 
       {/* Category labels under their slots */}
-      <div style={{ display: "flex", marginTop: 14 }}>
+      <div className="flex mt-3.5">
         {barSorted.map((c, i) => {
           const drop = c.drop_lowest ?? 0;
           return (
@@ -1222,43 +1068,20 @@ function GradeCompositionBar({
                   ? `${c.name}: drops ${drop} lowest. Click to jump to assignments.`
                   : `Jump to ${c.name} assignments`
               }
-              style={{
-                flex: `${c.weight} 0 0`,
-                minWidth: 0,
-                padding: "0 6px",
-                textAlign: "center",
-                background: "transparent",
-                border: 0,
-                borderLeft: i === 0 ? "none" : "1px solid var(--border)",
-                cursor: "pointer",
-                color: "inherit",
-              }}
+              className={cn("min-w-0 py-0 px-1.5 text-center bg-transparent border-0 cursor-pointer text-inherit", i === 0 ? "border-l-0" : "border-l border-l-border")} style={{ flex: `${c.weight} 0 0` }}
             >
               <div
-                style={{
-                  fontFamily: "var(--font-serif), var(--font-aleo), 'Aleo', Georgia, serif",
-                  fontSize: 12,
-                  color: "var(--text)",
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
-                }}
+                className="font-serif text-sm text-text overflow-hidden text-ellipsis whitespace-nowrap"
               >
                 {c.name}
               </div>
               <div
-                className="mono"
-                style={{
-                  fontSize: 10,
-                  color: "var(--text-muted)",
-                  marginTop: 2,
-                  letterSpacing: "-0.01em",
-                }}
+                className="mono text-2xs text-text-muted mt-0.5 tracking-[-0.01em]"
               >
                 {c.weight}%
                 {drop > 0 && (
                   <span
-                    style={{ marginLeft: 6, color: "var(--accent)" }}
+                    className="ml-1.5 text-accent"
                     title={`Drops ${drop} lowest`}
                   >
                     · {drop} Drops
@@ -1272,13 +1095,7 @@ function GradeCompositionBar({
 
       {Math.abs(totalWeight - 100) > 0.01 && (
         <div
-          className="mono"
-          style={{
-            fontSize: 10,
-            color: "var(--warn)",
-            marginTop: 12,
-            letterSpacing: "-0.01em",
-          }}
+          className="mono text-2xs text-warn mt-3 tracking-[-0.01em]"
         >
           Weights sum to {totalWeight.toFixed(0)}%, not 100%. Final percent
           is normalized.
@@ -1287,14 +1104,7 @@ function GradeCompositionBar({
 
       {/* Legend */}
       <div
-        style={{
-          display: "flex",
-          gap: 20,
-          marginTop: 22,
-          fontSize: 11,
-          color: "var(--text-dim)",
-          flexWrap: "wrap",
-        }}
+        className="flex gap-5 mt-5.5 text-xs text-text-dim flex-wrap"
       >
         <LegendSwatch fill="var(--sap-500)" label="Earned" />
         <LegendSwatch
@@ -1325,23 +1135,11 @@ function SectionHead({
 }) {
   return (
     <div
-      style={{
-        display: "flex",
-        alignItems: "baseline",
-        justifyContent: "space-between",
-        gap: 16,
-        flexWrap: "wrap",
-      }}
+      className="flex items-baseline justify-between gap-4 flex-wrap"
     >
-      <div style={{ display: "flex", alignItems: "baseline", gap: 16, minWidth: 0 }}>
+      <div className="flex items-baseline gap-4 min-w-0">
         <span
-          className="mono"
-          style={{
-            fontSize: 12,
-            
-            
-            color: "var(--text-muted)",
-            fontWeight: 600 }}
+          className="mono text-sm text-text-muted font-semibold"
         >
           {label}
         </span>
@@ -1350,19 +1148,7 @@ function SectionHead({
       <button
         type="button"
         onClick={onEdit}
-        style={{
-          fontFamily: "var(--font-sans)",
-          fontSize: 12,
-          fontWeight: 500,
-          color: "var(--text-dim)",
-          background: "none",
-          border: 0,
-          padding: 0,
-          cursor: "pointer",
-          textDecoration: "underline",
-          textUnderlineOffset: 3,
-          textDecorationColor: "var(--border-strong)",
-        }}
+        className="font-sans text-sm font-medium text-text-dim [background:none] border-0 p-0 cursor-pointer underline [text-underline-offset:3px] decoration-border-strong"
       >
         Edit Weights
       </button>
@@ -1401,44 +1187,25 @@ function CompositionStatus({
   } else action = `${(nextUp.min - current).toFixed(1)} pts to ${nextUp.letter}`;
 
   return (
-    <div style={{ display: "flex", alignItems: "baseline", gap: 10, minWidth: 0 }}>
+    <div className="flex items-baseline gap-2.5 min-w-0">
       <span
-        style={{
-          fontFamily: "var(--font-display), 'Aleo', Georgia, serif",
-          fontWeight: 500,
-          fontSize: 20,
-          lineHeight: 1,
-          color: percentColor(current),
-          letterSpacing: "-0.01em",
-        }}
+        className="font-display font-medium text-[20px] leading-none tracking-[-0.01em]" style={{ color: percentColor(current) }}
       >
         {current.toFixed(1)}%
       </span>
       {currentTier && (
         <span
-          style={{
-            fontFamily: "var(--font-display), 'Aleo', Georgia, serif",
-            fontSize: 14,
-            color: "var(--text-dim)",
-            fontWeight: 400,
-          }}
+          className="font-display text-base text-text-dim font-normal"
         >
           {currentTier}
         </span>
       )}
       <span
-        style={{
-          fontSize: 12,
-          color: "var(--text-dim)",
-          marginLeft: 4,
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-          whiteSpace: "nowrap",
-        }}
+        className="text-sm text-text-dim ml-1 overflow-hidden text-ellipsis whitespace-nowrap"
       >
         · {action}
         {isPredicted && (
-          <span style={{ color: "var(--text-muted)", marginLeft: 4 }}>(Predicted)</span>
+          <span className="text-text-muted ml-1">(Predicted)</span>
         )}
       </span>
     </div>
@@ -1455,15 +1222,9 @@ function LegendSwatch({
   isImage?: boolean;
 }) {
   return (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+    <span className="inline-flex items-center gap-1.5">
       <span
-        style={{
-          display: "inline-block",
-          width: 14,
-          height: 10,
-          borderRadius: 2,
-          ...(isImage ? { backgroundImage: fill } : { background: fill }),
-        }}
+        className="inline-block w-3.5 h-2.5 rounded-[2px]" style={{ ...(isImage ? { backgroundImage: fill } : { background: fill }) }}
       />
       {label}
     </span>
@@ -1531,34 +1292,14 @@ function CompositionTooltip({ tip }: { tip: TipState }) {
   return (
     <div
       role="tooltip"
-      style={{
-        position: "fixed",
-        left,
-        top,
-        width: TIP_W,
-        pointerEvents: "none",
-        background: "var(--text)",
-        color: "var(--bg)",
-        padding: "10px 12px",
-        borderRadius: "var(--r-sm)",
-        fontSize: 12,
-        lineHeight: 1.45,
-        boxShadow: "var(--shadow-md)",
-        zIndex: 1000,
-      }}
+      className="fixed w-70 pointer-events-none bg-text text-bg py-2.5 px-3 rounded-sm text-sm leading-[1.45] shadow-md z-1000" style={{ left, top }}
     >
       <div
-        style={{
-          fontFamily: "var(--font-display), 'Aleo', Georgia, serif",
-          fontSize: 14,
-          fontWeight: 500,
-          marginBottom: 6,
-          letterSpacing: "-0.01em",
-        }}
+        className="font-display text-base font-medium mb-1.5 tracking-[-0.01em]"
       >
         {title}
       </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>{body}</div>
+      <div className="flex flex-col gap-[3px]">{body}</div>
     </div>
   );
 }
@@ -1566,17 +1307,12 @@ function CompositionTooltip({ tip }: { tip: TipState }) {
 function Row({ label, value, muted }: { label: string; value: string; muted?: boolean }) {
   return (
     <div
-      style={{
-        display: "flex",
-        justifyContent: "space-between",
-        gap: 12,
-        opacity: muted ? 0.7 : 1,
-      }}
+      className={cn("flex justify-between gap-3", muted ? "opacity-70" : "opacity-100")}
     >
-      <span style={{ color: "color-mix(in oklch, var(--bg), transparent 35%)" }}>
+      <span className="text-[color-mix(in_oklch,_var(--bg),_transparent_35%)]">
         {label}
       </span>
-      <span className="mono" style={{ letterSpacing: "-0.01em" }}>
+      <span className="mono tracking-[-0.01em]">
         {value}
       </span>
     </div>
@@ -1648,30 +1384,18 @@ function ErrorBanner({ message, onRetry }: { message: string; onRetry: () => voi
   return (
     <div
       role="alert"
-      style={{
-        padding: "20px 24px",
-        borderRadius: "var(--r-md)",
-        background: "var(--err-soft)",
-        border: "1px solid color-mix(in oklab, var(--err) 20%, transparent)",
-        display: "flex",
-        gap: 16,
-        alignItems: "center",
-        justifyContent: "space-between",
-        flexWrap: "wrap",
-        marginTop: 32,
-      }}
+      className="py-5 px-6 rounded-md bg-err-soft border border-[color-mix(in_oklab,_var(--err)_20%,_transparent)] flex gap-4 items-center justify-between flex-wrap mt-8"
     >
       <div>
-        <div style={{ fontWeight: 600, color: "var(--err)", marginBottom: 4 }}>
+        <div className="font-semibold text-err mb-1">
           We couldn&apos;t load this course.
         </div>
-        <div style={{ fontSize: 13, color: "var(--text-dim)" }}>{message}</div>
+        <div className="text-md text-text-dim">{message}</div>
       </div>
       <button
         type="button"
-        className="btn btn--primary"
+        className="btn btn--primary py-2 px-4"
         onClick={onRetry}
-        style={{ padding: "8px 16px" }}
       >
         Try again
       </button>
@@ -1683,34 +1407,26 @@ function CoursePageSkeleton({ segmentCount = 4 }: { segmentCount?: number }) {
   return (
     <div>
       <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "flex-end",
-          gap: 32,
-          marginBottom: 32,
-          paddingBottom: 20,
-          borderBottom: "1px solid var(--border)",
-        }}
+        className="flex justify-between items-end gap-8 mb-8 pb-5 border-b border-b-border"
       >
-        <div style={{ flex: 1 }}>
-          <div className="skeleton" style={{ width: 160, height: 12, borderRadius: 4, marginBottom: 10 }} />
-          <div className="skeleton" style={{ width: "55%", height: 36, borderRadius: 6 }} />
+        <div className="flex-1">
+          <div className="skeleton w-40 h-3 rounded-xs mb-2.5" />
+          <div className="skeleton w-[55%] h-9 rounded-sm" />
         </div>
-        <div className="skeleton" style={{ width: 110, height: 44, borderRadius: 6 }} />
+        <div className="skeleton w-27.5 h-11 rounded-sm" />
       </div>
-      <div style={{ marginBottom: 44 }}>
-        <div className="skeleton" style={{ width: 140, height: 12, borderRadius: 4, marginBottom: 14 }} />
-        <div className="skeleton" style={{ width: "100%", height: 46, borderRadius: 10, marginBottom: 12 }} />
-        <div style={{ display: "flex", gap: 4 }}>
+      <div className="mb-11">
+        <div className="skeleton w-35 h-3 rounded-xs mb-3.5" />
+        <div className="skeleton w-full h-11.5 rounded-md mb-3" />
+        <div className="flex gap-1">
           {Array.from({ length: Math.max(1, segmentCount) }).map((_, i) => (
-            <div key={i} className="skeleton" style={{ flex: 1, height: 28, borderRadius: 4 }} />
+            <div key={i} className="skeleton flex-1 h-7 rounded-xs" />
           ))}
         </div>
       </div>
-      <div className="skeleton" style={{ width: 220, height: 18, borderRadius: 4, marginBottom: 24 }} />
+      <div className="skeleton w-55 h-4.5 rounded-xs mb-6" />
       {Array.from({ length: 4 }).map((_, i) => (
-        <div key={i} className="skeleton" style={{ height: 64, borderRadius: 8, marginBottom: 12 }} />
+        <div key={i} className="skeleton h-16 rounded-[8px] mb-3" />
       ))}
     </div>
   );

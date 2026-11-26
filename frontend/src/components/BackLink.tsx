@@ -25,15 +25,11 @@ type BackLinkProps = {
   ariaLabel?: string;
 } & ({ href: string; onClick?: undefined } | { onClick: () => void; href?: undefined });
 
-const STYLE: React.CSSProperties = {
-  height: 40, padding: "0 14px", gap: 6, fontSize: "var(--fs-md)", whiteSpace: "nowrap", flexShrink: 0,
-};
-
 export function BackLink({ label, ariaLabel, href, onClick }: BackLinkProps) {
   const inside = <><Icon name="chevron-left" size={12} /> {label}</>;
   if (href === undefined) {
     return (
-      <button type="button" className="btn" data-testid="back-link" aria-label={ariaLabel} style={STYLE} onClick={onClick}>
+      <button type="button" className="btn h-10 py-0 px-3.5 gap-1.5 text-md whitespace-nowrap shrink-0" data-testid="back-link" aria-label={ariaLabel} onClick={onClick}>
         {inside}
       </button>
     );
@@ -41,10 +37,9 @@ export function BackLink({ label, ariaLabel, href, onClick }: BackLinkProps) {
   return (
     <Link
       href={href}
-      className="btn"
+      className="btn h-10 py-0 px-3.5 gap-1.5 text-md whitespace-nowrap shrink-0"
       data-testid="back-link"
       aria-label={ariaLabel ?? (label === "Back" ? "Back" : `Back to ${label}`)}
-      style={STYLE}
     >
       {inside}
     </Link>

@@ -11,30 +11,23 @@
  * clock the rest of the hub changes on (./hubMotion.ts).
  */
 import React from "react";
-import { INHERIT_FONT } from "@/lib/inheritFont";
 import { Icon } from "../Icon";
 import { HUB_EASE, HUB_SWITCH_MS, HUB_WHOLE, reducedMotion } from "./hubMotion";
-import { DISPLAY, ELLIPSIS, POPOVER } from "./hubUi";
 import s from "./StudyHub.module.css";
 import { countdown, countFg, daysTo, fmtDow, type AssessType, type Assessment } from "./studyModel";
+import { cn } from "@/lib/cn";
 
 const TYPE_DOT: Record<AssessType, string> = { Exam: "var(--err)", Quiz: "#6A3E68", Homework: "var(--info)" };
 
-/* The 2px under every tab is a transparent border (a hover tints it); the
-   selected tab's line is drawn over it, so it can slide between tabs. */
-const TAB: React.CSSProperties = { position: "relative", display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 0, flexShrink: 0, padding: "0 0 8px", border: 0, borderBottom: "2px solid transparent", background: "transparent", ...INHERIT_FONT, textAlign: "left", cursor: "pointer" };
 /* The title darkens as the line arrives (the app-wide reduced-motion reset collapses it). */
 const TITLE_FADE = `color ${HUB_SWITCH_MS}ms ${HUB_EASE}`;
-const TAB_LINE: React.CSSProperties = { position: "absolute", left: 0, right: 0, bottom: -2, height: 2, background: "var(--brand-forest)", transformOrigin: "0 50%" };
-const ICON_BUTTON: React.CSSProperties = { width: 36, height: 36, display: "flex", alignItems: "center", justifyContent: "center", border: 0, borderRadius: "var(--r-sm)", background: "transparent", color: "var(--text-dim)", cursor: "pointer", position: "relative" };
-const BADGE: React.CSSProperties = { position: "absolute", top: 2, right: 1, minWidth: 16, height: 16, padding: "0 4px", boxSizing: "border-box", borderRadius: 8, background: "var(--err)", color: "#FFFFFF", fontSize: "var(--fs-2xs)", fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 0 0 2px var(--bg)" };
 
 function ExamTab({ exam, on, today, onSelect }: { exam: Assessment; on: boolean; today: Date; onSelect: () => void }) {
   return (
-    <button role="tab" aria-selected={on} data-tab={exam.id} className={on ? undefined : s.hoverTab} onClick={onSelect} style={TAB}>
-      <span style={{ fontSize: "var(--fs-base)", fontWeight: 600, color: on ? "var(--text)" : "var(--text-muted)", transition: TITLE_FADE, whiteSpace: "nowrap" }}>{exam.title}</span>
-      <span style={{ fontSize: "var(--fs-sm)", color: "var(--text-muted)", whiteSpace: "nowrap" }}>{fmtDow(exam.iso, today)}</span>
-      {on && <span data-tab-line="" aria-hidden="true" style={TAB_LINE} />}
+    <button role="tab" aria-selected={on} data-tab={exam.id} className={cn(on ? undefined : s.hoverTab, "relative flex flex-col items-start gap-0 shrink-0 pt-0 px-0 pb-2 border-0 border-b-2 border-b-transparent [background:transparent] [font-family:inherit] [font-size:inherit] [font-weight:inherit] [font-style:inherit] [line-height:inherit] text-left cursor-pointer")} onClick={onSelect}>
+      <span className={cn("text-base font-semibold whitespace-nowrap", on ? "text-text" : "text-text-muted")} style={{ transition: TITLE_FADE }}>{exam.title}</span>
+      <span className="text-sm text-text-muted whitespace-nowrap">{fmtDow(exam.iso, today)}</span>
+      {on && <span data-tab-line="" aria-hidden="true" className="absolute left-0 right-0 -bottom-0.5 h-0.5 bg-brand-forest [transform-origin:0_50%]" />}
     </button>
   );
 }
@@ -69,14 +62,13 @@ function useSlidingLine(list: React.RefObject<HTMLElement | null>, selectedId: s
 function DeadlineRow({ item, today, onPick }: { item: Assessment; today: Date; onPick: () => void }) {
   const n = daysTo(item.iso, today);
   return (
-    <button className={s.hoverOption} onClick={onPick}
-      style={{ display: "flex", alignItems: "center", gap: 10, padding: 8, border: 0, borderRadius: "var(--r-sm)", background: "transparent", ...INHERIT_FONT, textAlign: "left", cursor: "pointer" }}>
-      <span style={{ width: 8, height: 8, borderRadius: "50%", background: TYPE_DOT[item.type], flexShrink: 0 }} />
-      <span style={{ flex: 1, minWidth: 0 }}>
-        <span style={{ display: "block", fontSize: "var(--fs-md)", fontWeight: 600, ...ELLIPSIS }}>{item.title}</span>
-        <span style={{ display: "block", fontSize: "var(--fs-sm)", color: "var(--text-muted)" }}>{item.type} · {fmtDow(item.iso)}</span>
+    <button className={cn(s.hoverOption, "flex items-center gap-2.5 p-2 border-0 rounded-sm [background:transparent] [font-family:inherit] [font-size:inherit] [font-weight:inherit] [font-style:inherit] [line-height:inherit] text-left cursor-pointer")} onClick={onPick}>
+      <span className="w-2 h-2 rounded-[50%] shrink-0" style={{ background: TYPE_DOT[item.type] }} />
+      <span className="flex-1 min-w-0">
+        <span className="block text-md font-semibold whitespace-nowrap overflow-hidden text-ellipsis">{item.title}</span>
+        <span className="block text-sm text-text-muted">{item.type} · {fmtDow(item.iso)}</span>
       </span>
-      <span style={{ fontSize: "var(--fs-sm)", fontWeight: 600, color: countFg(n), whiteSpace: "nowrap" }}>{countdown(n)}</span>
+      <span className="text-sm font-semibold whitespace-nowrap" style={{ color: countFg(n) }}>{countdown(n)}</span>
     </button>
   );
 }
@@ -92,15 +84,15 @@ function DeadlinesPanel({ upcoming, courseLabel, today, onClose, onPick, onManag
 }) {
   return (
     <>
-      <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 30 }} />
-      <div role="dialog" aria-label="Upcoming deadlines" className={s.pop} style={{ position: "absolute", right: 0, top: 44, zIndex: 31, width: 320, maxWidth: "calc(100vw - 32px)", ...POPOVER, padding: 6, display: "flex", flexDirection: "column" }}>
-        <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", padding: "6px 8px 8px" }}>
-          <span style={{ fontFamily: DISPLAY, fontSize: "var(--fs-lg)", fontWeight: 600 }}>Upcoming Deadlines</span>
-          <span style={{ fontSize: "var(--fs-sm)", color: "var(--text-muted)" }}>{courseLabel}</span>
+      <div onClick={onClose} className="fixed inset-0 z-30" />
+      <div role="dialog" aria-label="Upcoming deadlines" className={cn(s.pop, "absolute right-0 top-11 z-31 w-80 max-w-[calc(100vw_-_32px)] [background:var(--bg-panel)] border border-border rounded-md shadow-lg p-1.5 flex flex-col")}>
+        <div className="flex items-baseline justify-between pt-1.5 px-2 pb-2">
+          <span className="font-display text-lg font-semibold">Upcoming Deadlines</span>
+          <span className="text-sm text-text-muted">{courseLabel}</span>
         </div>
-        {upcoming.length === 0 && <div style={{ padding: "4px 8px 10px", fontSize: "var(--fs-md)", color: "var(--text-muted)" }}>Nothing due for this course.</div>}
+        {upcoming.length === 0 && <div className="pt-1 px-2 pb-2.5 text-md text-text-muted">Nothing due for this course.</div>}
         {upcoming.map(item => <DeadlineRow key={item.id} item={item} today={today} onPick={() => onPick(item)} />)}
-        <button onClick={onManage} style={{ marginTop: 4, padding: 8, border: 0, borderTop: "1px solid var(--border)", borderRadius: "0 0 8px 8px", background: "transparent", color: "var(--brand-forest)", ...INHERIT_FONT, fontSize: "var(--fs-md)", fontWeight: 600, cursor: "pointer" }}>Manage Dates</button>
+        <button onClick={onManage} className="mt-1 p-2 border-0 border-t border-t-border [border-radius:0_0_8px_8px] bg-transparent text-brand-forest [font-family:inherit] [font-style:inherit] [line-height:inherit] text-md font-semibold cursor-pointer">Manage Dates</button>
       </div>
     </>
   );
@@ -134,11 +126,11 @@ export function ExamTabs(props: ExamTabsProps) {
   const tabs = React.useRef<HTMLDivElement | null>(null);
   useSlidingLine(tabs, exam?.id ?? null);
   return (
-    <div className={s.areaTabs} style={{ display: "flex", alignItems: "center", gap: 16, borderBottom: "1px solid var(--border)", minWidth: 0 }}>
-      <div ref={tabs} key={props.courseId} className={s.paneEnter} role="tablist" aria-label="Exams" style={{ flex: "0 1 auto", minWidth: 0, alignSelf: "stretch", display: "flex", gap: 28, overflowX: "auto", overflowY: "hidden" }}>
+    <div className={cn(s.areaTabs, "flex items-center gap-4 border-b border-b-border min-w-0")}>
+      <div ref={tabs} key={props.courseId} className={cn(s.paneEnter, "flex-[0_1_auto] min-w-0 self-stretch flex gap-7 overflow-x-auto overflow-y-hidden")} role="tablist" aria-label="Exams">
         {exams.map(e => <ExamTab key={e.id} exam={e} on={e.id === exam?.id} today={today} onSelect={() => props.onSelectExam(e.id)} />)}
         {exams.length === 0 && (
-          <button onClick={onAdd} style={{ alignSelf: "center", padding: "0 0 8px", border: 0, background: "transparent", ...INHERIT_FONT, fontSize: "var(--fs-md)", fontWeight: 600, color: "var(--brand-forest)", cursor: "pointer" }}>+ Add Exam or Deadline</button>
+          <button onClick={onAdd} className="self-center pt-0 px-0 pb-2 border-0 bg-transparent [font-family:inherit] [font-style:inherit] [line-height:inherit] text-md font-semibold text-brand-forest cursor-pointer">+ Add Exam or Deadline</button>
         )}
       </div>
       {/* Add an exam right where the exams are listed: the "+" follows the
@@ -152,12 +144,11 @@ export function ExamTabs(props: ExamTabsProps) {
       {/* Upcoming deadlines sit with the exams, at the end of the exam row.
           The gear that opened the dates editor is gone: "+" adds a date, and
           the bell's "Manage Dates" opens the editor to change or remove one. */}
-      <div style={{ display: "flex", alignItems: "center", gap: 2, flexShrink: 0, marginLeft: "auto", paddingBottom: 6 }}>
-        <div style={{ position: "relative" }}>
-          <button className={s.hoverIcon} onClick={() => onBell(!bellOpen)} aria-label={`Upcoming deadlines, ${soon} this week`} aria-expanded={bellOpen} title="Upcoming deadlines"
-            style={{ ...ICON_BUTTON, background: bellOpen ? "var(--bg-soft)" : "transparent" }}>
+      <div className="flex items-center gap-0.5 shrink-0 ml-auto pb-1.5">
+        <div className="relative">
+          <button className={cn(s.hoverIcon, "w-9 h-9 flex items-center justify-center border-0 rounded-sm text-text-dim cursor-pointer relative", bellOpen ? "[background:var(--bg-soft)]" : "[background:transparent]")} onClick={() => onBell(!bellOpen)} aria-label={`Upcoming deadlines, ${soon} this week`} aria-expanded={bellOpen} title="Upcoming deadlines">
             <Icon name="nofitication" size={18} />
-            {soon > 0 && <span style={BADGE}>{soon}</span>}
+            {soon > 0 && <span className="absolute top-0.5 right-px min-w-4 h-4 py-0 px-1 box-border rounded-[8px] bg-err text-accent-fg text-2xs font-semibold flex items-center justify-center [box-shadow:0_0_0_2px_var(--bg)]">{soon}</span>}
           </button>
           {bellOpen && (
             <DeadlinesPanel upcoming={props.upcoming} courseLabel={props.courseLabel} today={today}

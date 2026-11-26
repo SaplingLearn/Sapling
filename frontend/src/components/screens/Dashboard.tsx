@@ -31,7 +31,7 @@ import type { GraphNode as ApiNode, GraphEdge as ApiEdge } from "@/lib/types";
 import { apiToGraphNode, learnHrefForNode, type GraphNode, type GraphEdge } from "@/lib/data";
 import { IS_TEST_MODE, now } from "@/lib/testMode";
 import { buildQuizHref } from "@/lib/quiz/source";
-import { DashboardActions, PANEL_GAP, TodayColumn } from "../dashboard/TodayColumn";
+import { DashboardActions, TodayColumn } from "../dashboard/TodayColumn";
 import {
   activeDaysFrom,
   assignmentUrgency,
@@ -39,17 +39,11 @@ import {
   streakMarkState,
   type DashboardStats,
 } from "../dashboard/dashboardModel";
+import { cn } from "@/lib/cn";
 
 /** An assignment known to have a due date (gradebook/Gradescope items may not). */
 type DatedAssignment = Assignment & { due_date: string };
 const hasDueDate = (a: Assignment): a is DatedAssignment => !!a.due_date;
-
-// The desktop greeting's line box. The header actions centre on this line,
-// so both read from one place.
-const HERO_PAD_TOP = 6;
-const HERO_PAD_BOTTOM = 18;
-const HERO_FONT = 42;
-const HERO_LINE_HEIGHT = 1.15;
 
 const QUOTES = [
   "Learning is the only thing the mind never exhausts, never fears, and never regrets. — da Vinci",
@@ -135,13 +129,7 @@ function Typewriter({
       {shown}
       <span
         aria-hidden
-        style={{
-          opacity: done ? 0 : cursorOn ? 1 : 0,
-          marginLeft: 1,
-          color: "var(--accent)",
-          fontWeight: 200,
-          transition: "opacity 0.1s",
-        }}
+        className="ml-px text-accent font-extralight [transition:opacity_0.1s]" style={{ opacity: done ? 0 : cursorOn ? 1 : 0 }}
       >
         |
       </span>
@@ -482,7 +470,7 @@ export function Dashboard() {
 
   if (loading && !courses.length) {
     return (
-      <div style={{ minHeight: "100%", display: "flex", flexDirection: "column" }}>
+      <div className="min-h-full flex flex-col">
         <DashboardSkeleton />
       </div>
     );
@@ -492,8 +480,8 @@ export function Dashboard() {
     return (
       <div>
         <TopBar title="Couldn't load dashboard" />
-        <div style={{ padding: 32, fontSize: 13 }}>
-          <div style={{ color: "var(--err)", marginBottom: 10 }}>{loadError}</div>
+        <div className="p-8 text-md">
+          <div className="text-err mb-2.5">{loadError}</div>
           <button className="btn btn--primary" onClick={load}>Retry</button>
         </div>
       </div>
@@ -504,7 +492,7 @@ export function Dashboard() {
   const highlightId = suggestNode?.id;
 
   const graphPanel = (
-    <div style={{ display: "flex", flexDirection: "column", gap: 16, minWidth: 0, flex: 1, minHeight: 0 }}>
+    <div className="flex flex-col gap-4 min-w-0 flex-1 min-h-0">
       {renderGraphCard({
         stats,
         nodes,
@@ -518,7 +506,7 @@ export function Dashboard() {
           // The card grows with its content, so the graph's own height counts:
           // at least 420, as it has always opened (the pre-measurement guess
           // used to hold the card at that height).
-          <div ref={gRefCb} style={{ position: "relative", flex: 1, minHeight: 420 }}>
+          <div ref={gRefCb} className="relative flex-1 min-h-105">
             {size && renderGraphLayers({
               nodes,
               edges,
@@ -596,14 +584,7 @@ export function Dashboard() {
 
   const mainColumn = (
     <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        gap: 14,
-        minWidth: 0,
-        minHeight: 0,
-        alignSelf: "stretch",
-      }}
+      className="flex flex-col gap-3.5 min-w-0 min-h-0 self-stretch"
     >
       {heroBlock}
       {renderMobileMetaRow({ isMobile, navigate })}
@@ -613,7 +594,7 @@ export function Dashboard() {
   );
 
   return (
-    <div style={{ minHeight: "100%", display: "flex", flexDirection: "column" }}>
+    <div className="min-h-full flex flex-col">
       {isMobile && useLegacyPanels && renderMobileTabs({ mobileTab, setMobileTab })}
 
       {useLegacyPanels ? (
@@ -639,7 +620,7 @@ export function Dashboard() {
           }),
         })
       ) : isMobile ? (
-        <div style={{ padding: "8px 20px 16px", display: "grid", gap: 16, gridTemplateColumns: "1fr", alignItems: "start" }}>
+        <div className="pt-2 px-5 pb-4 grid gap-4 grid-cols-[1fr] [align-items:start]">
           {mainColumn}
           {rightPanel}
         </div>
@@ -647,34 +628,26 @@ export function Dashboard() {
         // Desktop sidebar layout: the greeting and the actions share one header
         // row, so the graph and the right column start on the same line and
         // stretch to the same bottom edge.
-        <div style={{ padding: "18px 32px 24px", display: "flex", flexDirection: "column", gap: 14, flex: 1, minHeight: 0 }}>
-          <div style={{ display: "flex", alignItems: "stretch", justifyContent: "space-between", gap: 16 }}>
-            <div style={{ minWidth: 0 }}>{heroBlock}</div>
+        <div className="pt-4.5 px-8 pb-6 flex flex-col gap-3.5 flex-1 min-h-0">
+          <div className="flex items-stretch justify-between gap-4">
+            <div className="min-w-0">{heroBlock}</div>
             {/* Bottom-aligned with the quote: both sides of the header end on
                 one line, the same distance above the cards. */}
             <div
-              style={{
-                paddingBottom: HERO_PAD_BOTTOM,
-                display: "flex", alignItems: "flex-end", flexShrink: 0,
-              }}
+              className="pb-4.5 flex items-end shrink-0"
             >
               <DashboardActions navigate={navigate} />
             </div>
           </div>
           {suggestBlock}
           <div
-            style={{
-              display: "grid", gap: PANEL_GAP,
-              gridTemplateColumns: "minmax(0, 1fr) minmax(280px, 360px)",
-              alignItems: "stretch", flex: 1, minHeight: 0,
-            }}
+            className="grid gap-4 grid-cols-[minmax(0,_1fr)_minmax(280px,_360px)] items-stretch flex-1 min-h-0"
           >
             {graphPanel}
             {rightPanel}
           </div>
         </div>
       )}
-
 
       {fullscreen && renderFullscreenOverlay({
         nodes,
@@ -716,22 +689,16 @@ function renderGraphCard({
     // height the grid row decides (courses + upcoming stacked on the
     // left determines the row height via align-items: stretch).
     <div
-      className="card"
-      style={{
-        padding: 0, overflow: "hidden", position: "relative",
-        minHeight: 420,
-        display: "flex", flexDirection: "column",
-        flex: 1,
-      }}
+      className="card p-0 overflow-hidden relative min-h-105 flex flex-col flex-1"
     >
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 22px", borderBottom: "1px solid var(--border)" }}>
+      <div className="flex items-center justify-between py-4 px-5.5 border-b border-b-border">
         <div>
           <div className="label-micro">Your knowledge graph</div>
-          <div className="h-serif" style={{ fontSize: 20, marginTop: 2 }}>
+          <div className="h-serif text-[20px] mt-0.5">
             {stats.total || nodes.filter((n) => !n.is_subject_root).length} concepts across {scopedCourses.length} courses
           </div>
         </div>
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+        <div className="flex gap-2.5 flex-wrap items-center">
           {useLegacyPanels && scopedCourses.slice(0, 5).map((c) => {
             const lit = (keyHoverCourse ?? graphHoverCourse ?? zoomedCourse) === c.course_id;
             return (
@@ -747,13 +714,9 @@ function renderGraphCard({
                 onFocus={() => setKeyHoverCourse(c.course_id)}
                 onBlur={() => setKeyHoverCourse(null)}
                 onClick={() => zoomToCourse(c.course_id)}
-                style={{
-                  display: "flex", alignItems: "center", gap: 6, fontSize: 11,
-                  color: lit ? "var(--text)" : "var(--text-dim)", fontWeight: lit ? 600 : 400,
-                  background: "transparent", border: 0, padding: "2px 4px", cursor: "pointer", fontFamily: "inherit",
-                }}
+                className={cn("flex items-center gap-1.5 text-xs bg-transparent border-0 py-0.5 px-1 cursor-pointer [font-family:inherit]", lit ? "text-text" : "text-text-dim", lit ? "font-semibold" : "font-normal")}
               >
-                <span style={{ width: 10, height: 10, borderRadius: "50%", background: c.color || "var(--accent)" }} />
+                <span className="w-2.5 h-2.5 rounded-[50%]" style={{ background: c.color || "var(--accent)" }} />
                 {c.course_code || c.course_name}
               </button>
             );
@@ -831,40 +794,17 @@ function renderHeroBlock({
 }) {
   return (
     <div
-      style={{
-        textAlign: centered ? "center" : "left",
-        padding: isMobile ? "14px 4px 14px" : `${HERO_PAD_TOP}px 0 ${HERO_PAD_BOTTOM}px`,
-      }}
+      className={cn(centered ? "text-center" : "text-left", isMobile ? "py-3.5 px-1" : "pt-1.5 px-0 pb-4.5")}
     >
       <h1
-        className="h-serif"
-        style={{
-          margin: 0,
-          fontSize: isMobile ? 34 : HERO_FONT,
-          fontWeight: 600,
-          color: "var(--text)",
-          letterSpacing: "-0.02em",
-          lineHeight: HERO_LINE_HEIGHT,
-        }}
+        className={cn("h-serif", "m-0 font-semibold text-text tracking-[-0.02em] leading-[1.15]", isMobile ? "text-[34px]" : "text-[42px]")}
       >
         <Typewriter text={greetingText} onDone={onGreetingDone} />
       </h1>
       {quote && (
         <p
           aria-hidden={!greetingDone}
-          className="body-serif"
-          style={{
-            margin: centered ? "8px auto 0" : "8px 0 0",
-            maxWidth: 640,
-            fontSize: 14,
-            fontStyle: "italic",
-            color: "var(--text-dim)",
-            lineHeight: 1.55,
-            opacity: greetingDone ? 1 : 0,
-            transform: greetingDone ? "translateY(0)" : "translateY(-6px)",
-            transition:
-              "opacity 0.55s var(--ease) 0.15s, transform 0.55s var(--ease) 0.15s",
-          }}
+          className={cn("body-serif", "max-w-160 text-base italic text-text-dim leading-[1.55] [transition:opacity_0.55s_var(--ease)_0.15s,_transform_0.55s_var(--ease)_0.15s]", centered ? "mt-2 mx-auto mb-0" : "mt-2 mx-0 mb-0", greetingDone ? "opacity-100" : "opacity-0", greetingDone ? "[transform:translateY(0)]" : "[transform:translateY(-6px)]")}
         >
           "{quote}"
         </p>
@@ -876,20 +816,13 @@ function renderHeroBlock({
 function renderMobileMetaRow({ isMobile, navigate }: { isMobile: boolean; navigate: Navigate }) {
   if (!isMobile) return null;
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+    <div className="flex flex-col gap-2">
       <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "flex-end",
-          gap: 8,
-          flexWrap: "wrap",
-        }}
+        className="flex items-center justify-end gap-2 flex-wrap"
       >
         <button
-          className="btn btn--sm btn--primary"
+          className="btn btn--sm btn--primary py-[7px] px-3.5 text-sm"
           onClick={() => navigate("/learn")}
-          style={{ padding: "7px 14px", fontSize: 12 }}
         >
           <Icon name="sparkle" size={13} /> Start learning
         </button>
@@ -907,11 +840,11 @@ function renderSuggestCard({
 }) {
   if (!node) return null;
   return (
-    <div className="card fade-in" style={{ padding: "14px 18px", display: "flex", gap: 14, alignItems: "center", borderColor: "var(--accent-border)", background: "var(--accent-soft)" }}>
+    <div className="card fade-in py-3.5 px-4.5 flex gap-3.5 items-center border-accent-border [background:var(--accent-soft)]">
       <Icon name="sparkle" size={16} />
-      <div style={{ flex: 1, fontSize: 13 }}>
+      <div className="flex-1 text-md">
         <strong>Try this next:</strong> {node.name}
-        {node.subject && <span style={{ color: "var(--text-dim)" }}> · {node.subject}</span>}
+        {node.subject && <span className="text-text-dim"> · {node.subject}</span>}
       </div>
       <button
         className="btn btn--sm btn--primary"
@@ -936,18 +869,12 @@ function renderMobileTabs({
   setMobileTab: (t: "courses" | "stats") => void;
 }) {
   return (
-    <div style={{ display: "flex", gap: 6, padding: "14px 20px 0" }}>
+    <div className="flex gap-1.5 pt-3.5 px-5 pb-0">
       {(["courses", "stats"] as const).map(t => (
         <button
           key={t}
           onClick={() => setMobileTab(t)}
-          style={{
-            flex: 1, padding: "8px 12px", borderRadius: "var(--r-sm)",
-            background: mobileTab === t ? "var(--accent-soft)" : "var(--bg-panel)",
-            color: mobileTab === t ? "var(--accent)" : "var(--text-dim)",
-            border: "1px solid var(--border)", fontSize: 12, fontWeight: 600,
-            textTransform: "capitalize",
-          }}
+          className={cn("flex-1 py-2 px-3 rounded-sm border border-border text-sm font-semibold capitalize", mobileTab === t ? "bg-accent-soft" : "bg-bg-panel", mobileTab === t ? "text-accent" : "text-text-dim")}
         >
           {t === "courses" ? "My Courses" : "Stats & More"}
         </button>
@@ -971,14 +898,7 @@ function renderLegacyGrid({
 }) {
   return (
     <div
-      style={{
-        padding: isMobile ? "8px 20px 16px" : "18px 32px 24px",
-        display: "grid", gap: 16,
-        gridTemplateColumns: isMobile ? "1fr" : "minmax(240px, 280px) minmax(0, 1fr) minmax(240px, 300px)",
-        alignItems: isMobile ? "start" : "stretch",
-        flex: isMobile ? "0 0 auto" : 1,
-        minHeight: 0,
-      }}
+      className={cn("grid gap-4 min-h-0", isMobile ? "pt-2 px-5 pb-4" : "pt-4.5 px-8 pb-6", isMobile ? "grid-cols-[1fr]" : "grid-cols-[minmax(240px,_280px)_minmax(0,_1fr)_minmax(240px,_300px)]", isMobile ? "[align-items:start]" : "items-stretch", isMobile ? "flex-[0_0_auto]" : "flex-1")}
     >
       {isMobile ? (
         mobileTab === "courses" ? (
@@ -1013,18 +933,18 @@ function renderLegacyCoursesPanel({
   navigate: Navigate;
 }) {
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 16, minWidth: 0 }}>
-      <div className="card" style={{ padding: "var(--pad-lg)" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+    <div className="flex flex-col gap-4 min-w-0">
+      <div className="card p-(--pad-lg)">
+        <div className="flex justify-between items-center mb-3">
           <div className="label-micro">My courses</div>
           <button className="btn btn--ghost btn--sm" onClick={onOpenCourses}>
             <Icon name="cog" size={12} /> Courses & Semesters
           </button>
         </div>
         {!hasCourses ? (
-          <div style={{ fontSize: 12, color: "var(--text-muted)" }}>No enrolled courses yet.</div>
+          <div className="text-sm text-text-muted">No enrolled courses yet.</div>
         ) : courseProgress.length === 0 ? (
-          <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
+          <div className="text-sm text-text-muted">
             Nothing enrolled this semester.
           </div>
         ) : null}
@@ -1033,21 +953,21 @@ function renderLegacyCoursesPanel({
         ))}
       </div>
 
-      <div className="card" style={{ padding: "var(--pad-lg)" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+      <div className="card p-(--pad-lg)">
+        <div className="flex justify-between items-center mb-3">
           <div className="label-micro">Upcoming</div>
           <button className="btn btn--ghost btn--sm" onClick={() => navigate("/calendar")}>Calendar →</button>
         </div>
         {assignments.length === 0 && (
-          <div style={{ fontSize: 12, color: "var(--text-muted)" }}>No upcoming assignments.</div>
+          <div className="text-sm text-text-muted">No upcoming assignments.</div>
         )}
         {assignments.slice(0, 4).map((a) => {
           const { chipClass, label } = assignmentUrgency(a.due_date, now());
           return (
-            <div key={a.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 0", borderBottom: "1px solid var(--border)" }}>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 13, fontWeight: 500 }}>{a.title}</div>
-                <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
+            <div key={a.id} className="flex items-center gap-3 py-2 px-0 border-b border-b-border">
+              <div className="flex-1 min-w-0">
+                <div className="text-md font-medium">{a.title}</div>
+                <div className="text-xs text-text-muted">
                   {a.course_name || "—"} · {a.assignment_type || "task"}
                 </div>
               </div>
@@ -1072,36 +992,35 @@ function renderLegacyRightPanel({
   navigate: Navigate;
 }) {
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 16, minWidth: 0 }}>
+    <div className="flex flex-col gap-4 min-w-0">
       {!isMobile && (
-        <div style={{ padding: "0 2px", display: "flex", justifyContent: "flex-end", gap: 8, minHeight: 28 }}>
+        <div className="py-0 px-0.5 flex justify-end gap-2 min-h-7">
           <button
-            className="btn btn--sm btn--primary"
+            className="btn btn--sm btn--primary py-[7px] px-3.5 text-sm"
             onClick={() => navigate("/learn")}
-            style={{ padding: "7px 14px", fontSize: 12 }}
           >
             <Icon name="sparkle" size={13} /> Start learning
           </button>
         </div>
       )}
-      <div className="card" style={{ padding: "var(--pad-lg)" }}>
-        <div className="label-micro" style={{ marginBottom: 8 }}>This week</div>
-        <div className="body-serif" style={{ fontSize: 16, marginBottom: 14, color: "var(--text)" }}>
+      <div className="card p-(--pad-lg)">
+        <div className="label-micro mb-2">This week</div>
+        <div className="body-serif text-lg mb-3.5 text-text">
           {stats.streak > 0 ? (
-            <>You&apos;re on a <span className="h-serif" style={{ color: "var(--warn)", fontWeight: 600 }}>{stats.streak}-day</span> streak.</>
+            <>You&apos;re on a <span className="h-serif text-warn font-semibold">{stats.streak}-day</span> streak.</>
           ) : (
             <>Ready when you are. Open any session to begin a streak.</>
           )}
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 6 }}>
+        <div className="grid grid-cols-[repeat(7,_1fr)] gap-1.5">
           {weekDays.map(d => {
             const key = d.toISOString().slice(0, 10);
             return (
-              <div key={key} style={{ textAlign: "center" }}>
-                <div className="label-micro" style={{ fontSize: 11 }}>
+              <div key={key} className="text-center">
+                <div className="label-micro text-xs">
                   {d.toLocaleDateString("en-US", { weekday: "short" }).slice(0, 2)}
                 </div>
-                <div style={{ marginTop: 6, display: "grid", placeItems: "center" }}>
+                <div className="mt-1.5 grid place-items-center">
                   <StreakMark state={streakMarkState(d, today, activeDays)} day={d.getDate()} />
                 </div>
               </div>
@@ -1110,7 +1029,7 @@ function renderLegacyRightPanel({
         </div>
       </div>
 
-      <div className="card" style={{ padding: 0, display: "grid", gridTemplateColumns: "1fr 1fr" }}>
+      <div className="card p-0 grid grid-cols-[1fr_1fr]">
         <MiniStat
           label="Mastered"
           value={stats.mastered}
@@ -1123,34 +1042,30 @@ function renderLegacyRightPanel({
         />
       </div>
 
-      <div className="card" style={{ padding: "var(--pad-lg)" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+      <div className="card p-(--pad-lg)">
+        <div className="flex justify-between items-center mb-3">
           <div className="label-micro">Learn next</div>
           <button className="btn btn--ghost btn--sm" onClick={() => navigate("/tree")}>Tree →</button>
         </div>
         {recommendations.length === 0 && (
-          <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Nothing suggested yet — start a session.</div>
+          <div className="text-sm text-text-muted">Nothing suggested yet — start a session.</div>
         )}
         {recommendations.slice(0, 3).map((r, i) => (
           <button
             key={`${r.concept_name}-${i}`}
             onClick={() => navigate(`/learn?topic=${encodeURIComponent(r.concept_name)}&mode=socratic`)}
-            style={{
-              display: "flex", alignItems: "flex-start", gap: 10, width: "100%",
-              padding: "10px 12px", borderRadius: "var(--r-md)",
-              background: "var(--bg-subtle)", marginBottom: 6, textAlign: "left",
-            }}
+            className="flex items-start gap-2.5 w-full py-2.5 px-3 rounded-md bg-bg-subtle mb-1.5 text-left"
           >
             <Icon name="sparkle" size={14} />
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 13, fontWeight: 600 }}>{r.concept_name}</div>
-              {r.reason && <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{r.reason}</div>}
+            <div className="flex-1 min-w-0">
+              <div className="text-md font-semibold">{r.concept_name}</div>
+              {r.reason && <div className="text-xs text-text-muted">{r.reason}</div>}
             </div>
             <Icon name="chev" size={12} />
           </button>
         ))}
-        <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
-          <button className="btn btn--sm" style={{ flex: 1 }} onClick={() => navigate("/social")}>
+        <div className="flex gap-1.5 mt-2.5">
+          <button className="btn btn--sm flex-1" onClick={() => navigate("/social")}>
             <Icon name="users" size={12} /> Study room
           </button>
         </div>
@@ -1170,15 +1085,12 @@ function renderFullscreenOverlay({
 }) {
   return (
     <div
-      style={{
-        position: "fixed", inset: 0, zIndex: 150, background: "var(--bg)",
-        display: "flex", flexDirection: "column",
-      }}
+      className="fixed inset-0 z-150 bg-bg flex flex-col"
     >
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 20px", borderBottom: "1px solid var(--border)" }}>
+      <div className="flex justify-between items-center py-3.5 px-5 border-b border-b-border">
         <div>
           <div className="label-micro">Knowledge graph — fullscreen</div>
-          <div className="h-serif" style={{ fontSize: 18 }}>Press Esc to exit</div>
+          <div className="h-serif text-xl">Press Esc to exit</div>
         </div>
         <button className="btn btn--ghost btn--sm" onClick={onClose}>
           <Icon name="x" size={14} />
@@ -1203,7 +1115,7 @@ function FullscreenGraph({
 }) {
   const [ref, size] = useGraphSize<HTMLDivElement>({ w: 1200, h: 700 });
   return (
-    <div ref={ref} style={{ flex: 1, position: "relative" }}>
+    <div ref={ref} className="flex-1 relative">
       {size && (
         <KnowledgeGraph
           legible
@@ -1218,7 +1130,6 @@ function FullscreenGraph({
     </div>
   );
 }
-
 
 // One "My courses" line: colour dot, course code, mastery percentage and the
 // four-segment mastery bar.
@@ -1242,42 +1153,31 @@ function CourseProgressRow({
 
   const body = (
     <>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12, marginBottom: 4 }}>
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-          <span style={{ width: 10, height: 10, borderRadius: "50%", background: baseColor, flexShrink: 0 }} />
-          <strong style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+      <div className="flex justify-between items-center text-sm mb-1">
+        <span className="inline-flex items-center gap-2 min-w-0">
+          <span className="w-2.5 h-2.5 rounded-[50%] shrink-0" style={{ background: baseColor }} />
+          <strong className="overflow-hidden text-ellipsis whitespace-nowrap">
             {course.course_code || course.course_name}
           </strong>
         </span>
-        <span className="mono" style={{ color: "var(--text-dim)", fontSize: 11, flexShrink: 0, marginLeft: 8 }}>
+        <span className="mono text-text-dim text-xs shrink-0 ml-2">
           {pct}%
         </span>
       </div>
       {total > 0 ? (
         <div
-          style={{
-            display: "flex",
-            height: 8,
-            background: "var(--bg-soft)",
-            borderRadius: "var(--r-full)",
-            overflow: "hidden",
-          }}
+          className="flex h-2 bg-bg-soft rounded-[var(--r-full)] overflow-hidden"
           title={segments.filter(s => s.count > 0).map(s => `${s.label}: ${s.count}`).join(" · ")}
         >
           {segments.map((s) => s.count > 0 && (
             <div
               key={s.key}
-              style={{
-                width: `${(s.count / total) * 100}%`,
-                background: s.color,
-                opacity: s.opacity,
-                transition: "width var(--dur) var(--ease)",
-              }}
+              className="[transition:width_var(--dur)_var(--ease)]" style={{ width: `${(s.count / total) * 100}%`, background: s.color, opacity: s.opacity }}
             />
           ))}
         </div>
       ) : (
-        <div style={{ height: 8, background: "var(--bg-soft)", borderRadius: "var(--r-full)" }} />
+        <div className="h-2 bg-bg-soft rounded-[var(--r-full)]" />
       )}
     </>
   );

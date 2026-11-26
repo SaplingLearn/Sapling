@@ -13,6 +13,7 @@ import userEvent from "@testing-library/user-event";
 import fixture from "@/test-utils/crisisSupport.json";
 import { crisisSupportOf, type CrisisSupport } from "@/lib/crisisSupport";
 import { CrisisSupportCard, CrisisSupportDialog, useCrisisSupport } from "./CrisisSupportCard";
+import { twStyle } from "@/test-utils/twStyle";
 
 const support = crisisSupportOf(fixture) as CrisisSupport;
 
@@ -56,7 +57,7 @@ describe("CrisisSupportCard", () => {
     render(<CrisisSupportCard support={support} />);
     const card = screen.getByTestId("crisis-support-card");
     expect(screen.queryByRole("alert")).toBeNull();
-    expect(card.getAttribute("style")).toContain("var(--info-soft)");
+    expect(twStyle(card).cssText).toContain("var(--info-soft)");
     expect(card.outerHTML).not.toMatch(/--err|--warn|crimson/);
   });
 

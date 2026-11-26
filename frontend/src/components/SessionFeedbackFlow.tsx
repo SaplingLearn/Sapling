@@ -3,9 +3,10 @@
 import React, { useCallback, useState } from "react";
 import { submitFeedback } from "@/lib/api";
 import { useUser } from "@/context/UserContext";
-import { useScrollLock } from "@/lib/useScrollLock";
+import Dialog from "@/components/Dialog";
 import { useToast } from "./ToastProvider";
 import { LONG_TEXT_MAX } from "@/lib/inputLimits";
+import { cn } from "@/lib/cn";
 
 export const SESSION_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000;
 export const SESSION_COOLDOWN_KEY = "sapling_last_session_feedback";
@@ -58,7 +59,6 @@ export function SessionFeedbackFlow({ open, context, onClose }: SessionFeedbackF
   const [comment, setComment] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
-  useScrollLock(open);
 
   const close = useCallback((recordCooldown: boolean) => {
     if (recordCooldown) localStorage.setItem(SESSION_COOLDOWN_KEY, String(Date.now()));
@@ -96,63 +96,41 @@ export function SessionFeedbackFlow({ open, context, onClose }: SessionFeedbackF
     }
   };
 
-  if (!open) return null;
-
   const canNext = step === 0 ? rating !== null : true;
 
   return (
-    <div
-      style={{
-        position: "fixed",
-        inset: 0,
-        background: "rgba(0,0,0,0.4)",
-        zIndex: 200,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-      }}
-      onClick={() => !submitting && close(true)}
+    <Dialog
+      open={open}
+      onClose={() => { if (!submitting) close(true); }}
+      labelledBy="session-feedback-title"
+      width="440px"
+      zIndex={200}
+      showCloseButton={false}
     >
-      <div
-        onClick={e => e.stopPropagation()}
-        style={{
-          width: 440,
-          maxWidth: "calc(100vw - 32px)",
-          background: "var(--bg-panel)",
-          borderRadius: "var(--r-lg)",
-          padding: 28,
-          boxShadow: "var(--shadow-lg)",
-        }}
-      >
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-          <div className="h-serif" style={{ fontSize: 22 }}>How was that session?</div>
+        <div className="flex justify-between items-center mb-3">
+          <div id="session-feedback-title" className="h-serif text-2xl">How was that session?</div>
           <button className="btn btn--ghost btn--sm" onClick={() => close(true)} aria-label="Close">×</button>
         </div>
 
         {context?.topic && (
-          <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 16 }}>
-            on <span style={{ color: "var(--text-dim)" }}>{context.topic}</span>
+          <div className="text-sm text-text-muted mb-4">
+            on <span className="text-text-dim">{context.topic}</span>
           </div>
         )}
 
-        <div style={{ display: "flex", gap: 6, marginBottom: 20 }}>
+        <div className="flex gap-1.5 mb-5">
           {[0, 1, 2, 3].map(i => (
             <div
               key={i}
-              style={{
-                flex: 1,
-                height: 4,
-                borderRadius: "var(--r-full)",
-                background: i <= step ? "var(--accent)" : "var(--bg-soft)",
-              }}
+              className={cn("flex-1 h-1 rounded-[var(--r-full)]", i <= step ? "bg-accent" : "bg-bg-soft")}
             />
           ))}
         </div>
 
         {step === 0 && (
           <div>
-            <div className="label-micro" style={{ marginBottom: 8 }}>How did it feel?</div>
-            <div style={{ display: "flex", gap: 8, justifyContent: "space-between" }}>
+            <div className="label-micro mb-2">How did it feel?</div>
+            <div className="flex gap-2 justify-between">
               {RATINGS.map(r => {
                 const sel = rating === r.value;
                 return (
@@ -161,18 +139,7 @@ export function SessionFeedbackFlow({ open, context, onClose }: SessionFeedbackF
                     onClick={() => setRating(r.value)}
                     aria-label={r.label}
                     title={r.label}
-                    className="h-serif"
-                    style={{
-                      flex: 1,
-                      padding: "14px 4px",
-                      fontSize: 20,
-                      fontWeight: 500,
-                      color: sel ? "var(--accent)" : "var(--text-dim)",
-                      borderRadius: "var(--r-md)",
-                      border: `1px solid ${sel ? "var(--accent-border)" : "var(--border)"}`,
-                      background: sel ? "var(--accent-soft)" : "var(--bg-panel)",
-                      transition: "background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease)",
-                    }}
+                    className={cn(cn("h-serif", "flex-1 py-3.5 px-1 text-[20px] font-medium rounded-md [transition:background_var(--dur-fast)_var(--ease),_color_var(--dur-fast)_var(--ease)]", sel ? "text-accent" : "text-text-dim", sel ? "bg-accent-soft" : "bg-bg-panel"), sel ? "border border-accent-border" : "border border-border")}
                   >
                     {r.value}
                   </button>
@@ -202,28 +169,19 @@ export function SessionFeedbackFlow({ open, context, onClose }: SessionFeedbackF
 
         {step === 3 && (
           <div>
-            <div className="label-micro" style={{ marginBottom: 6 }}>Anything else to add?</div>
+            <div className="label-micro mb-1.5">Anything else to add?</div>
             <textarea
               value={comment}
               maxLength={LONG_TEXT_MAX}
               onChange={e => setComment(e.target.value)}
               placeholder="Optional note…"
               rows={4}
-              style={{
-                width: "100%",
-                padding: "10px 14px",
-                fontSize: 13,
-                border: "1px solid var(--border)",
-                borderRadius: "var(--r-sm)",
-                background: "var(--bg-input)",
-                fontFamily: "inherit",
-                resize: "vertical",
-              }}
+              className="w-full py-2.5 px-3.5 text-md border border-border rounded-sm bg-bg-input [font-family:inherit] resize-y"
             />
           </div>
         )}
 
-        <div style={{ display: "flex", gap: 8, justifyContent: "space-between", marginTop: 18 }}>
+        <div className="flex gap-2 justify-between mt-4.5">
           {step > 0 ? (
             <button className="btn" onClick={() => setStep(step - 1)} disabled={submitting}>Back</button>
           ) : (
@@ -239,8 +197,7 @@ export function SessionFeedbackFlow({ open, context, onClose }: SessionFeedbackF
             </button>
           )}
         </div>
-      </div>
-    </div>
+    </Dialog>
   );
 }
 
@@ -249,22 +206,15 @@ function ChipPicker({ label, options, selected, onToggle }: {
 }) {
   return (
     <div>
-      <div className="label-micro" style={{ marginBottom: 8 }}>{label}</div>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+      <div className="label-micro mb-2">{label}</div>
+      <div className="flex flex-wrap gap-1.5">
         {options.map(o => {
           const isSel = selected.includes(o);
           return (
             <button
               key={o}
               onClick={() => onToggle(o)}
-              style={{
-                padding: "5px 11px",
-                fontSize: 12,
-                borderRadius: "var(--r-full)",
-                background: isSel ? "var(--accent-soft)" : "transparent",
-                color: isSel ? "var(--accent)" : "var(--text-dim)",
-                border: `1px solid ${isSel ? "var(--accent-border)" : "var(--border)"}`,
-              }}
+              className={cn(cn("py-[5px] px-[11px] text-sm rounded-[var(--r-full)]", isSel ? "bg-accent-soft" : "bg-transparent", isSel ? "text-accent" : "text-text-dim"), isSel ? "border border-accent-border" : "border border-border")}
             >
               {o}
             </button>

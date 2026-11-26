@@ -14,9 +14,9 @@ import {
 } from "@/lib/api";
 import type { AllowlistEmail, EmailStatus, InviteStatus } from "@/lib/types";
 
-import { fieldStyle, tdStyle, thStyle } from "./adminStyles";
 import { EmailNotConfiguredBanner } from "./EmailNotConfiguredBanner";
 import { OpenAccessBanner } from "./OpenAccessBanner";
+import { cn } from "@/lib/cn";
 
 /**
  * Admin "Allowlist" tab: the waitlist, filterable by status, with per-row and
@@ -75,7 +75,7 @@ const INVITE_CHIP: Record<InviteStatus, { cls: string; title: string }> = {
 };
 
 function InviteChip({ status, email }: { status: InviteStatus | null | undefined; email: string }) {
-  if (!status) return <span style={{ color: "var(--text-muted)" }}>—</span>;
+  if (!status) return <span className="text-text-muted">—</span>;
   const meta = INVITE_CHIP[status] ?? { cls: "chip", title: status };
   return (
     <span className={meta.cls} title={meta.title} data-testid={`allowlist-invite-${email}`}>
@@ -264,16 +264,16 @@ export function AllowlistTab() {
     <>
       <OpenAccessBanner onChanged={setGateOpen} />
       {notConfigured && <EmailNotConfiguredBanner />}
-      <div className="body-serif" style={{ fontSize: 15, marginBottom: 22, color: "var(--text-dim)", maxWidth: 680 }}>
-        <span style={{ color: "var(--text)" }}>{emails.length}</span> address{emails.length === 1 ? "" : "es"} · {" "}
-        <span style={{ color: "var(--accent)" }}>{emails.filter((e) => e.approved_at).length} approved</span> · {counts.joined} joined
-        {counts.signup > 0 && <> · <span style={{ color: "var(--warn)" }}>{counts.signup} unapproved signups</span></>}
+      <div className="body-serif text-[15px] mb-5.5 text-text-dim max-w-170">
+        <span className="text-text">{emails.length}</span> address{emails.length === 1 ? "" : "es"} · {" "}
+        <span className="text-accent">{emails.filter((e) => e.approved_at).length} approved</span> · {counts.joined} joined
+        {counts.signup > 0 && <> · <span className="text-warn">{counts.signup} unapproved signups</span></>}
         {counts.open > 0 && <> · {counts.open} {gateOpen === null ? "joined through open access" : gateOpen ? "in through open access" : "waiting after open access"}</>}
       </div>
-      <div className="card" style={{ padding: 0 }}>
-        <div style={{ display: "flex", flexWrap: "wrap", padding: "12px 16px", borderBottom: "1px solid var(--border)", alignItems: "center", gap: 12 }}>
-          <div style={{ position: "relative", flex: 1, minWidth: 180, maxWidth: 300 }}>
-            <div style={{ position: "absolute", left: 10, top: 8, color: "var(--text-muted)" }}>
+      <div className="card p-0">
+        <div className="flex flex-wrap py-3 px-4 border-b border-b-border items-center gap-3">
+          <div className="relative flex-1 min-w-45 max-w-75">
+            <div className="absolute left-2.5 top-2 text-text-muted">
               <Icon name="search" size={14} />
             </div>
             <input
@@ -281,11 +281,7 @@ export function AllowlistTab() {
               placeholder="Search emails…"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              style={{
-                width: "100%", padding: "7px 12px 7px 32px",
-                border: "1px solid var(--border)", borderRadius: "var(--r-sm)",
-                fontSize: 13, background: "var(--bg-input)",
-              }}
+              className="w-full pt-[7px] pr-3 pb-[7px] pl-8 border border-border rounded-sm text-md bg-bg-input"
             />
           </div>
           <input
@@ -294,7 +290,7 @@ export function AllowlistTab() {
             value={newEmail}
             onChange={(e) => setNewEmail(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") void add(); }}
-            style={{ ...fieldStyle, maxWidth: 240 }}
+            className="w-full py-[7px] px-2.5 border border-border rounded-sm text-md bg-bg-input [font-family:inherit] max-w-60"
           />
           <button
             type="button"
@@ -306,16 +302,15 @@ export function AllowlistTab() {
             {busy ? "Adding…" : "Allowlist"}
           </button>
         </div>
-        <div style={{ display: "flex", flexWrap: "wrap", padding: "10px 16px", borderBottom: "1px solid var(--border)", alignItems: "center", gap: 6 }}>
+        <div className="flex flex-wrap py-2.5 px-4 border-b border-b-border items-center gap-1.5">
           {FILTERS.map((f) => (
             <button
               key={f.key}
               type="button"
               data-testid={`allowlist-filter-${f.key}`}
               aria-pressed={filter === f.key}
-              className={`chip ${filter === f.key ? "chip--accent" : ""}`}
+              className={cn(`chip ${filter === f.key ? "chip--accent" : ""}`, "cursor-pointer", filter === f.key ? "" : "border border-dashed border-border")}
               onClick={() => setFilter(f.key)}
-              style={{ cursor: "pointer", border: filter === f.key ? undefined : "1px dashed var(--border)" }}
             >
               {f.label} ({counts[f.key]})
             </button>
@@ -324,13 +319,12 @@ export function AllowlistTab() {
             type="button"
             data-testid="allowlist-filter-non-bu"
             aria-pressed={nonBuOnly}
-            className={`chip ${nonBuOnly ? "chip--accent" : ""}`}
+            className={cn(`chip ${nonBuOnly ? "chip--accent" : ""}`, "cursor-pointer", nonBuOnly ? "" : "border border-dashed border-border")}
             onClick={() => setNonBuOnly((v) => !v)}
-            style={{ cursor: "pointer", border: nonBuOnly ? undefined : "1px dashed var(--border)" }}
           >
             Non-BU ({nonBuCount})
           </button>
-          <div style={{ flex: 1 }} />
+          <div className="flex-1" />
           <button
             type="button"
             data-testid="allowlist-bulk-approve"
@@ -341,10 +335,10 @@ export function AllowlistTab() {
             Approve selected ({n})
           </button>
         </div>
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+        <table className="w-full border-collapse text-md">
           <thead>
-            <tr style={{ background: "var(--bg-subtle)" }}>
-              <th style={{ ...thStyle, width: 36, paddingRight: 0 }}>
+            <tr className="bg-bg-subtle">
+              <th className="text-left py-2.5 px-4 font-medium text-md text-text-muted w-9 pr-0">
                 <input
                   ref={headerBoxRef}
                   type="checkbox"
@@ -356,14 +350,14 @@ export function AllowlistTab() {
                 />
               </th>
               {["Email", "Status", "Invite", "Submitted", "Approved", "Joined", ""].map((h) => (
-                <th key={h} style={thStyle}>{h}</th>
+                <th key={h} className="text-left py-2.5 px-4 font-medium text-md text-text-muted">{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
             {filtered.length === 0 && (
               <tr>
-                <td colSpan={8} style={{ padding: 28, textAlign: "center", color: "var(--text-muted)" }}>
+                <td colSpan={8} className="p-7 text-center text-text-muted">
                   No addresses match.
                 </td>
               </tr>
@@ -372,8 +366,8 @@ export function AllowlistTab() {
               const st = rowStatus(row);
               const chip = statusChip(st, gateOpen);
               return (
-                <tr key={row.id} data-testid={`allowlist-row-${row.email}`} style={{ borderTop: "1px solid var(--border)" }}>
-                  <td style={{ ...tdStyle, paddingRight: 0 }}>
+                <tr key={row.id} data-testid={`allowlist-row-${row.email}`} className="border-t border-t-border">
+                  <td className="py-2.5 px-4 pr-0">
                     {approvable(row) && (
                       <input
                         type="checkbox"
@@ -384,20 +378,19 @@ export function AllowlistTab() {
                       />
                     )}
                   </td>
-                  <td style={{ ...tdStyle, fontWeight: 500 }}>
+                  <td className="py-2.5 px-4 font-medium">
                     {row.email}
                     {row.school_email === false && (
                       <span
-                        className="chip"
+                        className="chip ml-2"
                         data-testid={`allowlist-non-bu-${row.email}`}
                         title="Not a BU address. A label only: it decides nothing."
-                        style={{ marginLeft: 8 }}
                       >
                         Non-BU
                       </span>
                     )}
                   </td>
-                  <td style={tdStyle}>
+                  <td className="py-2.5 px-4">
                     <span
                       className={`chip ${chip.cls}`}
                       title={chip.title}
@@ -406,13 +399,13 @@ export function AllowlistTab() {
                       {chip.label}
                     </span>
                   </td>
-                  <td style={tdStyle}>
+                  <td className="py-2.5 px-4">
                     <InviteChip status={row.invite_status} email={row.email} />
                   </td>
-                  <td style={{ ...tdStyle, color: "var(--text-muted)" }}>{fmtDate(row.created_at)}</td>
-                  <td style={{ ...tdStyle, color: "var(--text-muted)" }}>{fmtDate(row.approved_at)}</td>
-                  <td style={{ ...tdStyle, color: "var(--text-muted)" }}>{fmtDate(row.joined_at)}</td>
-                  <td style={{ ...tdStyle, textAlign: "right" }}>
+                  <td className="py-2.5 px-4 text-text-muted">{fmtDate(row.created_at)}</td>
+                  <td className="py-2.5 px-4 text-text-muted">{fmtDate(row.approved_at)}</td>
+                  <td className="py-2.5 px-4 text-text-muted">{fmtDate(row.joined_at)}</td>
+                  <td className="py-2.5 px-4 text-right">
                     <button
                       type="button"
                       data-testid={`allowlist-toggle-${row.email}`}
@@ -435,7 +428,7 @@ export function AllowlistTab() {
         size="sm"
         title={`Approve ${n} ${n === 1 ? "person" : "people"}?`}
       >
-        <p className="flags__confirm-text" style={{ marginBottom: 12 }} data-testid="allowlist-bulk-confirm-text">
+        <p className="flags__confirm-text mb-3" data-testid="allowlist-bulk-confirm-text">
           {notConfigured
             ? "The approvals will be saved, but no emails go out until Resend is configured."
             : gateOpen !== false && selectedRows.some((e) => e.open_access)
@@ -445,10 +438,7 @@ export function AllowlistTab() {
               : `Each gets a “you’re in” email.`}
         </p>
         <ul
-          style={{
-            margin: "0 0 20px", padding: "8px 12px", listStyle: "none", maxHeight: 160, overflowY: "auto",
-            border: "1px solid var(--border)", borderRadius: "var(--r-sm)", fontSize: 12, color: "var(--text-dim)",
-          }}
+          className="mt-0 mx-0 mb-5 py-2 px-3 list-none max-h-40 overflow-y-auto border border-border rounded-sm text-sm text-text-dim"
         >
           {selectedRows.map((e) => <li key={e.id}>{e.email}</li>)}
         </ul>

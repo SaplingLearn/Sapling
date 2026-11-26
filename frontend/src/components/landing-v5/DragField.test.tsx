@@ -25,12 +25,13 @@ import { ActIngest } from './ActIngest';
 import { ActTutor } from './ActTutor';
 import { DragField } from './DragField';
 import { Faq } from './Faq';
+import { twStyle } from "@/test-utils/twStyle";
 
 /** The act's stage: the sticky child of the section that carries the copy. */
 function stageOf(section: HTMLElement): HTMLElement {
   const stage = Array.from(section.children).find(
     (el) => el instanceof HTMLElement
-      && el.style.position === 'sticky'
+      && twStyle(el).position === 'sticky'
       && !el.querySelector('[data-dragnode]')
       && !el.classList.contains('drag-field'),
   );
@@ -62,10 +63,10 @@ describe.each(ACTS)('%s', (_name, renderAct) => {
 
     // Same three properties, same values. If the stage's height ever changes,
     // this fails and the field has to follow it.
-    expect(field.style.position).toBe(stage.style.position);
-    expect(field.style.top).toBe(stage.style.top);
-    expect(field.style.height).toBe(stage.style.height);
-    expect(field.style.height).toBe('100vh');
+    expect(twStyle(field).position).toBe(twStyle(stage).position);
+    expect(twStyle(field).top).toBe(twStyle(stage).top);
+    expect(twStyle(field).height).toBe(twStyle(stage).height);
+    expect(field).toHaveTwStyle({ height: '100vh' });
   });
 
   it('keeps the field out of the act\'s flow', () => {
@@ -75,8 +76,8 @@ describe.each(ACTS)('%s', (_name, renderAct) => {
 
     // A 100vh sticky box in flow would push the stage down by a viewport.
     // The absolute wrapper is what buys the geometry without the shove.
-    expect(wrapper.style.position).toBe('absolute');
-    expect(wrapper.style.inset).toBe('0px');
+    expect(wrapper).toHaveTwStyle({ position: 'absolute' });
+    expect(wrapper).toHaveTwStyle({ inset: '0px' });
     expect(field.parentElement?.parentElement?.tagName).toBe('SECTION');
   });
 
@@ -98,9 +99,9 @@ describe('static sections', () => {
       // An absolutely positioned 100vh child extends the document's
       // scrollHeight, which on the last section is a viewport of dead scroll
       // below the footer.
-      expect(field.style.position).toBe('absolute');
-      expect(field.style.inset).toBe('0px');
-      expect(field.style.height).toBe('');
+      expect(field).toHaveTwStyle({ position: 'absolute' });
+      expect(field).toHaveTwStyle({ inset: '0px' });
+      expect(twStyle(field).height).toBe('');
     },
   );
 
@@ -127,9 +128,9 @@ describe('static sections', () => {
     const { container } = render(<Faq openFaq={-1} onToggle={() => {}} />);
     const tracked = container.querySelectorAll<HTMLElement>('[data-drag-anchor="faq"]');
     expect(tracked).toHaveLength(1);
-    expect(tracked[0].style.position).toBe('sticky');
+    expect(tracked[0]).toHaveTwStyle({ position: 'sticky' });
     // A static tracked element would make the whole mechanism a no-op.
-    expect(tracked[0].style.top).toBe('110px');
+    expect(tracked[0]).toHaveTwStyle({ top: '110px' });
   });
 
   it('still hands every cluster to the sim', () => {

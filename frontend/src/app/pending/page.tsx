@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, type CSSProperties } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useUser } from '@/context/UserContext';
 import { getPendingStatus, joinWaitlistFromPending } from '@/lib/api';
@@ -38,24 +38,6 @@ type View =
   | { kind: 'status'; email: string; onWaitlist: boolean; justJoined: boolean }
   // #757: approved since this sign-in — only a fresh sign-in can let them in.
   | { kind: 'approved'; email: string };
-
-const bodyText: CSSProperties = {
-  fontSize: 15,
-  color: 'var(--text-dim)',
-  lineHeight: 1.6,
-  margin: 0,
-  maxWidth: 340,
-};
-
-const emailStyle: CSSProperties = { color: 'var(--text)', fontWeight: 600 };
-
-const stateStyle: CSSProperties = {
-  display: 'flex',
-  flexDirection: 'column',
-  alignItems: 'center',
-  gap: 16,
-  width: '100%',
-};
 
 export default function PendingPage() {
   const router = useRouter();
@@ -146,37 +128,17 @@ export default function PendingPage() {
   return (
     <div
       data-testid="pending-gate"
-      style={{
-        minHeight: '100vh',
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        background: 'radial-gradient(ellipse at top, var(--accent-soft) 0%, var(--bg) 60%)',
-        color: 'var(--text)',
-        padding: 24,
-      }}
+      className="min-h-screen flex flex-col items-center justify-center [background:radial-gradient(ellipse_at_top,_var(--accent-soft)_0%,_var(--bg)_60%)] text-text p-6"
     >
       <div
-        className="card pending-card"
-        style={{
-          // .card carries bg/border/radius/shadow but no padding — that part
-          // is the caller's job.
-          padding: 'var(--pad-lg)',
-          maxWidth: 440,
-          width: '100%',
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          textAlign: 'center',
-        }}
+        className="card pending-card p-(--pad-lg) max-w-110 w-full flex flex-col items-center text-center"
       >
         <svg
           width="56"
           height="56"
           viewBox="0 0 24 24"
           aria-hidden="true"
-          style={{ marginBottom: 20 }}
+          className="mb-5"
         >
           <path
             className="pending-sprout-body"
@@ -211,33 +173,25 @@ export default function PendingPage() {
         </svg>
 
         <h1
-          className="h-serif pending-step anim-d1"
-          style={{ fontSize: 30, fontWeight: 500, marginBottom: 10 }}
+          className="h-serif pending-step anim-d1 text-4xl font-medium mb-2.5"
         >
           {view.kind === 'approved' ? "You're approved" : "Your account isn't approved yet"}
         </h1>
 
         <div
-          className="pending-step anim-d2"
+          className="pending-step anim-d2 flex flex-col items-center gap-4 w-full min-h-18 mb-6"
           aria-live="polite"
           aria-busy={view.kind === 'loading'}
-          style={{
-            ...stateStyle,
-            // Reserve about three lines of copy so the card doesn't jump when
-            // the status lands.
-            minHeight: 72,
-            marginBottom: 24,
-          }}
         >
           {view.kind === 'loading' && (
-            <p data-testid="pending-loading" style={bodyText}>
+            <p data-testid="pending-loading" className="text-[15px] text-text-dim leading-[1.6] m-0 max-w-85">
               Checking your account…
             </p>
           )}
 
           {view.kind === 'unknown' && (
-            <div data-testid="pending-unknown" style={stateStyle}>
-              <p style={bodyText}>
+            <div data-testid="pending-unknown" className="flex flex-col items-center gap-4 w-full">
+              <p className="text-[15px] text-text-dim leading-[1.6] m-0 max-w-85">
                 Sapling is letting students in a few at a time. Sign in again to see
                 where you stand, or join the waitlist from the home page.
               </p>
@@ -252,9 +206,9 @@ export default function PendingPage() {
           )}
 
           {view.kind === 'approved' && (
-            <div data-testid="pending-approved" style={stateStyle}>
-              <p style={bodyText}>
-                <strong style={emailStyle}>{view.email}</strong> has been let in. Sign in
+            <div data-testid="pending-approved" className="flex flex-col items-center gap-4 w-full">
+              <p className="text-[15px] text-text-dim leading-[1.6] m-0 max-w-85">
+                <strong className="text-text font-semibold">{view.email}</strong> has been let in. Sign in
                 again to start using Sapling.
               </p>
               <button
@@ -268,10 +222,10 @@ export default function PendingPage() {
           )}
 
           {view.kind === 'status' && !view.onWaitlist && (
-            <div data-testid="pending-not-on-waitlist" style={stateStyle}>
-              <p style={bodyText}>
+            <div data-testid="pending-not-on-waitlist" className="flex flex-col items-center gap-4 w-full">
+              <p className="text-[15px] text-text-dim leading-[1.6] m-0 max-w-85">
                 Sapling is letting students in a few at a time. Join the waitlist as{' '}
-                <strong style={emailStyle}>{view.email}</strong>{' '}
+                <strong className="text-text font-semibold">{view.email}</strong>{' '}
                 and we&apos;ll email you
                 when your spot opens.
               </p>
@@ -288,7 +242,7 @@ export default function PendingPage() {
                 <p
                   data-testid="pending-join-error"
                   role="alert"
-                  style={{ ...bodyText, fontSize: 13, color: 'var(--err)' }}
+                  className="leading-[1.6] m-0 max-w-85 text-md text-err"
                 >
                   We couldn&apos;t add you to the waitlist. Please try again.
                 </p>
@@ -297,18 +251,18 @@ export default function PendingPage() {
           )}
 
           {view.kind === 'status' && view.onWaitlist && (
-            <div data-testid="pending-on-waitlist" style={stateStyle}>
+            <div data-testid="pending-on-waitlist" className="flex flex-col items-center gap-4 w-full">
               {view.justJoined && (
                 <p
                   data-testid="pending-joined"
                   role="status"
-                  style={{ ...bodyText, fontSize: 13, fontWeight: 600, color: 'var(--accent)' }}
+                  className="leading-[1.6] m-0 max-w-85 text-md font-semibold text-accent"
                 >
                   Done. You&apos;re on the waitlist.
                 </p>
               )}
-              <p style={bodyText}>
-                You&apos;re on the waitlist as <strong style={emailStyle}>{view.email}</strong>.
+              <p className="text-[15px] text-text-dim leading-[1.6] m-0 max-w-85">
+                You&apos;re on the waitlist as <strong className="text-text font-semibold">{view.email}</strong>.
                 We&apos;ll email you when your spot opens.
               </p>
             </div>

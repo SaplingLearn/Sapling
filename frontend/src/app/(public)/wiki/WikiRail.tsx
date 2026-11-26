@@ -2,8 +2,8 @@
 
 import * as React from 'react';
 import { WIKI_TOC } from '@/lib/landing/companionContent';
-import { DISPLAY, INK } from '@/lib/landing/companionType';
 import { useWikiSearch } from './WikiSearch';
+import { cn } from "@/lib/cn";
 
 /**
  * The wiki's contents rail, with a scrollspy.
@@ -29,50 +29,6 @@ import { useWikiSearch } from './WikiSearch';
  * view lands just below this and reads as current the moment it arrives.
  */
 const SPY_LINE = 100;
-
-/**
- * The rail's two tiers, sized so the parent outranks its children.
- *
- * The group labels used to be 10px tracked-out mono uppercase in the muted
- * grey — the masthead's eyebrow treatment, borrowed. An eyebrow is a kicker
- * above a title, though, and these are titles: "Learn" governs the six links
- * under it. Set as an eyebrow it came out SMALLER and lighter than the links
- * it governs, which is the hierarchy upside down, and five of them down a
- * narrow column read as five captions rather than five groups.
- *
- * So the label takes the page's own heading voice — Playfair in ink, at the
- * size the article column's h2 would be if you shrank it to rail scale — and
- * the links stay DM Sans in the muted grey. The rail then mirrors the page
- * beside it: display face for a heading, quieter face for its contents. Size
- * and colour both run the same direction, so the tier is legible at a glance
- * without a rule or an indent to prop it up.
- *
- * Both tiers are sized in `vh` between a floor and the size they had, so
- * eighteen links and five group labels fit the viewport instead of scrolling
- * inside the rail. The rail was a flat 781px, which fits a 900px-tall window
- * and nothing shorter — it scrolled on 1366x768 and 1280x720, two of the
- * commonest laptop screens there are, and the scroll was inside a sticky box
- * most people never think to scroll. The heading voice above survives the
- * shrink: the label stays Playfair in ink, it just stops being 18px on a
- * screen that cannot afford 18px.
- *
- * `lineHeight` is pinned rather than left at `normal`: the leading is most of
- * a row's height at these sizes, and an unpinned one varies by font and
- * platform, so the fit would have been measured on one machine and wrong on
- * the next.
- */
-const GROUP: React.CSSProperties = {
-  fontFamily: DISPLAY, fontWeight: 500,
-  fontSize: 'clamp(14px, 2vh, 18px)', lineHeight: 1.25,
-  letterSpacing: '-0.01em', color: INK,
-  marginBottom: 'clamp(2px, 0.85vh, 8px)',
-};
-const LINK: React.CSSProperties = {
-  fontSize: 'clamp(10.5px, 1.5vh, 13.5px)',
-  padding: 'clamp(1px, 0.4vh, 4px) 0',
-  lineHeight: 1.25,
-  transition: 'color 120ms ease',
-};
 
 export function WikiRail() {
   const [active, setActive] = React.useState('');
@@ -139,21 +95,10 @@ export function WikiRail() {
        `.wiki-rail` carries the narrow-width collapse — see globals.css. */
     <nav
       aria-label="Contents"
-      className="wiki-rail"
-      style={{
-        position: 'sticky', top: 84, maxHeight: 'calc(100vh - 100px)',
-        overflowY: 'auto', display: 'flex', flexDirection: 'column',
-        gap: 'clamp(5px, 1.9vh, 18px)',
-        /* Both columns start at the same grid row top, but they set Playfair
-           at different sizes, so their first lines sit at different baselines
-           — the rail's label floated 14px above the section heading beside
-           it. Half the leading difference between 18/1.25 here and the h2's
-           32/1.2, so the page opens on one line across both columns. */
-        paddingTop: 14,
-      }}
+      className="wiki-rail sticky top-21 max-h-[calc(100vh_-_100px)] overflow-y-auto flex flex-col gap-[clamp(5px,_1.9vh,_18px)] pt-3.5"
     >
       {groups.length === 0 && (
-        <span style={{ fontSize: 13, color: '#8d866f', lineHeight: 1.5 }}>
+        <span className="text-md text-[#8d866f] leading-[1.5]">
           Nothing matches “{query.trim()}”.
         </span>
       )}
@@ -168,9 +113,9 @@ export function WikiRail() {
           key={section.group}
           role="group"
           aria-labelledby={`rail-${section.group.toLowerCase()}`}
-          style={{ display: 'flex', flexDirection: 'column', gap: 2 }}
+          className="flex flex-col gap-0.5"
         >
-          <span id={`rail-${section.group.toLowerCase()}`} style={GROUP}>
+          <span id={`rail-${section.group.toLowerCase()}`} className="font-display font-medium text-[length:clamp(14px,_2vh,_18px)] leading-[1.25] tracking-[-0.01em] text-ink-800 mb-[clamp(2px,_0.85vh,_8px)]">
             {section.group}
           </span>
           {section.items.map((t) => {
@@ -182,9 +127,8 @@ export function WikiRail() {
                 /* The active link drops `cp-navlink` on purpose: that class
                    hovers to near-black, which would pull a current section
                    out of the accent colour under the cursor. */
-                className={on ? undefined : 'cp-navlink'}
+                className={cn(on ? undefined : 'cp-navlink', "text-[length:clamp(10.5px,_1.5vh,_13.5px)] py-[clamp(1px,_0.4vh,_4px)] px-0 leading-[1.25] [transition:color_120ms_ease]", on ? "text-brand-forest" : "text-text-muted", on ? "font-semibold" : "font-normal")}
                 aria-current={on ? 'true' : undefined}
-                style={{ ...LINK, color: on ? 'var(--brand-forest)' : '#6f6857', fontWeight: on ? 600 : 400 }}
               >
                 {t.title}
               </a>

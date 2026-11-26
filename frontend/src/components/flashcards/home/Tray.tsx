@@ -13,6 +13,7 @@ import { SET_NAME_MAX } from "@/lib/flashcardSetsApi";
 import { PER_CONCEPT, overSetLimit, plural, setLimitNote, type Draft, type PerConcept, type SaveState } from "./flashcardsModel";
 import h from "./home.module.css";
 import { startStatus, type StartProgress } from "./useStart";
+import { cn } from "@/lib/cn";
 
 export interface TrayProps {
   draft: Draft;
@@ -62,8 +63,7 @@ export function Tray(props: TrayProps) {
       <div className={h.trayHead}>
         <span className="label-micro">Your selection</span>
         {/* Always rendered so the head keeps its height; hidden with nothing ticked. */}
-        <button type="button" className={`btn btn--ghost btn--sm ${h.trayClear}`} onClick={props.onClear}
-          style={{ visibility: summary.concepts ? "visible" : "hidden" }}>
+        <button type="button" className={cn(`btn btn--ghost btn--sm ${h.trayClear}`, summary.concepts ? "visible" : "invisible")} onClick={props.onClear}>
           Clear
         </button>
       </div>

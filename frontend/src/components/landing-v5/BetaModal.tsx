@@ -28,10 +28,7 @@ import { useEffect, useId, useRef, useState } from 'react';
 import { SaplingWordmark } from '@/components/SaplingWordmark';
 import { HeroCard } from '@/components/marketing/HeroCard';
 import { useScrollLock } from '@/lib/useScrollLock';
-
-const SERIF = "var(--font-aleo), 'Aleo', Georgia, serif";
-const LABEL = "var(--font-suse), 'SUSE', system-ui, sans-serif";
-const SANS = "var(--font-suse), 'SUSE', system-ui, sans-serif";
+import { cn } from "@/lib/cn";
 
 /** The three perks of being on the list, each with its own accent dot.
  *  Waitlist perks first, the newsletter's last — phones show only the
@@ -102,8 +99,7 @@ export function BetaModal({
   if (subscribed) {
     return (
       <div
-        className={`fixed inset-0 z-[100] flex items-center justify-center p-4 ${closing ? 'modal-backdrop-out' : 'modal-backdrop-in'}`}
-        style={{ background: 'rgba(12,18,26,0.45)' }}
+        className={cn(`fixed inset-0 z-[100] flex items-center justify-center p-4 ${closing ? 'modal-backdrop-out' : 'modal-backdrop-in'}`, "[background:rgba(12,18,26,0.45)]")}
         onClick={dismiss}
       >
         <HeroCard
@@ -114,10 +110,10 @@ export function BetaModal({
           aria-modal="true"
           aria-labelledby={labelId}
         >
-          <h2 id={labelId} style={{ margin: 0, fontFamily: SERIF, fontSize: 32, lineHeight: 1.1, fontWeight: 600, letterSpacing: '-0.02em', color: '#1a1a1a' }}>
-            You&apos;re on the <span style={{ fontStyle: 'italic', color: 'var(--brand-forest)' }}>waitlist.</span>
+          <h2 id={labelId} className="m-0 font-serif text-5xl leading-[1.1] font-semibold tracking-[-0.02em] text-[#1a1a1a]">
+            You&apos;re on the <span className="italic text-brand-forest">waitlist.</span>
           </h2>
-          <p style={{ margin: '10px 0 0', fontSize: 17, color: '#4b5563', fontStyle: 'italic' }}>
+          <p className="mt-2.5 mx-0 mb-0 text-[17px] text-[#4b5563] italic">
             We&apos;ll be in touch when your spot opens - The Team
           </p>
         </HeroCard>
@@ -128,8 +124,7 @@ export function BetaModal({
   // ── form ──
   return (
     <div
-      className={`fixed inset-0 z-[100] flex items-center justify-center p-4 ${closing ? 'modal-backdrop-out' : 'modal-backdrop-in'}`}
-      style={{ background: 'rgba(12,18,26,0.65)' }}
+      className={cn(`fixed inset-0 z-[100] flex items-center justify-center p-4 ${closing ? 'modal-backdrop-out' : 'modal-backdrop-in'}`, "[background:rgba(12,18,26,0.65)]")}
       onClick={dismiss}
     >
       <HeroCard
@@ -147,96 +142,83 @@ export function BetaModal({
         <button
           onClick={dismiss}
           aria-label="Close dialog"
-          className="ld-betaclose"
-          style={{
-            position: 'absolute', top: 18, right: 18, zIndex: 10,
-            width: 32, height: 32, borderRadius: 16,
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            color: '#4b5563', fontSize: 20, lineHeight: 1,
-            background: 'none', border: 'none', cursor: 'pointer',
-            transition: 'background 0.15s',
-          }}
+          className="ld-betaclose absolute top-4.5 right-4.5 z-10 w-8 h-8 rounded-lg flex items-center justify-center text-[#4b5563] text-[20px] leading-none [background:none] border-0 cursor-pointer [transition:background_0.15s]"
         >
           ×
         </button>
 
         {/* ── left: brand + beta tester role ── */}
-        <div className="hero-surface ld-beta-left" style={{ padding: '36px 36px 32px', display: 'flex', flexDirection: 'column', gap: 22 }}>
+        <div className="hero-surface ld-beta-left pt-9 px-9 pb-8 flex flex-col gap-5.5">
           <SaplingWordmark width={88} />
 
           <div>
-            <div style={{ fontFamily: LABEL, fontSize: 12.5, color: '#6b7280', marginBottom: 14, fontWeight: 600 }}>
+            <div className="font-sans text-[12.5px] text-[#6b7280] mb-3.5 font-semibold">
               Early access
             </div>
-            <h2 style={{ margin: 0, fontFamily: SERIF, fontSize: 44, lineHeight: 1.05, fontWeight: 700, color: '#1a1a1a', letterSpacing: '-0.02em' }}>
+            <h2 className="m-0 font-serif text-[44px] leading-[1.05] font-bold text-[#1a1a1a] tracking-[-0.02em]">
               Learn early.<br />
-              <span style={{ fontStyle: 'italic', fontWeight: 800, color: 'var(--brand-forest)', fontFamily: SERIF }}>Grow</span> with us.
+              <span className="italic font-extrabold text-brand-forest font-serif">Grow</span> with us.
             </h2>
-            <p style={{ margin: '14px 0 0', fontSize: 13.5, lineHeight: 1.55, color: '#4b5563', maxWidth: 360 }}>
+            <p className="mt-3.5 mx-0 mb-0 text-[13.5px] leading-[1.55] text-[#4b5563] max-w-90">
               Sapling is being built alongside the students who&apos;ll use it most. Join early and
               help shape what it becomes.
             </p>
           </div>
 
-          <div style={{ height: 1, flexShrink: 0, background: 'rgba(107,114,128,0.15)' }} />
+          <div className="h-px shrink-0 bg-[rgba(107,114,128,0.15)]" />
 
           <div>
-            <h3 style={{ margin: '0 0 12px', fontFamily: SERIF, fontSize: 22, fontWeight: 700, color: '#1a1a1a', letterSpacing: '-0.02em' }}>
+            <h3 className="mt-0 mx-0 mb-3 font-serif text-2xl font-bold text-[#1a1a1a] tracking-[-0.02em]">
               Beta Tester Role
             </h3>
-            <div className="rounded-xl px-4 py-3 flex items-center gap-3" style={{ background: '#EBE6DC', border: '1px solid #D6D1C6' }}>
-              <div className="w-11 h-11 rounded-full flex items-center justify-center flex-shrink-0" style={{ background: '#374151', fontSize: 13, fontWeight: 700, color: '#fff', fontFamily: SANS, letterSpacing: '0.02em' }}>
+            <div className="rounded-[12px] px-4 py-3 flex items-center gap-3 bg-ink-100 border border-[#D6D1C6]">
+              <div className="w-11 h-11 rounded-full flex items-center justify-center flex-shrink-0 bg-[#374151] text-md font-bold text-accent-fg font-sans tracking-[0.02em]">
                 AK
               </div>
               <div className="flex flex-col gap-1">
                 <div className="flex items-center gap-2 flex-wrap">
-                  <span style={{ fontSize: 14, fontWeight: 700, color: '#111827', fontFamily: SANS }}>Alex Kim</span>
+                  <span className="text-base font-bold text-[#111827] font-sans">Alex Kim</span>
                   <span
-                    style={{
-                      display: 'inline-flex', alignItems: 'center', padding: '3px 10px',
-                      borderRadius: 9999, fontSize: 12, fontWeight: 500, fontFamily: LABEL,
-                      
-                      background: 'rgba(212,175,55,0.08)', color: '#C9A227',
-                      border: '1.5px solid rgba(212,175,55,0.55)' }}
+                    className="inline-flex items-center py-[3px] px-2.5 rounded-full text-sm font-medium font-sans bg-[rgba(212,175,55,0.08)] text-[#C9A227] border-[1.5px] border-[rgba(212,175,55,0.55)]"
                   >
                     Beta Tester
                   </span>
                 </div>
-                <span style={{ fontSize: 11, color: '#9CA3AF', fontFamily: SANS }}>@alexkim</span>
+                <span className="text-xs text-[#9CA3AF] font-sans">@alexkim</span>
               </div>
             </div>
-            <p style={{ margin: '10px 2px 0', fontSize: 12.5, color: '#6b7280', lineHeight: 1.5, fontStyle: 'italic' }}>
+            <p className="mt-2.5 mx-0.5 mb-0 text-[12.5px] text-[#6b7280] leading-[1.5] italic">
               The first mark on your profile. A permanent record of showing up early.
             </p>
           </div>
         </div>
 
-        <div className="ld-beta-divider" style={{ background: 'rgba(107,114,128,0.15)', alignSelf: 'stretch' }} />
+        <div className="ld-beta-divider [background:rgba(107,114,128,0.15)] self-stretch" />
 
         {/* ── right: newsletter ── */}
-        <div className="hero-surface ld-beta-right" style={{ padding: '44px 42px 36px', display: 'flex', flexDirection: 'column' }}>
-          <h1 id={labelId} className="ld-beta-title" style={{ margin: 0, fontFamily: SERIF, fontSize: 48, lineHeight: 1.05, fontWeight: 600, letterSpacing: '-0.025em', color: '#1a1a1a' }}>
+        <div className="hero-surface ld-beta-right pt-11 px-10.5 pb-9 flex flex-col">
+          <h1 id={labelId} className="ld-beta-title m-0 font-serif text-[48px] leading-[1.05] font-semibold tracking-[-0.025em] text-[#1a1a1a]">
             Join the{' '}
-            <span style={{ fontStyle: 'italic', fontWeight: 800, color: 'var(--brand-forest)', fontFamily: SERIF }}>Waitlist</span>
+            <span className="italic font-extrabold text-brand-forest font-serif">Waitlist</span>
           </h1>
-          <p style={{ margin: '14px 0 0', fontSize: 15, color: '#4b5563', lineHeight: 1.5 }}>
+          <p className="mt-3.5 mx-0 mb-0 text-[15px] text-[#4b5563] leading-[1.5]">
             Leave your email and we&apos;ll let you in when your spot opens.
           </p>
 
-          <div className="ld-beta-perks" style={{ marginTop: 28, display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <div className="ld-beta-perks mt-7 flex flex-col gap-4">
             {PERKS.map(({ dot, title, body }) => (
-              <div key={title} style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: 12, alignItems: 'start' }}>
-                <div style={{ width: 8, height: 8, borderRadius: '50%', background: dot, boxShadow: `0 0 8px ${dot}55`, marginTop: 8, flexShrink: 0 }} />
+              <div key={title} className="grid grid-cols-[auto_1fr] gap-3 [align-items:start]">
+                <div className="w-2 h-2 rounded-[50%] mt-2 shrink-0" style={{ background: dot, boxShadow: `0 0 8px ${dot}55` }} />
                 <div>
-                  <div style={{ fontSize: 14.5, fontWeight: 600, color: '#1a1a1a', marginBottom: 2, letterSpacing: '-0.005em' }}>{title}</div>
-                  <div style={{ fontSize: 12.5, color: '#4b5563', lineHeight: 1.5 }}>{body}</div>
+                  <div className="text-[14.5px] font-semibold text-[#1a1a1a] mb-0.5 tracking-[-0.005em]">{title}</div>
+                  <div className="text-[12.5px] text-[#4b5563] leading-[1.5]">{body}</div>
                 </div>
               </div>
             ))}
           </div>
 
-          <form onSubmit={submit} className="ld-beta-form" style={{ marginTop: 'auto', paddingTop: 28 }}>
-            <div style={{ position: 'relative', marginBottom: 10 }}>
+          <form onSubmit={submit} className="ld-beta-form mt-auto pt-7">
+            <div className="relative mb-2.5">
               <input
                 ref={inputRef}
                 type="text"
@@ -245,17 +227,10 @@ export function BetaModal({
                 value={email}
                 disabled={subscribing}
                 onChange={(e) => { onEmail(e.target.value); setLocalError(''); }}
-                className="ld-betainput"
-                style={{
-                  width: '100%', padding: '14px 16px', fontSize: 14,
-                  background: 'rgba(255,255,255,0.6)',
-                  border: '1.5px solid rgba(107,114,128,0.25)', borderRadius: 10,
-                  transition: 'border-color 0.15s, box-shadow 0.15s',
-                  fontFamily: SANS, color: '#1a1a1a', boxSizing: 'border-box',
-                }}
+                className="ld-betainput w-full py-3.5 px-4 text-base [background:rgba(255,255,255,0.6)] border-[1.5px] border-[rgba(107,114,128,0.25)] rounded-md [transition:border-color_0.15s,_box-shadow_0.15s] font-sans text-[#1a1a1a] box-border"
               />
               {(localError || error) && (
-                <p role="alert" style={{ margin: '6px 0 0', fontSize: 11.5, color: '#dc2626', fontFamily: SANS }}>
+                <p role="alert" className="mt-1.5 mx-0 mb-0 text-[11.5px] text-[#dc2626] font-sans">
                   {localError || error}
                 </p>
               )}
@@ -263,20 +238,11 @@ export function BetaModal({
             <button
               type="submit"
               disabled={subscribing}
-              className="ld-betasubmit"
-              style={{
-                width: '100%', padding: '14px 16px', borderRadius: 10,
-                background: subscribing ? '#4b5563' : 'var(--brand-forest)', color: '#fff',
-                fontSize: 14, fontWeight: 600, letterSpacing: '0.02em',
-                boxShadow: '0 8px 24px rgba(68,93,34,0.3)',
-                border: 'none', cursor: subscribing ? 'default' : 'pointer',
-                transition: 'all 0.18s', display: 'flex', alignItems: 'center',
-                justifyContent: 'center', gap: 8, fontFamily: SANS,
-              }}
+              className={cn("ld-betasubmit", "w-full py-3.5 px-4 rounded-md text-accent-fg text-base font-semibold tracking-[0.02em] [box-shadow:0_8px_24px_rgba(68,93,34,0.3)] border-0 [transition:all_0.18s] flex items-center justify-center gap-2 font-sans", subscribing ? "[background:#4b5563]" : "[background:var(--brand-forest)]", subscribing ? "cursor-default" : "cursor-pointer")}
             >
-              {subscribing ? 'Planting your node…' : <>Join the Waitlist <span style={{ opacity: 0.7 }}>→</span></>}
+              {subscribing ? 'Planting your node…' : <>Join the Waitlist <span className="opacity-70">→</span></>}
             </button>
-            <p style={{ margin: '12px 0 0', fontSize: 11.5, color: '#6b7280', textAlign: 'center', lineHeight: 1.5 }}>
+            <p className="mt-3 mx-0 mb-0 text-[11.5px] text-[#6b7280] text-center leading-[1.5]">
               You&apos;ll also get our occasional newsletter while you wait.
             </p>
           </form>

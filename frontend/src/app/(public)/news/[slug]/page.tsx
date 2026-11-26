@@ -3,7 +3,6 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { CompanionShell } from '@/components/companion/CompanionShell';
 import { ArticleArt } from '@/components/journal/ArticleArt';
-import { ARTICLE, ACCENT, SERIF } from '@/lib/landing/companionType';
 import {
   JOURNAL_ARTICLES,
   dateLabel,
@@ -53,16 +52,16 @@ export async function generateMetadata({
 function Block({ block }: { block: ArticleBlock }) {
   if (block.t === 'h2') {
     return (
-      <h2 style={{ ...ARTICLE.heading, margin: '48px 0 0' }}>
+      <h2 className="font-display font-medium text-[27px] leading-[1.22] tracking-[-0.015em] text-ink-800 mt-12 mx-0 mb-0">
         {block.text}
       </h2>
     );
   }
   if (block.t === 'ul') {
     return (
-      <ul style={{ margin: '26px 0 0', paddingLeft: 26, display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <ul className="mt-6.5 mx-0 mb-0 pl-6.5 flex flex-col gap-3.5">
         {block.items.map((item) => (
-          <li key={item} style={ARTICLE.body}>
+          <li key={item} className="font-serif text-xl leading-[1.62] text-ink-600">
             {item}
           </li>
         ))}
@@ -70,7 +69,7 @@ function Block({ block }: { block: ArticleBlock }) {
     );
   }
   return (
-    <p style={{ ...ARTICLE.body, margin: '26px 0 0' }}>
+    <p className="font-serif text-xl leading-[1.62] text-ink-600 mt-6.5 mx-0 mb-0">
       {block.text}
     </p>
   );
@@ -84,31 +83,31 @@ export default async function ArticlePage({ params }: { params: Promise<{ slug: 
   return (
     <CompanionShell current="/news">
       <div>
-        <Link href="/news" className="cp-navlink" style={ARTICLE.eyebrow}>
+        <Link href="/news" className="cp-navlink font-sans text-md text-text-muted">
           ← The Journal
         </Link>
 
-        <div style={{ marginTop: 26, display: 'flex', alignItems: 'center', gap: 14, lineHeight: 1 }}>
-          <span style={{ ...ARTICLE.eyebrow, letterSpacing: '0.16em', color: ACCENT }}>{article.tag}</span>
-          <span style={{ ...ARTICLE.eyebrow, letterSpacing: '0.06em' }}>{dateLabel(article.publishedAt)}</span>
-          <span style={ARTICLE.eyebrow}>{readTime(article.body)} READ</span>
+        <div className="mt-6.5 flex items-center gap-3.5 leading-none">
+          <span className="font-sans text-md tracking-[0.16em] text-brand-forest-bright">{article.tag}</span>
+          <span className="font-sans text-md text-text-muted tracking-[0.06em]">{dateLabel(article.publishedAt)}</span>
+          <span className="font-sans text-md text-text-muted">{readTime(article.body)} READ</span>
         </div>
 
-        <h1 style={{ ...ARTICLE.title, margin: '20px 0 0' }}>
+        <h1 className="font-display font-medium text-[length:clamp(1.9rem,4vw,2.9rem)] leading-[1.12] tracking-[-0.02em] text-ink-800 mt-5 mx-0 mb-0">
           {article.title}
         </h1>
 
-        <p style={{ ...ARTICLE.deck, margin: '24px 0 0' }}>
+        <p className="font-serif italic text-[20px] leading-[1.5] text-[#57503f] mt-6 mx-0 mb-0">
           {article.deck}
         </p>
 
         {/* Full content width, flush with the body text. The 16/10 box is the
             one the cards use, so motifs crop identically on every surface. */}
-        <div style={{ position: 'relative', width: '100%', marginTop: 38, aspectRatio: '16 / 10', borderRadius: 16, overflow: 'hidden', background: '#ebe6dc', border: '1px solid rgba(42,39,31,0.10)' }}>
+        <div className="relative w-full mt-9.5 aspect-[16/10] rounded-lg overflow-hidden bg-ink-100 border border-[rgba(42,39,31,0.10)]">
           <ArticleArt art={article.art} sizes="(max-width: 940px) 100vw, 880px" priority variant="hero" />
         </div>
 
-        <div style={{ ...ARTICLE.eyebrow, margin: '32px 0 0', paddingBottom: 32, borderBottom: '1px solid rgba(42,39,31,0.12)', letterSpacing: '0.12em' }}>
+        <div className="font-sans text-md text-text-muted mt-8 mx-0 mb-0 pb-8 border-b border-b-[rgba(42,39,31,0.12)] tracking-[0.12em]">
           By the Sapling team
         </div>
 
@@ -118,11 +117,11 @@ export default async function ArticlePage({ params }: { params: Promise<{ slug: 
           ))}
         </article>
 
-        <div style={{ marginTop: 64, borderRadius: 16, background: '#faf8f3', border: '1px solid rgba(42,39,31,0.10)', padding: '28px 30px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 20, flexWrap: 'wrap' }}>
-          <p style={{ margin: 0, fontFamily: SERIF, fontSize: 17, lineHeight: 1.6, color: '#3f3b31', maxWidth: '46ch' }}>
+        <div className="mt-16 rounded-lg bg-ink-0 border border-[rgba(42,39,31,0.10)] py-7 px-7.5 flex items-center justify-between gap-5 flex-wrap">
+          <p className="m-0 font-serif text-[17px] leading-[1.6] text-ink-600 max-w-[46ch]">
             One letter a month, written by the four of us. Get the next one in your inbox.
           </p>
-          <Link href="/#newsletter" className="cp-cta" style={{ background: 'var(--brand-forest)', color: '#fff', borderRadius: 8, padding: '12px 22px', fontSize: 14, fontWeight: 600, whiteSpace: 'nowrap' }}>
+          <Link href="/#newsletter" className="cp-cta [background:var(--brand-forest)] text-accent-fg rounded-[8px] py-3 px-5.5 text-base font-semibold whitespace-nowrap">
             Get the Journal
           </Link>
         </div>
