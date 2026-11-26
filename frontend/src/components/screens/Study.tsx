@@ -30,7 +30,7 @@ import { useActiveSemester, courseInTerm } from "@/lib/useActiveSemester";
 import { getCourses, type EnrolledCourse } from "@/lib/api";
 import { StudyHub } from "../study/StudyHub";
 import { studyGuideHref } from "@/lib/toolHrefs";
-import { DueQueue } from "../learn/DueQueue";
+import { ReviewSlot } from "../learn/review/ReviewSlot";
 import { RetentionCheck } from "../learn/RetentionCheck";
 import { useLoopStatus } from "../learn/useLoopStatus";
 import { useMotionPresets } from "@/lib/motion";
@@ -153,7 +153,7 @@ function LoopReviews({ courses, retentionCourse }: { courses: EnrolledCourse[]; 
   return (
     <div className={s.shell}>
       <motion.div className={s.reviews} data-testid="study-reviews" variants={m.list.item} initial="hidden" animate="shown">
-        <DueQueue userId={userId} />
+        <ReviewSlot userId={userId} courses={courses} />
         <RetentionCheck key={userId} userId={userId} courses={courses} initialCourseId={retentionCourse} />
       </motion.div>
     </div>

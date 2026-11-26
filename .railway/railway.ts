@@ -182,6 +182,7 @@ const FLAG_KILL_SWITCHES = [
   "new_session_v2",
   "session_v2",
   "course_page_v2",
+  "review_v2",
   "quiz_planned_questions",
   "quiz_item_gates",
   "quiz_misconceptions",

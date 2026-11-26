@@ -36,7 +36,7 @@ Several flags change a prompt or an output schema, so their eval datasets must b
 
 ## Recommended order
 
-1. **Read-only, no eval needed:** `quiz_concept_plan`, `quiz_results_routing`, `item_reports`, `skill_ladder`, `hint_ladder`, `verdict_v2`, `wrapup_v2`, `plan_v2`, `new_session_v2`, `session_v2`, `course_page_v2`.
+1. **Read-only, no eval needed:** `quiz_concept_plan`, `quiz_results_routing`, `item_reports`, `skill_ladder`, `hint_ladder`, `verdict_v2`, `wrapup_v2`, `plan_v2`, `new_session_v2`, `session_v2`, `course_page_v2`, `review_v2`.
 2. **Safety, after copy review:** `crisis_support`.
 3. **Prompt changes, after their evals:** `loop_tutor_v2`, `segment_prequestion`, `self_explanation_prompts`, `quiz_planned_questions`, `quiz_item_gates`, then `quiz_misconceptions`.
 4. **Drafting changes, after their evals:** `varied_isomorphs`, `multi_concept_items`, `upload_prereq_edges`.
@@ -102,6 +102,12 @@ Several flags change a prompt or an output schema, so their eval datasets must b
 - **Before:** nothing; the calendar's upcoming read is already exempt from `hide_calendar` (the Dashboard calls it).
 - **Watch:** sessions started from Learn; Coming-up rows against assignments students have.
 - **Roll back:** off restores the course page as before.
+
+### review_v2 (Tutor redesign phase 4) — client-visible
+- **Changes:** Study's review queue is headed "Review", with a chip per course and "All courses" (picked first; a pick serves that course's queue fresh) and the item's place ("3 of 9": answered this visit plus what today's budget still covers) in place of the "N min left" chip. The retention check beside it says "Retention check ready for MA 242" when one is due for the course it shows. Frontend only; the board's "Check answer" stays the shared card's "Submit answer".
+- **Before:** nothing; the review routes already take `course_id`.
+- **Watch:** reviews answered per visit, all courses against one course.
+- **Roll back:** off restores Due today as before.
 
 ### item_reports (A113, A123) — client-visible
 - **Changes:** students can report a check question. Two reports hold it from the whole course until staff approve or retire it in the admin check-items queue.

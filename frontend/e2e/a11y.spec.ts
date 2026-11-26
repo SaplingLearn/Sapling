@@ -778,6 +778,32 @@ test("review queue: a flashcard, its answer, the rated result and a multiple-cho
   }
 });
 
+// Tutor redesign phase 4: Review in Study, rebuilt (review_v2): the title, a
+// chip per course and All courses, "n of m", and the scope picked by a chip.
+test("review queue, rebuilt: its course chips and progress (review_v2 on)", async ({ browser }) => {
+  test.skip(loopOffLane, "loop path: default lane only");
+  await setUserFlag("review_v2", USER_CAPPED, "on");
+  const { context, page } = await signIn(browser, USER_CAPPED, "Casey Cap");
+  try {
+    await page.goto("/study");
+    await expect(page.getByTestId("review-item")).toBeVisible();
+    const panel = page.getByTestId("review-due-panel");
+    await expect(panel.getByRole("heading", { name: "Review", exact: true })).toBeVisible();
+    await expect(page.getByTestId("review-budget")).toHaveCount(0);
+    await expect(page.getByTestId("review-progress")).toHaveText(/^1 of \d+$/);
+    await expectAccessible(page, "review, rebuilt: the queue over every course");
+    const chips = page.getByTestId("review-scope");
+    if (await chips.count()) {
+      await expect(chips.getByRole("radio", { name: "All courses" })).toBeChecked();
+      await chips.locator("label").first().click(); // the first course
+      await expect(chips.getByRole("radio", { name: "All courses" })).not.toBeChecked();
+      await expectAccessible(page, "review, rebuilt: one course");
+    }
+  } finally {
+    await context.close();
+  }
+});
+
 test("retention check: opened with nothing eligible yet", async ({ browser }) => {
   test.skip(loopOffLane, "loop path: default lane only");
   const { context, page } = await signIn(browser, USER_LOOP, "Lou Loop");

@@ -365,6 +365,14 @@ REGISTRY: dict[str, FlagDef] = _registry(
             "Sessions, Coming up (the course's upcoming assignments) and "
             "Materials, with one note on top when a retention check or reviews "
             "are due. Off: the course page as before.", True),
+    # Tutor redesign phase 4 (Review in Study): the review queue is headed
+    # "Review", picks its course by chip (All courses first) and says "3 of 9";
+    # the retention check names the course it is ready for. Frontend only. A loop flag.
+    FlagDef("review_v2", ("off", "on"),
+            "The rebuilt Review in Study: the queue headed Review, a chip per "
+            "course and All courses, the item's place (3 of 9) in place of the "
+            "minutes chip, and a retention check that names the course it is "
+            "ready for. Off: Due today as before.", True),
     FlagDef("skill_ladder", ("off", "on"),
             "One skill measure on the graph: each concept's score, tier and words "
             "come from the learner model's decayed skill (Not started / Getting "

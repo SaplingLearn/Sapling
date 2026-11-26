@@ -58,6 +58,7 @@ import { ConfidenceControl } from "./ConfidenceControl";
 import { OptionList } from "./OptionList";
 import { AnswerField, CHECKING, QuestionActions, QuestionCard, REASON_LABEL, SUBMIT_ANSWER } from "./question/QuestionCard";
 import { ReportQuestion } from "./ReportQuestion";
+import { ReviewHead, reviewProgress, type ReviewScope } from "./review/ReviewHead";
 import { answerPauseMessage, gradingPausedMessage, pausedConceptsMessage } from "./reviewPauseCopy";
 import { useCrisisSupport } from "../safety/CrisisSupportCard";
 import { type MotionPresets, useMotionPresets } from "@/lib/motion";
@@ -86,7 +87,8 @@ const RATINGS: { n: number; label: string }[] = [
   { n: 3, label: "easy" },
 ];
 
-export function DueQueue({ userId, courseId }: { userId: string; courseId?: string }) {
+/** `scope` (`review_v2`, Study's ReviewsSlot): the rebuilt head, with the course chips and "3 of 9". */
+export function DueQueue({ userId, courseId, scope }: { userId: string; courseId?: string; scope?: ReviewScope }) {
   const reportsOn = useFlag("item_reports") === "on";
   // docs/safety/crisis-support.md: an answer the crisis screen answered
   const crisis = useCrisisSupport();
@@ -111,6 +113,8 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
   // The budget pause from a review call's 429; cleared by the next graded answer.
   const [pause, setPause] = React.useState<LoopBudgetPause | null>(null);
   const [summary, setSummary] = React.useState<ReviewSummaryResponse | null>(null);
+  // review_v2's "3 of 9": answers recorded this visit
+  const [done, setDone] = React.useState(0);
   // Every load bumps the sequence; a response for an older sequence (a slow poll, or
   // an answer to an item the panel has since moved past) is dropped, never attached
   // to the newer item.
@@ -243,7 +247,7 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
         return;
       }
       setResult(r);
-      if (!r.unavailable) setPause(null); // a graded answer got through
+      if (!r.unavailable) { setPause(null); setDone((d) => d + 1); } // a graded answer got through
       setNext({ ...next, remaining_budget_s: r.remaining_budget_s });
     } catch (err) {
       if (mine !== seq.current) return;
@@ -319,15 +323,17 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
       className={`card ${styles.panel}`}
     >
       {crisis.dialog}
-      <div className={styles.head}>
-        <h2 className={`h-serif ${styles.title}`}>Due today</h2>
-        <div className={styles.spacer} />
-        {next && (
-          <span data-testid="review-budget" className="chip chip--accent">
-            {Math.max(0, Math.round(next.remaining_budget_s / 60))} min left
-          </span>
-        )}
-      </div>
+      {scope ? <ReviewHead scope={scope} progress={reviewProgress(done - (answered ? 1 : 0), next?.in_budget, !!item)} /> : (
+        <div className={styles.head}>
+          <h2 className={`h-serif ${styles.title}`}>Due today</h2>
+          <div className={styles.spacer} />
+          {next && (
+            <span data-testid="review-budget" className="chip chip--accent">
+              {Math.max(0, Math.round(next.remaining_budget_s / 60))} min left
+            </span>
+          )}
+        </div>
+      )}
 
       {/* Its "review keeps working" would contradict a queue that did not load. */}
       {!loadFailed && renderPauseBanner(pause, summary)}

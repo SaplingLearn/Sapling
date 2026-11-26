@@ -54,14 +54,19 @@ export function RetentionCheck({ userId, courses, initialCourseId = "" }: {
 }) {
   const [selected, setSelected] = useState(initialCourseId);
   const noteId = useId();
+  const { courseIds: dueCourseIds } = useRetentionDue();
   const courseId = courses.some((course) => course.course_id === selected)
     ? selected : courses[0]?.course_id ?? "";
   // The link's course is not one of the student's: say which course shows instead.
   const fellBack = !!initialCourseId && selected === initialCourseId && !!courseId && courseId !== selected;
   const shown = courses.find((course) => course.course_id === courseId);
+  // review_v2 (the Review board): a check due for the course names it
+  const readyHere = useFlag("review_v2") === "on" && !!shown && dueCourseIds.includes(courseId);
   return (
     <section aria-label="Retention check" className={`card ${styles.retention} ${own.flush}`}>
-      <h2 className={own.title}>Retention check</h2>
+      <h2 className={own.title} data-testid="retention-title">
+        {readyHere ? `Retention check ready for ${shown.course_code || shown.course_name}` : "Retention check"}
+      </h2>
       <p className={own.copy}>See what you remember after some time away. There are no hints here.</p>
       <label>Course
         {/* #866 Z29: the answer boxes' field style — Tailwind's preflight strips a select's border and fill */}
