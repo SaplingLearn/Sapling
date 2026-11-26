@@ -193,6 +193,7 @@ EXPECTED_LOOP_FLAGS = {
     "varied_isomorphs", "multi_concept_items", "quiz_concept_plan", "quiz_planned_questions",
     "quiz_item_gates", "quiz_misconceptions", "quiz_results_routing",
     "skill_ladder",  # the graph route reads it after the loop's gate (routes/graph.py)
+    "hint_ladder",  # a loop UI flag: the check card only renders with the loop on
 }
 
 

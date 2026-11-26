@@ -1208,6 +1208,8 @@ inside `loop-messages` is `ChatPanel`, whose own `tutor-*` ids
 | `loop-hint-button` | request a hint: records the draft as an attempt (`/step/attempt`), moves the rung (`/hint`), then fetches the hint turn (`/action`) |
 | `loop-hint-denied` | denial line; `data-reason` = `no_genuine_attempt` / `too_soon` (a written attempt time alone kept from counting yet: /step/attempt's `wait_s`, #866 K32) / `dwell` / `ceiling` / `h6_gate` (never lifts on this item) / `h6_attempt` (an H6 gate another genuine try lifts: /hint's `lifts: "attempt"`) / `no_active_item` |
 | `loop-hint-reply` | the hint turn's text when allowed |
+| `loop-hint-ladder` | `hint_ladder` on (`learn/question/HintLadder.tsx`): the hints taken on the question, stacked, each `li` with `data-rung`; "Hint 1.", "Hint 2.", "Worked steps." (H4+). The latest step is `loop-hint-reply`, the earlier ones `loop-hint-step-{i}`. The button names the next step ("Hint 2", "Show worked steps") or, locked for time alone, counts down ("Hint in 0:30", `aria-disabled`) |
+| `loop-hint-cost` | `hint_ladder` on: what the next step costs, before it is taken: "Hints: half credit", "Worked steps: no credit", and before the worked steps "Showing steps means this question won't raise your skill level." |
 | `loop-check-report` | "Report this question" on the check card, only while the `item_reports` flag is on (spec §13 A113, #695) — opens the reasons |
 | `loop-check-report-reasons` | the reasons group (`role="group"`): buttons only, no text box |
 | `loop-check-report-reason-{reason}` | one reason — `wrong_answer` / `unclear` / `not_from_my_course` — posts `/api/learn/loop/report` (`surface: loop`, the pose's `question_hash`); the card goes and "Check me" brings another |

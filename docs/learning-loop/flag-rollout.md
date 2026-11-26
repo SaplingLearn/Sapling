@@ -36,7 +36,7 @@ Several flags change a prompt or an output schema, so their eval datasets must b
 
 ## Recommended order
 
-1. **Read-only, no eval needed:** `quiz_concept_plan`, `quiz_results_routing`, `item_reports`, `skill_ladder`.
+1. **Read-only, no eval needed:** `quiz_concept_plan`, `quiz_results_routing`, `item_reports`, `skill_ladder`, `hint_ladder`.
 2. **Safety, after copy review:** `crisis_support`.
 3. **Prompt changes, after their evals:** `loop_tutor_v2`, `segment_prequestion`, `self_explanation_prompts`, `quiz_planned_questions`, `quiz_item_gates`, then `quiz_misconceptions`.
 4. **Drafting changes, after their evals:** `varied_isomorphs`, `multi_concept_items`, `upload_prereq_edges`.
@@ -60,6 +60,12 @@ Several flags change a prompt or an output schema, so their eval datasets must b
 - **Before:** check a seeded student's `learner_state`: a concept with no graded answer reads **Not started**, even where the map's stored score is high (history from before the loop). Students whose mastery predates the loop see that drop until they answer again. E2E: the lanes run the loop on but this flag off; turning it on in a lane needs `learner_state` seeded and the Tree / Dashboard / Study / quiz-home specs moved to the ladder.
 - **Watch:** Tree and Study page errors; graph read latency (one extra batched `learner_state` read).
 - **Roll back:** off restores the map's stored score and four tiers everywhere, with no data change.
+
+### hint_ladder (Tutor redesign phase 4) — client-visible
+- **Changes:** the check card draws the help ladder as steps: the hints taken stay stacked, the next step names its cost before it is taken (a correct answer after hints counts half; after the worked steps it counts nothing, `learning/evidence.py::evidence_weight`), and a hint locked only for time alone counts down on its button. Frontend only: the `/hint` gate, rungs and weights are unchanged.
+- **Before:** nothing; it reads what `/hint` and `/step/attempt` already return.
+- **Watch:** hint requests per item and how often the worked steps are taken (`help_abuse` in the admin learning-loop report).
+- **Roll back:** off restores the one Hint button and the latest hint.
 
 ### item_reports (A113, A123) — client-visible
 - **Changes:** students can report a check question. Two reports hold it from the whole course until staff approve or retire it in the admin check-items queue.

@@ -1,0 +1,45 @@
+/* The hint ladder (HintLadder.tsx): the hints taken, stacked, and what the
+   next step costs. */
+
+.steps {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+.step {
+  padding: var(--sp-4) var(--sp-5);
+  border-radius: var(--r-md);
+  background: var(--accent-soft);
+  font-size: var(--fs-md);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* The worked steps: no credit, so not the accent's colour. */
+.worked {
+  background: var(--bg-soft);
+  border: 1px dashed var(--border);
+}
+
+.label {
+  font-weight: 600;
+}
+
+.cost {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2) var(--sp-6);
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+
+.warning {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--text-dim);
+}

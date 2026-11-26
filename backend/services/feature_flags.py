@@ -299,6 +299,15 @@ REGISTRY: dict[str, FlagDef] = _registry(
     # reads the whole graph on the skill ladder (frontend/src/lib/levels.ts).
     # Gated by learning_loop too (learning/gate.py::LOOP_FLAGS; the graph
     # route reads it after the loop's gate). Reads only.
+    # Tutor redesign phase 4 (the question card's hint ladder): the check card
+    # draws the help ladder as steps (the hints taken, stacked; what the next
+    # step costs; why it is locked, with a countdown). Frontend only; the
+    # /hint gate is unchanged. A loop flag (learning/gate.py::LOOP_FLAGS).
+    FlagDef("hint_ladder", ("off", "on"),
+            "The check card draws the hint ladder as steps: earlier hints stay "
+            "stacked, the next step names its cost (hints count half, worked "
+            "steps count nothing), and a locked hint says why, with a countdown. "
+            "Off: one Hint button and the latest hint, as before.", True),
     FlagDef("skill_ladder", ("off", "on"),
             "One skill measure on the graph: each concept's score, tier and words "
             "come from the learner model's decayed skill (Not started / Getting "

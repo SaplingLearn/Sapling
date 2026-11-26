@@ -11,6 +11,7 @@
 // never as a chat turn (A16). Spec:
 // docs/superpowers/specs/2026-09-26-learning-loop-design.md §9, §11.3; routes:
 // backend/routes/learn_loop.py.
+import { useHintSteps } from "./question/HintLadder";
 import { graphUsesSkill } from "@/lib/levels";
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
 import Link from "next/link";
@@ -480,6 +481,7 @@ export function LoopLearn() {
   }, []);
   const paused = state.budgetPause;
   const item = state.item;
+  const hintLadder = useHintSteps(item);
   const checkOpen = checkIsOpen(state);
   const exhaustedPracticeAttempt = practiceUnavailable.some((id) => goalProgress?.attempted_node_ids.includes(id));
 
@@ -1620,6 +1622,7 @@ export function LoopLearn() {
         ? [attempt.option, attempt.reason].filter(Boolean).join(" — ")
         : attempt.answer).trim();
       const grant = earnedHint.current;
+      let rung = grant?.questionHash === qh ? grant.rung : undefined; // the ladder's step
       if (!grant || grant.sessionId !== sessionId || grant.questionHash !== qh) {
         let waitS: number | undefined; // K32: time alone kept the draft from counting
         if (draft && countedAttempt.current !== `${qh}:${draft}`) {
@@ -1633,9 +1636,11 @@ export function LoopLearn() {
         if (!ownsHint()) return;
         if (r.denied) {
           setHint({ denied: hintDenial(r.denied, r.lifts, waitS) });
+          hintLadder.setWaitS(waitS ?? null);
           return;
         }
         if (typeof r.rung === "number") {
+          rung = r.rung;
           // The gate already granted/recorded this rung. A failed text request
           // retries only /action, never grants another rung or repeats effort.
           earnedHint.current = { sessionId, questionHash: qh, rung: r.rung };
@@ -1649,6 +1654,7 @@ export function LoopLearn() {
       // In the card while the item is current; the log hides this row until then
       // (the server saved it as an assistant row, so a reload shows it there).
       setHint({ reply: t.reply });
+      hintLadder.add(rung, t.reply);
       setMessages((prev) => [...prev, asMsg("assistant", t.reply, groundedExtra(t))]);
       // spec §13 A139: a worked example or a shown solution asks "why" — a
       // served hint turn closes an older prompt and may open a new one
@@ -2060,6 +2066,7 @@ export function LoopLearn() {
           hint={hint}
           hintBusy={hintBusy}
           hintRetry={hintRetry}
+          ladder={hintLadder.view}
           onSubmit={() => void submitAttempt(false)}
           onIdk={() => void submitAttempt(true)}
           onHint={() => void askHint()}

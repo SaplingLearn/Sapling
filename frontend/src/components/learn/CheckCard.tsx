@@ -1,4 +1,5 @@
 "use client";
+import { HINT_LADDER_COPY, HintCost, HintSteps, clock, nextHintLabel, useCountdown, type HintLadderView } from "./question/HintLadder";
 import React, { useLayoutEffect, useRef } from "react";
 import { motion } from "framer-motion";
 import { useMotionPresets } from "@/lib/motion";
@@ -25,8 +26,17 @@ const HINT_DENIED_COPY: Record<string, string> = {
 };
 const HINT_DENIED_FALLBACK = "No hint right now — keep working on it.";
 
+/** A refusal's line. The ladder says the design's shorter words for a missing
+ *  try, and for time alone while its countdown runs. */
+function deniedCopy(denied: string, ladder: boolean, locked: boolean): string {
+  if (ladder && denied === "no_genuine_attempt") return HINT_LADDER_COPY.locked;
+  if (ladder && denied === "too_soon" && locked) return HINT_LADDER_COPY.waiting;
+  return HINT_DENIED_COPY[denied] ?? HINT_DENIED_FALLBACK;
+}
+
 export function CheckCard({
   item, conceptName, draft, setDraft, busy, hint, hintBusy, hintRetry, onSubmit, onIdk, onHint, onReport, selfExplain,
+  ladder = null,
 }: {
   item: LoopCheckItem;
   /** The concept the check is on (the chip in the card's head). */
@@ -44,6 +54,9 @@ export function CheckCard({
   onReport?: (reason: LoopReportReason) => Promise<boolean>;
   /** spec §13 A139: an open "why" prompt, rendered under the hint it follows. */
   selfExplain?: React.ReactNode;
+  /** The `hint_ladder` flag on: the hints taken on this question and the wait a
+   *  locked hint owes (question/HintLadder.tsx). Null: the one-button hint. */
+  ladder?: HintLadderView | null;
 }) {
   const mc = item.format === "mc_reason";
   // K02: an mc_reason answer needs its reason; K09: a loading hint (its rung already charged) is shown first
@@ -60,7 +73,9 @@ export function CheckCard({
   }, [item.question_hash]);
   // While a hint loads the Hint button keeps focus (aria-disabled, not
   // disabled: a disabled control drops focus to the page).
-  const hintUnavailable = hintBusy || busy;
+  const waitLeft = useCountdown(ladder?.waitUntil ?? null);
+  const locked = !!ladder && waitLeft > 0;
+  const hintUnavailable = hintBusy || busy || locked;
   const m = useMotionPresets();
   const figure = item.figure?.status === "withheld" ? (
     // W4.1a: honest empty figure slot when the pose says the item is visual but
@@ -128,7 +143,8 @@ export function CheckCard({
                 if (!hintUnavailable) onHint();
               }}
             >
-              <Icon name="sparkle" size={13} />{hintBusy ? "Hint…" : hintRetry ? "Retry earned hint" : "Hint"}
+              <Icon name="sparkle" size={13} />{hintBusy ? "Hint…" : hintRetry ? "Retry earned hint"
+                : !ladder ? "Hint" : locked ? `Hint in ${clock(waitLeft)}` : nextHintLabel(ladder.steps)}
             </button>
           </QuestionActions>
           {/* Always in the DOM, so a refusal is announced when it appears. */}
@@ -141,11 +157,13 @@ export function CheckCard({
                 role="status"
                 className={styles.hintDenied}
               >
-                {HINT_DENIED_COPY[hint.denied] ?? HINT_DENIED_FALLBACK}
+                {deniedCopy(hint.denied, !!ladder, locked)}
               </motion.div>
             )}
           </div>
-          {hint && "reply" in hint && (
+          {ladder && <HintSteps steps={ladder.steps} />}
+          {ladder && <HintCost steps={ladder.steps} />}
+          {!ladder && hint && "reply" in hint && (
             // Re-keyed per hint: each rung rises in, so a new one reads as new.
             <motion.div
               key={hint.reply}

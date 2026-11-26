@@ -309,6 +309,38 @@ describe("F7 — a chat message never costs the student a hint", () => {
   });
 });
 
+describe("Tutor redesign phase 4 — the hint ladder (hint_ladder on)", () => {
+  it("each hint taken stays stacked, and the button names the next step", async () => {
+    flags.hint_ladder = "on";
+    api.requestLoopHint.mockResolvedValueOnce({ rung: 1 }).mockResolvedValueOnce({ rung: 2 });
+    api.requestLoopHintTurn
+      .mockResolvedValueOnce(turn({ reply: "Look at when n reaches zero.", phase: "check" }))
+      .mockResolvedValueOnce(turn({ reply: "What does factorial(0) return?", phase: "check" }));
+    await withCheckItem();
+    fireEvent.click(screen.getByTestId("loop-hint-button"));
+    await waitFor(() => expect(screen.getByTestId("loop-hint-ladder").textContent).toBe("Hint 1. Look at when n reaches zero."));
+    expect(screen.getByTestId("loop-hint-button").textContent).toBe("Hint 2");
+    fireEvent.click(screen.getByTestId("loop-hint-button"));
+    await waitFor(() => expect(screen.getByTestId("loop-hint-ladder").querySelectorAll("li")).toHaveLength(2));
+    expect(screen.getByTestId("loop-hint-reply").textContent).toBe("Hint 2. What does factorial(0) return?");
+    expect(screen.getByTestId("loop-hint-cost").textContent).toContain("Hints: half credit");
+  });
+
+  it("time alone is all a real try lacks: the button counts down, and says why", async () => {
+    flags.hint_ladder = "on";
+    api.postLoopAttempt.mockResolvedValue({ genuine: true, counted: false, attempts: 1, independent_s: 5, wait_s: 30 });
+    api.requestLoopHint.mockResolvedValue({ denied: "no_genuine_attempt" });
+    await withCheckItem();
+    fireEvent.change(screen.getByTestId("loop-attempt-input"), { target: { value: "it stops at zero" } });
+    fireEvent.click(screen.getByTestId("loop-hint-button"));
+    await waitFor(() => expect(screen.getByTestId("loop-hint-button").textContent).toMatch(/^Hint in 0:(29|30)$/));
+    expect(screen.getByTestId("loop-hint-button").getAttribute("aria-disabled")).toBe("true");
+    expect(screen.getByTestId("loop-hint-denied").textContent).toBe(
+      "Stay with the question a little longer. Your try counts when the timer ends.",
+    );
+  });
+});
+
 describe("F9 — the check-in's reason field is named by its visible label", () => {
   it("'In one sentence: why?' is the input's accessible name", async () => {
     api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "probe")]));
