@@ -21,7 +21,7 @@ import styles from "./SessionPanelV2.module.css";
 
 export const SESSION_PANEL_COPY = {
   title: "Plan",
-  empty: "Your plan appears here after the check-in.",
+  empty: "Your plan shows here once you start it.",
 } as const;
 
 export type PanelRowState = "done" | "now" | "next";
