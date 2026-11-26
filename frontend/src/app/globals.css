@@ -811,6 +811,112 @@ body { font-size: 14px; line-height: 1.5; }
 }
 .seg__opt[aria-disabled="true"]:hover { color: var(--text-muted); }
 
+/* ── SearchField ─────────────────────────────────────────────────────
+   The one search input (`ui/SearchField.tsx`). The wrapper owns the chrome
+   and the focus ring; the input is bare and fills it. Focus turns the
+   border --accent (≈5:1 on --bg-panel, so it reads on its own) and adds
+   the Library header's 22% ring outside it. The WebKit × is hidden: the
+   field draws its own clear button, and two would be one too many. */
+.search-field {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  /* Fills a flex row by default (the input's basis is 0, so without this a
+     field in a toolbar shrinks to its icon); callers narrow it with a class. */
+  flex: 1 1 auto;
+  height: 40px;
+  min-width: 0;
+  padding: 0 6px 0 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-md);
+  background: var(--bg-panel);
+  color: var(--text-muted);
+  cursor: text;
+  transition: border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
+}
+.search-field:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+.search-field__icon { display: inline-flex; flex-shrink: 0; pointer-events: none; }
+.search-field__input {
+  flex: 1 1 0;
+  width: 0;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  outline: none;
+  background: none;
+  font: inherit;
+  font-size: var(--fs-base);
+  color: var(--text);
+}
+.search-field__input:focus-visible { outline: none; }
+.search-field__input::placeholder { color: var(--text-muted); }
+.search-field__input::-webkit-search-cancel-button,
+.search-field__input::-webkit-search-decoration { -webkit-appearance: none; appearance: none; display: none; }
+.search-field__trailing { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
+.search-field__clear {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--r-sm);
+  background: var(--bg-subtle);
+  color: var(--text-dim);
+}
+.search-field__clear:hover { background: var(--bg-soft); color: var(--text); }
+.search-field__kbd {
+  flex-shrink: 0;
+  min-width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  margin-right: 4px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-xs);
+  font: 500 var(--fs-xs)/1 var(--font-mono);
+  color: var(--text-muted);
+}
+.search-field__spinner {
+  display: block;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: search-field-spin 700ms linear infinite;
+}
+@keyframes search-field-spin { to { transform: rotate(360deg); } }
+.search-field__status {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+.search-field--sm { height: 32px; gap: 8px; padding: 0 4px 0 10px; }
+.search-field--sm .search-field__input { font-size: var(--fs-md); }
+.search-field--sm .search-field__clear { width: 24px; height: 24px; }
+.search-field--lg { height: 50px; padding: 0 8px 0 16px; }
+.search-field--lg .search-field__input { font-size: var(--fs-lg); }
+/* The host draws the border and fill, and must style its own :focus-within. */
+.search-field--bare {
+  height: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+}
+.search-field--bare:focus-within { box-shadow: none; }
+@media (prefers-reduced-motion: reduce) {
+  .search-field { transition: none; }
+  .search-field__spinner { animation: none; border-right-color: currentColor; opacity: 0.5; }
+}
+
 /* ── AnswerOption ────────────────────────────────────────────────────
    Each choice is its own tile with a key-cap letter, because A–D (and 1–4)
    ARE the keyboard shortcuts — the cap says "press me" without a legend.

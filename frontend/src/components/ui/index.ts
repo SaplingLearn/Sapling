@@ -11,3 +11,5 @@ export { ProgressDots, type ProgressDotsProps } from "./ProgressDots";
 export { InlineBanner, type InlineBannerProps } from "./InlineBanner";
 export { Sheet, type SheetProps } from "./Sheet";
 export { EmptyState, type EmptyStateProps } from "./EmptyState";
+// The one search input; see its doc comment for the audit behind it.
+export { SearchField, type SearchFieldProps } from "./SearchField";

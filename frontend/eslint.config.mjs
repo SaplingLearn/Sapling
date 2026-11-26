@@ -193,6 +193,9 @@ const eslintConfig = [
       "src/components/quiz/results/MissedList.tsx",
       "src/components/ui/AnswerOption.tsx",
       "src/components/ui/SegmentedControl.tsx",
+      // The shared search input: every screen's search box (and its ×) will
+      // render inside it, so a testid-less control here un-anchors them all.
+      "src/components/ui/SearchField.tsx",
       "src/components/ui/Sheet.tsx",
       "src/components/graph/KnowledgeGraph.tsx",
       "src/components/graph/KnowledgeGraph2D.tsx",
