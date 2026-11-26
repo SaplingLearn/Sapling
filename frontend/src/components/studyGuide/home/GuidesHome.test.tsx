@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 /**
- * The Study Guides home: the toolbar (search, sort), the states that stand in
- * for the grid, and the buttons that open the New study guide dialog.
+ * The Study Guides home: the toolbar (search, sort, Saved), the states that
+ * stand in for the grid, and the buttons that open the New study guide dialog.
  *
  * A card's own content is pinned in GuideCard.test.tsx and the dialog in
  * NewGuideModal.test.tsx; the pure rules are in guidesModel.test.ts.
@@ -11,7 +11,11 @@ import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 const push = vi.hoisted(() => vi.fn());
-vi.mock("next/navigation", () => ({ useRouter: () => ({ push }) }));
+// The page reads its params on arrival; `arriveAt` sets them.
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push }),
+  useSearchParams: () => new URLSearchParams(window.location.search),
+}));
 vi.mock("@/context/UserContext", () => ({ useUser: () => ({ userId: "u1", userReady: true }) }));
 vi.mock("@/components/DocumentUploadModal", () => ({ DocumentUploadModal: () => null }));
 vi.mock("@/lib/api", () => ({ getCourses: vi.fn() }));
@@ -36,6 +40,9 @@ const THREE = [
 const cardIds = () =>
   within(screen.getByTestId("guides-grid")).getAllByRole("link").map(card => card.getAttribute("data-testid")?.replace("guides-card-", ""));
 
+/** The URL the home is opened at. */
+const arriveAt = (url: string) => window.history.replaceState(null, "", url);
+
 async function home(guides = THREE) {
   mocks.list.mockResolvedValue({ guides });
   renderHome();
@@ -46,6 +53,7 @@ async function home(guides = THREE) {
 beforeEach(() => {
   resetMocks();
   push.mockReset();
+  arriveAt("/study/guide");
 });
 afterEach(() => {
   cleanup();
@@ -69,11 +77,11 @@ describe("the page", () => {
 });
 
 describe("the toolbar", () => {
-  it("has search then sort on the left, and New study guide last", async () => {
+  it("has search, sort and Saved on the left, and New study guide last", async () => {
     await home();
     const toolbar = screen.getByTestId("guides-search").closest("label")?.parentElement as HTMLElement;
     const controls = [...toolbar.querySelectorAll("input, button")].map(control => control.getAttribute("data-testid"));
-    expect(controls).toEqual(["guides-search", "guides-sort", "guides-new"]);
+    expect(controls).toEqual(["guides-search", "guides-sort", "guides-saved-only", "guides-new"]);
     expect(screen.getByTestId("guides-search")).toHaveAttribute("placeholder", "Search your guides");
     expect(screen.getByTestId("guides-new")).toHaveTextContent("New study guide");
   });
@@ -124,6 +132,62 @@ describe("search", () => {
     expect(screen.queryByTestId("guides-empty")).toBeNull();
     await user.keyboard("{Escape}");
     expect(cardIds()).toEqual(["b", "a", "c"]);
+  });
+});
+
+describe("Saved", () => {
+  /** Only "b" is saved to the Library. */
+  const ONE_SAVED = THREE.map(g => (g.id === "b" ? { ...g, saved_at: "2026-11-11T13:00:00Z" } : g));
+  const toggle = () => screen.getByTestId("guides-saved-only");
+
+  it("is off on arrival; on, it keeps only the saved guides, and the URL follows it", async () => {
+    const user = await home(ONE_SAVED);
+    expect(toggle()).toHaveAttribute("aria-pressed", "false");
+    expect(toggle()).toHaveTextContent("Saved");
+    expect(cardIds()).toEqual(["b", "a", "c"]);
+
+    await user.click(toggle());
+    expect(toggle()).toHaveAttribute("aria-pressed", "true");
+    expect(cardIds()).toEqual(["b"]);
+    expect(screen.getByRole("list", { name: "Your saved study guides" })).toBeTruthy();
+    expect(window.location.search).toBe("?saved=1");
+
+    await user.click(toggle());
+    expect(toggle()).toHaveAttribute("aria-pressed", "false");
+    expect(cardIds()).toEqual(["b", "a", "c"]);
+    expect(window.location.search).toBe("");
+  });
+
+  it("is on when the home is opened at ?saved=1, where the reader's Saved to Library leads", async () => {
+    arriveAt("/study/guide?saved=1");
+    await home(ONE_SAVED);
+    expect(toggle()).toHaveAttribute("aria-pressed", "true");
+    expect(cardIds()).toEqual(["b"]);
+  });
+
+  it("says how to save a guide when none is, and Show all guides turns it off", async () => {
+    arriveAt("/study/guide?saved=1");
+    mocks.list.mockResolvedValue({ guides: THREE });
+    renderHome();
+    const none = await screen.findByTestId("guides-none-saved");
+    expect(none).toHaveTextContent("No guide is saved to your Library yet.");
+    expect(screen.queryByTestId("guides-grid")).toBeNull();
+    // Not the first-guide invitation: the student has guides.
+    expect(screen.queryByTestId("guides-empty")).toBeNull();
+
+    await userEvent.setup().click(screen.getByTestId("guides-none-saved-show-all"));
+    expect(toggle()).toHaveAttribute("aria-pressed", "false");
+    expect(cardIds()).toEqual(["b", "a", "c"]);
+    expect(window.location.search).toBe("");
+  });
+
+  it("searches the saved guides only, and says so when none matches", async () => {
+    arriveAt("/study/guide?saved=1");
+    const user = await home(ONE_SAVED);
+    await user.type(screen.getByTestId("guides-search"), "arrays");
+    expect(screen.getByTestId("guides-no-match")).toHaveTextContent("No saved guide matches “arrays”.");
+    await user.click(toggle());
+    expect(cardIds()).toEqual(["c"]);
   });
 });
 

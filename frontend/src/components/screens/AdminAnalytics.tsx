@@ -43,6 +43,7 @@ import {
   type AnalyticsRangeValue,
 } from "@/lib/useAdminAnalytics";
 import type { CostDayPoint, LlmCostGroupBy } from "@/lib/types";
+import { sentenceCase } from "@/lib/sentenceCase";
 
 const PRESETS = [
   { days: 7, label: "7d" },
@@ -53,9 +54,8 @@ const PRESETS = [
 const GROUPS: LlmCostGroupBy[] = ["feature", "user", "model"];
 
 const th: React.CSSProperties = {
-  textAlign: "left", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em",
-  color: "var(--text-muted)", padding: "4px 8px",
-};
+  textAlign: "left", fontSize: 13, 
+  color: "var(--text-muted)", padding: "4px 8px" };
 const td: React.CSSProperties = {
   fontSize: 13, padding: "6px 8px", borderTop: "1px solid var(--border)",
 };
@@ -357,7 +357,7 @@ function AnalyticsBody() {
                       <tbody>
                         {users.map((u) => (
                           <tr key={u.user_id}>
-                            <td style={{ ...td, fontFamily: "var(--font-mono, monospace)", fontSize: 12 }}>{u.user_id}</td>
+                            <td style={{ ...td, fontFamily: "var(--font-code)", fontSize: 12 }}>{u.user_id}</td>
                             <td style={tdNum}>{u.event_count}</td>
                             <td style={tdNum}>${u.llm_cost_usd.toFixed(4)}</td>
                             <td style={tdNum}>{u.total_tokens}</td>
@@ -424,10 +424,10 @@ function AnalyticsBody() {
                   { label: "Cost", points: costPoints, format: (v) => `$${v.toFixed(2)}` },
                 ]}
               />
-              <h3 className="label-micro" style={{ margin: "16px 0 8px" }}>Cost by {d.group_by}</h3>
+              <h3 className="label-micro" style={{ margin: "16px 0 8px" }}>Cost by {sentenceCase(d.group_by)}</h3>
               <CategoryBars
                 rows={d.rows.slice(0, 8).map((r) => ({ label: r.key || "(none)", value: r.cost_usd }))}
-                ariaLabel={`Cost by ${d.group_by}`}
+                ariaLabel={`Cost by ${sentenceCase(d.group_by)}`}
                 format={(v) => `$${v.toFixed(4)}`}
               />
               <details style={{ marginTop: 12 }}>
@@ -436,7 +436,7 @@ function AnalyticsBody() {
                   <table style={{ borderCollapse: "collapse", minWidth: 560, marginTop: 8 }}>
                     <thead>
                       <tr>
-                        <th style={th}>{d.group_by}</th>
+                        <th style={th}>{sentenceCase(d.group_by)}</th>
                         <th style={{ ...th, textAlign: "right" }}>Calls</th>
                         <th style={{ ...th, textAlign: "right" }}>Prompt</th>
                         <th style={{ ...th, textAlign: "right" }}>Completion</th>
@@ -561,7 +561,7 @@ function AnalyticsBody() {
                           <td style={{ ...td, whiteSpace: "nowrap" }}>{e.created_at ?? "—"}</td>
                           <td style={td}>{e.event_type}</td>
                           <td style={td}>{e.method ?? "—"}</td>
-                          <td style={{ ...td, fontFamily: "var(--font-mono, monospace)", fontSize: 12 }}>{e.path ?? "—"}</td>
+                          <td style={{ ...td, fontFamily: "var(--font-code)", fontSize: 12 }}>{e.path ?? "—"}</td>
                           <td style={tdNum}>{e.status_code ?? "—"}</td>
                           <td style={tdNum}>{e.duration_ms != null ? `${e.duration_ms.toFixed(1)}ms` : "—"}</td>
                         </tr>

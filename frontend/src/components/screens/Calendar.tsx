@@ -269,7 +269,7 @@ export function Calendar() {
           </button>
         </>
       )}
-      <button className="btn btn--sm" onClick={() => setUploadOpen(true)}>
+      <button className="btn btn--sm" data-testid="calendar-import-syllabus" onClick={() => setUploadOpen(true)}>
         <Icon name="upload" size={12} /> Import syllabus
       </button>
       {googleConnected ? (
@@ -459,7 +459,7 @@ function GoogleEventsModal({
                 <div key={e.google_event_id} className="card" style={{ padding: 12 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10 }}>
                     <div style={{ fontWeight: 600, fontSize: 13 }}>{e.title}</div>
-                    <span className="chip" style={{ fontSize: 10 }}>
+                    <span className="chip" style={{ fontSize: 11 }}>
                       {e.all_day ? "All day" : e.start_datetime?.slice(11, 16) || ""}
                     </span>
                   </div>
@@ -809,7 +809,7 @@ function AssignmentTable({
         <div className="label-micro">{selected.size} of {assignments.length} selected</div>
         <div style={{ flex: 1 }} />
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <span className="label-micro" style={{ fontSize: 10 }}>Sort</span>
+          <span className="label-micro" style={{ fontSize: 12 }}>Sort</span>
           <div style={{ minWidth: 140 }}>
             <CustomSelect
               size="sm"

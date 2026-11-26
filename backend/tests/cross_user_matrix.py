@@ -77,6 +77,9 @@ PRIVATE_CHUNK_TEXT = "MATRIX-PRIVATE-CHUNK-91c2 A's private upload text"
 #: A saved flashcard set of A's (the rich seed has none), in COURSE_SHARED.
 FLASHCARD_SET_ID = "rich-matrix-flashcard-set-a"
 FLASHCARD_SET_NAME = "MATRIX-FLASHCARD-SET-4be1 only A saved this"
+#: A Library folder of A's (the rich seed has none), in COURSE_SHARED.
+FOLDER_ID = "rich-matrix-folder-a"
+FOLDER_NAME = "MATRIX-FOLDER-0d5e only A filed this"
 #: A check question in A's seeded study guide (db/seed_local_rich
 #: GUIDE_CS_MIDTERM, "rich-guide-cs-f25-mid"; "s3-i3" is its other one). The
 #: block routes are probed with a block that exists, so only the guide's
@@ -112,6 +115,7 @@ A_PRIVATE_MARKERS: tuple[str, ...] = (
     PRIVATE_ROOM_INVITE,
     PRIVATE_CHUNK_TEXT,
     FLASHCARD_SET_NAME,                                  # flashcard_sets.name
+    FOLDER_NAME,                                         # document_folders.name
 )
 
 
@@ -207,6 +211,9 @@ ID_SOURCES: dict[str, IdSource] = {
     "category_id": _owned(
         "SELECT c.id::text FROM gradebook_categories c JOIN enrollments e "
         "ON e.id = c.enrollment_id WHERE e.user_id = %(a)s ORDER BY c.id LIMIT 1"
+    ),
+    "folder_id": _owned(
+        "SELECT id::text FROM document_folders WHERE user_id = %(a)s ORDER BY id LIMIT 1"
     ),
     "room_id": _owned(_PRIVATE_ROOM),
     "message_id": _owned(_PRIVATE_MESSAGE),
@@ -386,6 +393,11 @@ SELF = Ref("<self>")
 BODY_OVERRIDES: dict[tuple[str, str], dict[str, Any]] = {
     ("PATCH", "/api/documents/doc/{document_id}"): {"category": "other", "user_id": SELF},
     ("POST", "/api/documents/doc/{document_id}/scan-concepts"): {"user_id": SELF},
+    ("POST", "/api/documents/doc/{document_id}/restore"): {"user_id": SELF},
+    # A rename refuses a blank name (400) before it reads the folder's owner.
+    ("PATCH", "/api/documents/folders/{folder_id}"): {
+        "user_id": SELF, "name": "Matrix Probe Folder",
+    },
     ("POST", "/api/documents/course/{course_id}/scan-concepts"): {"user_id": SELF},
     ("PATCH", "/api/calendar/assignments/{assignment_id}"): {"user_id": SELF, "title": "matrix"},
     # The default scope_kind is "course", which refuses any scope_id (422)

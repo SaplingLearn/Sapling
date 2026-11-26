@@ -58,6 +58,10 @@ regexes = [
   '''^SHORT_PRIVATE_\d+$''',
   # The landing page's localStorage key name (frontend/src/lib/landing/engine/plant.ts).
   '''^sapling-planted-v\d+$''',
+  # pydantic-ai's `anthropic_effort=` keyword, read as the value of the preceding
+  # `max_tokens=ANTHROPIC_MAX_TOKENS,` (generic-api-key; commit 0517b4d5 on the
+  # #866 learning-loop branches, backend/tests/evals/_judge_model.py).
+  '''^anthropic_effort=$''',
 ]
 
 [[allowlists]]

@@ -17,14 +17,14 @@
 
 import { DragField } from './DragField';
 import { FadeIn } from '@/components/landing/anim';
-import { FONT_MONO } from '@/lib/landing/fonts';
+import { FONT_SANS } from '@/lib/landing/fonts';
 
-const MONO: React.CSSProperties = { fontFamily: "var(--font-plex-mono), 'IBM Plex Mono', ui-monospace, monospace" };
+const LABEL: React.CSSProperties = { fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif" };
 
 const CAPTIONS = [
-  ['SOCRATIC', 'Never hands you the answer. It asks the question that gets you there yourself.'],
-  ['EXPOSITORY', 'Explains it straight: structured, sourced from your materials, at your level.'],
-  ['TEACHBACK', 'Flips the desk. You explain, and Sapling names exactly where it breaks down.'],
+  ['Socratic', 'Never hands you the answer. It asks the question that gets you there yourself.'],
+  ['Expository', 'Explains it straight: structured, sourced from your materials, at your level.'],
+  ['Teachback', 'Flips the desk. You explain, and Sapling names exactly where it breaks down.'],
 ];
 
 const MOTES: { d: number; s: React.CSSProperties }[] = [
@@ -109,7 +109,7 @@ export function ActTutor({
             <div className="ld-tutor-caps" style={{ position: 'relative', marginTop: 22, minHeight: 110 }}>
               {CAPTIONS.map(([tag, body], i) => (
                 <div key={tag} data-tcap={i} style={{ position: 'absolute', inset: 0, opacity: 0 }}>
-                  <span style={{ ...MONO, fontSize: 10, letterSpacing: '0.28em', color: '#445D22' }}>{tag}</span>
+                  <span style={{ ...LABEL, fontSize: 12, letterSpacing: '0.01em', color: '#445D22' }}>{tag}</span>
                   <p style={{ margin: '8px 0 0', color: '#3B4233', fontSize: 15.5, lineHeight: 1.7, maxWidth: '36ch' }}>{body}</p>
                 </div>
               ))}
@@ -123,7 +123,7 @@ export function ActTutor({
                   onClick={() => onSetMode(i)}
                   style={{
                     border: '1px solid rgba(68,93,34,0.3)', borderRadius: 99, padding: '9px 18px',
-                    ...MONO, fontSize: 10.5, letterSpacing: '0.12em', cursor: 'pointer',
+                    ...LABEL, fontSize: 12.5, letterSpacing: '0.01em', cursor: 'pointer',
                     background: tutorMode === i ? PILL_ON : 'transparent',
                     color: tutorMode === i ? PILL_ON_FG : '#3B4233',
                     transition: 'all 250ms',
@@ -149,7 +149,7 @@ export function ActTutor({
                 style={{ ...FACE, transform: `rotateY(0deg) translateZ(${RADIUS}px)`, background: '#FDFCF9', border: '1px solid #E8E5DA', boxShadow: '0 26px 54px -22px rgba(25,31,19,0.3)', display: 'grid', gridTemplateRows: 'auto minmax(0,1fr) auto', gap: 10 }}
               >
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <span style={{ ...MONO, fontSize: 10, letterSpacing: '0.22em', color: '#445D22' }}>SOCRATIC MODE</span>
+                  <span style={{ ...LABEL, fontSize: 12, letterSpacing: '0.01em', color: '#445D22' }}>Socratic mode</span>
                   <span style={{ fontFamily: "var(--font-aleo), 'Aleo', Georgia, serif", fontStyle: 'italic', fontSize: 22, color: '#445D22' }}>?</span>
                 </div>
                 <div className="ld-tface-chat" style={{ minHeight: 0, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', gap: 5, overflow: 'hidden' }}>
@@ -168,13 +168,13 @@ export function ActTutor({
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 5, borderTop: '1px solid #EDF0EA', paddingTop: 9 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <span style={{ ...MONO, fontSize: 8, letterSpacing: '0.18em', color: '#9FA49A' }}>HINT LADDER</span>
+                    <span style={{ ...LABEL, fontSize: 9.5, letterSpacing: '0.01em', color: '#9FA49A' }}>Hint ladder</span>
                     <span style={{ display: 'flex', gap: 4, marginLeft: 2 }}>
                       {[true, true, false, false].map((on, i) => (
                         <span key={i} style={{ width: 18, height: 3, borderRadius: 99, background: on ? '#68951F' : '#E0E6DA' }} />
                       ))}
                     </span>
-                    <span style={{ marginLeft: 'auto', ...MONO, fontSize: 9, color: '#697062' }}>2 / 4</span>
+                    <span style={{ marginLeft: 'auto', ...LABEL, fontSize: 9, color: '#697062' }}>2 / 4</span>
                   </div>
                   <span className="ld-tface-note" style={{ fontSize: 11, lineHeight: 1.5, color: '#91978B' }}>It escalates only when you stall.</span>
                 </div>
@@ -187,7 +187,7 @@ export function ActTutor({
                 style={{ ...FACE, transform: `rotateY(120deg) translateZ(${RADIUS}px)`, background: '#F6F8F4', border: '1px solid #E8E5DA', boxShadow: '0 26px 54px -22px rgba(25,31,19,0.3)', display: 'grid', gridTemplateRows: 'auto auto auto minmax(0,1fr) auto auto', gap: 9 }}
               >
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <span style={{ ...MONO, fontSize: 10, letterSpacing: '0.22em', color: '#445D22' }}>EXPOSITORY MODE</span>
+                  <span style={{ ...LABEL, fontSize: 12, letterSpacing: '0.01em', color: '#445D22' }}>Expository mode</span>
                   <svg aria-hidden="true" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="#445D22" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M12 6.5C10.5 5 8.3 4.4 5 4.4c-.6 0-1 .4-1 1v11.4c0 .6.4 1 1 1 3.3 0 5.5.6 7 2.1" />
                     <path d="M12 6.5c1.5-1.5 3.7-2.1 7-2.1.6 0 1 .4 1 1v11.4c0 .6-.4 1-1 1-3.3 0-5.5.6-7 2.1" />
@@ -204,33 +204,33 @@ export function ActTutor({
                       <line x1="82" y1="12" x2="52" y2="34" stroke="#E0E6DA" strokeWidth="1.5" />
                       <line x1="52" y1="34" x2="26" y2="54" stroke="#E0E6DA" strokeWidth="1.5" />
                       <circle cx="82" cy="12" r="9" fill="#E27A63" />
-                      <text x="82" y="15.5" textAnchor="middle" style={{ fontFamily: FONT_MONO }} fontSize="8" fill="#FDFCF9">+2</text>
+                      <text x="82" y="15.5" textAnchor="middle" style={{ fontFamily: FONT_SANS }} fontSize="8" fill="#FDFCF9">+2</text>
                       <circle cx="52" cy="34" r="7" fill="#7B9E51" />
                       <circle cx="26" cy="54" r="6" fill="#B1D28B" />
                     </svg>
-                    <span style={{ ...MONO, fontSize: 7.5, letterSpacing: '0.14em', color: '#9c4b48' }}>LEFT-HEAVY</span>
+                    <span style={{ ...LABEL, fontSize: 9, letterSpacing: '0.01em', color: '#9c4b48' }}>Left-heavy</span>
                   </div>
-                  <span style={{ alignSelf: 'center', ...MONO, fontSize: 11, color: '#445D22' }}>→</span>
+                  <span style={{ alignSelf: 'center', ...LABEL, fontSize: 11, color: '#445D22' }}>→</span>
                   <div style={{ minHeight: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 5 }}>
                     <svg aria-hidden="true" width="100%" height="100%" style={{ flex: 1, minHeight: 34 }} preserveAspectRatio="xMidYMid meet" viewBox="0 0 120 62">
                       <line x1="60" y1="16" x2="34" y2="46" stroke="#7B9E51" strokeWidth="1.5" />
                       <line x1="60" y1="16" x2="88" y2="46" stroke="#7B9E51" strokeWidth="1.5" />
                       <circle cx="60" cy="16" r="9" fill="#445D22" />
-                      <text x="60" y="19.5" textAnchor="middle" style={{ fontFamily: FONT_MONO }} fontSize="8" fill="#EAF1E4">0</text>
+                      <text x="60" y="19.5" textAnchor="middle" style={{ fontFamily: FONT_SANS }} fontSize="8" fill="#EAF1E4">0</text>
                       <circle cx="34" cy="46" r="7" fill="#7B9E51" />
                       <circle cx="88" cy="46" r="7" fill="#B1D28B" />
                     </svg>
-                    <span style={{ ...MONO, fontSize: 7.5, letterSpacing: '0.14em', color: '#445D22' }}>AFTER LL ROTATE</span>
+                    <span style={{ ...LABEL, fontSize: 9, letterSpacing: '0.01em', color: '#445D22' }}>After LL rotate</span>
                   </div>
                 </div>
                 <div className="ld-tface-cases" style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-                  <span style={{ ...MONO, fontSize: 8, letterSpacing: '0.18em', color: '#9FA49A' }}>FOUR CASES</span>
+                  <span style={{ ...LABEL, fontSize: 9.5, letterSpacing: '0.01em', color: '#9FA49A' }}>Four cases</span>
                   {(['LL', 'LR', 'RL', 'RR'] as const).map((t) => {
                     const on = t === 'LL';
                     return (
                       <span
                         key={t}
-                        style={{ flex: 1, textAlign: 'center', padding: '4px 0', borderRadius: 6, ...MONO, fontSize: 8.5, letterSpacing: '0.1em', background: on ? '#EAF1E4' : '#FDFCF9', border: `1px solid ${on ? '#68951F' : '#E8E5DA'}`, color: on ? '#445D22' : '#91978B' }}
+                        style={{ flex: 1, textAlign: 'center', padding: '4px 0', borderRadius: 6, ...LABEL, fontSize: 10, letterSpacing: '0.01em', background: on ? '#EAF1E4' : '#FDFCF9', border: `1px solid ${on ? '#68951F' : '#E8E5DA'}`, color: on ? '#445D22' : '#91978B' }}
                       >
                         {t}
                       </span>
@@ -238,13 +238,13 @@ export function ActTutor({
                   })}
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 5, borderTop: '1px solid #E6EAE2', paddingTop: 9 }}>
-                  <span style={{ ...MONO, fontSize: 8, letterSpacing: '0.2em', color: '#9FA49A' }}>RETRIEVED FROM YOUR LIBRARY</span>
+                  <span style={{ ...LABEL, fontSize: 9.5, letterSpacing: '0.01em', color: '#9FA49A' }}>Retrieved from your library</span>
                   <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
-                    <span style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '4px 8px', borderRadius: 6, background: '#FDFCF9', border: '1px solid #E0E6DA', ...MONO, fontSize: 8.5, color: '#3B4233' }}>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '4px 8px', borderRadius: 6, background: '#FDFCF9', border: '1px solid #E0E6DA', ...LABEL, fontSize: 8.5, color: '#3B4233' }}>
                       <span style={{ width: 5, height: 5, borderRadius: 99, background: '#68951F' }} />
                       lecture-07.pdf<b style={{ fontWeight: 400, color: '#9FA49A' }}>p. 12</b>
                     </span>
-                    <span style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '4px 8px', borderRadius: 6, background: '#FDFCF9', border: '1px solid #E0E6DA', ...MONO, fontSize: 8.5, color: '#3B4233' }}>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '4px 8px', borderRadius: 6, background: '#FDFCF9', border: '1px solid #E0E6DA', ...LABEL, fontSize: 8.5, color: '#3B4233' }}>
                       <span style={{ width: 5, height: 5, borderRadius: 99, background: '#68951F' }} />
                       notes-wk4.md
                     </span>
@@ -259,7 +259,7 @@ export function ActTutor({
                 style={{ ...FACE, transform: `rotateY(240deg) translateZ(${RADIUS}px)`, background: '#FDFCF9', border: '1px solid #E8E5DA', boxShadow: '0 26px 54px -22px rgba(25,31,19,0.3)', padding: 18, display: 'grid', gridTemplateRows: 'auto auto auto minmax(0,1fr) auto', gap: 8 }}
               >
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <span style={{ ...MONO, fontSize: 10, letterSpacing: '0.22em', color: '#445D22' }}>TEACHBACK MODE</span>
+                  <span style={{ ...LABEL, fontSize: 12, letterSpacing: '0.01em', color: '#445D22' }}>Teachback mode</span>
                   <svg aria-hidden="true" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="#E27A63" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M12 3.5a3 3 0 0 1 3 3v4.5a3 3 0 0 1-6 0V6.5a3 3 0 0 1 3-3z" />
                     <path d="M5.5 10.5v.8a6.5 6.5 0 0 0 13 0v-.8" />
@@ -274,32 +274,32 @@ export function ActTutor({
                       <span key={i} style={{ width: 3, height: '100%', borderRadius: 2, background: c, transformOrigin: 'bottom', animation: `waveBar ${dur} ease-in-out ${delay} infinite` }} />
                     ))}
                   </span>
-                  <span style={{ ...MONO, fontSize: 8.5, letterSpacing: '0.16em', color: '#445D22' }}>RECORDING · 0:42</span>
+                  <span style={{ ...LABEL, fontSize: 10, letterSpacing: '0.01em', color: '#445D22' }}>Recording · 0:42</span>
                 </div>
                 <p style={{ margin: 0, fontSize: 12, lineHeight: 1.6, color: '#3B4233' }}>
                   &ldquo;…so you <span style={{ color: '#191F13', fontWeight: 600 }}>rotate left when the right side gets too heavy</span>, and, um, <span style={{ background: 'rgba(226,122,99,0.16)', borderBottom: '1.5px solid #E27A63', borderRadius: 3, padding: '1px 3px', color: '#191F13' }}>the parent just moves down</span>{' '}and it&rsquo;s balanced again…&rdquo;
                 </p>
                 <div className="ld-tface-cover" style={{ minHeight: 0, display: 'flex', flexDirection: 'column', justifyContent: 'flex-start', gap: 3, overflow: 'hidden' }}>
-                  <span style={{ ...MONO, fontSize: 8, letterSpacing: '0.2em', color: '#9FA49A', marginBottom: 2 }}>WHAT YOUR EXPLANATION COVERED</span>
-                  {([['#68951F', 'Rotation direction', 'CORRECT'],
-                     ['#E27A63', 'Which node becomes root', 'MISSING'],
-                     ['#c89b5e', 'Subtree reattachment', 'VAGUE']] as const).map(([c, label, verdict]) => (
+                  <span style={{ ...LABEL, fontSize: 9.5, letterSpacing: '0.01em', color: '#9FA49A', marginBottom: 2 }}>What your explanation covered</span>
+                  {([['#68951F', 'Rotation direction', 'Correct'],
+                     ['#E27A63', 'Which node becomes root', 'Missing'],
+                     ['#c89b5e', 'Subtree reattachment', 'Vague']] as const).map(([c, label, verdict]) => (
                     <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       <span style={{ width: 6, height: 6, borderRadius: 99, background: c, flex: '0 0 auto' }} />
                       <span style={{ fontSize: 10.5, color: '#3B4233' }}>{label}</span>
-                      <span style={{ marginLeft: 'auto', ...MONO, fontSize: 8.5, letterSpacing: '0.14em', color: c }}>{verdict}</span>
+                      <span style={{ marginLeft: 'auto', ...LABEL, fontSize: 10, letterSpacing: '0.01em', color: c }}>{verdict}</span>
                     </div>
                   ))}
                 </div>
                 <div style={{ background: 'rgba(226,122,99,0.12)', border: '1px solid rgba(226,122,99,0.4)', borderRadius: 12, padding: '8px 11px' }}>
-                  <span style={{ ...MONO, fontSize: 9, letterSpacing: '0.2em', color: '#E27A63' }}>GAP FOUND</span>
+                  <span style={{ ...LABEL, fontSize: 11, letterSpacing: '0.01em', color: '#E27A63' }}>Gap found</span>
                   <p style={{ margin: '5px 0 0', fontSize: 11.5, lineHeight: 1.5, color: '#191F13' }}>
                     The right child becomes the new root, not the parent.
                   </p>
                   <div style={{ marginTop: 7, display: 'flex', alignItems: 'center', gap: 8 }}>
                     {/* mastery goes DOWN — the gap is new information */}
-                    <span style={{ ...MONO, fontSize: 8, letterSpacing: '0.14em', color: '#697062' }}>MASTERY 24% → 19%</span>
-                    <span style={{ marginLeft: 'auto', ...MONO, fontSize: 8, letterSpacing: '0.14em', color: '#445D22', whiteSpace: 'nowrap' }}>RE-EXPLAIN ↻</span>
+                    <span style={{ ...LABEL, fontSize: 9.5, letterSpacing: '0.01em', color: '#697062' }}>Mastery 24% → 19%</span>
+                    <span style={{ marginLeft: 'auto', ...LABEL, fontSize: 9.5, letterSpacing: '0.01em', color: '#445D22', whiteSpace: 'nowrap' }}>Re-explain ↻</span>
                   </div>
                 </div>
               </div>

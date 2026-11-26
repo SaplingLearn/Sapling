@@ -12,7 +12,7 @@
  */
 
 import { useState } from 'react';
-import { MONO } from './LabShell';
+import { LABEL } from './LabShell';
 import { GB_CATS, GB_ROWS, LETTERS } from './labData';
 
 export function GradesDemo() {
@@ -47,11 +47,11 @@ export function GradesDemo() {
           <span style={{ fontFamily: "var(--font-aleo), 'Aleo', Georgia, serif", fontSize: 46, fontWeight: 600, lineHeight: 1, transition: 'color 300ms' }}>
             {grade.toFixed(1)}
           </span>
-          <span style={{ padding: '5px 12px', borderRadius: 8, background: '#EAF1E4', border: '1px solid #68951F', ...MONO, fontSize: 13, letterSpacing: '0.1em', color: '#445D22' }}>
+          <span style={{ padding: '5px 12px', borderRadius: 8, background: '#EAF1E4', border: '1px solid #68951F', ...LABEL, fontSize: 13, letterSpacing: '0.01em', color: '#445D22' }}>
             {letter}
           </span>
         </div>
-        <span style={{ ...MONO, fontSize: 9.5, letterSpacing: '0.14em', color: '#91978B' }}>MA 242 · SPRING 2026</span>
+        <span style={{ ...LABEL, fontSize: 11.5, letterSpacing: '0.01em', color: '#91978B' }}>MA 242 · Spring 2026</span>
       </div>
 
       <span style={{ fontSize: 12, color: '#91978B' }}>
@@ -65,10 +65,10 @@ export function GradesDemo() {
           const pctColor = pct === null ? '#C7CBC2' : pct >= 90 ? '#445D22' : pct >= 80 ? '#c89b5e' : '#b25855';
           return (
             <div key={r.title} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '11px 14px', borderRadius: 11, border: '1px solid #E8E5DA', background: '#FDFCF9' }}>
-              <span style={{ width: 9, height: 9, borderRadius: 3, flex: '0 0 auto', background: r.cat === 'PSETS' ? '#68951F' : '#c89b5e' }} />
+              <span style={{ width: 9, height: 9, borderRadius: 3, flex: '0 0 auto', background: r.cat === 'Psets' ? '#68951F' : '#c89b5e' }} />
               <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
                 <span style={{ fontSize: 13, fontWeight: 600, color: '#191F13', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.title}</span>
-                <span style={{ ...MONO, fontSize: 9, letterSpacing: '0.1em', color: '#91978B' }}>{r.cat}</span>
+                <span style={{ ...LABEL, fontSize: 11, letterSpacing: '0.01em', color: '#91978B' }}>{r.cat}</span>
               </div>
               <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
                 <input
@@ -79,10 +79,10 @@ export function GradesDemo() {
                   }}
                   inputMode="decimal"
                   aria-label={`Points earned, ${r.title}`}
-                  style={{ width: 56, padding: '7px 8px', borderRadius: 8, border: '1px solid #E0E6DA', background: '#F6F8F4', ...MONO, fontSize: 12.5, textAlign: 'right', color: '#191F13', outline: 'none' }}
+                  style={{ width: 56, padding: '7px 8px', borderRadius: 8, border: '1px solid #E0E6DA', background: '#F6F8F4', ...LABEL, fontSize: 12.5, textAlign: 'right', color: '#191F13', outline: 'none' }}
                 />
-                <span style={{ ...MONO, fontSize: 12, color: '#9FA49A' }}>/ {r.possible}</span>
-                <span style={{ width: 44, textAlign: 'right', ...MONO, fontSize: 12, color: pctColor }}>
+                <span style={{ ...LABEL, fontSize: 12, color: '#9FA49A' }}>/ {r.possible}</span>
+                <span style={{ width: 44, textAlign: 'right', ...LABEL, fontSize: 12, color: pctColor }}>
                   {pct === null ? '—' : `${pct}%`}
                 </span>
               </div>
@@ -95,11 +95,11 @@ export function GradesDemo() {
         {cats.map((c) => (
           <div key={c.name} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <span style={{ width: 74, fontSize: 12, color: '#3B4233' }}>{c.name}</span>
-            <span style={{ ...MONO, fontSize: 10, color: '#9FA49A', width: 30 }}>{c.weight}</span>
+            <span style={{ ...LABEL, fontSize: 10, color: '#9FA49A', width: 30 }}>{c.weight}</span>
             <span style={{ flex: 1, height: 7, borderRadius: 99, background: '#E6EAE2', overflow: 'hidden' }}>
               <span style={{ display: 'block', height: '100%', background: '#68951F', transition: 'width 400ms cubic-bezier(0.22,1,0.36,1)', width: `${c.pct === null ? 0 : Math.max(0, Math.min(100, c.pct))}%` }} />
             </span>
-            <span style={{ width: 52, textAlign: 'right', ...MONO, fontSize: 11, color: '#445D22' }}>
+            <span style={{ width: 52, textAlign: 'right', ...LABEL, fontSize: 11, color: '#445D22' }}>
               {c.pct === null ? 'not yet' : `${c.pct.toFixed(1)}%`}
             </span>
           </div>

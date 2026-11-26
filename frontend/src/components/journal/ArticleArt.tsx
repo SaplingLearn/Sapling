@@ -22,7 +22,7 @@
 import Image from 'next/image';
 
 import type { ArticleArt as Art, ArtMotif } from '@/lib/landing/journalArticles';
-import { FONT_MONO, FONT_SANS } from '@/lib/landing/fonts';
+import { FONT_SANS } from '@/lib/landing/fonts';
 
 const GROUND = 'radial-gradient(ellipse 80% 70% at 45% 45%, #EDF0E9 0%, #E6EBE1 60%, #DEE4D8 100%)';
 
@@ -48,9 +48,9 @@ function Frame({ label, children }: { label: string; children: React.ReactNode }
           position: 'absolute',
           left: '5%',
           top: '6%',
-          fontFamily: "var(--font-plex-mono), 'IBM Plex Mono', ui-monospace, monospace",
-          fontSize: 9.5,
-          letterSpacing: '0.18em',
+          fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif",
+          fontSize: 11.5,
+          letterSpacing: '0.01em',
           color: GREEN_DEEP,
         }}
       >
@@ -63,7 +63,7 @@ function Frame({ label, children }: { label: string; children: React.ReactNode }
 /** Concepts, prerequisite edges, and a mastery arc on each node. */
 function GraphMotif({ ls }: MotifProps) {
   return (
-    <Frame label="CS 112 · KNOWLEDGE GRAPH">
+    <Frame label="CS 112 · Knowledge graph">
       <line x1="118" y1="76" x2="62" y2="44" stroke="rgba(68,93,34,0.3)" />
       <line x1="118" y1="76" x2="54" y2="108" stroke="rgba(68,93,34,0.3)" />
       <line x1="118" y1="76" x2="182" y2="50" stroke="rgba(68,93,34,0.3)" />
@@ -74,7 +74,7 @@ function GraphMotif({ ls }: MotifProps) {
       <circle cx="118" cy="76" r="15" fill="none" stroke={HAIRLINE} strokeWidth="2.6" />
       <circle cx="118" cy="76" r="15" fill="none" stroke={GREEN} strokeWidth="2.6" strokeLinecap="round" strokeDasharray="58 94" transform="rotate(-90 118 76)" />
       <circle cx="118" cy="76" r="9" fill={GREEN} />
-      <text x="118" y="79" textAnchor="middle" style={{ fontFamily: FONT_MONO }} fontSize={7 * ls} fill="#0f1508">112</text>
+      <text x="118" y="79" textAnchor="middle" style={{ fontFamily: FONT_SANS }} fontSize={7 * ls} fill="#0f1508">112</text>
       <circle cx="62" cy="44" r="10" fill="none" stroke={HAIRLINE} strokeWidth="2.2" />
       <circle cx="62" cy="44" r="10" fill="none" stroke={GREEN_MID} strokeWidth="2.2" strokeLinecap="round" strokeDasharray="38 25" transform="rotate(-90 62 44)" />
       <circle cx="62" cy="44" r="5.5" fill={GREEN_MID} />
@@ -101,7 +101,7 @@ function GraphMotif({ ls }: MotifProps) {
  */
 function SpacingMotif({ ls }: MotifProps) {
   return (
-    <Frame label="SPACED REVIEW · INTERVALS">
+    <Frame label="Spaced review · Intervals">
       <line x1="22" y1="118" x2="226" y2="118" stroke="rgba(68,93,34,0.18)" />
       <path d="M76 90C120 108 170 114 220 116" fill="none" stroke={MUTED} strokeWidth="1.1" strokeDasharray="2 3" opacity="0.45" />
       <path d="M30 36C46 74 62 86 76 90" fill="none" stroke={GREEN_DEEP} strokeWidth="2" strokeLinecap="round" opacity="0.85" />
@@ -132,7 +132,7 @@ function TeachBackMotif({ ls }: MotifProps) {
     { y: 96, tint: 'rgba(226,122,99,0.14)', stroke: CORAL, mark: 'M-2.6 -2.6 2.6 2.6M2.6 -2.6 -2.6 2.6', label: 'Missing' },
   ];
   return (
-    <Frame label="TEACHBACK · THE VERDICT">
+    <Frame label="Teachback · The verdict">
       <rect x="18" y="34" width="112" height="64" rx="12" fill={PAPER} stroke={HAIRLINE} />
       <path d="M34 97V110L49 97Z" fill={PAPER} stroke={HAIRLINE} strokeLinejoin="round" />
       <rect x="31" y="48" width="84" height="4.6" rx="2.3" fill="rgba(68,93,34,0.18)" />
@@ -159,7 +159,7 @@ function SyllabusMotif() {
   }));
   const marked: Record<number, string> = { 4: CORAL, 9: AMBER, 16: GREEN, 21: GREEN };
   return (
-    <Frame label="SYLLABUS · ONE UPLOAD">
+    <Frame label="Syllabus · One upload">
       <rect x="26" y="38" width="62" height="80" rx="6" fill={PAPER} stroke={HAIRLINE} />
       <path d="M76 38 88 50H76Z" fill="rgba(68,93,34,0.10)" />
       <rect x="36" y="52" width="28" height="4.4" rx="2.2" fill="rgba(68,93,34,0.30)" />
@@ -191,7 +191,7 @@ function CanopyMotif({ ls }: MotifProps) {
     { y: 108, tint: 'rgba(25,31,19,0.08)', dot: '#9a9a9a', label: 'Draft' },
   ];
   return (
-    <Frame label="CANOPY · THE SHARED MAP">
+    <Frame label="Canopy · The shared map">
       {/* links are drawn first, so the opaque cards leave them showing in the gaps */}
       <line x1="42" y1="46" x2="104" y2="72" stroke="rgba(68,93,34,0.30)" />
       <line x1="42" y1="46" x2="46" y2="112" stroke="rgba(68,93,34,0.30)" />

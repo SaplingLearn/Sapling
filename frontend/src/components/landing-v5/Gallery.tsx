@@ -42,18 +42,18 @@ import { useEffect, useState } from 'react';
 import { GALLERY_MINIS } from './galleryMinis';
 import { FadeIn } from '@/components/landing/anim';
 
-const MONO: React.CSSProperties = { fontFamily: "var(--font-plex-mono), 'IBM Plex Mono', ui-monospace, monospace" };
+const LABEL: React.CSSProperties = { fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif" };
 
 /** Card copy, indexed by `data-tk`. Distinct from the lab panels' copy in content.ts. */
 const CARDS = [
-  { kicker: 'ADAPTIVE QUIZZES', title: <>Questions that <em style={{ color: '#445D22', fontStyle: 'italic' }}>re-tune.</em></>, desc: 'Difficulty moves with every answer, and each result writes mastery back to your graph.' },
-  { kicker: 'SPACED REPETITION', title: <>Knows what to review, <em style={{ color: '#445D22', fontStyle: 'italic' }}>and when.</em></>, desc: 'Forgot, Hard, Easy: ten minutes, a day, four days. Sapling schedules; you show up.' },
-  { kicker: 'NOTETAKER', title: <>Notes that <em style={{ color: '#445D22', fontStyle: 'italic' }}>think.</em></>, desc: 'Write normally. Sapling summarizes, pulls the concepts, and links them to your graph.' },
-  { kicker: 'STUDY GUIDES', title: <>Built from your <em style={{ color: '#445D22', fontStyle: 'italic' }}>gaps.</em></>, desc: 'Pick a course and an exam. The guide is assembled from your own library, weighted to weak concepts.' },
-  { kicker: 'STUDY ROOMS', title: <>Learn <em style={{ color: '#445D22', fontStyle: 'italic' }}>together.</em></>, desc: 'Live rooms with chat and a side-by-side graph that shows exactly who knows what.' },
-  { kicker: 'GRADEBOOK', title: <>Know your <em style={{ color: '#445D22', fontStyle: 'italic' }}>real grade.</em></>, desc: 'Syllabus weights become categories. Every score rolls into a live grade and letter.' },
-  { kicker: 'CALENDAR', title: <>A syllabus becomes a <em style={{ color: '#445D22', fontStyle: 'italic' }}>semester.</em></>, desc: 'Upload once. Every exam, pset, and quiz is extracted, dated, and synced to Google Calendar.' },
-  { kicker: 'AI TUTOR', title: <>It asks. <em style={{ color: '#445D22', fontStyle: 'italic' }}>You answer.</em></>, desc: 'Socratic, expository, or teachback. It never hands over the solution, it walks you to it.' },
+  { kicker: 'Adaptive quizzes', title: <>Questions that <em style={{ color: '#445D22', fontStyle: 'italic' }}>re-tune.</em></>, desc: 'Difficulty moves with every answer, and each result writes mastery back to your graph.' },
+  { kicker: 'Spaced repetition', title: <>Knows what to review, <em style={{ color: '#445D22', fontStyle: 'italic' }}>and when.</em></>, desc: 'Forgot, Hard, Easy: ten minutes, a day, four days. Sapling schedules; you show up.' },
+  { kicker: 'Notetaker', title: <>Notes that <em style={{ color: '#445D22', fontStyle: 'italic' }}>think.</em></>, desc: 'Write normally. Sapling summarizes, pulls the concepts, and links them to your graph.' },
+  { kicker: 'Study guides', title: <>Built from your <em style={{ color: '#445D22', fontStyle: 'italic' }}>gaps.</em></>, desc: 'Pick a course and an exam. The guide is assembled from your own library, weighted to weak concepts.' },
+  { kicker: 'Study rooms', title: <>Learn <em style={{ color: '#445D22', fontStyle: 'italic' }}>together.</em></>, desc: 'Live rooms with chat and a side-by-side graph that shows exactly who knows what.' },
+  { kicker: 'Gradebook', title: <>Know your <em style={{ color: '#445D22', fontStyle: 'italic' }}>real grade.</em></>, desc: 'Syllabus weights become categories. Every score rolls into a live grade and letter.' },
+  { kicker: 'Calendar', title: <>A syllabus becomes a <em style={{ color: '#445D22', fontStyle: 'italic' }}>semester.</em></>, desc: 'Upload once. Every exam, pset, and quiz is extracted, dated, and synced to Google Calendar.' },
+  { kicker: 'AI tutor', title: <>It asks. <em style={{ color: '#445D22', fontStyle: 'italic' }}>You answer.</em></>, desc: 'Socratic, expository, or teachback. It never hands over the solution, it walks you to it.' },
 ];
 
 /** Track A drifts right, track B drifts left. */
@@ -167,7 +167,7 @@ function Card({ i, ghost }: { i: number; ghost: boolean }) {
           )}
         </div>
         <div style={{ padding: '15px 12px 0', display: 'flex', flexDirection: 'column' }}>
-          <span style={{ ...MONO, fontSize: 9.5, letterSpacing: '0.28em', color: '#445D22' }}>{c.kicker}</span>
+          <span style={{ ...LABEL, fontSize: 11.5, letterSpacing: '0.01em', color: '#445D22' }}>{c.kicker}</span>
           <h3 style={{ margin: '10px 0 0', fontFamily: "var(--font-gummi), Georgia, serif", fontSize: 22, fontWeight: 600, lineHeight: 1.2, letterSpacing: '-0.015em', color: '#191F13' }}>
             {c.title}
           </h3>

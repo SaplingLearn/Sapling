@@ -1796,7 +1796,7 @@ function KnowledgeGraph2DImpl({
         <button
           data-testid="graph-zoom-in"
           className="btn btn--ghost btn--sm"
-          style={{ padding: "2px 8px", fontFamily: "var(--font-mono)" }}
+          style={{ padding: "2px 8px", fontFamily: "var(--font-sans)" }}
           // About the window's centre in every mode. The plain mode used to
           // scale about the content origin, so each press slid what you were
           // looking at toward a corner (quiz home's preview lost its focus
@@ -1812,7 +1812,7 @@ function KnowledgeGraph2DImpl({
         <button
           data-testid="graph-zoom-out"
           className="btn btn--ghost btn--sm"
-          style={{ padding: "2px 8px", fontFamily: "var(--font-mono)" }}
+          style={{ padding: "2px 8px", fontFamily: "var(--font-sans)" }}
           onClick={() => {
             viewTouchedRef.current = true;
             zoomAbout(1 / 1.25, width / 2, height / 2);

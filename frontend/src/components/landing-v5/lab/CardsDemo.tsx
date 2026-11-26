@@ -13,7 +13,7 @@
  */
 
 import { useCallback, useEffect, useState } from 'react';
-import { LAB_TIER, MONO } from './LabShell';
+import { LAB_TIER, LABEL } from './LabShell';
 import { DECK, RATE_DUE, RATE_LABEL, RATE_TONE } from './labData';
 
 type RateKey = '1' | '2' | '3';
@@ -58,10 +58,10 @@ export function CardsDemo() {
         <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
           <span style={{ width: 8, height: 8, borderRadius: 99, background: LAB_TIER.struggling }} />
           <span style={{ fontSize: 14, fontWeight: 600, color: '#191F13' }}>Eigenvalues</span>
-          <span style={{ padding: '3px 8px', borderRadius: 6, background: '#F6F8F4', border: '1px solid #E6EAE2', ...MONO, fontSize: 9, letterSpacing: '0.1em', color: '#697062' }}>MA 242</span>
+          <span style={{ padding: '3px 8px', borderRadius: 6, background: '#F6F8F4', border: '1px solid #E6EAE2', ...LABEL, fontSize: 11, letterSpacing: '0.01em', color: '#697062' }}>MA 242</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-          <span style={{ ...MONO, fontSize: 9.5, letterSpacing: '0.12em', color: '#91978B' }}>
+          <span style={{ ...LABEL, fontSize: 11.5, letterSpacing: '0.01em', color: '#91978B' }}>
             DUE TODAY · {DECK.length - Math.min(idx, DECK.length)} LEFT
           </span>
           <span style={{ fontSize: 12.5, color: '#697062' }}>
@@ -81,8 +81,8 @@ export function CardsDemo() {
             {log.map((l, i) => (
               <div key={i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '9px 13px', borderRadius: 9, background: '#F6F8F4', border: '1px solid #E6EAE2' }}>
                 <span style={{ fontSize: 12.5, color: '#3B4233', maxWidth: '60%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{l.q}</span>
-                <span style={{ ...MONO, fontSize: 10.5, color: RATE_TONE[l.key] }}>
-                  {RATE_LABEL[l.key].toUpperCase()} · {RATE_DUE[l.key]}
+                <span style={{ ...LABEL, fontSize: 10.5, color: RATE_TONE[l.key] }}>
+                  {RATE_LABEL[l.key]} · {RATE_DUE[l.key]}
                 </span>
               </div>
             ))}
@@ -101,14 +101,14 @@ export function CardsDemo() {
             <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', perspective: 1600 }}>
               <div style={{ position: 'relative', width: '100%', maxWidth: 600, aspectRatio: '16 / 9', maxHeight: '100%', transformStyle: 'preserve-3d', transition: 'transform 560ms cubic-bezier(0.4,0,0.2,1)', transform: `rotateY(${flipped ? 180 : 0}deg)` }}>
                 <div style={{ position: 'absolute', inset: 0, backfaceVisibility: 'hidden', borderRadius: 18, background: '#FDFCF9', border: '1px solid #E3E0D5', boxShadow: '0 18px 40px -18px rgba(25,31,19,0.28)', padding: '30px 34px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', gap: 14 }}>
-                  <span style={{ ...MONO, fontSize: 9, letterSpacing: '0.26em', color: '#9FA49A' }}>FRONT</span>
+                  <span style={{ ...LABEL, fontSize: 11, letterSpacing: '0.01em', color: '#9FA49A' }}>Front</span>
                   <span style={{ fontFamily: "var(--font-aleo), 'Aleo', Georgia, serif", fontSize: 'clamp(20px,2.3vw,27px)', fontWeight: 600, lineHeight: 1.3, color: '#191F13' }}>{card.q}</span>
                   <span style={{ position: 'absolute', bottom: 16, left: 0, right: 0, fontSize: 11.5, color: '#B8BDB4' }}>click to reveal</span>
                 </div>
                 <div style={{ position: 'absolute', inset: 0, backfaceVisibility: 'hidden', transform: 'rotateY(180deg)', borderRadius: 18, background: '#445D22', border: '1px solid #445D22', boxShadow: '0 18px 40px -18px rgba(68,93,34,0.5)', padding: '30px 34px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', gap: 14 }}>
-                  <span style={{ ...MONO, fontSize: 9, letterSpacing: '0.26em', color: '#B1D28B' }}>BACK</span>
+                  <span style={{ ...LABEL, fontSize: 11, letterSpacing: '0.01em', color: '#B1D28B' }}>Back</span>
                   <span style={{ fontFamily: "var(--font-aleo), 'Aleo', Georgia, serif", fontSize: 'clamp(18px,2.1vw,24px)', fontWeight: 500, lineHeight: 1.4, color: '#F6F8F4' }}>{card.a}</span>
-                  <span style={{ position: 'absolute', bottom: 16, left: 0, right: 0, ...MONO, fontSize: 9, letterSpacing: '0.14em', color: 'rgba(234,241,228,0.5)' }}>HOW DID THAT GO?</span>
+                  <span style={{ position: 'absolute', bottom: 16, left: 0, right: 0, ...LABEL, fontSize: 11, letterSpacing: '0.01em', color: 'rgba(234,241,228,0.5)' }}>How did that go?</span>
                 </div>
               </div>
             </div>
@@ -125,9 +125,9 @@ export function CardsDemo() {
                   style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, padding: '11px 0', borderRadius: 11, fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif", cursor: 'pointer', transition: 'all 180ms', border: `1px solid ${RATE_TONE[k]}66`, background: `${RATE_TONE[k]}12` }}
                 >
                   <span style={{ fontSize: 13.5, fontWeight: 600, color: RATE_TONE[k] }}>
-                    {RATE_LABEL[k]} <b style={{ ...MONO, fontSize: 10, color: '#9FA49A', fontWeight: 400 }}>{k}</b>
+                    {RATE_LABEL[k]} <b style={{ ...LABEL, fontSize: 10, color: '#9FA49A', fontWeight: 400 }}>{k}</b>
                   </span>
-                  <span style={{ ...MONO, fontSize: 10, color: `${RATE_TONE[k]}cc` }}>next in {RATE_DUE[k]}</span>
+                  <span style={{ ...LABEL, fontSize: 10, color: `${RATE_TONE[k]}cc` }}>next in {RATE_DUE[k]}</span>
                 </button>
               ))}
             </div>

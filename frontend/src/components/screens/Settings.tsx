@@ -42,6 +42,7 @@ import {
   type UsernameState,
 } from "./settingsUsername";
 import { humanizeError } from "@/lib/errorMessage";
+import { sentenceCase } from "@/lib/sentenceCase";
 
 type Tab = "profile" | "cosmetics" | "preferences" | "notifications" | "data";
 
@@ -1107,7 +1108,7 @@ function CosmeticCard({
       {locked && (
         <span
           className="chip"
-          style={{ position: "absolute", top: 8, right: 8, fontSize: 9, textTransform: "uppercase" }}
+          style={{ position: "absolute", top: 8, right: 8, fontSize: 11 }}
           title={unlockSource || "Locked"}
         >
           🔒 locked
@@ -1115,9 +1116,7 @@ function CosmeticCard({
       )}
       <CosmeticPreview cosmetic={cosmetic} userName={userName} avatarUrl={avatarUrl} />
       <div style={{ fontSize: 12, fontWeight: 600, textAlign: "center" }}>{cosmetic.name}</div>
-      <div style={{ fontSize: 10, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.08em" }}>
-        {cosmetic.rarity}
-      </div>
+      <div style={{ fontSize: 12, color: "var(--text-muted)" }}>{sentenceCase(cosmetic.rarity)}</div>
       {locked ? (
         <div style={{ fontSize: 10, color: "var(--text-muted)", textAlign: "center", minHeight: 14 }}>
           {unlockSource ? `Unlock: ${unlockSource}` : "Locked"}
@@ -1178,7 +1177,7 @@ function CosmeticPreview({
   }
   if (cosmetic.type === "title") {
     return (
-      <span className="chip" style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.1em" }}>
+      <span className="chip" style={{ fontSize: 12 }}>
         {cosmetic.css_value || cosmetic.name}
       </span>
     );

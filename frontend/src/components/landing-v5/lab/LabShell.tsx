@@ -9,7 +9,7 @@
  * "TRY IT · THIS ONE ACTUALLY WORKS" line is promising.
  */
 
-export const MONO: React.CSSProperties = { fontFamily: "var(--font-plex-mono), 'IBM Plex Mono', ui-monospace, monospace" };
+export const LABEL: React.CSSProperties = { fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif" };
 
 /** Lab-local tier swatches; see labData.ts for why they differ from the graph's. */
 export const LAB_TIER = {
@@ -25,9 +25,9 @@ export function LabShell({ route, children }: { route: string; children: React.R
             <span key={i} style={{ width: 8, height: 8, borderRadius: 99, background: '#E3E0D5' }} />
           ))}
         </span>
-        <span style={{ ...MONO, fontSize: 9.5, letterSpacing: '0.2em', color: '#91978B' }}>{route}</span>
-        <span style={{ marginLeft: 'auto', ...MONO, fontSize: 9, letterSpacing: '0.18em', color: '#445D22', background: '#EAF1E4', border: '1px solid #E0E6DA', borderRadius: 99, padding: '3px 9px' }}>
-          INTERACTIVE
+        <span style={{ ...LABEL, fontSize: 11.5, letterSpacing: '0.01em', color: '#91978B' }}>{route}</span>
+        <span style={{ marginLeft: 'auto', ...LABEL, fontSize: 11, letterSpacing: '0.01em', color: '#445D22', background: '#EAF1E4', border: '1px solid #E0E6DA', borderRadius: 99, padding: '3px 9px' }}>
+          Interactive
         </span>
       </div>
       <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>{children}</div>
@@ -77,7 +77,7 @@ export function Segmented<T extends string>({
             aria-pressed={on}
             style={{
               padding: '6px 13px', borderRadius: 7, border: 'none', cursor: 'pointer',
-              ...MONO, fontSize: 9.5, letterSpacing: '0.14em',
+              ...LABEL, fontSize: 11.5, letterSpacing: '0.01em',
               background: on ? '#191F13' : 'transparent',
               color: on ? '#FDFCF9' : '#697062',
               fontWeight: on ? 600 : 400,

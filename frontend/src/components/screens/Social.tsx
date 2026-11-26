@@ -464,7 +464,7 @@ export function FriendsPanel() {
         <div style={{ marginBottom: 12 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
             <span style={{ fontSize: 11, fontWeight: 600 }}>Incoming requests</span>
-            <span className="chip chip--accent" style={{ fontSize: 10 }}>{incoming.length}</span>
+            <span className="chip chip--accent" style={{ fontSize: 11 }}>{incoming.length}</span>
           </div>
           {incoming.map((r) => (
             <div
@@ -508,7 +508,7 @@ export function FriendsPanel() {
               <div style={{ flex: 1, minWidth: 0, fontSize: 12, color: "var(--text-dim)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                 {r.name}
               </div>
-              <span className="chip" style={{ fontSize: 10 }}>Pending</span>
+              <span className="chip" style={{ fontSize: 11 }}>Pending</span>
               <button
                 data-testid={`social-friend-cancel-${r.id}`}
                 className="btn btn--sm btn--ghost"
@@ -1698,7 +1698,7 @@ export function Social() {
             >
               <div style={{ fontSize: 13, fontWeight: 600, display: "flex", alignItems: "center", gap: 6 }}>
                 {r.name}
-                {r.is_public && <span className="chip" style={{ fontSize: 10 }}>Public</span>}
+                {r.is_public && <span className="chip" style={{ fontSize: 11 }}>Public</span>}
               </div>
               <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
                 {r.topic ? `${r.topic} · ` : ""}{r.member_count} members

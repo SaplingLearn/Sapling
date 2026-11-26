@@ -24,16 +24,21 @@ import uuid
 #   OCR_ASYNC_ENABLED=true
 OCR_ASYNC_ENABLED = os.getenv("OCR_ASYNC_ENABLED", "false").lower() == "true"
 
-from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Request, UploadFile
+from fastapi import (
+    APIRouter, BackgroundTasks, Body, File, Form, HTTPException, Request, UploadFile,
+)
 from sse_starlette.sse import EventSourceResponse
 from pydantic_ai.exceptions import UsageLimitExceeded, UnexpectedModelBehavior
 
 from db.connection import table
 from services import events_service
-from services.academics import offering_course_id, require_course_enrollment
+from services.academics import require_course_enrollment
 from services.auth_guard import get_session_user_id, require_self, guard_off_loop
-from services.encryption import bind, decrypt_if_present, decrypt_json
-from services.extraction_service import extract_text_from_file
+# Still re-exported here even though `_extract_text_or_422` moved to
+# `services/documents/upload.py`: `tests/split_patches.py::patch_documents`
+# patches a name across every documents module, and the moved helper looks
+# it up in its new home (#118).
+from services.extraction_service import extract_text_from_file  # noqa: F401  (re-export, #118)
 from services.agent_events import SSE_CACHE_CONTROL
 from services.request_context import current_request_id
 from services import abuse_limits
@@ -53,6 +58,7 @@ from services.documents.upload import (  # noqa: F401  (re-export, #118)
     UNREADABLE_DOCUMENT_DETAIL,
     UPLOAD_FAILED_DETAIL,
     _budget_failed_frames,
+    _extract_text_or_422,
     _has_usable_text,
 )
 from services.documents.persistence import (  # noqa: F401  (re-export, #118)
@@ -78,17 +84,18 @@ from services.documents.post_roll import (  # noqa: F401  (re-export, #118)
 )
 from services.documents.scan import (  # noqa: F401  (re-export, #118)
     _course_label,
+    scan_for_document,
     _extend_concepts,
     _extend_via_agent,
     _scan_concepts_for_course,
     _scan_user_message,
 )
 from services.documents.library import (  # noqa: F401  (re-export, #118)
-    _courses_for_offerings,
-    list_user_documents,
-    soft_delete_document,
-    update_document_row,
+    _courses_for_offerings, hard_delete_document, list_trashed_documents,
+    list_user_documents, restore_document, soft_delete_document, update_document_row,
 )
+from services.documents import folders as folders_service, library_api
+from services.documents.page_count import page_count_of
 from services.documents.stream import upload_event_stream
 
 from agents.deps import SaplingDeps
@@ -107,10 +114,8 @@ MISMATCHED_FILE_DETAIL = (
     "Please upload a different file."
 )
 
-VALID_CATEGORIES = {
-    "syllabus", "lecture_notes", "slides", "reading",
-    "assignment", "study_guide", "other",
-}
+#: Re-exported (#118): the validation moved to `services/documents/library_api.py`.
+VALID_CATEGORIES = library_api.VALID_CATEGORIES
 
 
 async def _validate_user(user_id: str) -> None:
@@ -155,57 +160,53 @@ async def _require_owned_document(document_id: str, user_id: str) -> None:
 
 
 @router.delete("/doc/{document_id}")
-async def delete_document(document_id: str, request: Request, user_id: str | None = None):
+async def delete_document(
+    document_id: str, request: Request, user_id: str | None = None, hard: int = 0,
+):
+    """Move a document to the Trash, or - with ``hard=1`` - delete it forever.
+
+    ``hard=1`` only ever applies to a document already in the Trash, so the
+    Library's own delete can never skip the grace period.
+    """
     user_id = await _session_or_self(user_id, request)
-    await _require_owned_document(document_id, user_id)
-    await soft_delete_document(document_id, user_id)
-    return {"deleted": True}
+    return await library_api.delete(
+        document_id, user_id, hard=bool(hard), owned_check=_require_owned_document)
+
+
+@router.get("/user/{user_id}/trash")
+async def list_trash(user_id: str, request: Request):
+    """The user's soft-deleted documents - the Library's Trash view."""
+    await guard_off_loop(require_self, user_id, request)
+    await _validate_user(user_id)
+    return {"documents": await list_trashed_documents(user_id)}
+
+
+@router.post("/doc/{document_id}/restore")
+async def restore_trashed_document(
+    document_id: str, request: Request, body: dict = Body(default={}),
+):
+    """Take a document back out of the Trash and re-index it."""
+    user_id = await _session_or_self(body.get("user_id"), request)
+    return await library_api.restore(document_id, user_id)
 
 
 @router.patch("/doc/{document_id}")
 async def update_document(document_id: str, request: Request, body: UpdateDocumentBody):
-    """Update mutable fields on a document (currently only category)."""
-    category = body.category
-    if category and category not in VALID_CATEGORIES:
-        raise HTTPException(status_code=400, detail=f"Invalid category '{category}'.")
-    updates = {}
-    if category:
-        updates["category"] = category
-    if not updates:
-        raise HTTPException(status_code=400, detail="No valid fields to update.")
+    """Update the mutable fields on a document: its category, its name, the
+    course it belongs to, and the folder it is filed in.
+
+    A body that asks for nothing is a bad request whoever sent it, so it is
+    refused before the ownership read. The model bounds every field, so an
+    overlong one is a 422 before this runs at all; `model_fields_set` keeps the
+    difference between "sent as null" (clear it) and "absent" (leave it).
+    """
+    sent = {k: getattr(body, k) for k in body.model_fields_set}
+    updates = library_api.validate_fields(sent)
     user_id = await _session_or_self(body.user_id, request)
     await _require_owned_document(document_id, user_id)
+    updates.update(await library_api.resolve_filing(user_id, sent))
     return await update_document_row(document_id, user_id, updates)
 
-
-def _extract_text_or_422(file_bytes: bytes, filename: str, content_type: str) -> str:
-    """Run synchronous text extraction. Convert any failure into a clean
-    HTTP 422 with a friendly detail instead of a bubbled-up 500.
-
-    The async-OCR path (OCR_ASYNC_ENABLED=true) handles its own failures
-    via SSE error events; this helper is for the synchronous default
-    path on /upload/sync and on /upload when the flag is off.
-    """
-    try:
-        text = extract_text_from_file(file_bytes, filename, content_type)
-    except LLMBudgetExceeded:
-        raise  # #119: vision OCR refused by the per-user LLM budget -> the 429
-    except Exception:
-        logger.exception("Text extraction failed for '%s'", filename)
-        raise HTTPException(
-            status_code=422,
-            detail="Could not read this document. Please try a different file.",
-        )
-    # Extraction can "succeed" and return nothing -- a rasterized PDF has no
-    # text layer, so there is no exception to catch. Reject here rather than
-    # letting an empty document reach the model (see MIN_EXTRACTED_CHARS).
-    if not _has_usable_text(text):
-        logger.warning(
-            "Extraction yielded %d usable chars for '%s' - rejecting as unreadable",
-            len((text or "").strip()), filename,
-        )
-        raise HTTPException(status_code=422, detail=UNREADABLE_DOCUMENT_DETAIL)
-    return text
 
 
 def _upload_request_id(request: Request) -> str:
@@ -371,6 +372,7 @@ async def upload_document_sync(
             filename=filename, result=result, request_id=request_id,
             course_id=course_id, char_count=len(extracted_text),
             extracted_text=extracted_text,
+            page_count=page_count_of(file_bytes, filename, file.content_type or ""),
         )
     except Exception:
         # #759/#116: a duplicate of this request saved it first (the unique
@@ -482,44 +484,8 @@ def scan_document_concepts(document_id: str, request: Request, body: ScanConcept
     require_self(user_id, request)
     enforce_abuse_limit(abuse_limits.CONCEPT_SCAN, user_id)
     _validate_user_sync(user_id)
-
-    rows = table("documents").select(
-        "id,user_id,offering_id,file_name,summary,concept_notes",
-        filters={"id": f"eq.{document_id}", "user_id": f"eq.{user_id}", "deleted_at": "is.null"},
-        limit=1,
-    )
-    if not rows:
-        raise HTTPException(status_code=404, detail="Document not found.")
-    doc = rows[0]
-    # The document keys on the offering; the concept graph keys on the
-    # abstract course. Resolve offering → abstract course before scanning.
-    course_id = offering_course_id(doc.get("offering_id"))
-    if not course_id:
-        raise HTTPException(status_code=400, detail="Document is not associated with a course.")
-    # #115: the scan writes the course's graph and spends model quota, so —
-    # like /course/{id}/scan-concepts — the caller must still be enrolled in
-    # the course (a dropped course's document is readable, not scannable).
-    require_course_enrollment(user_id, course_id)
-
-    doc_summary = decrypt_if_present(doc.get("summary"), bind=bind("documents", "summary", doc))
-    notes_raw = doc.get("concept_notes")
-    if isinstance(notes_raw, str):
-        try:
-            doc_concept_notes = decrypt_json(
-                notes_raw, bind=bind("documents", "concept_notes", doc))
-        except Exception:
-            doc_concept_notes = []
-    else:
-        doc_concept_notes = notes_raw or []
-
     try:
-        return _scan_concepts_for_course(
-            user_id,
-            course_id,
-            doc_filename=doc.get("file_name"),
-            doc_summary=doc_summary,
-            doc_concept_notes=doc_concept_notes
-        )
+        return scan_for_document(user_id, document_id)
     except ConceptScanFailed as e:
         raise HTTPException(status_code=500, detail=e.detail)
 
@@ -539,3 +505,39 @@ def scan_course_concepts(course_id: str, request: Request, body: ScanConceptsBod
         return _scan_concepts_for_course(user_id, course_id)
     except ConceptScanFailed as e:
         raise HTTPException(status_code=500, detail=e.detail)
+
+
+# -- folders ----------------------------------------------------------------
+
+
+@router.get("/folders")
+async def list_document_folders(request: Request, user_id: str | None = None):
+    """Every folder the user has, across all of their courses."""
+    user_id = await _session_or_self(user_id, request)
+    return {"folders": await folders_service.list_folders(user_id)}
+
+
+@router.post("/folders")
+async def create_document_folder(request: Request, body: dict = Body(...)):
+    """Make a folder. A blank name is the Library's normal first state, not an
+    error: it creates the folder and renames it in place."""
+    user_id = await _session_or_self(body.get("user_id"), request)
+    return await folders_service.create_for_request(
+        user_id, body.get("name"), body.get("course_id") or None)
+
+
+@router.patch("/folders/{folder_id}")
+async def rename_document_folder(folder_id: str, request: Request, body: dict = Body(...)):
+    user_id = await _session_or_self(body.get("user_id"), request)
+    return await folders_service.rename_for_request(folder_id, user_id, body.get("name"))
+
+
+@router.delete("/folders/{folder_id}")
+async def delete_document_folder(
+    folder_id: str, request: Request, user_id: str | None = None,
+):
+    """Delete a folder. Its documents stay in the Library, unfiled —
+    `documents.folder_id` is ON DELETE SET NULL."""
+    user_id = await _session_or_self(user_id, request)
+    await folders_service.delete_for_request(folder_id, user_id)
+    return {"deleted": True}

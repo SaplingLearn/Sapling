@@ -14,6 +14,7 @@ import { BadgeModal } from "./achievements/BadgeModal";
 import { LeaderboardTab } from "./achievements/LeaderboardTab";
 import { ActivityTab } from "./achievements/ActivityTab";
 import { humanizeError } from "@/lib/errorMessage";
+import { sentenceCase } from "@/lib/sentenceCase";
 
 // Rarity colors come only from the canonical --rarity-* tokens (globals.css);
 // rarity text itself stays neutral (colored text fails 4.5:1 on several tiers).
@@ -350,8 +351,8 @@ export function Achievements() {
                     </button>
                     <div style={{ fontSize: 26, marginBottom: 4 }}>{ua.achievement.icon || "★"}</div>
                     <div style={{ fontSize: 11, fontWeight: 600 }}>{ua.achievement.name}</div>
-                    <div style={{ fontSize: 10, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.08em", marginTop: 2 }}>
-                      {ua.achievement.rarity}
+                    <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 2 }}>
+                      {sentenceCase(ua.achievement.rarity)}
                     </div>
                     <div style={{ display: "flex", justifyContent: "center", gap: 4, marginTop: 6 }}>
                       <button

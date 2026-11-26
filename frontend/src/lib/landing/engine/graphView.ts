@@ -247,12 +247,12 @@ export function drawScroll(
 
   if (p > 0.76) {
     const la = smooth((p - 0.76) / 0.1);
-    ctx.font = '11px ' + canvasFont('mono');
+    ctx.font = '11px ' + canvasFont('sans');
     proj.forEach((pr) => {
       if (!pr.n.hub) return;
       ctx.globalAlpha = la * 0.85;
       ctx.fillStyle = '#3B4233';
-      ctx.fillText(pr.n.label.toUpperCase(), pr.x + 14, pr.y + 4);
+      ctx.fillText(pr.n.label, pr.x + 14, pr.y + 4);
     });
     ctx.globalAlpha = 1;
   }
@@ -264,11 +264,11 @@ export function drawScroll(
   const hv = hover as Projected | null;
   if (hv && !hv.n.hub) {
     const cp = smooth((p - hv.n.colorAt) / 0.09);
-    const status = cp < 0.05 ? 'UNEXPLORED' : XTIER_LABEL[hv.n.tier].toUpperCase();
+    const status = cp < 0.05 ? 'Unexplored' : XTIER_LABEL[hv.n.tier];
     const label = hv.n.label;
     ctx.font = '600 12px ' + canvasFont('sans');
     const tw = ctx.measureText(label).width;
-    ctx.font = '9px ' + canvasFont('mono');
+    ctx.font = '9px ' + canvasFont('sans');
     const sw = ctx.measureText(status).width;
     const bw = Math.max(tw, sw) + 24;
     const bh = 40;
@@ -287,7 +287,7 @@ export function drawScroll(
     ctx.font = '600 12px ' + canvasFont('sans');
     ctx.fillText(label, bx + 12, by + 17);
     ctx.fillStyle = cp < 0.05 ? '#9a9a9a' : hv.n.final;
-    ctx.font = '9px ' + canvasFont('mono');
+    ctx.font = '9px ' + canvasFont('sans');
     ctx.fillText(status, bx + 12, by + 31);
   }
 }
@@ -433,13 +433,13 @@ export function drawExplore(
       if (show) {
         ctx.globalAlpha = dim * la * (n.hub ? 0.95 : 0.72);
         ctx.font = n.root
-          ? '600 14px ' + canvasFont('mono')
+          ? '600 14px ' + canvasFont('sans')
           : n.hub
-            ? '11px ' + canvasFont('mono')
+            ? '11px ' + canvasFont('sans')
             : '11px ' + canvasFont('sans');
         ctx.fillStyle = n.root ? '#191F13' : n.hub ? '#3B4233' : '#697062';
         ctx.textAlign = 'center';
-        ctx.fillText(n.hub ? n.label.toUpperCase() : n.label, pr.x, pr.y + ar + 15 * pr.sc + 4);
+        ctx.fillText(n.hub ? n.label : n.label, pr.x, pr.y + ar + 15 * pr.sc + 4);
         ctx.textAlign = 'left';
       }
       ctx.globalAlpha = 1;

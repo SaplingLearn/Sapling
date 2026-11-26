@@ -1,0 +1,131 @@
+/* Library — ported from the design handoff.
+ *
+ * `reference/library-global.css` from design_handoff_library_notes, verbatim
+ * apart from three deliberate changes:
+ *
+ *  1. The `body` / `a` rules are dropped: the shell already paints those from
+ *     --bg and --brand-forest, which hold the same values.
+ *  2. The rules the design writes against `*` — the custom scrollbar and the
+ *     reduced-motion override — are scoped to `[data-sap-surface]`, the
+ *     attribute the Library puts on its root, so they cannot repaint or
+ *     flatten the rest of the app.
+ *  3. The Trash button's keyframes (sapBumpA/B, sapLidA/B) are dropped with
+ *     the button itself (owner's call 2026-11-25).
+ *
+ * Everything else (every keyframe, every literal value) is byte-for-byte what
+ * the prototype ships. Hover and focus states, which the prototype expresses
+ * as `style-hover="…"` attributes on elements, live at the bottom of this file
+ * as `.sap-*` classes.
+ */
+
+/* ── from reference/library-global.css ─────────────────────────────────── */
+
+@property --sb-a { syntax: "<number>"; inherits: true; initial-value: 0; }
+[data-sap-surface] *, [data-sap-surface] { --sb-a: 0; transition: --sb-a 450ms ease; }
+[data-scrolling] { --sb-a: 0.45; transition: --sb-a 120ms ease; }
+@supports not selector(::-webkit-scrollbar) { [data-sap-surface] * { scrollbar-width: thin; scrollbar-color: rgba(68,93,34,var(--sb-a)) transparent; } }
+[data-sap-surface] ::-webkit-scrollbar { width: 14px; height: 14px; }
+[data-sap-surface] ::-webkit-scrollbar-track { background: transparent; }
+[data-sap-surface] ::-webkit-scrollbar-thumb { background-color: rgba(68,93,34,var(--sb-a)); border: 4px solid transparent; background-clip: padding-box; border-radius: 8px; min-height: 40px; }
+[data-sap-surface] [data-scrolling]::-webkit-scrollbar-thumb:hover { background-color: rgba(68,93,34,0.7); }
+[data-sap-surface] ::-webkit-scrollbar-corner { background: transparent; }
+
+[data-sap-surface] input::placeholder { color: #8A8372; }
+/* The design's Trash-can keyframes (sapBumpA/B, the landing bump, and
+   sapLidA/B, the lid tilt) are not ported: the Trash button they animated was
+   removed, owner's call 2026-11-25 — the Trash is now the scope switcher's
+   last option, which is not a drop target. */
+@keyframes sapRowOut{from{opacity:1;transform:none}to{opacity:0;transform:translateX(-14px) scale(0.98)}}
+@keyframes sapMenuIn{from{opacity:0;transform:translateY(-4px) scale(0.97)}to{opacity:1;transform:none}}@keyframes sapMenuOut{from{opacity:1;transform:none}to{opacity:0;transform:translateY(-4px) scale(0.97)}}@keyframes sapScrimIn{from{opacity:0}to{opacity:1}}@keyframes sapScrimOut{from{opacity:1}to{opacity:0}}@keyframes sapModalIn{from{opacity:0;transform:translateY(10px) scale(0.98)}to{opacity:1;transform:none}}@keyframes sapModalOut{from{opacity:1;transform:none}to{opacity:0;transform:translateY(6px) scale(0.98)}}
+@keyframes sapShimmer { 0% { background-position: -300px 0; } 100% { background-position: 300px 0; } }
+@keyframes sapSkelOut { from { opacity: 1; visibility: visible; } to { opacity: 0; visibility: hidden; } }
+
+/* List <-> Panel. The rows and cards each animate themselves in, but the
+   outgoing view used to vanish on the same frame, which read as a jump. The
+   incoming view slides in as one block over that stagger, from the side its
+   tab sits on: Panel is the right tab, so it enters from the right, and List
+   from the left. Direction is what makes the toggle feel like a switch rather
+   than a replace. */
+@keyframes sapViewInRight  { from { opacity: 0; transform: translateX(28px); }  to { opacity: 1; transform: none; } }
+@keyframes sapViewInLeft   { from { opacity: 0; transform: translateX(-28px); } to { opacity: 1; transform: none; } }
+/* The outgoing half of the same switch. Both views are on screen together for
+   the length of one slide, stacked in the same grid cell, so the new one
+   arrives as the old one leaves instead of appearing into a gap. */
+@keyframes sapViewOutLeft  { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateX(-28px); } }
+@keyframes sapViewOutRight { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateX(28px); } }
+/* While the two slide, the rows and cards must not ALSO stagger themselves in:
+   two motions at once reads as a stutter, where the point is one panel moving
+   across. The slide owns the frame; the per-row entrance returns next time the
+   list is built for any other reason. */
+[data-sliding] [role="row"], [data-sliding] [data-card] { animation: none !important; }
+/* The selection bar ("2 Selected · Move To · …"). It used to pop in and out on
+   one frame, shoving the list down and back. Now its row opens (the grid track
+   tweens 0fr -> 1fr, so the list below glides instead of jumping) while the bar
+   itself drops in like a menu does; leaving runs the same two backwards. Only
+   the in-between frames are new: both ends are the bar exactly as designed. */
+@keyframes sapBulkRowIn  { from { grid-template-rows: 0fr; } to { grid-template-rows: 1fr; } }
+@keyframes sapBulkRowOut { from { grid-template-rows: 1fr; } to { grid-template-rows: 0fr; } }
+@keyframes sapBulkIn  { from { opacity: 0; transform: translateY(-6px) scale(0.98); } to { opacity: 1; transform: none; } }
+@keyframes sapBulkOut { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateY(-6px) scale(0.98); } }
+/* The List / Panel switcher's pill slides to the chosen tab (ViewSwitcher.tsx)
+   on the Library's 220ms entrance curve, and the labels recolour with it.
+   Transitions, not animations, so the reduced-motion rule below cannot reach
+   them; they carry their own. Scoped under the surface so they outrank its
+   `[data-sap-surface] *` scrollbar transition. */
+[data-sap-surface] .sapSwitchThumb { transition: transform 220ms cubic-bezier(0.2, 0.7, 0.2, 1), width 220ms cubic-bezier(0.2, 0.7, 0.2, 1); }
+[data-sap-surface] .sapSwitchTab { transition: color 220ms cubic-bezier(0.2, 0.7, 0.2, 1); }
+@media (prefers-reduced-motion: reduce) { [data-sap-surface] .sapSwitchThumb, [data-sap-surface] .sapSwitchTab { transition: none; } }
+@keyframes sapFadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+@keyframes sapSlideUp { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { [data-sap-surface], [data-sap-surface] * { animation-duration: 1ms !important; animation-delay: 0ms !important; } }
+
+/* ── skeletons ─────────────────────────────────────────────────────────────
+ * The repo's `Skeleton` primitive paints `.skeleton` with the app's shimmer
+ * (--bg-soft → --bg-subtle, 400px, 1.8s). The Library's skeleton adds
+ * `.sapSkeleton`, which swaps in the handoff's exact gradient and timing while
+ * keeping the primitive's sizing, radius and aria handling.
+ */
+.skeleton.sapSkeleton {
+  background: linear-gradient(90deg, #F2EFE8, #EAE5DB, #F2EFE8);
+  background-size: 600px 100%;
+  animation: sapShimmer 1.6s linear infinite;
+}
+
+
+/* ── hover / focus states ──────────────────────────────────────────────────
+ * The prototype writes these as `style-hover="background: X"` on each element;
+ * the dc runtime turns them into real :hover rules. React has no inline
+ * :hover, so each one becomes a class here with the SAME literal value.
+ * Named for the element, so a reader can find it in the markup.
+ */
+
+/* a plain row / ghost control that warms on hover */
+.sapHoverWarm:hover        { background: #F4F1EA !important; }
+.sapHoverWarmer:hover      { background: #F0ECE3 !important; }
+.sapHoverWarmest:hover     { background: #EDE9E0 !important; }
+.sapHoverStone:hover       { background: #E4DFD3 !important; }
+.sapHoverCard:hover        { background: #F2EEE5 !important; }
+/* menu items and option rows */
+.sapHoverMenu:hover        { background: #F2F6EE !important; }
+.sapHoverTint:hover        { background: #EBF0E1 !important; }
+.sapHoverChip:hover        { background: #C9DCB2 !important; }
+.sapHoverChipOn:hover      { background: #BBD29F !important; }
+.sapHoverDanger:hover      { background: #F6E3E1 !important; }
+/* primary buttons */
+.sapHoverForest:hover      { background: #3A501C !important; }
+/* a document row: selected rows keep their tint, unselected ones warm */
+/* A row carries its background INLINE (`transparent`, or the tint when it is
+   selected), and an inline style beats a stylesheet rule — so these two need
+   `!important` exactly as every `.sapHover*` above does. Without it the row
+   hover silently did nothing at all: the computed background stayed
+   `rgba(0,0,0,0)` with the cursor on the row.
+
+   The value is the owner's call of 2026-11-25. The handoff's #F4F1EA is six
+   units off the #FAF8F3 page behind it, which reads as no feedback; #EDE9E0 is
+   the next step down the same warm family (the design names it for
+   `.sapHoverWarmest`), so a hovered row is obvious without leaving the
+   palette or colliding with the green selection states. */
+.sapRow:hover              { background: #EDE9E0 !important; }
+/* the upload modal's course radio keeps its chosen tint on hover */
+.sapUplCourse:hover            { background: #F7F4EE; }
+.sapUplCourse[data-on="1"]:hover { background: #F2F6EE; }

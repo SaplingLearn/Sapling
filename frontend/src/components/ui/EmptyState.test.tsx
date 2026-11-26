@@ -99,7 +99,7 @@ describe("EmptyState — the Gradebook promotion renders identically", () => {
     const { container } = render(GRADEBOOK);
     const root = container.querySelector(".empty-state")!;
     expect(root).toHaveClass("empty-state--hero");
-    // Eyebrow: `.label-micro` inside `--hero`, which is what restores 11px+ss01.
+    // Eyebrow: `.label-micro` inside `--hero`, which is what sizes it for the hero.
     expect(root.querySelector(".empty-state__eyebrow")).toHaveClass("label-micro");
     // Title/body keep the type classes the old inline font-families named.
     expect(root.querySelector(".empty-state__title")).toHaveClass("h-serif");
@@ -121,13 +121,12 @@ describe("EmptyState — the Gradebook promotion renders identically", () => {
     );
     // The tokens, at the values the screen was drawn at…
     expect(css).toMatch(/--empty-hero-fs:\s*56px;/);
-    expect(css).toMatch(/--empty-hero-eyebrow-fs:\s*11px;/);
+    expect(css).toMatch(/--empty-hero-eyebrow-fs:\s*15px;/);
     expect(css).toMatch(/--empty-hero-body-fs:\s*17px;/);
     expect(css).toMatch(/--empty-hero-cta-pad:\s*10px 18px;/);
-    // …and the rules that actually spend them, including the ss01 `.mono`
-    // carried and `.label-micro` does not.
+    // …and the rules that actually spend them.
     expect(css).toMatch(
-      /\.empty-state--hero \.empty-state__eyebrow \{[^}]*font-size:\s*var\(--empty-hero-eyebrow-fs\)[^}]*font-feature-settings:\s*"ss01"[^}]*\}/,
+      /\.empty-state--hero \.empty-state__eyebrow \{[^}]*font-size:\s*var\(--empty-hero-eyebrow-fs\)[^}]*\}/,
     );
     expect(css).toMatch(
       /\.empty-state--hero \.empty-state__body \{[^}]*font-size:\s*var\(--empty-hero-body-fs\)[^}]*\}/,

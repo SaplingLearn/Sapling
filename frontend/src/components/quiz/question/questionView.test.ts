@@ -123,9 +123,9 @@ describe("verdictShown", () => {
 
 describe("header and status labels", () => {
   it("prefers the question's difficulty, keeping a blank one blank", () => {
-    expect(difficultyLabel(item({ question: question({ difficulty: "hard" }) }), session())).toBe("HARD");
+    expect(difficultyLabel(item({ question: question({ difficulty: "hard" }) }), session())).toBe("Hard");
     expect(difficultyLabel(item({ question: question({ difficulty: "" }) }), session())).toBe("");
-    expect(difficultyLabel(undefined, session())).toBe("EASY");
+    expect(difficultyLabel(undefined, session())).toBe("Easy");
     expect(difficultyLabel(undefined, session({ config: { count: 3, difficulty: undefined as never, feedback: "at-end" } }))).toBe("");
   });
 

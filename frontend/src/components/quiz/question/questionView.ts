@@ -11,6 +11,7 @@ import { isUnanswered } from "@/lib/quiz/machine";
 import type { Phase, QuestionType, QuizItem, QuizSession, WireOption } from "@/lib/quiz/types";
 import { isWrittenType } from "@/lib/quiz/types";
 import type { AskSeed } from "./AskPanel";
+import { sentenceCase } from "@/lib/sentenceCase";
 
 export type Verdict = NonNullable<QuizItem["verdict"]>;
 export type Outcome = "correct" | "incorrect";
@@ -54,7 +55,7 @@ export function verdictShown(session: QuizSession, item: QuizItem | undefined): 
 
 /** The question's own difficulty, else the quiz's, as the header shows it. */
 export function difficultyLabel(item: QuizItem | undefined, session: QuizSession): string {
-  return (item?.question.difficulty ?? session.config.difficulty ?? "").toUpperCase();
+  return sentenceCase(item?.question.difficulty ?? session.config.difficulty ?? "");
 }
 
 /** "Recursion · CS101", or just the concept when there is no course code. */

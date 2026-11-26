@@ -173,7 +173,7 @@ describe("QuizQuestion — header and grounding", () => {
 
   it("shows the question's own difficulty over the quiz's", () => {
     renderScreen(makeSession({ items: [item(0, { question: question(1, { difficulty: "hard" }) })] }));
-    expect(screen.getByText("HARD")).toBeInTheDocument();
+    expect(screen.getByText("Hard")).toBeInTheDocument();
   });
 
   it("answers a type it doesn't know by choosing, tagged as multiple choice", () => {

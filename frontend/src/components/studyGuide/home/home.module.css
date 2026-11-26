@@ -1,5 +1,6 @@
-/* The Study Guides home: a toolbar (search and sort on the left, New study
-   guide on the right) over the student's guides as a grid of paper cards.
+/* The Study Guides home: a toolbar (search, sort and Saved on the left, New
+   study guide on the right) over the student's guides as a grid of paper
+   cards.
 
    Width comes from the CONTAINER, not the viewport, as on the Flashcards home:
    the side nav collapses and expands, and a viewport query is wrong in one of
@@ -53,6 +54,17 @@
 .sort svg { color: var(--text-dim); }
 .sortChevron { display: grid; transition: transform var(--dur-fast) var(--ease); }
 .sort[aria-expanded="true"] .sortChevron { transform: rotate(180deg); }
+
+/* Saved: pressed, the grid keeps only the guides saved to the Library. */
+.toolbar .savedOnly {
+  flex-shrink: 0; height: 50px; padding: 0 16px; gap: 8px; border-radius: var(--r-md);
+  font-size: var(--fs-base); font-weight: 700; white-space: nowrap; cursor: pointer;
+}
+.savedOnly svg { color: var(--text-dim); }
+.toolbar .savedOnly[aria-pressed="true"] {
+  background: var(--accent-soft); border-color: var(--accent-border); color: var(--brand-forest);
+}
+.savedOnly[aria-pressed="true"] svg { color: currentColor; }
 
 .toolbar .newGuide { margin-left: auto; flex-shrink: 0; }
 /* The toolbar's primary button, and the empty state's. */
@@ -119,7 +131,7 @@
 
 .meta { display: flex; align-items: center; justify-content: space-between; gap: 12px; height: 18px; margin-top: 17px; }
 .when {
-  min-width: 0; font-family: var(--font-mono); font-size: var(--fs-sm); letter-spacing: 0.04em; text-transform: uppercase;
+  min-width: 0; font-family: var(--font-sans); font-size: var(--fs-sm); letter-spacing: 0.01em;
   color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .note { font-weight: 600; color: var(--warn); }
@@ -162,12 +174,6 @@
 .ghostTitle { box-sizing: border-box; height: 58px; padding-top: 5px; display: flex; flex-direction: column; gap: 10px; }
 .ghost .figure { flex-direction: column; gap: 7px; }
 
-/* ── a saved guide in the Library: the title, then the last row ──────────── */
-
-.short { padding: 18px; }
-.short .title { font-size: 20px; }
-.short .foot { margin-top: 14px; }
-
 /* ── states ──────────────────────────────────────────────────────────────── */
 
 .empty {
@@ -175,16 +181,11 @@
   background: var(--bg-panel); box-shadow: var(--shadow-sm);
 }
 .quiet { margin: 0; padding: 32px 0; font-size: var(--fs-base); color: var(--text-muted); }
+.noneSaved { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; padding: 32px 0; }
+.noneSaved p { margin: 0; font-size: var(--fs-base); color: var(--text-muted); }
 .loadError { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: 32px 0; }
 .loadError .loadErrorTitle { font-size: var(--fs-2xl); color: var(--text); }
 .loadError p { margin: 0 0 10px; color: var(--text-dim); }
-
-/* ── the Library's saved guides ──────────────────────────────────────────── */
-
-.librarySection { display: flex; flex-direction: column; gap: 10px; margin-bottom: 24px; }
-.libraryGrid { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
-/* The guides could not be read: one line, as the Library's own refresh error. */
-.libraryError { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; font-size: 12px; color: var(--text-muted); }
 
 @container guideshome (min-width: 1560px) {
   .grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
@@ -192,7 +193,7 @@
 @container guideshome (max-width: 980px) {
   .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
-/* Search takes the row; sort and New share the next one. */
+/* Search takes the row; sort, Saved and New share the next one. */
 @container guideshome (max-width: 720px) {
   .search { flex-basis: 100%; }
 }
@@ -207,6 +208,6 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .search, .sortChevron, .card { transition: none; }
+  .search, .sortChevron, .savedOnly, .card { transition: none; }
   .card:hover { transform: none; }
 }

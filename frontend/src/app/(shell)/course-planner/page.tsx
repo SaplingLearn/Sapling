@@ -28,11 +28,8 @@ export default function CoursePlannerPage() {
             borderRadius: "var(--r-full)",
             background: "var(--accent-soft)",
             color: "var(--accent)",
-            fontSize: 12,
-            fontWeight: 600,
-            letterSpacing: "0.06em",
-            textTransform: "uppercase",
-          }}
+            fontSize: 14,
+            fontWeight: 600 }}
         >
           <Icon name="sparkle" size={12} />
           Coming soon

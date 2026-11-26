@@ -14,7 +14,7 @@ import { FAQS } from '@/lib/landing/content';
 import { DragField } from './DragField';
 import { FadeIn } from '@/components/landing/anim';
 
-const MONO: React.CSSProperties = { fontFamily: "var(--font-plex-mono), 'IBM Plex Mono', ui-monospace, monospace" };
+const LABEL: React.CSSProperties = { fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif" };
 
 const MOTES: { d: number; s: React.CSSProperties }[] = [
   { d: 0.25, s: { left: '7.4%', top: '8.0%', width: 6.1, height: 6.1, background: '#597731', opacity: 0.39, animation: 'nodeFloatB 13s ease-in-out -4s infinite' } },
@@ -57,7 +57,7 @@ export function Faq({
       <div className="ld-faq-grid" style={{ maxWidth: 1150, margin: '0 auto', display: 'grid', gridTemplateColumns: '4fr 7fr', gap: 72, alignItems: 'start' }}>
         {/*
           Sticky, so it holds while the accordion scrolls past — and named,
-          because `DragField`'s `TRACKS` welds CS 112 and PH 150 to this
+          because `DragField`'s `Tracks` welds CS 112 and PH 150 to this
           column. If it stops being sticky, drop the entry there too.
         */}
         <FadeIn data-drag-anchor="faq" className="ld-faq-intro" style={{ position: 'sticky', top: 110 }}>
@@ -70,7 +70,7 @@ export function Faq({
             where we stand.
           </p>
           <div style={{ marginTop: 28, display: 'flex', alignItems: 'center' }}>
-            <span style={{ ...MONO, fontSize: 10, letterSpacing: '0.3em', color: '#697062', textTransform: 'uppercase' }}>
+            <span style={{ ...LABEL, fontSize: 12, color: '#697062' }}>
               Still curious?{' '}
               <Link href="/faq" style={{ color: '#445D22', textDecoration: 'underline' }}>Read the full FAQ</Link>
             </span>

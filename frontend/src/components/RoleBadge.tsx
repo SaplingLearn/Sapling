@@ -24,15 +24,14 @@ export function RoleBadge({ role, size = "sm", showIcon = true, className, style
         gap: 4,
         padding,
         fontSize,
-        fontFamily: "var(--font-mono)",
-        letterSpacing: "0.08em",
-        textTransform: "uppercase",
+        fontFamily: "var(--font-sans)",
+        
+        
         borderRadius: "var(--r-full)",
         color,
         background: `color-mix(in oklab, ${color} 14%, transparent)`,
         border: `1px solid color-mix(in oklab, ${color} 28%, transparent)`,
-        ...style,
-      }}
+        ...style }}
     >
       {showIcon && role.icon && <span aria-hidden>{role.icon}</span>}
       <span>{role.name}</span>

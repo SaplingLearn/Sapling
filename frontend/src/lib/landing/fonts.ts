@@ -1,5 +1,5 @@
 /**
- * The landing's four font stacks, in one place (display and serif are both
+ * The landing's three font stacks, in one place (display and serif are both
  * Aleo today; they stay separate names so a section can split them).
  *
  * Every family but Gummi is loaded by `next/font/local` (see `app/layout.tsx`;
@@ -21,22 +21,19 @@
 export const FONT_DISPLAY = "var(--font-gummi), Georgia, serif";
 export const FONT_SERIF = "var(--font-aleo), 'Aleo', Georgia, serif";
 export const FONT_SANS = "var(--font-suse), 'SUSE', system-ui, sans-serif";
-export const FONT_MONO = "var(--font-plex-mono), 'IBM Plex Mono', ui-monospace, monospace";
 
-type FontKind = 'display' | 'serif' | 'sans' | 'mono';
+type FontKind = 'display' | 'serif' | 'sans';
 
 const CSS_VAR: Record<FontKind, string> = {
   display: '--font-gummi',
   serif: '--font-aleo',
   sans: '--font-suse',
-  mono: '--font-plex-mono',
 };
 
 const BARE: Record<FontKind, string> = {
   display: 'Georgia, serif',
   serif: "'Aleo', Georgia, serif",
   sans: "'SUSE', system-ui, sans-serif",
-  mono: "'IBM Plex Mono', ui-monospace, monospace",
 };
 
 const resolved: Partial<Record<FontKind, string>> = {};

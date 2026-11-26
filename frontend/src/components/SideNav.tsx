@@ -55,7 +55,7 @@ const ROW = {
 /* Wide-rail group header slot: space above the label, the label's line, and
    space below it before the first row. Kept tight so the groups read as one
    list with light dividers, not as separate blocks. */
-const HEADER = { above: 12, line: 14, below: 6 };
+const HEADER = { above: 12, line: 17, below: 6 };
 
 const GEOMETRY_TRANSITION =
   "margin var(--dur) var(--ease), padding var(--dur) var(--ease), height var(--dur) var(--ease)";

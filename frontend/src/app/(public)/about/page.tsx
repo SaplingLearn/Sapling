@@ -6,7 +6,7 @@ import {
   TEAM_MEMBERS,
   TEAM_WAYS,
 } from '@/lib/landing/companionContent';
-import { DISPLAY, MONO, SERIF } from '@/lib/landing/companionType';
+import { DISPLAY, LABEL, SERIF } from '@/lib/landing/companionType';
 
 /**
  * About Sapling.
@@ -153,7 +153,7 @@ export default function AboutPage() {
                 style={{ display: 'flex', flexDirection: 'column', gap: 5, animation: 'fadeUp 700ms ease both', animationDelay: `${460 + i * 50}ms` }}
               >
                 <span style={{ fontSize: 15.5, fontWeight: 600, color: '#1a1814', letterSpacing: '-0.01em' }}>{m.name}</span>
-                <span style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '0.14em', textTransform: 'uppercase', color: 'var(--brand-forest-bright)' }}>{m.role}</span>
+                <span style={{ fontFamily: LABEL, fontSize: 12, color: 'var(--brand-forest-bright)' }}>{m.role}</span>
                 <span style={{ fontFamily: SERIF, fontSize: 14, lineHeight: 1.6, color: '#3f3b31' }}>{m.body}</span>
               </div>
             ))}

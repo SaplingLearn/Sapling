@@ -137,7 +137,7 @@ function EnvBadge({ env, testid = "admin-account-env", badgeTestid = "admin-acco
       <span className="label-micro" style={{ color: "inherit" }}>{label}</span>
       <strong
         data-testid={badgeTestid}
-        style={{ fontFamily: "var(--font-mono)", letterSpacing: "0.06em", fontSize: 14 }}
+        style={{ fontFamily: "var(--font-sans)", letterSpacing: "0.06em", fontSize: 14 }}
       >
         {env.toUpperCase()}
       </strong>
@@ -160,7 +160,7 @@ function CourseList({ courses, testid, label }: {
     <ul data-testid={testid} aria-label={label} style={listStyle}>
       {courses.map((c, i) => (
         <li key={`${c.code}-${i}`} style={{ color: "var(--text-dim)" }}>
-          <span style={{ fontFamily: "var(--font-mono)", color: "var(--text)" }}>{c.code}</span>
+          <span style={{ fontFamily: "var(--font-sans)", color: "var(--text)" }}>{c.code}</span>
           {c.name ? <> · {c.name}</> : null}
         </li>
       ))}
@@ -391,7 +391,7 @@ export function AccountToolsDialog({ user, onClose }: {
         <>
           <SummaryBlock
             testid="admin-account-review-delete"
-            title={<>Will delete from <span style={{ fontFamily: "var(--font-mono)" }}>{env.toUpperCase()}</span>:</>}
+            title={<>Will delete from <span style={{ fontFamily: "var(--font-sans)" }}>{env.toUpperCase()}</span>:</>}
             summary={s}
             danger={isProd(env) && !s.empty}
             emptyText="This account has no study data yet — nothing will be deleted."
@@ -440,7 +440,7 @@ export function AccountToolsDialog({ user, onClose }: {
           testid="admin-account-review-destination"
           title={
             <>
-              <span style={{ fontFamily: "var(--font-mono)" }}>{destination.env.toUpperCase()}</span> currently has
+              <span style={{ fontFamily: "var(--font-sans)" }}>{destination.env.toUpperCase()}</span> currently has
               {" "}(will be deleted):
             </>
           }
@@ -453,7 +453,7 @@ export function AccountToolsDialog({ user, onClose }: {
           testid="admin-account-review-source"
           title={
             <>
-              Replaced with, from <span style={{ fontFamily: "var(--font-mono)" }}>{source.env.toUpperCase()}</span>:
+              Replaced with, from <span style={{ fontFamily: "var(--font-sans)" }}>{source.env.toUpperCase()}</span>:
             </>
           }
           summary={source.summary}
@@ -540,7 +540,7 @@ export function AccountToolsDialog({ user, onClose }: {
           <label htmlFor={confirmId} style={{ display: "block", margin: "4px 0 16px" }}>
             <span className="label-micro" style={{ display: "block", marginBottom: 4 }}>
               Type {targetIsEmail ? "the account's email" : "the account's user id"}{" "}
-              <span style={{ fontFamily: "var(--font-mono)", textTransform: "none", color: "var(--text)" }}>{target}</span>{" "}
+              <span style={{ fontFamily: "var(--font-code)", textTransform: "none", color: "var(--text)" }}>{target}</span>{" "}
               to confirm
             </span>
             <input
