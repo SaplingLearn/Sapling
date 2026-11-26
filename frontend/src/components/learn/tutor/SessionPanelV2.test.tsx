@@ -55,8 +55,9 @@ describe("the panel's one list", () => {
       ["Stacks", "done", 0.58], ["Hash tables", "now", 0.22], ["Collision resolution", "next", null], ["Queues", "next", 0.31],
     ]);
     expect(panelRows(PLAN, SKILLS, null).every((r) => r.state === "next")).toBe(true); // not teaching yet
-    // no plan yet: the concept in focus
+    // no plan: the concept being taught; before teaching (check-in, plan) nothing
     expect(panelRows(null, [SKILLS[1]], "ht").map((r) => [r.name, r.state])).toEqual([["Hash tables", "now"]]);
+    expect(panelRows(null, [SKILLS[1]], null)).toEqual([]);
   });
 });
 

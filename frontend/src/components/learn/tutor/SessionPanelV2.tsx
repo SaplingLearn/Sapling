@@ -28,11 +28,14 @@ export type PanelRowState = "done" | "now" | "next";
 export type PanelRow = { id: string; name: string; score: number | null; state: PanelRowState };
 
 /** The plan's concepts with their skill, in plan order: the one being taught
- *  is `now`, the ones before it `done`; with no plan, the concept in focus. */
+ *  is `now`, the ones before it `done`; with no plan, the concept being taught.
+ *  Before teaching (the check-in and the plan) nothing: the plan screen itself
+ *  says where the student starts, and the panel would say it twice. */
 export function panelRows(plan: readonly LoopPanelConcept[] | null, skills: readonly PanelConcept[], currentNodeId: string | null): PanelRow[] {
   const score = new Map(skills.map((s) => [s.nodeId, s.score]));
   if (!plan || plan.length === 0) {
-    return skills.map((s) => ({ id: s.nodeId, name: s.name, score: s.score, state: s.nodeId === currentNodeId ? "now" : "next" }));
+    if (!currentNodeId) return [];
+    return skills.filter((s) => s.nodeId === currentNodeId).map((s) => ({ id: s.nodeId, name: s.name, score: s.score, state: "now" }));
   }
   const at = currentNodeId ? plan.findIndex((c) => c.node_id === currentNodeId) : -1;
   return plan.map((c, i) => ({

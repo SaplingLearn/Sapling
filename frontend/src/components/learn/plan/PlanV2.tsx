@@ -83,14 +83,19 @@ export function startingRows(
   return rows.sort((a, b) => a.order - b.order).map((r) => r.row);
 }
 
-/** The tutor's one line: where the student has a head start and what is new,
- *  from the rows (no check-in: just the suggestion). */
+/** The tutor's one line, in the ladder's words: a head start (Developing or
+ *  Proficient), just getting started (measured, below 30%), new (never
+ *  answered); no check-in: just the suggestion. A measured concept is never
+ *  called new. */
 export function planIntro(rows: readonly StartRow[]): string {
   if (rows.length === 0) return PLAN_V2_COPY.suggestOnly;
-  const ahead = rows.filter((r) => r.level === "develop" || r.level === "profic").map((r) => r.name);
-  const fresh = rows.filter((r) => r.level === "not_started" || r.level === "novice").map((r) => r.name);
+  const named = (...levels: string[]) => rows.filter((r) => levels.includes(r.level)).map((r) => r.name);
+  const ahead = named("develop", "profic");
+  const early = named("novice");
+  const fresh = named("not_started");
   const parts: string[] = [PLAN_V2_COPY.thanks];
   if (ahead.length) parts.push(`You have a head start on ${nameList(ahead)}.`);
+  if (early.length) parts.push(`You're just getting started on ${nameList(early)}.`);
   if (fresh.length) parts.push(`${nameList(fresh)} ${fresh.length === 1 ? "is" : "are"} new to you.`);
   parts.push(PLAN_V2_COPY.suggest);
   return parts.join(" ");

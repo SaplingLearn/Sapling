@@ -69,10 +69,14 @@ describe("what the plan says", () => {
 
   it("the tutor's line comes from the rows", () => {
     expect(planIntro(startingRows(DIAGNOSIS, STARTING, PLAN, names))).toBe(
-      "Thanks. You have a head start on Stacks. Hash tables and Collision resolution are new to you. Here's where you're starting and what I suggest for today.",
+      "Thanks. You have a head start on Stacks. You're just getting started on Hash tables. Collision resolution is new to you. Here's where you're starting and what I suggest for today.",
     );
+    // a measured concept is never called new
     expect(planIntro([{ id: "a", name: "Queues", level: "novice", p: 0.1 }])).toBe(
-      "Thanks. Queues is new to you. Here's where you're starting and what I suggest for today.",
+      "Thanks. You're just getting started on Queues. Here's where you're starting and what I suggest for today.",
+    );
+    expect(planIntro([{ id: "a", name: "Queues", level: "not_started", p: null }, { id: "b", name: "Trees", level: "not_started", p: null }])).toBe(
+      "Thanks. Queues and Trees are new to you. Here's where you're starting and what I suggest for today.",
     );
     expect(planIntro([])).toBe("Here's what I suggest for today."); // no check-in
     expect(nameList(["A", "B", "C"])).toBe("A, B and C");
