@@ -2,7 +2,7 @@
 import React from "react";
 import Link from "next/link";
 import type { LoopPanelConcept, LoopPlanPrereqEdge } from "@/lib/api";
-import { HANDOFF_COPY } from "@/lib/learningHandoffs";
+import { LEARNING_COPY } from "@/lib/learningCopy";
 import { MASTERY_PALETTE, TIER_LABEL, type MasteryTier } from "@/lib/graph/nodeStyle";
 import { PlanDeps } from "../PlanDeps";
 import { planKind } from "../planLabels";
@@ -23,8 +23,7 @@ const MAP_TIERS: MasteryTier[] = ["mastered", "learning", "struggling", "unexplo
 /** The due line: the review queue's own count, else what it holds. */
 export function dueCountText(count: number | null): string {
   if (count === null) return "Flashcards and retention checks";
-  if (count === 0) return "Nothing due right now";
-  return `${count} ${count === 1 ? "review" : "reviews"} due`;
+  return LEARNING_COPY.reviewsDue(count);
 }
 
 /**
@@ -114,7 +113,7 @@ export function SessionPanel({
                 {dueCountText(dueCount)}
               </span>
               <Link href={dueHref} className={`btn btn--sm ${styles.start}`} data-testid="tutor-panel-review">
-                {HANDOFF_COPY.dueOnStudy}
+                {LEARNING_COPY.review}
               </Link>
             </div>
           </section>
@@ -124,7 +123,7 @@ export function SessionPanel({
             <span id="tutor-panel-map" className="label-micro">Knowledge map</span>
             {showTreeLink && (
               <Link data-testid="loop-tree-link" href={treeHref} className={`${styles.textLink} ${styles.small}`}>
-                {HANDOFF_COPY.seeOnMap}
+                {LEARNING_COPY.seeOnMap}
               </Link>
             )}
           </div>

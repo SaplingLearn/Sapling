@@ -208,14 +208,14 @@ describe("Quick quiz links (§6)", () => {
 });
 
 describe("W8.2 coherence actions (learning_loop on)", () => {
-  it("offers Teach / Quiz / Cards / Guide deep links for a concept", async () => {
+  it("offers Learn / Quiz / Cards / Guide deep links for a concept", async () => {
     flagState.loop = "on";
     const user = userEvent.setup();
     renderTree();
     await selectNode(user, RECURSION);
 
     const menu = screen.getByTestId("tree-node-actions");
-    expect(within(menu).getByTestId("tree-node-action-teach")).toHaveTextContent("Teach");
+    expect(within(menu).getByTestId("tree-node-action-teach")).toHaveTextContent("Learn");
     expect(within(menu).getByTestId("tree-node-action-quiz")).toHaveTextContent("Quiz");
     expect(within(menu).getByTestId("tree-node-action-cards")).toHaveTextContent("Cards");
     expect(within(menu).getByTestId("tree-node-action-guide")).toHaveTextContent("Guide");

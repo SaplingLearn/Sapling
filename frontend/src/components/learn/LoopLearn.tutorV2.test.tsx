@@ -361,7 +361,7 @@ describe("F11b — the due line counts the reviews that are due", () => {
     await waitFor(() => expect(screen.getByTestId("tutor-panel-due-count").textContent).toBe("3 reviews due"));
     expect(api.getReviewSummary).toHaveBeenCalledWith("u1");
     fireEvent.click(screen.getByTestId("loop-new-session"));
-    expect((await screen.findByTestId("tutor-home-due")).textContent).toBe("Due on Study · 3");
+    expect((await screen.findByTestId("tutor-home-due")).textContent).toBe("3 reviews due");
   });
 
   it("nothing due: the panel says so and the home offers no review pill", async () => {

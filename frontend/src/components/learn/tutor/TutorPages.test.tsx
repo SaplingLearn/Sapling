@@ -31,7 +31,7 @@ describe("TutorHome's CTA", () => {
     home(true, false);
     const cta = screen.getByTestId("loop-start-guided") as HTMLButtonElement;
     expect(cta.disabled).toBe(true);
-    expect(cta.textContent).toContain("Start a guided session");
+    expect(cta.textContent).toContain("New session");
     expect(cta.textContent).not.toContain("Starting");
   });
 

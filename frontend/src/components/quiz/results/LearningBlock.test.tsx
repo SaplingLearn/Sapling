@@ -95,7 +95,7 @@ describe("LearningBlock", () => {
     expect(screen.getByTestId("quiz-results-due").textContent).toContain("2 concepts are due for review.");
     const review = screen.getByTestId("quiz-next-step-review");
     expect(review.getAttribute("href")).toBe("/study?course=cs111");
-    expect(review.textContent).toBe("Due on Study (2)");
+    expect(review.textContent).toBe("2 reviews due");
     expect(screen.getByTestId("quiz-next-step-learn").getAttribute("href")).toBe(
       "/learn?topic=Loops&concept=n2&mode=socratic&course=cs111",
     );
@@ -126,7 +126,7 @@ describe("LearningBlock", () => {
     expect(screen.getByTestId("quiz-results-due").textContent).toBe(
       "Nothing is due for review right now. Recursion comes back for review in 3 days.",
     );
-    expect(screen.getByTestId("quiz-next-step-learn").textContent).toBe("Continue learning: Loops");
+    expect(screen.getByTestId("quiz-next-step-learn").textContent).toBe("Learn Loops");
   });
 
   it("never links to a page a hide flag hides (Z62): Study, Learn, Tree", () => {

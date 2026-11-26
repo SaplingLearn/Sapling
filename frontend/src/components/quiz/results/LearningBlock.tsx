@@ -27,12 +27,8 @@ import { useLoopStatus } from "@/components/learn/useLoopStatus";
 import { useStudyNavShown } from "@/components/useRetentionNav";
 import { useFlag } from "@/context/FlagsContext";
 import { useUser } from "@/context/UserContext";
-import {
-  HANDOFF_COPY,
-  handoffLearnHref,
-  handoffStudyHref,
-  handoffTreeHref,
-} from "@/lib/learningHandoffs";
+import { handoffLearnHref, handoffStudyHref, handoffTreeHref } from "@/lib/learningHandoffs";
+import { LEARNING_COPY } from "@/lib/learningCopy";
 import { BAND_WORDS } from "@/lib/quiz/proposals";
 import type { QuizLearning } from "@/lib/quiz/types";
 
@@ -41,7 +37,7 @@ export { BAND_WORDS };
 
 const pct = (value: number) => Math.round(value * 100);
 
-/** Where "Continue learning" goes: Learn opens a session on the concept (#866 K05). */
+/** Where "Learn {concept}" goes: Learn opens a session on the concept (#866 K05). */
 export function learnHref(learn: NonNullable<QuizLearning["learn"]>): string {
   return handoffLearnHref({
     conceptId: learn.concept_id,
@@ -142,7 +138,7 @@ export function LearningBlock({
               href={reviewHref(courseId)}
               data-testid="quiz-next-step-review"
             >
-              {HANDOFF_COPY.dueOnStudyCounted(learning.review.due_count)}
+              {LEARNING_COPY.reviewLink(learning.review.due_count)}
             </a>
           ) : null}
           {learn && (
@@ -151,7 +147,7 @@ export function LearningBlock({
               href={learnHref(learn)}
               data-testid="quiz-next-step-learn"
             >
-              {HANDOFF_COPY.continueLearning(learn.concept_name)}
+              {LEARNING_COPY.learnConcept(learn.concept_name)}
             </a>
           )}
           {treeHref && (
@@ -160,7 +156,7 @@ export function LearningBlock({
               href={treeHref}
               data-testid="quiz-next-step-tree"
             >
-              {HANDOFF_COPY.seeOnMap}
+              {LEARNING_COPY.seeOnMap}
             </a>
           )}
         </div>

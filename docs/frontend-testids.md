@@ -427,8 +427,8 @@ journeys keep anchoring: `quiz-panel`, `quiz-start`,
 | `quiz-results-no-change` | the line shown instead when no meter moved |
 | `quiz-results-due` | how many concepts are due for review, and when this concept comes back |
 | `quiz-learning-next` | the "Next:" CTA row inside the learning block (W7.7) — Study review / Learn / Tree links that survive the matching `hide_*` flags |
-| `quiz-next-step-review` | "Due on Study ({n})" — Study hub (`studyHref` / W3.4); only when the server's next step is review and the learning loop is on; omitted while `hide_study` |
-| `quiz-next-step-learn` | "Continue learning: {concept}" — Tutor deep link on the weakest ready concept; omitted while `hide_tutor` |
+| `quiz-next-step-review` | "{n} reviews due" (`LEARNING_COPY.reviewLink`) — Study hub (`studyHref` / W3.4); only when the server's next step is review and the learning loop is on; omitted while `hide_study` |
+| `quiz-next-step-learn` | "Learn {concept}" — Tutor deep link on the weakest ready concept; omitted while `hide_tutor` |
 | `quiz-next-step-tree` | "See on your map" — Tree on the quizzed concept; omitted while `hide_tree` |
 | `quiz-missed-list` | the "to look at" section |
 | `quiz-missed-{questionId}` | one missed item |
@@ -443,7 +443,7 @@ journeys keep anchoring: `quiz-panel`, `quiz-start`,
 | `quiz-error-retry` / `quiz-error-back` | its "Try again" and "Back" |
 | `tree-node-recent-quizzes` | the tree node panel's "Recent quizzes" block (`screens/Tree.tsx`) |
 | `tree-node-recent-quiz-{attemptId}` | one row in it, suffixed with the attempt's `quiz_id` per the stable-domain-id rule |
-| `tree-node-actions` | W8.2: Teach / Quiz / Cards / Guide action menu on the selected node panel |
+| `tree-node-actions` | W8.2: Learn / Quiz / Cards / Guide action menu on the selected node panel |
 | `tree-node-action-teach` / `tree-node-action-quiz` / `tree-node-action-cards` / `tree-node-action-guide` | one action link; Cards/Guide only when `learning_loop` is on and Study is shown |
 
 The last three carry another surface's prefix because they render in that
@@ -1121,7 +1121,7 @@ inside `loop-messages` is `ChatPanel`, whose own `tutor-*` ids
 | `tutor-view-all` | "View all sessions" — the all-sessions page (T3) |
 | `loop-new-session` | New session: opens the Tutor home (T1) and writes nothing; in the sidebar on wide screens, "+ New" in the TopBar on a phone |
 | `tutor-home` | the Tutor home (T1): "What do you want to learn today?" — where `/learn` lands when the course has no open session (a `?topic=` link still starts one) |
-| `loop-start-guided` | the home's "Start a guided session": wraps up (`/close`) the open session on screen first, so sessions do not pile up open (a 409 there starts nothing), then starts one |
+| `loop-start-guided` | the home's "New session": wraps up (`/close`) the open session on screen first, so sessions do not pile up open (a 409 there starts nothing), then starts one |
 | `tutor-home-continue` / `tutor-home-due` / `tutor-home-start-with` / `tutor-home-goal` | the home's suggestions: back to the open session; Study's due review; a session on the weakest concept (its goal, #866 K05); the goal editor (`data-view="goal"`), before anything starts — saving starts the session on that goal |
 | `tutor-course-page` | a course page (T2); `data-course-id`: its sessions, progress and material; `tutor-course-start` (TopBar) goes to the home. Each skill meter in its progress (`Meter`, no testid: journeys select `[data-tier]` inside the page) carries `data-tier` = its concept's map tier (`unexplored` / `struggling` / `learning` / `mastered`, `nodeStyle.tierFor`, #866 K21) |
 | `tutor-all-sessions` | every session (T3), with a search and an All / In progress / Wrapped up filter |
@@ -1155,7 +1155,7 @@ inside `loop-messages` is `ChatPanel`, whose own `tutor-*` ids
 | `loop-topic-offer` | a `?topic=` deep link arrived while a session is open: the session resumed, the topic is offered (`loop-topic-start`; with the link's `?concept=` of the course on screen, a session on that concept) |
 | `loop-topic-start` | "Start a session on <topic>" (wraps up the open session first, like `loop-new-session`) |
 | `loop-readonly-transcript` | a `?resume=` session that is not an open loop session (a legacy one), shown read-only |
-| `loop-readonly-new-session` | "Start a new session" beside the read-only transcript |
+| `loop-readonly-new-session` | "New session" beside the read-only transcript |
 | `loop-notices` | the notices container — always on the page, `aria-live="polite"` and empty until a notice arrives, so each notice below is announced as it is added (spec §13 A135) |
 | `loop-budget-paused` | the budget pause banner (A20/A26/A39); `role="status"`, `data-reset-at` (ISO or empty), `data-session-capped` (`true`: "paused for this session", no reset time); when the 429 or `budget` notice says `pause_novice`, it says checks on concepts the student is just starting are paused too, and a "Check me" that met that pause says so beside the button (#866 K35) |
 | `loop-budget-study-link` | link to `/study?mode=cards` inside the banner |
@@ -1163,7 +1163,7 @@ inside `loop-messages` is `ChatPanel`, whose own `tutor-*` ids
 | `loop-tree-link` | link to `/tree` (`?node=<id>` once a `learner_state` event names the concept): the session panel's "Open map", or "Map" in the TopBar on a phone; absent while `hide_tree` hides the Tree |
 | `loop-rail` | the session panel, "Today's session" (wide screens only): the plan (the approved one from `/status` after a reload), optional `session-plan-deps` when kept `prereq_edges` are non-empty, a skill meter per concept, due review (`tutor-panel-review`) and the knowledge map; the tree link sits in the TopBar on narrow screens |
 | `loop-verdict` | wireframe T9: the graded check's verdict over the feedback; `data-verdict` = correct / not_yet / idk; a not_yet names the next concept ("Next up: …") when the grade moved the plan on. On a correct verdict `data-credit` = `full` / `partial` / `none`, the weight the answer's evidence was journaled at (#866 K07; absent from an older server); a partial one names what reduced it (the response's `credit_reasons`: a hint, a same-session re-check, a low-confidence grade, a multi-concept item) |
-| `loop-close-new-session` | the wrap-up's "Start a new session" (to the Tutor home) |
+| `loop-close-new-session` | the wrap-up's "New session" (to the Tutor home) |
 | `tutor-attach` | the composer's "+" next to Send: opens the Library to add material |
 | `loop-learner-state` | a hidden state hook (no visible chip since the Tutor redesign's subtract pass): the current concept's belief; `data-node-id`, `data-p-known`, `data-band` (present, empty, before any event) |
 | `loop-probe-greeting` | the session opener above the check-in (spec §13 A121: a template — a welcome and the check-in's intro, never teaching or a question) |
@@ -1245,13 +1245,13 @@ inside `loop-messages` is `ChatPanel`, whose own `tutor-*` ids
 | `loop-close-rating-send` | sends the rating, chips and note as ONE session feedback row |
 | `loop-close-rating-sent` | the thanks line once the feedback is sent |
 | `loop-close-done` | the closed state (the wrap-up's next-step links); also a session found closed elsewhere (a 409 `this session is closed`) whose stored close could not be read |
-| `loop-close-study-link` | W3.4 "Due on Study" inside `loop-close-done` (`/study?course=` when known); omitted while `hide_study` |
+| `loop-close-study-link` | W3.4 "Review" inside `loop-close-done` (`/study?course=` when known); omitted while `hide_study` |
 | `loop-close-practice-link` | W3.3c "Practice what's due" → Quiz `scope=due` + learner_next due[] queue (or course+`start=1`); omitted while `hide_quiz` or `hide_study` |
 | `loop-close-quiz-link` | W3.4 "Quiz this concept" on a wrap-up concept that went down (else the first); omitted while `hide_quiz` or with no concept id |
 | `loop-close-tree-link` | W3.4 "See on your map" (`/tree?course=`); omitted while `hide_tree` |
-| `loop-practice-study-link` / `loop-practice-quiz-link` | practice-unavailable notice → Due on Study / Quiz this concept |
+| `loop-practice-study-link` / `loop-practice-quiz-link` | practice-unavailable notice → Review / Quiz this concept |
 | `due-reviews-quiz` | Study Hub Due Reviews secondary CTA; label "Practice what's due" (W3.3b); omitted while `hide_quiz` / flags off |
-| `focus-learn` | Study Hub Focus "Continue in Tutor"; omitted while `hide_tutor` |
+| `focus-learn` | Study Hub Focus "Learn"; omitted while `hide_tutor` |
 
 `loop-hint-offer` was removed in the PKG-13 fix round: PKG-07 sends `hint_offer`
 on the FEEDBACK turn, after the item closed, so the affordance (inside the check

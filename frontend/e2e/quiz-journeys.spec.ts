@@ -711,7 +711,8 @@ test("entry points: each link shape arrives in the state it promised", async ({ 
   await openQuizHome(page, `/quiz?course=${COURSE_ID_CS}&from=tree`);
   proposal = page.getByTestId("quiz-proposal");
   await expect(proposal).toContainText(`Practice ${COURSE_CODE_CS}`);
-  await expect(proposal).toContainText(`${Math.min(csDue.length, QUEUE_MAX)} concepts due`);
+  const queued = Math.min(csDue.length, QUEUE_MAX);
+  await expect(proposal).toContainText(`${queued} ${queued === 1 ? "concept" : "concepts"} to practice`);
   await expect(proposal).toContainText(`${QUEUE_COUNT} questions each`);
 
   // (c) Existing dashboard-origin due-review links remain supported.

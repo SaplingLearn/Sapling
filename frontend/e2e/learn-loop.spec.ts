@@ -147,7 +147,7 @@ async function signIn(browser: Browser, userId: string, name: string) {
 }
 
 /** Wireframe T1: with no open session, /learn is the Tutor home; its
- * "Start a guided session" starts the session and its check-in. */
+ * "New session" (the home's CTA) starts the session and its check-in. */
 async function openLearn(page: Page) {
   await page.goto("/learn");
   await page.getByTestId("loop-start-guided").click();

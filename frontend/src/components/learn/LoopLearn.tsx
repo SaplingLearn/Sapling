@@ -1193,7 +1193,7 @@ export function LoopLearn() {
           applyStatus(sid, latest);
           if (!["probe", "plan"].includes(statusPhase(latest))) {
             setGoalEditor(false);
-            toast.info(humanizeError(error, "The session has started teaching. Start a new session to change its goal."));
+            toast.info(humanizeError(error, "This session's plan has started. Choose New session to set a different goal."));
           }
         } catch { /* keep the draft and error available for retry */ }
       }

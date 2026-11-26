@@ -1,6 +1,7 @@
 "use client";
 // A wrapped-up (or legacy) session, read-only (wireframe T14; moved out of
 // LoopLearn.tsx unchanged): its transcript and "Start a new session".
+import { LEARNING_COPY } from "@/lib/learningCopy";
 import React from "react";
 import type { ChatMsg } from "../chat/ChatPanel";
 import styles from "./ReadOnlyTranscript.module.css";
@@ -22,7 +23,7 @@ export function ReadOnlyTranscript({ topic, messages, startDisabled, onStart }: 
           <div className={styles.spacer} />
           <button data-testid="loop-readonly-new-session" className="btn btn--primary btn--sm" disabled={startDisabled}
             onClick={onStart}>
-            Start a new session
+            {LEARNING_COPY.newSession}
           </button>
         </div>
         <div

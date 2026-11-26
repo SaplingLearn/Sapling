@@ -12,7 +12,7 @@
  * Flashcards — cue stream, not Teach.
  */
 import React from "react";
-import { HANDOFF_COPY } from "@/lib/learningHandoffs";
+import { LEARNING_COPY } from "@/lib/learningCopy";
 import { Icon } from "../Icon";
 import { quickReviewEstimate } from "./hubModel";
 import { CardsIcon, StatusDot } from "./hubUi";
@@ -59,14 +59,14 @@ function ReviewList({ reviews, courseLabel, onStart, onQuiz, fsrsDue }: {
         {onQuiz ? (
           <span className={q.actions}>
             <button type="button" className={`btn btn--primary ${q.action} ${q.actionShare}`} data-testid="due-reviews-flashcards" onClick={onStart}>
-              {HANDOFF_COPY.reviewFlashcards}
+              {LEARNING_COPY.review}
             </button>
             <button type="button" className={`btn ${q.action} ${q.actionShare}`} data-testid="due-reviews-quiz" onClick={onQuiz}>
-              {HANDOFF_COPY.practiceWhatsDue}
+              {LEARNING_COPY.practiceDue}
             </button>
           </span>
         ) : (
-          <button type="button" className={`btn btn--primary ${q.action}`} onClick={onStart}>Start review</button>
+          <button type="button" className={`btn btn--primary ${q.action}`} onClick={onStart}>{LEARNING_COPY.review}</button>
         )}
       </div>
     </div>

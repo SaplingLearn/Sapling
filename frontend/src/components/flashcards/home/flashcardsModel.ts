@@ -52,7 +52,9 @@ export interface Card {
 /** How names are compared everywhere: trimmed, case-insensitive. */
 export const normName = (name?: string | null) => (name ?? "").trim().toLowerCase();
 
-export const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+/** "1 section", "2 sections": the one helper, `lib/learningCopy.ts`. */
+import { plural } from "@/lib/learningCopy";
+export { plural };
 
 // ── cards ────────────────────────────────────────────────────────────────────
 

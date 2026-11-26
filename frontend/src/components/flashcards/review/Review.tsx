@@ -21,7 +21,7 @@ import Link from "next/link";
 import { useUser } from "@/context/UserContext";
 import { deleteFlashcard, rateFlashcard } from "@/lib/api";
 import { humanizeError } from "@/lib/errorMessage";
-import { HANDOFF_COPY } from "@/lib/learningHandoffs";
+import { LEARNING_COPY } from "@/lib/learningCopy";
 import { useMotionPresets } from "@/lib/motion";
 import { Icon } from "../../Icon";
 import { useToast } from "../../ToastProvider";
@@ -382,7 +382,7 @@ function Summary({
         )}
         {studyHref && (
           <Link href={studyHref} className="btn" data-testid="flashcards-review-study">
-            {HANDOFF_COPY.dueOnStudy}
+            {LEARNING_COPY.review}
           </Link>
         )}
         {onAllSets && (

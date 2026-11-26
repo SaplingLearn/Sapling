@@ -29,7 +29,7 @@ vi.mock("@/lib/api", () => ({
 }));
 
 import { rateFlashcard, deleteFlashcard } from "@/lib/api";
-import { HANDOFF_COPY } from "@/lib/learningHandoffs";
+import { LEARNING_COPY } from "@/lib/learningCopy";
 import { ToastProvider } from "../../ToastProvider";
 import { REVIEW_DONE_NOTE } from "../flashcardsCopy";
 import type { Card } from "../home/flashcardsModel";
@@ -196,7 +196,7 @@ describe("Review: deck complete", () => {
     expect(summary.getByText("Deck complete")).toBeTruthy();
     // W8.4: ratings schedule cards; concept mastery is not claimed here.
     expect(summary.getByTestId("flashcards-review-note").textContent).toBe(REVIEW_DONE_NOTE);
-    expect(summary.getByTestId("flashcards-review-study").textContent).toBe(HANDOFF_COPY.dueOnStudy);
+    expect(summary.getByTestId("flashcards-review-study").textContent).toBe(LEARNING_COPY.review);
     expect(summary.getByTestId("flashcards-review-study").getAttribute("href")).toBe("/study?course=c1");
     expect(counts()).toEqual([1, 1, 1]);
     expect(summary.getByRole("img", { name: "This session: 1 easy, 1 hard, 1 forgot" })).toBeTruthy();

@@ -1001,7 +1001,7 @@ describe("QuizHome — arrival", () => {
 
     const proposal = screen.getByTestId("quiz-proposal");
     expect(proposal).toHaveTextContent("Practice CS101");
-    expect(proposal).toHaveTextContent("4 concepts due");
+    expect(proposal).toHaveTextContent("4 concepts to practice");
     expect(proposal).toHaveTextContent(`${QUEUE_COUNT} questions each, gentle`);
 
     fireEvent.click(screen.getByTestId("quiz-start"));
@@ -1019,7 +1019,7 @@ describe("QuizHome — arrival", () => {
 
     const proposal = screen.getByTestId("quiz-proposal");
     expect(proposal).toHaveTextContent("Review everything due");
-    expect(proposal).toHaveTextContent("7 concepts across 2 courses · starting with the 5 weakest");
+    expect(proposal).toHaveTextContent("7 concepts across 2 courses, starting with the 5 weakest");
     // The card already is the due set, so the list does not offer it again.
     expect(screen.getByTestId("quiz-proposal-name")).toHaveTextContent("Review everything due");
     expect(screen.queryByTestId("quiz-review-due")).toBeNull();

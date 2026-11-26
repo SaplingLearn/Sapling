@@ -7,11 +7,8 @@ import Link from "next/link";
 import { AnimatePresence, motion } from "framer-motion";
 import { useMotionPresets } from "@/lib/motion";
 import type { LoopBudgetPause } from "@/lib/api";
-import {
-  HANDOFF_COPY,
-  handoffStudyHref,
-  practiceUnavailableHandoffCtas,
-} from "@/lib/learningHandoffs";
+import { handoffStudyHref, practiceUnavailableHandoffCtas } from "@/lib/learningHandoffs";
+import { LEARNING_COPY } from "@/lib/learningCopy";
 import { BudgetPausedBanner, tutorPauseMessage } from "./BudgetPausedBanner";
 import { PREPARING_COPY } from "./checkNote";
 import styles from "./LoopNotices.module.css";
@@ -82,7 +79,7 @@ export function LoopNotices({
           message={tutorPauseMessage(paused.resetAt, paused.sessionCapped, paused.pauseNovice, paused.aiLimit)}
         >
           {studyVisible && <>{" "}<Link data-testid="loop-budget-study-link" href={handoffStudyHref(courseId)} className={styles.studyLink}>
-            {HANDOFF_COPY.reviewFlashcards}
+            {LEARNING_COPY.review}
           </Link></>}
         </BudgetPausedBanner>
         </motion.div>

@@ -6,6 +6,7 @@
  * one concept id, no forked ranking. Guide stamps `?concept=` (or `?course=`
  * for a subject root) the same way Teach/Quiz do.
  */
+import { LEARNING_COPY } from "@/lib/learningCopy";
 import { learnHrefForNode, type GraphNode } from "@/lib/data";
 import { buildQuizHref } from "@/lib/quiz/source";
 import { flashcardsHref, studyGuideHref } from "@/lib/toolHrefs";
@@ -83,14 +84,14 @@ export type TreeNodeAction = {
 /**
  * Actions offered for a selected tree node.
  *
- * Always: Teach (Learn) + Quiz (when quiz is shown).
+ * Always: Learn (the loop-off app keeps "Learn this") + Quiz (when quiz is shown).
  * When `learning_loop` is on and Study is shown: Cards + Guide — the W8.2 spine.
  */
 export function treeNodeActions(
   node: TreeNodeRef,
   opts: { loopOn: boolean; quizShown: boolean; studyShown: boolean },
 ): TreeNodeAction[] {
-  const teachLabel = opts.loopOn ? "Teach" : "Learn this";
+  const teachLabel = opts.loopOn ? LEARNING_COPY.learn : "Learn this";
   const quizLabel = opts.loopOn ? "Quiz" : "Quick quiz";
   const out: TreeNodeAction[] = [
     { key: "teach", label: teachLabel, href: treeTeachHref(node), primary: true },

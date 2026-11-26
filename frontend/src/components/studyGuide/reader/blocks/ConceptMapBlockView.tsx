@@ -7,7 +7,7 @@ import { Icon } from "@/components/Icon";
 import { tierFill, tierLabel, tierText } from "@/components/studyGuide/shared/tiers";
 import { useFlag } from "@/context/FlagsContext";
 import { useMotionPresets } from "@/lib/motion";
-import { HANDOFF_COPY } from "@/lib/learningHandoffs";
+import { LEARNING_COPY } from "@/lib/learningCopy";
 import { buildQuizHref } from "@/lib/quiz/source";
 import type { ConceptMapBlock } from "@/lib/studyGuide/types";
 import { studyGuideReaderHref } from "@/lib/toolHrefs";
@@ -70,7 +70,7 @@ function TutorPrompts({
             className={s.option}
             data-testid={`guide-concept-quiz-${blockId}`}
           >
-            {HANDOFF_COPY.quizThisConcept}
+            {LEARNING_COPY.quizConcept}
           </Link>
         )}
         {PROMPTS.map((prompt, i) => (

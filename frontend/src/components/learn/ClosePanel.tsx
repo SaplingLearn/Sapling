@@ -1,4 +1,5 @@
 "use client";
+import { LEARNING_COPY } from "@/lib/learningCopy";
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
@@ -257,7 +258,7 @@ export function ClosePanel({
           />
           {onNew && (
             <button type="button" data-testid="loop-close-new-session" className={`btn btn--primary ${styles.press}`} onClick={onNew}>
-              Start a new session
+              {LEARNING_COPY.newSession}
             </button>
           )}
         </motion.div>

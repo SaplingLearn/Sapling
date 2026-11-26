@@ -16,7 +16,7 @@
 import React from "react";
 import Link from "next/link";
 import { Icon } from "@/components/Icon";
-import { HANDOFF_COPY } from "@/lib/learningHandoffs";
+import { LEARNING_COPY } from "@/lib/learningCopy";
 import { FOCUS_ARC, chipsThatFit, focusCardsLabel } from "./hubModel";
 import { Glyph, StatusDot, WarnIcon, shownTools, type GlyphName } from "./hubUi";
 import f from "./FocusCard.module.css";
@@ -157,7 +157,7 @@ export function FocusCard({ concept, upNext, masteredExam, prereqs, cardCount, q
     actions.push({
       key: "learn",
       icon: "clover",
-      label: HANDOFF_COPY.continueInTutor,
+      label: LEARNING_COPY.learn,
       href: nav.learnHref(concept.id, concept.name),
       testId: "focus-learn",
     });

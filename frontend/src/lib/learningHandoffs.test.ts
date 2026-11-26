@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  HANDOFF_COPY,
   closeHandoffCtas,
   handoffLearnHref,
   handoffPracticeDueHref,
@@ -12,19 +11,6 @@ import {
 } from "./learningHandoffs";
 
 const ALL_ON = { study: true, tutor: true, quiz: true, tree: true };
-
-describe("HANDOFF_COPY", () => {
-  it("keeps the W8.5 / W3.4 labels stable, and Practice distinct from Teach", () => {
-    expect(HANDOFF_COPY.dueOnStudy).toBe("Due on Study");
-    expect(HANDOFF_COPY.dueOnStudyCounted(2)).toBe("Due on Study (2)");
-    expect(HANDOFF_COPY.continueInTutor).toBe("Continue in Tutor");
-    expect(HANDOFF_COPY.continueLearning("Loops")).toBe("Continue learning: Loops");
-    expect(HANDOFF_COPY.quizThisConcept).toBe("Quiz this concept");
-    expect(HANDOFF_COPY.practiceWhatsDue).toBe("Practice what's due");
-    expect(HANDOFF_COPY.seeOnMap).toBe("See on your map");
-    expect(HANDOFF_COPY.practiceWhatsDue).not.toMatch(/learn|teach|tutor/i);
-  });
-});
 
 describe("href builders", () => {
   it("courses Study and Learn with mode=socratic", () => {
@@ -58,14 +44,14 @@ describe("href builders", () => {
 });
 
 describe("closeHandoffCtas", () => {
-  it("offers Study, Practice (course+start without due ids), Quiz concept, and Tree", () => {
+  it("offers Review, Practice (course+start without due ids), Quiz concept, and Tree", () => {
     const links = closeHandoffCtas({
       courseId: "c1",
       quizConceptId: "n-down",
       visibility: ALL_ON,
     });
     expect(links.map((l) => [l.testId, l.label, l.href])).toEqual([
-      ["loop-close-study-link", "Due on Study", "/study?course=c1"],
+      ["loop-close-study-link", "Review", "/study?course=c1"],
       [
         "loop-close-practice-link",
         "Practice what's due",
@@ -121,7 +107,7 @@ describe("closeHandoffCtas", () => {
 });
 
 describe("retentionEmptyHandoffCtas", () => {
-  it("offers Due on Study and Continue in Tutor when visible", () => {
+  it("offers Review and Open Tutor when visible", () => {
     const links = retentionEmptyHandoffCtas({
       courseId: "c1",
       visibility: { study: true, tutor: true },

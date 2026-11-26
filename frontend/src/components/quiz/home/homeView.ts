@@ -7,6 +7,7 @@
  * (`homeView.test.ts`); `useHomeCard` wires them to state.
  */
 
+import { plural } from "@/lib/learningCopy";
 import type { EnrolledCourse } from "@/lib/api";
 import type { SessionConfig, StartRequest } from "@/lib/quiz/machine";
 import {
@@ -163,10 +164,12 @@ export function cardMeta(
   planned = false,
   planLineShown = false,
 ): string {
-  if (mode === "course") return `${courseQueueLength} concepts ${planned ? "to practice" : "due"}`;
+  // "due" is an FSRS review only (lib/learningCopy.ts): the course queue is
+  // "to practice" either way.
+  if (mode === "course") return `${plural(courseQueueLength, "concept")} to practice`;
   if (mode === "due") {
     const order = planned ? "most overdue" : "weakest";
-    return `${due.count} concepts across ${due.courseCount} courses · starting with the ${Math.min(due.count, QUEUE_MAX)} ${order}`;
+    return `${plural(due.count, "concept")} across ${plural(due.courseCount, "course")}, starting with the ${Math.min(due.count, QUEUE_MAX)} ${order}`;
   }
   if (!card) return "";
   return card.plan && planLineShown ? planStateLine(card.node, card.plan) : metaLine(card.node, undefined, card.plan);

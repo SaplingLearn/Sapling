@@ -23,8 +23,9 @@ export const DEPTH_LABEL: Record<Depth, string> = {
 export const focusLabel = (goal: Goal, depth: Depth): string =>
   depth === "standard" ? GOAL_LABEL[goal] : DEPTH_LABEL[depth];
 
-/** "1 section", "2 sections". */
-export const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+/** "1 section", "2 sections": the one helper, `lib/learningCopy.ts`. */
+import { plural } from "@/lib/learningCopy";
+export { plural };
 
 /** "2 new lectures", or nothing when the class has added none since. */
 export const newLecturesText = (count: number): string => (count > 0 ? plural(count, "new lecture") : "");

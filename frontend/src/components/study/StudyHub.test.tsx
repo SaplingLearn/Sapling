@@ -156,7 +156,7 @@ describe("StudyHub", () => {
     // The block names the concept and how to start on it; no quiz history.
     expect(within(card).getByRole("link", { name: "Start quiz" })).toBeTruthy();
     expect(within(card).getByTestId("focus-learn").getAttribute("href")).toContain("concept=rec");
-    expect(within(card).getByTestId("focus-learn").textContent).toMatch(/Continue in Tutor/);
+    expect(within(card).getByTestId("focus-learn").textContent).toMatch(/Learn/);
     expect(within(card).queryByText(/Last Quiz/i)).toBeNull();
     // Legend counts.
     expect(screen.getByRole("button", { name: /1\s*Struggling/ })).toBeTruthy();
@@ -1316,7 +1316,7 @@ describe("StudyHub shows only what its data backs", () => {
     const dueDlg = screen.getByRole("dialog", { name: "Due reviews" });
     expect(within(dueDlg).getByText("Due for review")).toBeTruthy();
     // W8.3b / W3.3b: Due Reviews offer Practice what's due beside Flashcards.
-    expect(within(dueDlg).getByTestId("due-reviews-flashcards").textContent).toBe("Review flashcards");
+    expect(within(dueDlg).getByTestId("due-reviews-flashcards").textContent).toBe("Review");
     expect(within(dueDlg).getByTestId("due-reviews-quiz").textContent).toBe("Practice what's due");
     fireEvent.click(within(dueDlg).getByTestId("due-reviews-quiz"));
     expect(push).toHaveBeenLastCalledWith(
@@ -1340,7 +1340,7 @@ describe("StudyHub shows only what its data backs", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: /1 review due/ })).toBeTruthy());
     fireEvent.focus(screen.getByRole("button", { name: /1 review due/ }));
     const dueDlg = screen.getByRole("dialog", { name: "Due reviews" });
-    expect(within(dueDlg).getByRole("button", { name: "Start review" })).toBeTruthy();
+    expect(within(dueDlg).getByRole("button", { name: "Review" })).toBeTruthy();
     expect(within(dueDlg).queryByTestId("due-reviews-quiz")).toBeNull();
   });
 
@@ -1357,7 +1357,7 @@ describe("StudyHub shows only what its data backs", () => {
     const row = screen.getByRole("button", { name: /quick reviews?/ });
     fireEvent.focus(row);
     const list = screen.getByRole("dialog", { name: "Quick reviews" });
-    expect(within(list).getByRole("button", { name: "Start review" })).toBeTruthy();
+    expect(within(list).getByRole("button", { name: "Review" })).toBeTruthy();
     expect(within(list).queryByTestId("due-reviews-quiz")).toBeNull();
   });
 

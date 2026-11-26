@@ -104,7 +104,7 @@ describe("treeNodeActions", () => {
   it("adds Cards + Guide when learning_loop is on and Study is shown", () => {
     const actions = treeNodeActions(concept, { loopOn: true, quizShown: true, studyShown: true });
     expect(actions.map(a => a.key)).toEqual(["teach", "quiz", "cards", "guide"]);
-    expect(actions.map(a => a.label)).toEqual(["Teach", "Quiz", "Cards", "Guide"]);
+    expect(actions.map(a => a.label)).toEqual(["Learn", "Quiz", "Cards", "Guide"]);
     expect(actions.find(a => a.key === "cards")!.href).toBe(treeCardsHref(concept));
     expect(actions.find(a => a.key === "guide")!.href).toBe(treeGuideHref(concept));
   });

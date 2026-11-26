@@ -1,4 +1,5 @@
 "use client";
+import { LEARNING_COPY } from "@/lib/learningCopy";
 import { useLayoutEffect, useRef } from "react";
 import { motion } from "framer-motion";
 import { type LoopDiagnosis, type LoopPlanConcept, type LoopPlanPrereqEdge } from "@/lib/api";
@@ -96,7 +97,7 @@ export function PlanPanel({
             disabled={busy}
             onClick={onApprove}
           >
-            <Icon name="sparkle" size={14} /> {busy ? "Saving…" : "Start learning"}
+            <Icon name="sparkle" size={14} /> {busy ? "Saving…" : LEARNING_COPY.startPlan}
           </button>
         )}
       </section>

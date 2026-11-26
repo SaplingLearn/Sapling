@@ -3,7 +3,7 @@ import React, { useLayoutEffect, useRef } from "react";
 import Link from "next/link";
 import type { EnrolledCourse } from "@/lib/api";
 import type { GraphNode } from "@/lib/data";
-import { HANDOFF_COPY } from "@/lib/learningHandoffs";
+import { LEARNING_COPY } from "@/lib/learningCopy";
 import { MASTERY_PALETTE, TIER_LABEL, tierFor, type MasteryTier } from "@/lib/graph/nodeStyle";
 import { Icon } from "../../Icon";
 import { ChevRight } from "./TutorIcons";
@@ -107,12 +107,12 @@ export function TutorHome({
       <div className={styles.suggest}>
         {continueRow && (
           <button type="button" className={styles.pill} data-testid="tutor-home-continue" onClick={onContinue} disabled={busy}>
-            Continue: {continueTitle ?? sessionTitle(continueRow)}
+            {LEARNING_COPY.continueSession(continueTitle ?? sessionTitle(continueRow))}
           </button>
         )}
         {dueHref && (dueCount ?? 0) > 0 && (
           <Link className={styles.pill} data-testid="tutor-home-due" href={dueHref}>
-            {HANDOFF_COPY.dueOnStudyDot(dueCount ?? 0)}
+            {LEARNING_COPY.reviewLink(dueCount)}
           </Link>
         )}
         {startWith && (
@@ -131,7 +131,7 @@ export function TutorHome({
         onClick={onStart}
         disabled={busy}
       >
-        <Icon name="sparkle" size={14} /> {starting ? "Starting…" : "Start a guided session"}
+        <Icon name="sparkle" size={14} /> {starting ? LEARNING_COPY.starting : LEARNING_COPY.newSession}
       </button>
       {closesCurrent && (
         <p className={styles.ctaNote}>

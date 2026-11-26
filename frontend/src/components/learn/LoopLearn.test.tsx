@@ -1480,7 +1480,7 @@ describe("LoopLearn — PKG-13 fix round", () => {
     expect(screen.getByTestId("tutor-course-c2")).toBeTruthy();
     fireEvent.click(screen.getByTestId("loop-close-button"));
     expect((await screen.findByTestId("loop-close-study-link")).getAttribute("href")).toBe("/study?course=c1");
-    expect(screen.getByTestId("loop-close-study-link").textContent).toBe("Due on Study");
+    expect(screen.getByTestId("loop-close-study-link").textContent).toBe("Review");
     // W3.3b: Practice cue stream (course+start when no due ids / flags off)
     expect(screen.getByTestId("loop-close-practice-link").textContent).toBe("Practice what's due");
     expect(screen.getByTestId("loop-close-practice-link").getAttribute("href")).toBe(

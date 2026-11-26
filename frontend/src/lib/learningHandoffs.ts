@@ -1,8 +1,9 @@
 /**
- * W3.4 / W8.5: one copy system for Learn ↔ Study ↔ Quiz handoffs.
+ * W3.4 / W8.5: the Learn ↔ Study ↔ Quiz handoffs.
  *
- * Labels stay stable across wrap-up, Quiz results, Study Hub Focus, retention
- * empty states and LoopNotices. Hrefs reuse `studyHref` / `buildQuizHref` /
+ * Labels come from `lib/learningCopy.ts`, the one glossary, so they stay the
+ * same across wrap-up, Quiz results, Study Hub Focus, retention empty states
+ * and LoopNotices. Hrefs reuse `studyHref` / `buildQuizHref` /
  * Learn query params — no second planner. Callers pass hide_* visibility and
  * omit a null / filtered CTA (NavFeatureGate would only bounce to /dashboard).
  *
@@ -12,23 +13,8 @@
  */
 
 import { buildQuizHref, practiceDueQueue } from "@/lib/quiz/source";
+import { LEARNING_COPY } from "@/lib/learningCopy";
 import { studyHref } from "@/lib/toolHrefs";
-
-/** Canonical CTA labels (W8.5 phrasing + "quiz this concept" + Practice). */
-export const HANDOFF_COPY = {
-  dueOnStudy: "Due on Study",
-  dueOnStudyCounted: (n: number) => `Due on Study (${n})`,
-  dueOnStudyDot: (n: number) => `Due on Study · ${n}`,
-  continueInTutor: "Continue in Tutor",
-  continueLearning: (name: string) => `Continue learning: ${name}`,
-  quizThisConcept: "Quiz this concept",
-  /** W3.3b: Quiz cue stream on due (not Teach / LoopLearn). */
-  practiceWhatsDue: "Practice what's due",
-  seeOnMap: "See on your map",
-  /** The budget pause (flashcards while the tutor is capped) AND the Study
-   *  hub's due-reviews button: one label for one action, edit with both in view. */
-  reviewFlashcards: "Review flashcards",
-} as const;
 
 export type HandoffVisibility = {
   study: boolean;
@@ -124,10 +110,10 @@ export function handoffTreeHref(opts: {
 }
 
 /**
- * Wrap-up / close CTAs. Study stays the Hub handoff; Practice is the Quiz cue
+ * Wrap-up / close CTAs. Review stays the Hub handoff; Practice is the Quiz cue
  * stream (due[] queue or course+start) when Study and Quiz are both visible;
  * "Quiz this concept" only when a measured concept id is known. Retention +
- * "Start a new session" stay beside these in ClosePanel.
+ * "New session" stay beside these in ClosePanel.
  */
 export function closeHandoffCtas(input: {
   courseId: string | null;
@@ -141,7 +127,7 @@ export function closeHandoffCtas(input: {
   if (visibility.study) {
     out.push({
       key: "study",
-      label: HANDOFF_COPY.dueOnStudy,
+      label: LEARNING_COPY.review,
       href: handoffStudyHref(courseId),
       testId: "loop-close-study-link",
     });
@@ -150,7 +136,7 @@ export function closeHandoffCtas(input: {
   if (visibility.study && visibility.quiz && courseId) {
     out.push({
       key: "quiz",
-      label: HANDOFF_COPY.practiceWhatsDue,
+      label: LEARNING_COPY.practiceDue,
       href: handoffPracticeDueHref(courseId, dueConceptIds ?? []),
       testId: "loop-close-practice-link",
     });
@@ -158,7 +144,7 @@ export function closeHandoffCtas(input: {
   if (visibility.quiz && quizConceptId) {
     out.push({
       key: "quiz",
-      label: HANDOFF_COPY.quizThisConcept,
+      label: LEARNING_COPY.quizConcept,
       href: handoffQuizConceptHref(quizConceptId, { courseId }),
       testId: "loop-close-quiz-link",
     });
@@ -166,7 +152,7 @@ export function closeHandoffCtas(input: {
   if (visibility.tree) {
     out.push({
       key: "tree",
-      label: HANDOFF_COPY.seeOnMap,
+      label: LEARNING_COPY.seeOnMap,
       href: handoffTreeHref({ courseId }),
       testId: "loop-close-tree-link",
     });
@@ -174,7 +160,7 @@ export function closeHandoffCtas(input: {
   return out;
 }
 
-/** Retention empty / finished: Study due + Tutor, hide_* filtered. */
+/** Retention empty / finished: Review + Open Tutor, hide_* filtered. */
 export function retentionEmptyHandoffCtas(input: {
   courseId: string | null;
   visibility: Pick<HandoffVisibility, "study" | "tutor">;
@@ -183,7 +169,7 @@ export function retentionEmptyHandoffCtas(input: {
   if (input.visibility.study) {
     out.push({
       key: "study",
-      label: HANDOFF_COPY.dueOnStudy,
+      label: LEARNING_COPY.review,
       href: handoffStudyHref(input.courseId),
       testId: "retention-study-link",
     });
@@ -191,7 +177,7 @@ export function retentionEmptyHandoffCtas(input: {
   if (input.visibility.tutor) {
     out.push({
       key: "tutor",
-      label: HANDOFF_COPY.continueInTutor,
+      label: LEARNING_COPY.openTutor,
       href: handoffLearnHref({ courseId: input.courseId }),
       testId: "retention-tutor-link",
     });
@@ -200,7 +186,7 @@ export function retentionEmptyHandoffCtas(input: {
 }
 
 /**
- * Practice-unavailable notice: Due on Study + Quiz on the first named concept
+ * Practice-unavailable notice: Review + Quiz on the first named concept
  * (not full W3.3 practice mode — no due-queue fetch).
  */
 export function practiceUnavailableHandoffCtas(input: {
@@ -212,7 +198,7 @@ export function practiceUnavailableHandoffCtas(input: {
   if (input.visibility.study) {
     out.push({
       key: "study",
-      label: HANDOFF_COPY.dueOnStudy,
+      label: LEARNING_COPY.review,
       href: handoffStudyHref(input.courseId),
       testId: "loop-practice-study-link",
     });
@@ -221,7 +207,7 @@ export function practiceUnavailableHandoffCtas(input: {
   if (input.visibility.quiz && conceptId) {
     out.push({
       key: "quiz",
-      label: HANDOFF_COPY.quizThisConcept,
+      label: LEARNING_COPY.quizConcept,
       href: handoffQuizConceptHref(conceptId, { courseId: input.courseId }),
       testId: "loop-practice-quiz-link",
     });

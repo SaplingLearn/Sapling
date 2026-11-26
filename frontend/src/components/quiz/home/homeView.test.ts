@@ -205,10 +205,10 @@ describe("the card's copy", () => {
 
   it("writes each shape's meta line", () => {
     const due = { count: 7, courseCount: 2 } as Parameters<typeof cardMeta>[2];
-    expect(cardMeta("course", 4, due, null)).toBe("4 concepts due");
-    expect(cardMeta("due", 0, due, null)).toBe("7 concepts across 2 courses · starting with the 5 weakest");
+    expect(cardMeta("course", 4, due, null)).toBe("4 concepts to practice");
+    expect(cardMeta("due", 0, due, null)).toBe("7 concepts across 2 courses, starting with the 5 weakest");
     expect(cardMeta("due", 0, { ...due, count: 2 }, null)).toBe(
-      "2 concepts across 2 courses · starting with the 2 weakest",
+      "2 concepts across 2 courses, starting with the 2 weakest",
     );
     expect(cardMeta("concept", 0, due, candidate(REC))).toBe("30% · struggling · not studied yet");
     // a planned card states the plan's skill meter, once
