@@ -59,6 +59,7 @@ vi.mock("@/context/RetentionDueContext", async (orig) => ({
 import { ApiError, ChatStreamError } from "@/lib/api";
 import { __resetFeedbackPacingForTests } from "@/lib/feedbackPacing";
 import { markNoteCardShown } from "@/lib/crisisSupport";
+import { BANNED_STUDENT_TERMS } from "@/lib/learningCopy";
 import { LoopLearn } from "./LoopLearn";
 import { PROBE_PHASE_OPENERS } from "./loopHistory";
 import crisisFixture from "@/test-utils/crisisSupport.json";
@@ -1157,10 +1158,10 @@ describe("K34 — the check's answer box stops at the grader's 4,000-character c
 });
 
 describe("SUB — no model jargon on the Tutor's student surfaces (redesign subtract pass)", () => {
-  // The audit's banned-terms list: words that name the machinery, not the
-  // student's learning. Mastery may appear only on the badge, which these
-  // surfaces do not render.
-  const BANNED = /\b(probes?|rungs?|H[0-6]|p_known|BKT|FSRS|bounded|independent(ly)?|observations?|evidence|eligible|budget|scope|grader|checks drafting|mastery)\b/i;
+  // The audit's banned-terms list (lib/learningCopy.ts): words that name the
+  // machinery, not the student's learning. Mastery may appear only on the
+  // badge, which these surfaces do not render.
+  const BANNED = BANNED_STUDENT_TERMS;
   const diagnosis = {
     status: "limited", stop_reason: "coverage_limit", skills: [{
       node_id: "n1", status: "partial", floor_difficulty: 1, ceiling_difficulty: null, independent_correct: 1, independent_incorrect: 1,

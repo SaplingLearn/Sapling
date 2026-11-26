@@ -28,6 +28,7 @@
  * ordering itself is untouched.
  */
 
+import { levelPhrase } from "@/lib/levels";
 import { paletteFor } from "@/lib/data";
 import { resolveInitialSelection, type QuizConcept } from "@/lib/quizSelection";
 import type { EnrolledCourse } from "@/lib/api";
@@ -108,12 +109,13 @@ function pct(score: number): number {
   return Math.round(score * 100);
 }
 
-/** The skill bands in a student's words — the quiz results say them the
- *  same way (`results/LearningBlock.tsx`). */
+/** The skill bands in a student's words, mid-sentence: the one ladder's
+ *  (`lib/levels.ts`), which the quiz results say the same way
+ *  (`results/LearningBlock.tsx`). */
 export const BAND_WORDS: Record<SkillBand, string> = {
-  novice: "just starting",
-  develop: "developing",
-  profic: "proficient",
+  novice: levelPhrase("novice"),
+  develop: levelPhrase("develop"),
+  profic: levelPhrase("profic"),
 };
 
 function studiedPhrase(node: GraphNode, now: Date): string {

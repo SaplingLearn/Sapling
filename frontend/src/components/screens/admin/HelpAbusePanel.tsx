@@ -12,6 +12,7 @@
  * behind it reads "—", never a zero.
  */
 
+import { LEVEL_WORDS } from "@/lib/levels";
 import React from "react";
 import type { LoopHelpAbuse, LoopHelpAbuseGroup, LoopHelpMedian, LoopHelpNext } from "@/lib/types";
 import { AnimatedNumber } from "../AnimatedNumber";
@@ -32,10 +33,12 @@ const GATE_LABEL: Record<string, string> = {
   strict: "Strict gate",
   none: "No hint attempt",
 };
+// The one skill ladder's words (lib/levels.ts), so staff and students name a
+// band the same way.
 const BAND_LABEL: Record<string, string> = {
-  novice: "Novice",
-  develop: "Developing",
-  profic: "Proficient",
+  novice: LEVEL_WORDS.novice,
+  develop: LEVEL_WORDS.develop,
+  profic: LEVEL_WORDS.profic,
   unknown: "Band unknown",
 };
 const LEVELS = [

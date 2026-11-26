@@ -10,6 +10,7 @@
 import type { StudentConfidence } from "@/lib/api";
 import type { GamificationMe } from "@/lib/types";
 import type { QuizError } from "./errors";
+import type { SkillBand } from "@/lib/levels";
 
 /** `GET /api/quiz/config` — the ONLY source of option lists (never enumerate
  *  counts or difficulties in code; `services/quiz_config.py::quiz_config_payload`). */
@@ -420,8 +421,9 @@ export type SubmitGamification =
  *  misconception on it, or everything it builds on is proficient. */
 export type PlanReason = "due" | "misconception" | "ready";
 
-/** The skill bands of the learner model (`learning/bkt.py::band`). */
-export type SkillBand = "novice" | "develop" | "profic";
+/** The skill bands of the learner model (`learning/bkt.py::band`); the one
+ *  ladder's words for them are `lib/levels.ts`. */
+export type { SkillBand };
 
 /** One concept of `GET /api/quiz/plan`, in the learner model's order. */
 export interface PlannedConcept {

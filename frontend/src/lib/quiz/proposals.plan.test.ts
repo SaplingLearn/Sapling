@@ -124,7 +124,7 @@ describe("one measure per concept (metaLine)", () => {
   });
 
   it("says each band as the quiz results do", () => {
-    expect(metaLine(fresh, NOW, { ...plan, band: "novice" })).toBe("35% · just starting · not studied yet");
+    expect(metaLine(fresh, NOW, { ...plan, band: "novice" })).toBe("35% · getting started · not studied yet");
     expect(metaLine(fresh, NOW, { ...plan, band: "profic", pKnown: 0.91 })).toBe("91% · proficient · not studied yet");
   });
 });

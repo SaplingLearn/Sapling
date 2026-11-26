@@ -7,8 +7,6 @@ import fieldStyles from "./loopShared.module.css";
 export const LOOP_GOAL_TEXT_MAX = 500;
 export { LOOP_GOAL_MAX_TARGETS } from "@/lib/inputLimits";
 
-export const BAND_LABEL: Record<string, string> = { novice: "Getting started", develop: "Developing", profic: "Proficient" };
-
 /** The loop's written-answer field: a textarea carries it to read as a field
  *  (Tailwind's preflight strips a textarea's own border, padding and fill). */
 export const FIELD_CLASS = fieldStyles.field;
