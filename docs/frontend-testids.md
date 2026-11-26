@@ -1153,10 +1153,10 @@ inside `loop-messages` is `ChatPanel`, whose own `tutor-*` ids
 | `loop-start-retry` | retry the start |
 | `loop-start-crisis` | `/start-session` answered with the crisis-support card (no session was opened); the card's `crisis-support-dismiss` starts a fresh session on the course (docs/safety/crisis-support.md) |
 | `loop-topic-offer` | a `?topic=` deep link arrived while a session is open: the session resumed, the topic is offered (`loop-topic-start`; with the link's `?concept=` of the course on screen, a session on that concept) |
-| `loop-topic-start` | "Start a session on <topic>" (wraps up the open session first, like `loop-new-session`) |
+| `loop-topic-start` | "Learn <topic>" (wraps up the open session first, like `loop-new-session`; the offer says so) |
 | `loop-readonly-transcript` | a `?resume=` session that is not an open loop session (a legacy one), shown read-only |
 | `loop-readonly-new-session` | "New session" beside the read-only transcript |
-| `loop-notices` | the notices container — always on the page, `aria-live="polite"` and empty until a notice arrives, so each notice below is announced as it is added (spec §13 A135) |
+| `loop-notices` | the notices container (`components/ui/StatusSlot`) — always on the page, `aria-live="polite"` and empty until a notice arrives, so each notice below is announced as it is added (spec §13 A135). It shows ONE notice at a time, most important first: the budget pause, the topic offer, practice unavailable, no check items, preparing, materials unavailable; `data-notice` names the one shown ("" when none), `data-has-notices` whether there is one |
 | `loop-budget-paused` | the budget pause banner (A20/A26/A39); `role="status"`, `data-reset-at` (ISO or empty), `data-session-capped` (`true`: "paused for this session", no reset time); when the 429 or `budget` notice says `pause_novice`, it says checks on concepts the student is just starting are paused too, and a "Check me" that met that pause says so beside the button (#866 K35) |
 | `loop-budget-study-link` | link to `/study?mode=cards` inside the banner |
 | `loop-no-check-items` | "No check items for this course yet" (A23) |

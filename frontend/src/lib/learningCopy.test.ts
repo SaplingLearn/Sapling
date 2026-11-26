@@ -41,7 +41,7 @@ describe("LEARNING_COPY", () => {
  *  seven "due" labels): none may come back on a learning surface. */
 const RETIRED = [
   "Due on Study", "Start a guided session", "Start a new session", "Review flashcards",
-  "Continue learning:", "Continue in Tutor", "Start review",
+  "Continue learning:", "Continue in Tutor", "Start review", "Start a session on",
 ];
 const SURFACES = ["components/learn", "components/study", "components/quiz", "components/flashcards", "lib"];
 // The loop-off app (main's pre-loop Learn screen) keeps its own words.

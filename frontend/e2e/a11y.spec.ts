@@ -608,32 +608,54 @@ test("learning loop: a segment's ungraded guess and a self-explanation prompt (A
   }
 });
 
+/** spec §13 A128's notes, from the server's own answers with the flags set. */
+async function stubDegradedNotes(page: Page) {
+  await page.route("**/api/learn/loop/start-session", (route) => withFields(route, { materials_unavailable: true }));
+  await page.route("**/api/learn/loop/probe/next", (route) =>
+    route.fulfill({ json: { done: true, phase: "plan", no_check_items: true, preparing: true } }),
+  );
+  // The stubbed check-in never reaches the server, so the lazily started session
+  // is never materialised (the first real /probe/next does that). The server's
+  // plan read then rightly answers 404 "Session not found", which Tutor V2 shows
+  // as a lost session (#866 K26), so the plan read is answered here too.
+  await page.route(
+    (url) => url.pathname.endsWith("/api/learn/loop/plan"),
+    (route) => route.fulfill({ json: { concepts: [], order: [], phase: "plan" } }),
+  );
+}
+
+// The notices region shows one notice at a time, most important first
+// (components/ui/StatusSlot): the pause, then the preparing note, then the
+// materials note. Each is scanned as the one on screen.
 test("learning loop: the budget pause and the degraded-mode notes", async ({ browser }) => {
   test.skip(loopOffLane, "loop path: default lane only");
-  const { context, page } = await signIn(browser, USER_CAPPED, "Casey Cap");
+  const capped = await signIn(browser, USER_CAPPED, "Casey Cap");
   try {
-    // spec §13 A128's notes, from the server's own answers with the flags set.
-    await page.route("**/api/learn/loop/start-session", (route) => withFields(route, { materials_unavailable: true }));
-    await page.route("**/api/learn/loop/probe/next", (route) =>
-      route.fulfill({ json: { done: true, phase: "plan", no_check_items: true, preparing: true } }),
-    );
-    // The stubbed check-in never reaches the server, so the lazily started session
-    // is never materialised (the first real /probe/next does that). The server's
-    // plan read then rightly answers 404 "Session not found", which Tutor V2 shows
-    // as a lost session (#866 K26), so the plan read is answered here too.
-    await page.route(
-      (url) => url.pathname.endsWith("/api/learn/loop/plan"),
-      (route) => route.fulfill({ json: { concepts: [], order: [], phase: "plan" } }),
-    );
+    const { page } = capped;
+    await stubDegradedNotes(page);
     await page.goto("/learn");
     await page.getByTestId("loop-start-guided").click();
     await expect(page.getByTestId("loop-budget-paused")).toBeVisible();
-    await expect(page.getByTestId("loop-materials-unavailable")).toBeVisible();
-    await expect(page.getByTestId("loop-preparing-items")).toBeVisible();
+    await expect(page.getByTestId("loop-notices")).toHaveAttribute("data-notice", "paused");
+    await expect(page.getByTestId("loop-materials-unavailable")).toHaveCount(0);
+    await expect(page.getByTestId("loop-preparing-items")).toHaveCount(0);
     await expect(page.getByTestId("loop-phase")).toHaveAttribute("data-phase", "plan");
-    await expectAccessible(page, "learn loop: paused, materials unavailable, preparing questions");
+    await expectAccessible(page, "learn loop: paused (one notice at a time)");
   } finally {
-    await context.close();
+    await capped.context.close();
+  }
+  const loop = await signIn(browser, USER_LOOP, "Lou Loop");
+  try {
+    const { page } = loop;
+    await stubDegradedNotes(page);
+    await page.goto("/learn");
+    await page.getByTestId("loop-start-guided").click();
+    await expect(page.getByTestId("loop-preparing-items")).toBeVisible();
+    await expect(page.getByTestId("loop-notices")).toHaveAttribute("data-notice", "preparing");
+    await expect(page.getByTestId("loop-materials-unavailable")).toHaveCount(0);
+    await expectAccessible(page, "learn loop: preparing questions");
+  } finally {
+    await loop.context.close();
   }
 });
 

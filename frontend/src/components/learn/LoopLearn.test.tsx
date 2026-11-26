@@ -322,7 +322,8 @@ describe("LoopLearn — resume (spec §11.3)", () => {
     const retryButton = await screen.findByTestId(`loop-${phase}-retry`);
     const button = screen.getByTestId("loop-new-session") as HTMLButtonElement;
     await waitFor(() => expect(button.disabled).toBe(false));
-    expect(toast.error).toHaveBeenCalledTimes(1);
+    // One message for one failure: the inline error with its retry, no toast.
+    expect(toast.error).not.toHaveBeenCalled();
     expect(load).toHaveBeenCalledTimes(1); // No automatic load/model retry.
     fireEvent.click(retryButton);
     await waitFor(() => expect(load).toHaveBeenCalledTimes(2));
@@ -333,7 +334,7 @@ describe("LoopLearn — resume (spec §11.3)", () => {
     await act(async () => { retry.resolve(phase === "probe" ? probeItem : { concepts: [], order: [] }); });
     await waitFor(() => expect(button.disabled).toBe(false));
     expect(screen.queryByTestId(`loop-${phase}-retry`)).toBeNull();
-    expect(toast.error).toHaveBeenCalledTimes(1);
+    expect(toast.error).not.toHaveBeenCalled();
   });
 
   it("blocks New session during an explicit authoritative scope retry", async () => {

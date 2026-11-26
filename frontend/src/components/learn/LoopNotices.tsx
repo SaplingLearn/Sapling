@@ -1,12 +1,11 @@
 "use client";
-// The session's notices region (moved out of LoopLearn.tsx unchanged): the
-// budget pause, the course's item state (A26/A128), the materials outage
-// (A128), the goal's exhausted practice, and the ?topic= offer (F3).
+// The session's notices region: the budget pause, the ?topic= offer (F3), the
+// goal's exhausted practice, the course's item state (A26/A128) and the
+// materials outage (A128), one at a time in that order (a StatusSlot).
 import { CtaLink, HandoffLink } from "@/components/ui/HandoffLink";
+import { StatusSlot, type StatusNotice } from "@/components/ui/StatusSlot";
 import React from "react";
 import Link from "next/link";
-import { AnimatePresence, motion } from "framer-motion";
-import { useMotionPresets } from "@/lib/motion";
 import type { LoopBudgetPause } from "@/lib/api";
 import { handoffStudyHref, practiceUnavailableHandoffCtas } from "@/lib/learningHandoffs";
 import { LEARNING_COPY } from "@/lib/learningCopy";
@@ -49,30 +48,20 @@ export function LoopNotices({
   topicStartDisabled: boolean;
   onTopicStart: () => void;
 }) {
-  const hasNotices = !!paused || noCheckItems === "none" || preparing || materialsNote || !!topicOffer || practiceUnavailable.length > 0;
   const practiceHandoffs = practiceUnavailableHandoffCtas({
     courseId,
     conceptIds: practiceUnavailable,
     visibility: { study: studyVisible, quiz: quizVisible },
   });
-  // Each notice opens and closes in place (collapse); one already up on the
-  // first render is simply there. The bare wrapper carries the height tween,
-  // so a padded notice collapses to nothing rather than to its padding.
-  const m = useMotionPresets();
   const handoff = `btn btn--sm ${styles.handoff} ${styles.press}`;
-  // Always in the DOM (spec §13 A135): a notice is announced when it is added to
-  // this polite region; one inserted together with its own region is not
-  // reliably read out.
-  return (
-    <div
-      aria-live="polite"
-      data-testid="loop-notices"
-      data-has-notices={hasNotices}
-      className={styles.region}
-    >
-      <AnimatePresence initial={false}>
-      {paused && (
-        <motion.div key="paused" {...m.collapse}>
+  // One notice at a time, most important first (components/ui/StatusSlot):
+  // the pause stops the tutor; the ?topic= offer waits on the student's
+  // choice; then what the session's practice lacks; then the outage note.
+  const notices: StatusNotice[] = [
+    {
+      key: "paused",
+      on: !!paused,
+      render: () => paused && (
         <BudgetPausedBanner
           testId="loop-budget-paused"
           resetAt={paused.resetAt}
@@ -83,31 +72,32 @@ export function LoopNotices({
             {LEARNING_COPY.review}
           </HandoffLink></>}
         </BudgetPausedBanner>
-        </motion.div>
-      )}
-      {noCheckItems === "none" && (
-        <motion.div key="no-check-items" {...m.collapse}>
-          <div data-testid="loop-no-check-items" role="status" className={styles.note}>
-            {NO_CHECK_ITEMS_COPY}
-          </div>
-        </motion.div>
-      )}
-      {preparing && (
-        <motion.div key="preparing" {...m.collapse}>
-          <div data-testid="loop-preparing-items" role="status" className={styles.note}>
-            {PREPARING_COPY}
-          </div>
-        </motion.div>
-      )}
-      {materialsNote && (
-        <motion.div key="materials" {...m.collapse}>
-          <div data-testid="loop-materials-unavailable" role="status" className={styles.note}>
-            {MATERIALS_UNAVAILABLE_COPY}
-          </div>
-        </motion.div>
-      )}
-      {practiceUnavailable.length > 0 && (
-        <motion.div key="practice" {...m.collapse}>
+      ),
+    },
+    {
+      // ?topic= while a session is open: resume won (a reload never starts a
+      // probe, §11.3); the link's concept is one click away, never automatic,
+      // and the action says what it does to the open session.
+      key: "topic-offer",
+      on: !!topicOffer,
+      render: () => (
+        <div data-testid="loop-topic-offer" role="status" className={styles.topicOffer}>
+          <span className={styles.topicCopy}>You picked “{topicOffer}”. Learning it wraps up this session first.</span>
+          <button
+            data-testid="loop-topic-start"
+            className={`btn btn--sm ${styles.press}`}
+            disabled={topicStartDisabled}
+            onClick={onTopicStart}
+          >
+            {LEARNING_COPY.learnConcept(topicOffer ?? "")}
+          </button>
+        </div>
+      ),
+    },
+    {
+      key: "practice",
+      on: practiceUnavailable.length > 0,
+      render: () => (
         <div data-testid="loop-practice-unavailable" role="status" className={`${styles.note} ${styles.practice}`}>
           <p className={styles.para}>{NO_FRESH_PRACTICE_COPY}</p>
           <p className={`${styles.paraLast} ${styles.anywhere}`}>Practice unavailable: {practiceUnavailable.map((id) => names.get(id) ?? "A selected concept").join(", ")}.</p>
@@ -124,26 +114,23 @@ export function LoopNotices({
             )}
           </div>
         </div>
-        </motion.div>
-      )}
-      {topicOffer && (
-        // ?topic= while a session is open: resume won (a reload never starts a
-        // probe, §11.3); the link's concept is one click away, never automatic.
-        <motion.div key="topic-offer" {...m.collapse}>
-        <div data-testid="loop-topic-offer" role="status" className={styles.topicOffer}>
-          <span className={styles.topicCopy}>You picked “{topicOffer}”. This session is still open.</span>
-          <button
-            data-testid="loop-topic-start"
-            className={`btn btn--sm ${styles.press}`}
-            disabled={topicStartDisabled}
-            onClick={onTopicStart}
-          >
-            Start a session on {topicOffer}
-          </button>
-        </div>
-        </motion.div>
-      )}
-      </AnimatePresence>
-    </div>
-  );
+      ),
+    },
+    {
+      key: "no-check-items",
+      on: noCheckItems === "none",
+      render: () => <div data-testid="loop-no-check-items" role="status" className={styles.note}>{NO_CHECK_ITEMS_COPY}</div>,
+    },
+    {
+      key: "preparing",
+      on: preparing,
+      render: () => <div data-testid="loop-preparing-items" role="status" className={styles.note}>{PREPARING_COPY}</div>,
+    },
+    {
+      key: "materials",
+      on: materialsNote,
+      render: () => <div data-testid="loop-materials-unavailable" role="status" className={styles.note}>{MATERIALS_UNAVAILABLE_COPY}</div>,
+    },
+  ];
+  return <StatusSlot notices={notices} testId="loop-notices" className={styles.region} />;
 }

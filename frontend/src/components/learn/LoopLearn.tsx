@@ -553,8 +553,10 @@ export function LoopLearn() {
   }, [userId, dropFromPicker, invalidateHint, showClose]);
 
   // ── Error routing: a budget 429 is the banner, a closed session is the
-  // close, anything else a toast ─────────────────────────────────────────
-  const reportError = useCallback((err: unknown, fallback: string) => {
+  // close, anything else a toast — unless the screen already says it inline
+  // (`shownInline`: a load error with its own Try again), because one event
+  // gets one message, never a toast and an inline line both ───────────────
+  const reportError = useCallback((err: unknown, fallback: string, opts?: { shownInline?: boolean }) => {
     const pause = loopPauseOf(err); // K11: the loop's tutor budget, or the daily AI limit
     if (pause) {
       dispatch({ type: "budget", level: "hard", resetAt: pause.resetAt, sessionCapped: pause.sessionCapped, pauseNovice: pause.pauseNovice, aiLimit: pause.aiLimit });
@@ -571,6 +573,7 @@ export function LoopLearn() {
       resyncRef.current(sid); // one in flight already re-reads it
       return;
     }
+    if (opts?.shownInline) return;
     toast.error(humanizeError(err, fallback));
   }, [toast, enterClosed]);
 
@@ -688,7 +691,7 @@ export function LoopLearn() {
     } catch (err) {
       if (g !== gen.current) return;
       setLoadError("plan");
-      reportError(err, "Couldn't load today's plan.");
+      reportError(err, "Couldn't load today's plan.", { shownInline: true });
     } finally {
       if (g === gen.current) setPlanLoading(false);
     }
@@ -720,7 +723,7 @@ export function LoopLearn() {
     } catch (err) {
       if (g !== gen.current) return;
       setLoadError("probe");
-      reportError(err, "Couldn't load the next question.");
+      reportError(err, "Couldn't load the next question.", { shownInline: true });
     } finally {
       if (g === gen.current) setProbeBusy(false);
     }
@@ -903,7 +906,7 @@ export function LoopLearn() {
         return;
       }
       setLoadError("start"); // never an empty probe: the start card offers a retry
-      reportError(err, "Couldn't start a session.");
+      reportError(err, "Couldn't start a session.", { shownInline: true });
     } finally {
       if (g === gen.current) setStarting(false);
     }
@@ -1234,9 +1237,11 @@ export function LoopLearn() {
       }
     } catch (err) {
       if (g !== gen.current) return;
-      reportError(err, "Couldn't save the plan.");
+      // A 409 (the plan changed) reloads it with its own inline error and retry.
+      const stale = extractErrorDetail(err).status === 409;
+      reportError(err, "Couldn't save the plan.", { shownInline: stale });
       if (g !== gen.current) return;
-      if (extractErrorDetail(err).status === 409) {
+      if (stale) {
         setPlan(null);
         setPlanPrereqEdges([]);
         setLoadError("plan");
