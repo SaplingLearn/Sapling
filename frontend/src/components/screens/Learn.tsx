@@ -1919,7 +1919,7 @@ function KnowledgeMapRail({
           (and the graph's measured bounds stay stable) while the outer
           <aside> clips it during the slide. */}
       <div
-        className={cn("learn-map-rail", "h-full box-border [background:var(--bg-subtle)] overflow-y-auto overflow-x-hidden flex flex-col", isMobile ? "w-full" : "w-100", isMobile ? "border-l-0" : "border-l border-l-border")}
+        className={cn("learn-map-rail", "h-full box-border [background:var(--bg-subtle)] overflow-y-auto overflow-x-hidden flex flex-col", isMobile ? "border-l-0" : "border-l border-l-border")} style={{ width: isMobile ? "100%" : RAIL_WIDTH }}
       >
         {/* Header */}
         <RailHeader cardCourse={cardCourse} topic={topic} />
@@ -2090,7 +2090,7 @@ function ElsewhereList({ items, activeFocusId, onFocus }: {
               key={r.id}
               onClick={() => onFocus(r.id)}
               title={`Focus ${r.name}`}
-              className={cn(cn("py-1.5 px-3 rounded-[var(--r-full)] text-[12.5px] font-medium cursor-pointer", active ? "bg-accent-soft" : "bg-bg-panel", active ? "text-text" : "text-text-dim"), active ? "border border-brand-forest" : "border border-border")}
+              className={cn("py-1.5 px-3 rounded-[var(--r-full)] text-[12.5px] font-medium cursor-pointer", active ? "border border-brand-forest" : "border border-border", active ? "bg-accent-soft" : "bg-bg-panel", active ? "text-text" : "text-text-dim")}
             >
               {r.name}
             </button>

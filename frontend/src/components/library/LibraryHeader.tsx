@@ -57,9 +57,10 @@ function GuidesButton() {
     <Link
       href={studyGuideHref()}
       data-testid="library-guides"
-      className="btn btn--sm h-10 py-0 px-4 text-md mr-2 whitespace-nowrap shrink-0 no-underline"
+      className="btn btn--sm py-0 px-4 text-md mr-2 whitespace-nowrap shrink-0 no-underline"
+      style={{ height: CONTROL_H }}
     >
-      <span aria-hidden="true" className="grid text-warn">
+      <span aria-hidden="true" className="grid" style={{ color: TOOL.guide.fg }}>
         <ToolGlyph name={TOOL.guide.icon} size={14} />
       </span>
       {TOOL.guide.title}
@@ -85,7 +86,7 @@ export function LibraryHeader(props: LibraryHeaderProps) {
 
       </div>
 
-      <label className={cn("flex-1 min-w-0 max-w-210 ml-6 flex items-center gap-2.5 h-10 box-border pt-0 pr-2 pb-0 pl-4 border border-[rgba(42,39,31,0.16)] rounded-[12px] bg-bg-panel cursor-text", focused ? "[box-shadow:0_0_0_3px_rgba(89,117,54,0.22)]" : "shadow-none")}>
+      <label className={cn("flex-1 min-w-0 max-w-210 ml-6 flex items-center gap-2.5 box-border pt-0 pr-2 pb-0 pl-4 border border-[rgba(42,39,31,0.16)] rounded-[12px] bg-bg-panel cursor-text", focused ? "[box-shadow:0_0_0_3px_rgba(89,117,54,0.22)]" : "shadow-none")} style={{ height: CONTROL_H }}>
         <Glyph name="search" size={18} fill="#6F6857" />
         <input
           data-testid="library-search"
@@ -200,12 +201,13 @@ export function LibraryHeader(props: LibraryHeaderProps) {
           <div className="relative shrink-0 flex">
             <button
               data-testid="library-upload"
-              className={cn("sapHoverForest", "inline-flex items-center gap-2 h-10 pt-0 pr-3.5 pb-0 pl-4 border-0 [background:#445D22] text-accent-fg rounded-sm [font-family:inherit] [font-style:inherit] [font-variant:inherit] [font-stretch:inherit] [line-height:inherit] text-md font-bold", canUpload ? "cursor-pointer" : "cursor-not-allowed", canUpload ? "opacity-100" : "opacity-55")}
+              className={cn("sapHoverForest", "inline-flex items-center gap-2 pt-0 pr-3.5 pb-0 pl-4 border-0 [background:#445D22] text-accent-fg rounded-sm [font-family:inherit] [font-style:inherit] [font-variant:inherit] [font-stretch:inherit] [line-height:inherit] text-md font-bold", canUpload ? "cursor-pointer" : "cursor-not-allowed", canUpload ? "opacity-100" : "opacity-55")}
               onClick={() => onMenu(menu === "upload" ? null : "upload")}
               aria-haspopup="menu"
               aria-expanded={menu === "upload"}
               disabled={!canUpload}
               title={canUpload ? "Upload documents" : "Enroll in a course first"}
+              style={{ height: CONTROL_H }}
             >
               <Glyph name="upload" size={14} />
               Upload

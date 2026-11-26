@@ -50,7 +50,7 @@ export default function GalleryPage() {
                 onClick={() => setFilter(f.key)}
                 type="button"
                 aria-pressed={on}
-                className={cn(cn("py-2 px-[15px] rounded-[99px] cursor-pointer font-sans text-md font-medium [transition:all_200ms]", on ? "bg-brand-forest" : "bg-transparent", on ? "text-ink-0" : "text-text-muted"), on ? "border border-brand-forest" : "border border-[rgba(42,39,31,0.16)]")}
+                className={cn("py-2 px-[15px] rounded-[99px] cursor-pointer font-sans text-md font-medium [transition:all_200ms]", on ? "border border-brand-forest" : "border border-[rgba(42,39,31,0.16)]", on ? "bg-brand-forest" : "bg-transparent", on ? "text-ink-0" : "text-text-muted")}
               >
                 {f.label}
               </button>

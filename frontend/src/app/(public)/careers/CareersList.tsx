@@ -22,8 +22,16 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { JOBS, DEPT_COLORS } from './jobs';
 import { CompanionShell } from '@/components/companion/CompanionShell';
-import { MUTED } from '@/lib/landing/companionType';
+import { ACCENT, LABEL, MUTED } from '@/lib/landing/companionType';
 import { cn } from "@/lib/cn";
+
+const EYEBROW: React.CSSProperties = {
+  display: 'block', fontFamily: LABEL, fontSize: 12, 
+  color: ACCENT };
+
+const META: React.CSSProperties = {
+  fontFamily: LABEL, fontSize: 12.5, 
+  color: MUTED };
 
 /**
  * Chip colours for a department `jobs.ts` has no entry for. The old fallback
@@ -43,8 +51,8 @@ export default function CareersList() {
         {/* The dot is the live-role tell: forest green while something is
             open, neutral once nothing is. An accent dot over "not hiring"
             reads as a broken state rather than a deliberate one. */}
-        <span className="inline-flex items-center gap-2 font-sans text-sm text-text-muted [animation:fadeUp_600ms_ease_both]">
-          <span aria-hidden="true" className={cn("w-1.5 h-1.5 rounded-[99px]", hiring ? "bg-brand-forest-bright" : "bg-[rgba(42,39,31,0.28)]")} />
+        <span className="inline-flex items-center gap-2 font-sans text-sm [animation:fadeUp_600ms_ease_both]" style={{ color: MUTED }}>
+          <span aria-hidden="true" className="w-1.5 h-1.5 rounded-[99px]" style={{ background: hiring ? ACCENT : 'rgba(42,39,31,0.28)' }} />
           {hiring ? "We're hiring" : 'Not hiring right now'}
         </span>
         <h1 className="mt-3.5 mx-0 mb-0 font-display font-medium text-[48px] leading-[1.15] tracking-[-0.015em] text-ink-800 [animation:fadeUp_700ms_ease_60ms_both]">
@@ -60,9 +68,9 @@ export default function CareersList() {
             open, the same rule carries the empty state — a header reading
             "0 positions" above blank space is how a page looks broken. */}
         <div className="mt-12 pb-3 border-b border-b-[rgba(42,39,31,0.10)] flex items-baseline justify-between gap-4 [animation:fadeUp_700ms_ease_200ms_both]">
-          <span className="block font-sans text-sm text-brand-forest-bright">{hiring ? 'Open roles' : 'Openings'}</span>
+          <span style={EYEBROW}>{hiring ? 'Open roles' : 'Openings'}</span>
           {hiring ? (
-            <span className="font-sans text-[12.5px] text-text-muted">
+            <span style={META}>
               {JOBS.length} {JOBS.length === 1 ? 'position' : 'positions'}
             </span>
           ) : null}
@@ -101,7 +109,7 @@ export default function CareersList() {
                       {job.department}
                     </span>
                   </span>
-                  <span className="font-sans text-[12.5px] text-text-muted">
+                  <span style={META}>
                     {job.location} · {job.type}
                   </span>
                 </span>
@@ -109,7 +117,7 @@ export default function CareersList() {
                 {/* Same affordance as the /faq accordion: a hairline circle that
                     fills forest green once the row is open. */}
                 <span
-                  className={cn(cn("flex-[0_0_auto] w-6.5 h-6.5 rounded-[99px] flex items-center justify-center [transition:all_260ms_cubic-bezier(0.22,1,0.36,1)]", isOpen ? "bg-brand-forest" : "bg-transparent", isOpen ? "text-ink-0" : "text-text-muted", isOpen ? "[transform:rotate(180deg)]" : "[transform:rotate(0deg)]"), isOpen ? "border border-brand-forest" : "border border-[rgba(42,39,31,0.16)]")}
+                  className={cn("flex-[0_0_auto] w-6.5 h-6.5 rounded-[99px] flex items-center justify-center [transition:all_260ms_cubic-bezier(0.22,1,0.36,1)]", isOpen ? "border border-brand-forest" : "border border-[rgba(42,39,31,0.16)]", isOpen ? "bg-brand-forest" : "bg-transparent", isOpen ? "[transform:rotate(180deg)]" : "[transform:rotate(0deg)]")} style={{ color: isOpen ? '#faf8f3' : MUTED }}
                 >
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round">
                     <path d="M19 9l-7 7-7-7" />
@@ -128,7 +136,7 @@ export default function CareersList() {
                   </p>
 
                   <div>
-                    <span className="block font-sans text-sm text-brand-forest-bright">What you&apos;d touch</span>
+                    <span style={EYEBROW}>What you&apos;d touch</span>
                     <div className="mt-3.5 flex flex-wrap gap-[7px]">
                       {job.tags.map((tag) => (
                         <span
@@ -157,7 +165,7 @@ export default function CareersList() {
 
         <div className="mt-13 rounded-[18px] bg-ink-0 border border-[rgba(42,39,31,0.10)] p-[clamp(26px,4vw,40px)] flex items-center justify-between gap-6 flex-wrap">
           <div className="max-w-[46ch]">
-            <span className="block font-sans text-sm text-brand-forest-bright">Don&apos;t see your role?</span>
+            <span style={EYEBROW}>Don&apos;t see your role?</span>
             <p className="mt-2.5 mx-0 mb-0 font-serif text-[15.5px] leading-[1.65] text-ink-600">
               We&apos;re always interested in meeting talented people. Send us a note and tell us what
               you&apos;d build.

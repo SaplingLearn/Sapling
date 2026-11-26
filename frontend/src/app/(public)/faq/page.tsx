@@ -63,7 +63,7 @@ export default function FaqPage() {
                     >
                       <span className="text-lg font-semibold leading-[1.45] text-ink-800 tracking-[-0.01em]">{item.q}</span>
                       <span
-                        className={cn(cn("flex-[0_0_auto] w-5.5 h-5.5 mt-px rounded-[99px] flex items-center justify-center [transition:all_260ms_cubic-bezier(0.22,1,0.36,1)]", isOpen ? "[transform:rotate(45deg)]" : "[transform:rotate(0deg)]", isOpen ? "bg-brand-forest" : "bg-transparent", isOpen ? "text-ink-0" : "text-text-muted"), isOpen ? "border border-brand-forest" : "border border-[rgba(42,39,31,0.16)]")}
+                        className={cn("flex-[0_0_auto] w-5.5 h-5.5 mt-px rounded-[99px] flex items-center justify-center [transition:all_260ms_cubic-bezier(0.22,1,0.36,1)]", isOpen ? "border border-brand-forest" : "border border-[rgba(42,39,31,0.16)]", isOpen ? "[transform:rotate(45deg)]" : "[transform:rotate(0deg)]", isOpen ? "bg-brand-forest" : "bg-transparent", isOpen ? "text-ink-0" : "text-text-muted")}
                       >
                         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
                           <path d="M12 5v14M5 12h14" />

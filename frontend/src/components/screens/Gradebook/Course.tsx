@@ -1292,7 +1292,7 @@ function CompositionTooltip({ tip }: { tip: TipState }) {
   return (
     <div
       role="tooltip"
-      className="fixed w-70 pointer-events-none bg-text text-bg py-2.5 px-3 rounded-sm text-sm leading-[1.45] shadow-md z-1000" style={{ left, top }}
+      className="fixed pointer-events-none bg-text text-bg py-2.5 px-3 rounded-sm text-sm leading-[1.45] shadow-md z-1000" style={{ left, top, width: TIP_W }}
     >
       <div
         className="font-display text-base font-medium mb-1.5 tracking-[-0.01em]"

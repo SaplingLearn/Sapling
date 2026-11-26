@@ -113,7 +113,7 @@ export function ActTutor({
             </div>
           </div>
 
-          <div className="ld-tutor-stage [perspective:1600px] h-[min(66vh,560px)] flex items-center justify-center">
+          <div className="ld-tutor-stage h-[min(66vh,560px)] flex items-center justify-center" style={{ perspective: PERSPECTIVE }}>
             <div className="[transform-style:preserve-3d]" style={{ zoom: MAG, transform: `translateZ(${-RADIUS}px)` }}>
             <div
               ref={carouselRef}
@@ -123,7 +123,7 @@ export function ActTutor({
               <div
                 data-panel="0"
                 data-socratic="1"
-                className="absolute inset-0 [backface-visibility:hidden] rounded-xl p-5 box-border overflow-hidden [transform:rotateY(0deg)_translateZ(310px)] bg-bg-panel border border-paper-200 [box-shadow:0_26px_54px_-22px_rgba(25,31,19,0.3)] grid grid-rows-[auto_minmax(0,1fr)_auto] gap-2.5"
+                className="absolute inset-0 [backface-visibility:hidden] rounded-xl p-5 box-border overflow-hidden bg-bg-panel border border-paper-200 [box-shadow:0_26px_54px_-22px_rgba(25,31,19,0.3)] grid grid-rows-[auto_minmax(0,1fr)_auto] gap-2.5" style={{ transform: `rotateY(0deg) translateZ(${RADIUS}px)` }}
               >
                 <div className="flex items-center justify-between">
                   <span className="font-sans text-sm tracking-[0.01em] text-brand-forest">Socratic mode</span>
@@ -160,7 +160,8 @@ export function ActTutor({
               {/* ── face 1 · Expository ── */}
               <div
                 data-panel="1"
-                className="ld-tface-expo absolute inset-0 [backface-visibility:hidden] rounded-xl p-5 box-border overflow-hidden [transform:rotateY(120deg)_translateZ(310px)] [background:#F6F8F4] border border-paper-200 [box-shadow:0_26px_54px_-22px_rgba(25,31,19,0.3)] grid grid-rows-[auto_auto_auto_minmax(0,1fr)_auto_auto] gap-[9px]"
+                className="ld-tface-expo absolute inset-0 [backface-visibility:hidden] rounded-xl p-5 box-border overflow-hidden [background:#F6F8F4] border border-paper-200 [box-shadow:0_26px_54px_-22px_rgba(25,31,19,0.3)] grid grid-rows-[auto_auto_auto_minmax(0,1fr)_auto_auto] gap-[9px]"
+                style={{ transform: `rotateY(120deg) translateZ(${RADIUS}px)` }}
               >
                 <div className="flex items-center justify-between">
                   <span className="font-sans text-sm tracking-[0.01em] text-brand-forest">Expository mode</span>
@@ -206,7 +207,7 @@ export function ActTutor({
                     return (
                       <span
                         key={t}
-                        className={cn(cn("flex-1 text-center py-1 px-0 rounded-sm font-sans text-2xs tracking-[0.01em]", on ? "bg-leaf-50" : "bg-bg-panel", on ? "text-brand-forest" : "text-moss-400"), on ? "border border-leaf-500" : "border border-paper-200")}
+                        className={cn("flex-1 text-center py-1 px-0 rounded-sm font-sans text-2xs tracking-[0.01em]", on ? "bg-leaf-50" : "bg-bg-panel", on ? "border border-leaf-500" : "border border-paper-200", on ? "text-brand-forest" : "text-moss-400")}
                       >
                         {t}
                       </span>
@@ -231,7 +232,8 @@ export function ActTutor({
               {/* ── face 2 · TeachBack — light like its siblings since the graph act moved off the dark ground ── */}
               <div
                 data-panel="2"
-                className="ld-tface-teach absolute inset-0 [backface-visibility:hidden] rounded-xl box-border overflow-hidden [transform:rotateY(240deg)_translateZ(310px)] [background:#FDFCF9] border border-paper-200 [box-shadow:0_26px_54px_-22px_rgba(25,31,19,0.3)] p-4.5 grid grid-rows-[auto_auto_auto_minmax(0,1fr)_auto] gap-2"
+                className="ld-tface-teach absolute inset-0 [backface-visibility:hidden] rounded-xl box-border overflow-hidden [background:#FDFCF9] border border-paper-200 [box-shadow:0_26px_54px_-22px_rgba(25,31,19,0.3)] p-4.5 grid grid-rows-[auto_auto_auto_minmax(0,1fr)_auto] gap-2"
+                style={{ transform: `rotateY(240deg) translateZ(${RADIUS}px)` }}
               >
                 <div className="flex items-center justify-between">
                   <span className="font-sans text-sm tracking-[0.01em] text-brand-forest">Teachback mode</span>

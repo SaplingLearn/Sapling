@@ -41,7 +41,7 @@ function Frame({ label, children }: { label: string; children: React.ReactNode }
         {children}
       </svg>
       <span
-        className="absolute left-[5%] top-[6%] font-sans text-[11.5px] tracking-[0.01em] text-brand-forest"
+        className="absolute left-[5%] top-[6%] font-sans text-[11.5px] tracking-[0.01em]" style={{ color: GREEN_DEEP }}
       >
         {label}
       </span>

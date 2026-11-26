@@ -9,7 +9,7 @@ import React from "react";
 import type { DocFolder } from "@/lib/types";
 import type { EnrolledCourse } from "@/lib/api";
 import { courseLabel } from "./libraryModel";
-import { FolderIcon, Glyph } from "./primitives";
+import { FolderIcon, Glyph, MENU_IN, MENU_OUT } from "./primitives";
 import { cn } from "@/lib/cn";
 
 /**
@@ -133,7 +133,7 @@ export function BulkBar(props: BulkBarProps) {
             <Glyph name="chevronDown" size={10} />
           </button>
           {menuOpen && (
-            <div data-testid="library-bulk-menu" className={cn("absolute right-0 top-10 w-60 text-ink-800 z-6 max-h-80 overflow-y-auto bg-bg-panel border border-[rgba(42,39,31,0.14)] rounded-[12px] [box-shadow:0_14px_36px_rgba(25,37,11,0.16)] p-1.5 flex flex-col gap-px [transform-origin:top_right]", menuClosing ? "[animation:sapMenuOut_130ms_cubic-bezier(0.4,_0,_1,_1)_both]" : "[animation:sapMenuIn_170ms_cubic-bezier(0.2,_0.7,_0.2,_1)_both]")}>
+            <div data-testid="library-bulk-menu" className="absolute right-0 top-10 w-60 text-ink-800 z-6 max-h-80 overflow-y-auto bg-bg-panel border border-[rgba(42,39,31,0.14)] rounded-[12px] [box-shadow:0_14px_36px_rgba(25,37,11,0.16)] p-1.5 flex flex-col gap-px [transform-origin:top_right]" style={{ animation: menuClosing ? MENU_OUT : MENU_IN }}>
               <span className="pt-1.5 px-2.5 pb-1 font-sans text-md text-text-muted">Course</span>
               {courses.map(c => (
                 <button

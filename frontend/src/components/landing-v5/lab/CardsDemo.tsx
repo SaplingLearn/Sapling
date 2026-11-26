@@ -13,6 +13,7 @@
  */
 
 import { useCallback, useEffect, useState } from 'react';
+import { LAB_TIER } from './LabShell';
 import { DECK, RATE_DUE, RATE_LABEL, RATE_TONE } from './labData';
 import { cn } from "@/lib/cn";
 
@@ -56,7 +57,7 @@ export function CardsDemo() {
     <div className="pt-4.5 px-6.5 pb-5 flex flex-col gap-3 h-full box-border">
       <div className="flex-[0_0_auto] flex items-center justify-between gap-4">
         <div className="flex items-center gap-[9px]">
-          <span className="w-2 h-2 rounded-[99px] bg-state-struggle" />
+          <span className="w-2 h-2 rounded-[99px]" style={{ background: LAB_TIER.struggling }} />
           <span className="text-base font-semibold text-moss-900">Eigenvalues</span>
           <span className="py-[3px] px-2 rounded-sm bg-moss-25 border border-moss-75 font-sans text-xs tracking-[0.01em] text-moss-500">MA 242</span>
         </div>

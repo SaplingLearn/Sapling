@@ -11,7 +11,7 @@
 import React from "react";
 
 import { Icon } from "../Icon";
-import { Glyph, MenuDivider, MenuScrim, TrashIcon } from "./primitives";
+import { Glyph, MENU_IN, MENU_OUT, MenuDivider, MenuScrim, TrashIcon } from "./primitives";
 import { ViewSwitcher, type ViewSwitcherOption } from "./ViewSwitcher";
 import { cn } from "@/lib/cn";
 
@@ -99,7 +99,7 @@ function ScopeSwitcher({
       {open && (
         <>
           <MenuScrim onClick={() => onOpen(false)} />
-          <div role="listbox" className={cn("absolute left-0 top-12.5 z-31 w-70 [transform-origin:top_left] bg-bg-panel border border-[rgba(42,39,31,0.14)] rounded-[12px] [box-shadow:0_14px_36px_rgba(25,37,11,0.16)] p-1.5 flex flex-col gap-px", closing ? "[animation:sapMenuOut_130ms_cubic-bezier(0.4,_0,_1,_1)_both]" : "[animation:sapMenuIn_170ms_cubic-bezier(0.2,_0.7,_0.2,_1)_both]")}>
+          <div role="listbox" className="absolute left-0 top-12.5 z-31 w-70 [transform-origin:top_left] bg-bg-panel border border-[rgba(42,39,31,0.14)] rounded-[12px] [box-shadow:0_14px_36px_rgba(25,37,11,0.16)] p-1.5 flex flex-col gap-px" style={{ animation: closing ? MENU_OUT : MENU_IN }}>
             {options.map(o => (
               <React.Fragment key={o.id}>
                 {o.trash && <MenuDivider />}

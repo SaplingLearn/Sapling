@@ -3,7 +3,11 @@ import React from "react";
 import { TopBar } from "@/components/TopBar";
 import { FullHeightScreen } from "@/components/FullHeightScreen";
 import { SemesterChips } from "@/components/Gradebook/SemesterChips";
-import { CourseCard } from "@/components/Gradebook/CourseCard";
+import {
+  CourseCard,
+  COURSE_CARD_GRID_GAP,
+  COURSE_CARD_HEIGHT,
+} from "@/components/Gradebook/CourseCard";
 import { useUser } from "@/context/UserContext";
 import { getGradebookSummary, getCourses, getSemesters } from "@/lib/api";
 import { courseTermLabels, currentTerm } from "@/lib/semesters";
@@ -333,7 +337,7 @@ export function GradebookLanding() {
             onKeyDown={handleGridKeyDown}
             role="grid"
             aria-label="Courses"
-            className="grid grid-cols-[repeat(3,_minmax(0,_1fr))] gap-6"
+            className="grid grid-cols-[repeat(3,_minmax(0,_1fr))]" style={{ gap: COURSE_CARD_GRID_GAP }}
           >
             {courses.map((c) => (
               <CourseCard
@@ -371,12 +375,13 @@ function LoadingSkeleton() {
   return (
     <div
       aria-hidden="true"
-      className="grid grid-cols-[repeat(3,_minmax(0,_1fr))] gap-6"
+      className="grid grid-cols-[repeat(3,_minmax(0,_1fr))]" style={{ gap: COURSE_CARD_GRID_GAP }}
     >
       {Array.from({ length: 6 }).map((_, i) => (
         <div
           key={i}
-          className="skeleton h-61 rounded-md"
+          className="skeleton rounded-md"
+          style={{ height: COURSE_CARD_HEIGHT }}
         />
       ))}
     </div>

@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { CompanionShell } from '@/components/companion/CompanionShell';
 import { ArticleArt } from '@/components/journal/ArticleArt';
+import { ARTICLE, ACCENT } from '@/lib/landing/companionType';
 import {
   JOURNAL_ARTICLES,
   dateLabel,
@@ -83,14 +84,14 @@ export default async function ArticlePage({ params }: { params: Promise<{ slug: 
   return (
     <CompanionShell current="/news">
       <div>
-        <Link href="/news" className="cp-navlink font-sans text-md text-text-muted">
+        <Link href="/news" className="cp-navlink" style={ARTICLE.eyebrow}>
           ← The Journal
         </Link>
 
         <div className="mt-6.5 flex items-center gap-3.5 leading-none">
-          <span className="font-sans text-md tracking-[0.16em] text-brand-forest-bright">{article.tag}</span>
-          <span className="font-sans text-md text-text-muted tracking-[0.06em]">{dateLabel(article.publishedAt)}</span>
-          <span className="font-sans text-md text-text-muted">{readTime(article.body)} READ</span>
+          <span className="tracking-[0.16em]" style={{ ...ARTICLE.eyebrow, color: ACCENT }}>{article.tag}</span>
+          <span className="tracking-[0.06em]" style={{ ...ARTICLE.eyebrow }}>{dateLabel(article.publishedAt)}</span>
+          <span style={ARTICLE.eyebrow}>{readTime(article.body)} READ</span>
         </div>
 
         <h1 className="font-display font-medium text-[length:clamp(1.9rem,4vw,2.9rem)] leading-[1.12] tracking-[-0.02em] text-ink-800 mt-5 mx-0 mb-0">
@@ -107,7 +108,7 @@ export default async function ArticlePage({ params }: { params: Promise<{ slug: 
           <ArticleArt art={article.art} sizes="(max-width: 940px) 100vw, 880px" priority variant="hero" />
         </div>
 
-        <div className="font-sans text-md text-text-muted mt-8 mx-0 mb-0 pb-8 border-b border-b-[rgba(42,39,31,0.12)] tracking-[0.12em]">
+        <div className="mt-8 mx-0 mb-0 pb-8 border-b border-b-[rgba(42,39,31,0.12)] tracking-[0.12em]" style={{ ...ARTICLE.eyebrow }}>
           By the Sapling team
         </div>
 

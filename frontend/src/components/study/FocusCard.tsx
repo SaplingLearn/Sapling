@@ -78,7 +78,7 @@ function GapWarning({ concept }: { concept: Concept }) {
   return (
     <span onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)} className="relative shrink-0 flex">
       <span tabIndex={0} aria-label={`${concept.name} · ${concept.gap}`} onFocus={() => setOpen(true)} onBlur={() => setOpen(false)}
-        className="inline-flex items-center h-5.5 rounded-[11px] text-accent-fg text-xs font-semibold whitespace-nowrap py-0 px-1.5 bg-warn-soft cursor-default">
+        className="inline-flex items-center h-5.5 py-0 px-2 rounded-[11px] text-accent-fg text-xs font-semibold whitespace-nowrap bg-warn-soft cursor-default" style={{ padding: `0 ${GAP_MARK_PAD}px` }}>
         <WarnIcon size={GAP_MARK_ICON} />
       </span>
       {open && (
@@ -98,11 +98,11 @@ function Prereqs({ prereqs, gapOn }: { prereqs: Concept[]; gapOn: Concept | null
   const fit = chipsThatFit(prereqs.map(t => t.name), gapOn ? GAP_MARK_W : 0);
   const rest = prereqs.slice(fit);
   return (
-    <div className="flex flex-nowrap items-center gap-1.5 h-5.5 min-w-0 text-sm text-[rgba(255,255,255,0.86)]">
+    <div className="flex flex-nowrap items-center h-5.5 min-w-0 text-sm text-[rgba(255,255,255,0.86)]" style={{ gap: PREREQ_GAP }}>
       {gapOn && <GapWarning concept={gapOn} />}
       {/* Only the chips clip. The gap mark and "+N more" open their pop-ups
           below the line, and a line that clipped hid both. */}
-      <span className="flex items-center gap-1.5 min-w-0 overflow-hidden">
+      <span className="flex items-center min-w-0 overflow-hidden" style={{ gap: PREREQ_GAP }}>
         {prereqs.length === 0 && <span className="shrink-0 whitespace-nowrap">No prerequisites</span>}
         {/* minWidth 0 + ellipsis on each chip: two are shown whether or not they
             fit (chipsThatFit), so one that does not must truncate visibly — the

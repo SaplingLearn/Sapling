@@ -26,8 +26,12 @@ import Link from 'next/link';
 import { type Job, DEPT_COLORS } from '../jobs';
 import { submitJobApplication } from '@/lib/api';
 import { CompanionShell } from '@/components/companion/CompanionShell';
-import { ACCENT, MUTED } from '@/lib/landing/companionType';
+import { ACCENT, LABEL, MUTED } from '@/lib/landing/companionType';
 import { cn } from "@/lib/cn";
+
+const EYEBROW: React.CSSProperties = {
+  display: 'block', fontFamily: LABEL, fontSize: 12, 
+  color: ACCENT };
 
 /**
  * The way back to the list. The old chrome's only back link pointed at `/`,
@@ -39,7 +43,8 @@ function BackToOpenings() {
   return (
     <Link
       href="/careers"
-      className="cp-navlink inline-flex items-center gap-2 text-md text-text-muted [animation:fadeUp_600ms_ease_both]"
+      className="cp-navlink inline-flex items-center gap-2 text-md [animation:fadeUp_600ms_ease_both]"
+      style={{ color: MUTED }}
     >
       <span aria-hidden="true">←</span> All openings
     </Link>
@@ -130,7 +135,7 @@ export default function ApplyForm({ job }: { job: Job | null }) {
               {job.department}
             </span>
           )}
-          <span className="font-sans text-[12.5px] text-text-muted">
+          <span className="font-sans text-[12.5px]" style={{ color: MUTED }}>
             {job.location} · {job.type}
           </span>
         </div>
@@ -141,13 +146,13 @@ export default function ApplyForm({ job }: { job: Job | null }) {
           {/* Sticky because the form beside it is about twice as tall; the
               offset clears the shell's 92px header scrim. */}
           <aside className="sticky top-27 [animation:fadeUp_700ms_ease_200ms_both]">
-            <span className="block font-sans text-sm text-brand-forest-bright">The role</span>
+            <span style={EYEBROW}>The role</span>
             <p className="mt-3.5 mx-0 mb-0 font-serif text-[17.5px] leading-[1.64] text-ink-600">
               {job.description}
             </p>
 
             <div className="mt-7.5 pt-6.5 border-t border-t-[rgba(42,39,31,0.10)]">
-              <span className="block font-sans text-sm text-brand-forest-bright">What you&apos;d touch</span>
+              <span style={EYEBROW}>What you&apos;d touch</span>
               <div className="mt-3.5 flex flex-wrap gap-[7px]">
                 {job.tags.map((tag) => (
                   <span
@@ -186,7 +191,7 @@ export default function ApplyForm({ job }: { job: Job | null }) {
               </div>
             ) : (
               <form onSubmit={handleSubmit} className="p-[clamp(24px,3.4vw,34px)]">
-                <span className="block font-sans text-sm text-brand-forest-bright">Apply</span>
+                <span style={EYEBROW}>Apply</span>
 
                 <div className="mt-5.5 flex flex-col gap-5">
                   <div>
@@ -265,7 +270,7 @@ export default function ApplyForm({ job }: { job: Job | null }) {
                       }}
                       onDragLeave={() => setDragging(false)}
                       onDrop={handleDrop}
-                      className={cn(cn("rounded-md py-7 px-5 text-center cursor-pointer [transition:border-color_200ms,_background_200ms]", dragging ? "bg-[rgba(89,117,54,0.08)]" : "bg-accent-fg"), dragging ? "border-[1.5px] border-dashed border-brand-forest-bright" : "border-[1.5px] border-dashed border-[rgba(42,39,31,0.22)]")}
+                      className={cn("rounded-md py-7 px-5 text-center cursor-pointer [transition:border-color_200ms,_background_200ms]", dragging ? "bg-[rgba(89,117,54,0.08)]" : "bg-accent-fg")} style={{ border: `1.5px dashed ${dragging ? ACCENT : 'rgba(42,39,31,0.22)'}` }}
                     >
                       {resumeFile ? (
                         <div className="flex items-center justify-center gap-2">
@@ -291,7 +296,7 @@ export default function ApplyForm({ job }: { job: Job | null }) {
                               setResumeFile(null);
                             }}
                             aria-label="Remove attached resume"
-                            className="text-text-muted py-0 px-0.5 text-[15px] leading-none cursor-pointer"
+                            className="py-0 px-0.5 text-[15px] leading-none cursor-pointer" style={{ color: MUTED }}
                           >
                             ×
                           </button>
@@ -315,7 +320,7 @@ export default function ApplyForm({ job }: { job: Job | null }) {
                             <span className="font-semibold text-brand-forest">Click to upload</span>{' '}
                             or drag and drop
                           </p>
-                          <p className="text-xs text-text-muted m-0">PDF only</p>
+                          <p className="text-xs m-0" style={{ color: MUTED }}>PDF only</p>
                         </>
                       )}
                       <input
@@ -363,7 +368,7 @@ export default function ApplyForm({ job }: { job: Job | null }) {
                   >
                     {submitting ? 'Submitting…' : 'Submit Application'}
                   </button>
-                  <p className="text-xs text-text-muted text-center mt-3 mx-0 mb-0">
+                  <p className="text-xs text-center mt-3 mx-0 mb-0" style={{ color: MUTED }}>
                     Fields marked <span className="text-err">*</span> are required
                   </p>
                 </div>

@@ -18,6 +18,7 @@
 
 import Link from 'next/link';
 import { SaplingWordmark } from '@/components/SaplingWordmark';
+import { PAGE_MAX, PAGE_PAD } from '@/lib/landing/companionType';
 import { cn } from "@/lib/cn";
 
 /**
@@ -97,13 +98,13 @@ export function CompanionShell({
           article, 1280 on the footer — so content jumped left and right as you
           navigated. Pages render content now, not a container. */}
       <main
-        className="flex-1 min-w-0 w-full max-w-295 my-0 mx-auto pt-10 px-8 pb-16 box-border"
+        className="flex-1 min-w-0 w-full my-0 mx-auto box-border" style={{ maxWidth: PAGE_MAX, padding: `40px ${PAGE_PAD}px 64px` }}
       >
         {children}
       </main>
 
-      <footer className="border-t border-t-[rgba(42,39,31,0.10)] bg-ink-0 py-12 px-8 box-border">
-        <div className="max-w-295 my-0 mx-auto box-border flex flex-wrap items-center justify-between gap-6">
+      <footer className="border-t border-t-[rgba(42,39,31,0.10)] bg-ink-0 box-border" style={{ padding: `48px ${PAGE_PAD}px` }}>
+        <div className="my-0 mx-auto box-border flex flex-wrap items-center justify-between gap-6" style={{ maxWidth: PAGE_MAX }}>
           <div className="flex items-center gap-2">
             <SaplingWordmark width={64} />
             <span className="text-base text-text-muted">© 2026</span>

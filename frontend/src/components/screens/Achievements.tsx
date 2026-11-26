@@ -41,7 +41,7 @@ function TabBar({ tab, onChange }: { tab: Tab; onChange: (t: Tab) => void }) {
           role="tab"
           aria-selected={tab === t.value}
           onClick={() => onChange(t.value)}
-          className={cn(cn("py-2.5 px-4 text-md -mb-px", tab === t.value ? "font-semibold" : "font-medium", tab === t.value ? "text-text" : "text-text-dim"), tab === t.value ? "border-b-2 border-b-accent" : "border-b-2 border-b-transparent")}
+          className={cn("py-2.5 px-4 text-md -mb-px", tab === t.value ? "font-semibold" : "font-medium", tab === t.value ? "text-text" : "text-text-dim", tab === t.value ? "border-b-2 border-b-accent" : "border-b-2 border-b-transparent")}
         >
           {t.label}
         </button>
@@ -301,7 +301,7 @@ export function Achievements() {
               <span>Showcase · featured on your profile</span>
               <span className="text-text-muted">{featuredIds.length} / {MAX_FEATURED}</span>
             </div>
-            <div className="grid grid-cols-[repeat(5,_1fr)] gap-2.5 mb-7.5">
+            <div className="grid gap-2.5 mb-7.5" style={{ gridTemplateColumns: `repeat(${MAX_FEATURED}, 1fr)` }}>
               {featuredIds.map((id, idx) => {
                 const ua = earnedById.get(id);
                 if (!ua) return null;

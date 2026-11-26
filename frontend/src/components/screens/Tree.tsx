@@ -456,8 +456,9 @@ export function Tree() {
                 data-testid="graph-fullscreen"
                 aria-label="Fullscreen"
                 title="Fullscreen"
-                className="btn btn--ghost btn--sm absolute top-3 right-3 z-5 w-9 h-8 p-0 inline-flex items-center justify-center bg-bg-panel border border-border rounded-sm shadow-sm"
+                className="btn btn--ghost btn--sm absolute right-3 z-5 p-0 inline-flex items-center justify-center bg-bg-panel border border-border rounded-sm shadow-sm"
                 onClick={() => setFullscreen(true)}
+                style={{ top: FULLSCREEN_BTN.top, width: FULLSCREEN_BTN.w, height: FULLSCREEN_BTN.h }}
               >
                 <Icon name="max" size={13} />
               </button>

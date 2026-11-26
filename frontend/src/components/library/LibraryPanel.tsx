@@ -116,7 +116,7 @@ export function DocCard(props: DocCardProps) {
       onClick={onSelect}
       onDoubleClick={onOpen}
       onKeyDown={e => { if (e.key === "Enter") onOpen(); }}
-      className={cn(cn("relative flex flex-col rounded-[14px] bg-bg-panel overflow-hidden cursor-pointer", selected ? "[box-shadow:0_0_0_2px_rgba(89,117,54,0.25),_0_6px_18px_rgba(25,37,11,0.08)]" : "[box-shadow:0_1px_2px_rgba(25,37,11,0.04)]", dimmed ? "opacity-45" : "opacity-100"), selected ? "border border-brand-forest-bright" : "border border-[rgba(42,39,31,0.12)]")} style={{ animation: view.anim, animationDelay: view.delay }}
+      className={cn("relative flex flex-col rounded-[14px] bg-bg-panel overflow-hidden cursor-pointer", selected ? "border border-brand-forest-bright" : "border border-[rgba(42,39,31,0.12)]", selected ? "[box-shadow:0_0_0_2px_rgba(89,117,54,0.25),_0_6px_18px_rgba(25,37,11,0.08)]" : "[box-shadow:0_1px_2px_rgba(25,37,11,0.04)]", dimmed ? "opacity-45" : "opacity-100")} style={{ animation: view.anim, animationDelay: view.delay }}
     >
       <div className="relative h-44 bg-[#EFEBE2] pt-4 px-5.5 pb-0 box-border overflow-hidden">
         <div className="h-55 bg-accent-fg [border-radius:4px_4px_0_0] [box-shadow:0_1px_3px_rgba(25,37,11,0.12)] pt-4 px-4 pb-0 box-border flex flex-col gap-1.5">

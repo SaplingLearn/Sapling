@@ -76,6 +76,42 @@ const program = ts.createProgram(files, {
 const checker = program.getTypeChecker();
 
 const NONE = Symbol("none");
+
+// A const that is also read OUTSIDE a style object (layout maths, a canvas,
+// a test) must stay a reference: copying its value into a class would let
+// the two drift apart. Collect those declarations up front.
+const sharedConsts = new Set();
+function inStyleAttr(n) {
+  for (let p = n.parent; p; p = p.parent) {
+    if (ts.isJsxAttribute(p)) return p.name.getText() === "style";
+    if (ts.isFunctionLike(p) || ts.isSourceFile(p)) return false;
+  }
+  return false;
+}
+for (const f of program.getSourceFiles()) {
+  if (f.isDeclarationFile || f.fileName.includes("node_modules")) continue;
+  (function walk(n) {
+    if (ts.isIdentifier(n) && !(ts.isVariableDeclaration(n.parent) && n.parent.name === n) && !ts.isImportSpecifier(n.parent) && !ts.isExportSpecifier(n.parent) && !(ts.isPropertyAssignment(n.parent) && n.parent.name === n) && !(ts.isPropertyAccessExpression(n.parent) && n.parent.name === n)) {
+      let sym = checker.getSymbolAtLocation(n);
+      if (sym && sym.flags & ts.SymbolFlags.Alias) sym = checker.getAliasedSymbol(sym);
+      const d = sym?.valueDeclaration;
+      if (d && ts.isVariableDeclaration(d) && !inStyleAttr(n) && !isStyleConstUse(n)) sharedConsts.add(d);
+    }
+    ts.forEachChild(n, walk);
+  })(f);
+}
+// `const BOX = { padding: PAD }` used as style={BOX}: PAD's use inside BOX is
+// a style use too.
+function isStyleConstUse(n) {
+  for (let p = n.parent; p; p = p.parent) {
+    if (ts.isVariableDeclaration(p)) {
+      const t = p.type?.getText() ?? "";
+      return /CSSProperties/.test(t) || /^[A-Z_]+$/.test(p.name.getText?.() ?? "") && ts.isObjectLiteralExpression(unwrap(p.initializer));
+    }
+    if (ts.isFunctionLike(p) || ts.isSourceFile(p)) return false;
+  }
+  return false;
+}
 const stats = { files: 0, elements: 0, converted: 0, partial: 0, skippedComponent: 0, skippedSpreadAttr: 0, declsMoved: 0, declsKept: 0 };
 const cases = [];
 
@@ -93,6 +129,7 @@ function constInit(id, depth) {
   const list = decl.parent;
   if (!ts.isVariableDeclarationList(list) || !(list.flags & ts.NodeFlags.Const)) return null;
   if (decl.getSourceFile().isDeclarationFile) return null;
+  if (sharedConsts.has(decl)) return null;
   return unwrap(decl.initializer);
 }
 // -> string | number | NONE (no declaration) | undefined (not static)
@@ -163,6 +200,50 @@ function evalObjectRaw(e, depth) {
   e = unwrap(e);
   if (ts.isIdentifier(e)) { const init = constInit(e, depth + 1); return init && ts.isObjectLiteralExpression(init) ? init : null; }
   return ts.isObjectLiteralExpression(e) ? e : null;
+}
+// The property names a spread sets, when they are known even if the values
+// aren't (`...ARTICLE.eyebrow` where eyebrow = { fontFamily: LABEL, ... }).
+function spreadKeys(e, depth = 0) {
+  e = unwrap(e);
+  if (!e || depth > 6) return null;
+  let obj = null;
+  if (ts.isObjectLiteralExpression(e)) obj = e;
+  else if (ts.isIdentifier(e)) {
+    let sym = checker.getSymbolAtLocation(e);
+    if (sym && sym.flags & ts.SymbolFlags.Alias) sym = checker.getAliasedSymbol(sym);
+    const d = sym?.valueDeclaration;
+    if (d && ts.isVariableDeclaration(d) && d.initializer && d.parent.flags & ts.NodeFlags.Const) obj = unwrap(d.initializer);
+  } else if (ts.isPropertyAccessExpression(e)) {
+    const parent = spreadObject(e.expression, depth + 1);
+    const prop = parent?.properties.find((q) => ts.isPropertyAssignment(q) && propName(q) === e.name.text);
+    obj = prop ? unwrap(prop.initializer) : null;
+  }
+  if (!obj || !ts.isObjectLiteralExpression(obj)) return null;
+  const keys = [];
+  for (const q of obj.properties) {
+    if (ts.isSpreadAssignment(q)) { const k = spreadKeys(q.expression, depth + 1); if (!k) return null; keys.push(...k); }
+    else if ((ts.isPropertyAssignment(q) || ts.isShorthandPropertyAssignment(q)) && propName(q) != null) keys.push(propName(q));
+    else return null;
+  }
+  return keys;
+}
+function spreadObject(e, depth) {
+  e = unwrap(e);
+  if (ts.isObjectLiteralExpression(e)) return e;
+  if (ts.isIdentifier(e)) {
+    let sym = checker.getSymbolAtLocation(e);
+    if (sym && sym.flags & ts.SymbolFlags.Alias) sym = checker.getAliasedSymbol(sym);
+    const d = sym?.valueDeclaration;
+    const init = d && ts.isVariableDeclaration(d) && d.initializer ? unwrap(d.initializer) : null;
+    return init && ts.isObjectLiteralExpression(init) ? init : null;
+  }
+  if (ts.isPropertyAccessExpression(e) && depth < 6) {
+    const parent = spreadObject(e.expression, depth + 1);
+    const prop = parent?.properties.find((q) => ts.isPropertyAssignment(q) && propName(q) === e.name.text);
+    const v = prop ? unwrap(prop.initializer) : null;
+    return v && ts.isObjectLiteralExpression(v) ? v : null;
+  }
+  return null;
 }
 function propName(p) {
   const n = p.name;
@@ -269,7 +350,7 @@ for (const file of files) {
           const obj = evalObject(p.expression);
           if (obj && obj.props.every((q) => q.kind === "lit")) {
             for (const q of obj.props) entries.push({ kind: "decl", name: q.name, value: q.value, src: null });
-          } else entries.push({ kind: "spread", src: p.getText(sf) });
+          } else entries.push({ kind: "spread", src: p.getText(sf), keys: spreadKeys(p.expression) });
           continue;
         }
         if (!ts.isPropertyAssignment(p) || propName(p) == null) { entries.push({ kind: "dyn", src: p.getText(sf) }); continue; }
@@ -307,15 +388,17 @@ for (const file of files) {
       else return; // style={fn()} / style={props.style}: leave it
     }
 
-    // Everything after the first unknown spread must stay inline.
-    // A static declaration also stays when an EARLIER kept one shares its
-    // property family: inline, the later static won; as a class it would lose.
-    const firstSpread = entries.findIndex((e) => e.kind === "spread");
+    // A static declaration stays inline when something EARLIER that stays
+    // inline could set the same property: a dynamic declaration in its
+    // family, or a spread (all of it if its keys are unknown, else only those
+    // keys). Inline, the later static won; as a class it would lose.
     const movable = [], kept = [];
     const overlaps = (a, b) => a === b || (FAMILY[a] && FAMILY[a].test(b)) || (FAMILY[b] && FAMILY[b].test(a));
     entries.forEach((e, i) => {
-      const shadowedByKept = e.kind === "decl" && entries.slice(0, i).some((k) => k.kind === "dynDecl" && overlaps(k.name, e.name));
-      if (e.kind === "decl" && (firstSpread < 0 || i < firstSpread) && !shadowedByKept) movable.push(e);
+      const before = entries.slice(0, i);
+      const shadowedByKept = e.kind === "decl" && before.some((k) => k.kind === "dynDecl" && overlaps(k.name, e.name));
+      const shadowedBySpread = e.kind === "decl" && before.some((k) => k.kind === "spread" && (!k.keys || k.keys.some((key) => overlaps(key, e.name))));
+      if (e.kind === "decl" && !shadowedBySpread && !shadowedByKept) movable.push(e);
       else kept.push(e);
     });
     // a static entry that came from an expanded const spread has no source

@@ -13,7 +13,7 @@ import React from "react";
 import type { DocFolder } from "@/lib/types";
 import type { EnrolledCourse } from "@/lib/api";
 import { FMT, FMT_FALLBACK, courseLabel } from "./libraryModel";
-import { FolderIcon, Glyph, MenuScrim } from "./primitives";
+import { FolderIcon, Glyph, MENU_IN, MenuScrim } from "./primitives";
 import type { UploadRow } from "./useUploadQueue";
 import { cn } from "@/lib/cn";
 
@@ -131,7 +131,7 @@ function CoursePicker({
               role="radio"
               aria-checked={on}
               data-on={on ? "1" : "0"}
-              className={cn(cn("sapUplCourse", "flex items-center gap-2.5 py-3 px-3.5 rounded-[12px] [font:inherit] text-left cursor-pointer", on ? "[background:#F2F6EE]" : "[background:#FDFCF9]"), on ? "border-[1.5px] border-brand-forest-bright" : "border-[1.5px] border-[rgba(42,39,31,0.14)]")}
+              className={cn("sapUplCourse", "flex items-center gap-2.5 py-3 px-3.5 rounded-[12px] [font:inherit] text-left cursor-pointer", on ? "border-[1.5px] border-brand-forest-bright" : "border-[1.5px] border-[rgba(42,39,31,0.14)]", on ? "[background:#F2F6EE]" : "[background:#FDFCF9]")}
               onClick={() => onPick(c.course_id)}
             >
               <span className={cn("w-2.5 h-2.5 rounded-[50%] box-border shrink-0", c.color ? "border-0" : "border-[1.5px] border-dashed border-ink-400")} style={{ background: c.color || "transparent" }} />
@@ -179,7 +179,7 @@ function FolderPicker({
           aria-haspopup="listbox"
           aria-expanded={open}
           aria-label="Folder"
-          className={cn(cn("w-full flex items-center gap-2.5 h-11.5 py-0 px-3.5 rounded-[12px] [font-family:inherit] [font-style:inherit] [font-variant:inherit] [font-stretch:inherit] [line-height:inherit] text-[15px] font-semibold text-left", none ? "bg-ink-50" : "bg-bg-panel", none ? "text-ink-400" : "text-ink-800", none ? "cursor-default" : "cursor-pointer"), open ? "border-[1.5px] border-brand-forest-bright" : "border-[1.5px] border-[rgba(42,39,31,0.16)]")}
+          className={cn("w-full flex items-center gap-2.5 h-11.5 py-0 px-3.5 rounded-[12px] [font-family:inherit] [font-style:inherit] [font-variant:inherit] [font-stretch:inherit] [line-height:inherit] text-[15px] font-semibold text-left", open ? "border-[1.5px] border-brand-forest-bright" : "border-[1.5px] border-[rgba(42,39,31,0.16)]", none ? "bg-ink-50" : "bg-bg-panel", none ? "text-ink-400" : "text-ink-800", none ? "cursor-default" : "cursor-pointer")}
         >
           {selected && <span className="inline-flex"><FolderIcon size={15} /></span>}
           <span className="flex-1 min-w-0 whitespace-nowrap overflow-hidden text-ellipsis">{label}</span>
@@ -189,7 +189,7 @@ function FolderPicker({
         {open && !none && (
           <>
             <MenuScrim onClick={() => setOpen(false)} zIndex={1} />
-            <div role="listbox" aria-label="Folder" className="absolute left-0 right-0 bottom-13 z-2 [transform-origin:top_right] [animation:sapMenuIn_170ms_cubic-bezier(0.2,_0.7,_0.2,_1)_both] bg-bg-panel border border-[rgba(42,39,31,0.14)] rounded-[12px] [box-shadow:0_14px_36px_rgba(25,37,11,0.16)] p-1.5 flex flex-col gap-px">
+            <div role="listbox" aria-label="Folder" className="absolute left-0 right-0 bottom-13 z-2 [transform-origin:top_right] bg-bg-panel border border-[rgba(42,39,31,0.14)] rounded-[12px] [box-shadow:0_14px_36px_rgba(25,37,11,0.16)] p-1.5 flex flex-col gap-px" style={{ animation: MENU_IN }}>
               {[{ id: null as string | null, name: "None" }, ...options].map(f => {
                 const on = folderId === f.id;
                 return (

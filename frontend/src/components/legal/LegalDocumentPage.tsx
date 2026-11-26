@@ -1,4 +1,5 @@
 import type { CSSProperties } from "react";
+import { ACCENT, LABEL, MUTED } from "@/lib/landing/companionType";
 import { legalDateLabel, type LegalDocument, type LegalSection } from "@/lib/legal/documents";
 import { cn } from "@/lib/cn";
 
@@ -30,6 +31,12 @@ import { cn } from "@/lib/cn";
  * clause left edge.
  */
 
+const BULLET: CSSProperties = { color: MUTED, flex: "0 0 auto" };
+const META: CSSProperties = {
+  display: "block", fontFamily: LABEL, fontSize: 10.5, letterSpacing: "0.04em", color: MUTED,
+};
+const LINK: CSSProperties = { color: ACCENT };
+
 /** Rows fade in down the page; the cap keeps the last clause from waiting. */
 function enter(i: number): CSSProperties {
   return { animation: "fadeUp 700ms ease both", animationDelay: `${Math.min(120 + i * 40, 640)}ms` };
@@ -40,7 +47,7 @@ function Bulleted({ items, style }: { items: React.ReactNode[]; style?: CSSPrope
     <ul className="mt-3.5 mx-0 mb-0 p-0 list-none flex flex-col gap-2.5" style={{ ...style }}>
       {items.map((item, i) => (
         <li key={i} className="m-0 font-serif text-lg leading-[1.62] text-ink-600 flex gap-3">
-          <span className="text-text-muted flex-[0_0_auto]">&bull;</span>
+          <span style={BULLET}>&bull;</span>
           <span>{item}</span>
         </li>
       ))}
@@ -54,7 +61,7 @@ function SectionText({ section }: { section: LegalSection }) {
       {section.body && (
         <p className="m-0 font-serif text-lg leading-[1.62] text-ink-600">
           {section.body}
-          {section.link && <a href={section.link.href} className="text-brand-forest-bright">{section.link.label}</a>}
+          {section.link && <a href={section.link.href} style={LINK}>{section.link.label}</a>}
           {section.bodySuffix}
         </p>
       )}
@@ -97,7 +104,7 @@ export function LegalDocumentPage({ doc }: { doc: LegalDocument }) {
           masthead defers to it and only keeps the space. */}
       <header className="pb-7.5">
         <span
-          className="block font-sans text-sm text-text-muted [animation:fadeUp_600ms_ease_both]"
+          className="block font-sans text-sm [animation:fadeUp_600ms_ease_both]" style={{ color: MUTED }}
         >
           Legal
         </span>
@@ -115,7 +122,7 @@ export function LegalDocumentPage({ doc }: { doc: LegalDocument }) {
             every clause under it, instead of running the full width alone. */}
         <div className="flex flex-wrap items-start gap-8 py-5.5 px-0 border-t border-t-[rgba(42,39,31,0.08)]" style={{ ...enter(0) }}>
           <div className="flex-[1_1_220px] max-w-full min-w-0">
-            <span className="block font-sans text-[10.5px] tracking-[0.04em] text-text-muted" data-testid="legal-updated">Last updated: {legalDateLabel(doc.version)}</span>
+            <span style={META} data-testid="legal-updated">Last updated: {legalDateLabel(doc.version)}</span>
           </div>
           <div className="flex-[999_1_330px] min-w-0">
             <p className="m-0 font-serif text-lg leading-[1.62] text-ink-600">{doc.preamble}</p>

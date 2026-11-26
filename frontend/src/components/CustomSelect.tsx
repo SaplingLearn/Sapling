@@ -180,8 +180,8 @@ export function CustomSelect<T extends string = string>({
           tabIndex={-1}
           onKeyDown={onListKey}
           ref={el => el?.focus({ preventScroll: true })}
-          className={cn("fade-in", "absolute z-100 min-w-full m-0 p-1 list-none [background:var(--bg-panel)] border border-border-strong rounded-md shadow-lg overflow-y-auto", place.up ? "top-auto" : "top-[calc(100%_+_4px)]", place.up ? "bottom-[calc(100%_+_4px)]" : "bottom-auto", align === "left" ? "left-0" : "left-auto", align === "right" ? "right-0" : "right-auto")}
-          style={{ maxHeight: place.max }}
+          className={cn("fade-in", "absolute z-100 min-w-full m-0 p-1 list-none [background:var(--bg-panel)] border border-border-strong rounded-md shadow-lg overflow-y-auto", align === "left" ? "left-0" : "left-auto", align === "right" ? "right-0" : "right-auto")}
+          style={{ top: place.up ? "auto" : `calc(100% + ${LIST_GAP}px)`, bottom: place.up ? `calc(100% + ${LIST_GAP}px)` : "auto", maxHeight: place.max }}
         >
           {options.map((opt, idx) => {
             const active = idx === highlighted;

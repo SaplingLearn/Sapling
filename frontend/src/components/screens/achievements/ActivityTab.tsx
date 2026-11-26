@@ -48,7 +48,7 @@ function WeeklyChart({ week, dailyGoalXp }: { week: ActivityData["week"]; dailyG
   return (
     <div className="card py-4.5 px-5 mb-4">
       <div className="label-micro mb-3.5">This week</div>
-      <div className="relative h-35 pt-1">
+      <div className="relative pt-1" style={{ height: WEEK_CHART_H }}>
         <div
           className="absolute left-0 right-0 [border-top:1.5px_dashed_var(--text-muted)]" style={{ top: goalY }}
           aria-hidden
@@ -87,7 +87,7 @@ function TrendChart({ trend }: { trend: ActivityData["trend"] }) {
   return (
     <div className="card py-4.5 px-5">
       <div className="label-micro mb-3.5">Last 8 weeks</div>
-      <div className="flex items-end justify-between gap-1.5 h-25">
+      <div className="flex items-end justify-between gap-1.5" style={{ height: TREND_CHART_H }}>
         {trend.map((t, i) => (
           <div key={`${t.label}-${i}`} className="flex flex-col items-center gap-1.5 flex-1">
             <div

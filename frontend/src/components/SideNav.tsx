@@ -115,7 +115,7 @@ export function SideNav() {
       aria-label="Primary"
       // Hook for the pre-hydration mobile guard in globals.css (#110).
       data-app-sidenav=""
-      className={cn("h-full bg-sidenav-bg [border-radius:0_var(--r-lg)_var(--r-lg)_0] relative z-1 flex flex-col gap-px overflow-hidden [transition:width_var(--dur)_var(--ease),_min-width_var(--dur)_var(--ease),_padding_var(--dur)_var(--ease)]", collapsed ? "py-4 px-1.5" : "py-4 px-2.5")} style={{ width, minWidth: width }}
+      className="h-full bg-sidenav-bg [border-radius:0_var(--r-lg)_var(--r-lg)_0] relative z-1 flex flex-col gap-px overflow-hidden [transition:width_var(--dur)_var(--ease),_min-width_var(--dur)_var(--ease),_padding_var(--dur)_var(--ease)]" style={{ width, minWidth: width, padding: `16px ${collapsed ? RAIL_PAD_X.narrow : RAIL_PAD_X.wide}px` }}
     >
       {/* Wide: the wordmark. Narrow: the Sapling symbol, centred. The two
           cross-fade in one fixed-height slot so nothing below shifts, and the
@@ -124,7 +124,7 @@ export function SideNav() {
         href="/dashboard"
         aria-label="Sapling — home"
         data-sidenav-logo=""
-        className="relative block h-8.5 pb-3.5 box-content overflow-hidden border-b border-b-border mb-2 no-underline"
+        className="relative block pb-3.5 box-content overflow-hidden border-b border-b-border mb-2 no-underline" style={{ height: LOGO_SLOT_HEIGHT }}
       >
         <SaplingWordmark
           width={112}
@@ -140,7 +140,7 @@ export function SideNav() {
           width={SYMBOL_WIDTH}
           height={LOGO_SLOT_HEIGHT}
           draggable={false}
-          className={cn(cn("absolute top-0 h-8.5 [filter:brightness(0)_invert(1)]", collapsed ? "opacity-100" : "opacity-0"), collapsed ? "[transition:opacity_var(--dur-fast)_var(--ease)_90ms]" : "[transition:opacity_var(--dur-fast)_var(--ease)_0ms]")} style={{ left: (RAIL_INNER_NARROW - SYMBOL_WIDTH) / 2, width: SYMBOL_WIDTH }}
+          className={cn("absolute top-0 [filter:brightness(0)_invert(1)]", collapsed ? "opacity-100" : "opacity-0", collapsed ? "[transition:opacity_var(--dur-fast)_var(--ease)_90ms]" : "[transition:opacity_var(--dur-fast)_var(--ease)_0ms]")} style={{ left: (RAIL_INNER_NARROW - SYMBOL_WIDTH) / 2, width: SYMBOL_WIDTH, height: LOGO_SLOT_HEIGHT }}
         />
       </Link>
 
