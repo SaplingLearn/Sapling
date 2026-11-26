@@ -86,6 +86,21 @@ export function LibraryHeader(props: LibraryHeaderProps) {
   const [focused, setFocused] = React.useState(false);
   const menuAnim = menuClosing ? MENU_OUT : MENU_IN;
 
+  // Escape closes whichever header menu is open. The design handoff binds
+  // Escape only inside text inputs, so a menu opened by keyboard could be
+  // dismissed only by clicking its scrim — which is a mouse-only exit from a
+  // keyboard-reachable control. One listener covers all three menus because
+  // they share `menu`/`onMenu`, and it closes through the same exit animation
+  // a scrim click does.
+  React.useEffect(() => {
+    if (!menu) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") { e.stopPropagation(); onMenu(null); }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [menu, onMenu]);
+
   const sortLabel = SORTS.find(([k]) => k === sort)?.[1] ?? "Recently Added";
   const typeLabel = type === "all" ? "All Types" : TYPES[type].label;
 
