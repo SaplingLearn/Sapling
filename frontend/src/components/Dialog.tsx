@@ -51,11 +51,16 @@ export function useOverlayBehaviour({
   useEffect(() => {
     if (!open) { setVisible(false); return; }
     previousFocusRef.current = document.activeElement;
+    const focusAtOpen = document.activeElement;
     const raf = requestAnimationFrame(() => setVisible(true));
 
     const focusTimer = setTimeout(() => {
       const panel = panelRef.current;
       if (!panel) return;
+      // The user clicked into the panel before this ran (a fast click, or
+      // a slow machine): don't pull focus away from what they picked.
+      const active = document.activeElement;
+      if (active !== focusAtOpen && active !== panel && panel.contains(active)) return;
       const preferred = initialFocusRef?.current;
       if (preferred) { preferred.focus(); return; }
       const focusable = panel.querySelector<HTMLElement>(FOCUSABLE);
