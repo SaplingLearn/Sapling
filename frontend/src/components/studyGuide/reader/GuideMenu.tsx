@@ -72,9 +72,16 @@ export function GuideMenu({
       {open && (
         <div role="menu" aria-label="Guide actions" className={`${s.menu} fade-in`}>
           {saved ? (
-            // The Study Guides home, not /library: since the Library rebuild
-            // (#717) the home is the one place that lists saved guides.
-            <Link ref={savedItem} role="menuitem" href={studyGuideHref()} className={s.menuItem} data-testid="guide-menu-saved">
+            // The Study Guides home with Saved on, not /library: since the
+            // Library rebuild (#717) the home is the one place that lists
+            // saved guides.
+            <Link
+              ref={savedItem}
+              role="menuitem"
+              href={studyGuideHref({ saved: true })}
+              className={s.menuItem}
+              data-testid="guide-menu-saved"
+            >
               <Icon name="check" size={14} />
               <span className={s.menuSaved}>
                 <strong>Saved to Library</strong>

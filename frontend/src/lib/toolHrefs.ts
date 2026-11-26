@@ -16,13 +16,20 @@ export function studyHref(courseId?: string | null): string {
 }
 
 /**
+ * `?saved=1` opens the Study Guides home on the guides saved to the Library
+ * only: where the reader's "Saved to Library" leads, since the rebuilt
+ * Library (#717) lists documents alone.
+ */
+export const SAVED_GUIDES_PARAM = "saved";
+
+/**
  * Where "Study Guide" goes: the Study Guides home (/study/guide), which lists
  * every class's guides. Under /study, so it is auth-gated, flag-gated
  * (hide_study) and keeps Study lit in the nav with no list of its own to
  * maintain (unlike /flashcards: see `flashcardsHref`).
  */
-export function studyGuideHref(): string {
-  return "/study/guide";
+export function studyGuideHref({ saved = false }: { saved?: boolean } = {}): string {
+  return saved ? `/study/guide?${SAVED_GUIDES_PARAM}=1` : "/study/guide";
 }
 
 /** One guide, in the reader. */

@@ -739,7 +739,8 @@ for the mix bar).
 
 Added with the upload → SSE → library journey (#387); redone with the Library
 rebuild (#717), which dropped the sidebar course filters, the detail panel and
-the saved-guides section (saved guides are listed on the Study Guides home).
+the saved-guides section (saved guides are listed on the Study Guides home,
+under its Saved toggle).
 
 | testid | element |
 | --- | --- |
@@ -783,7 +784,7 @@ content carries (`s1`, `s1-i2`, ...); a block's id is its item id.
 | `guide-title` | the guide's title (`<h2>`: the top bar's "Study" is the page's `<h1>`, and each section's title is an `<h3>`) |
 | `guide-menu` | the three-dot menu button beside the title |
 | `guide-menu-save` | menu item "Save to Library" (only while the guide is not saved) |
-| `guide-menu-saved` | menu item "Saved to Library", a link to the Study Guides home `/study/guide`, which lists saved guides (only once saved; takes the focus when Save swaps it in) |
+| `guide-menu-saved` | menu item "Saved to Library", a link to the Study Guides home with Saved on (`/study/guide?saved=1`), which lists saved guides (only once saved; takes the focus when Save swaps it in) |
 | `guide-menu-export` | menu item "Export PDF" (the browser's print dialog) |
 | `guide-menu-regenerate` | menu item "Regenerate whole guide" (disabled while the guide is generating or a block is being regenerated) |
 | `guide-space-bar` | the bar that shows each section's share of the guide by mastery (`shared/SpaceBar.tsx`). Also rendered on every home card and in the dialog's planned outline, so scope it to its parent there |
@@ -825,6 +826,7 @@ The Study Guides home (`/study/guide`), added with the study-guide redesign.
 | `guides-search` | the toolbar's search input (title, class name or code, scope) |
 | `guides-sort` | the sort button; its text is the current choice |
 | `guides-sort-{key}` | one sort menu item: `recent`, `oldest`, `class` |
+| `guides-saved-only` | the toolbar's "Saved" toggle (`aria-pressed`): on, the grid keeps only the guides saved to the Library; `?saved=1` opens the home with it on, and the URL follows it |
 | `guides-new` | the toolbar's "New study guide" button |
 | `guides-grid` | the list of guide cards |
 | `guides-card-{guideId}` | one guide's card, a link to the reader; `data-status` is the guide's status |
@@ -837,7 +839,9 @@ The Study Guides home (`/study/guide`), added with the study-guide redesign.
 | `guides-loading` | the skeleton grid while the list loads (`aria-busy`) |
 | `guides-empty` | the empty state when the student has no guide |
 | `guides-empty-new` | its "New study guide" button |
-| `guides-no-match` | "No guide matches ..." when the search keeps none |
+| `guides-no-match` | "No guide matches ..." when the search keeps none ("No saved guide matches ..." with Saved on) |
+| `guides-none-saved` | Saved is on and no guide is saved: how to save one (`role="status"`) |
+| `guides-none-saved-show-all` | its "Show all guides" button, which turns Saved off |
 | `guides-load-error` | the list could not be loaded (`role="alert"`) |
 | `guides-load-retry` | its "Try again" button |
 

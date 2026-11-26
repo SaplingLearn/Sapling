@@ -26,6 +26,11 @@ describe("studyGuideHref", () => {
   it("lives under /study, so the shell's auth and hide_study gates cover it", () => {
     expect(studyGuideHref().startsWith("/study/")).toBe(true);
   });
+
+  it("opens the home on the saved guides only when asked", () => {
+    expect(studyGuideHref({ saved: true })).toBe("/study/guide?saved=1");
+    expect(studyGuideHref({ saved: false })).toBe("/study/guide");
+  });
 });
 
 describe("studyGuideReaderHref", () => {
