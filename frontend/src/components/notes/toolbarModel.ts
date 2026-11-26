@@ -108,6 +108,19 @@ export const METRICS: Record<"wide" | "narrow", ToolbarMetrics> = {
   },
 };
 
+/**
+ * Narrowest corridor between the breadcrumb and the header actions that the
+ * toolbar will still centre itself in. Below it the bar drops to its own row.
+ * Sized off the bar's own natural width: `METRICS.narrow` measures ~656px
+ * (the Clov-open case, which is the tight one — with Clov closed the bar is
+ * wider but the corridor gains that panel's 440px back). The threshold sits
+ * just above it so the bar is never left PARTLY squeezed: it either has the
+ * room it wants in the header row, or it takes a row of its own and has it
+ * there. At 480 the 1700-1800 band kept the bar in the header at two thirds
+ * of its width, scrolling, when a full-width row was available below.
+ */
+export const TOOLBAR_MIN_CORRIDOR = 672;
+
 /** The design's shared transition for everything the panel squeezes. */
 export const SQUEEZE = "380ms cubic-bezier(0.3, 0.7, 0.2, 1)";
 

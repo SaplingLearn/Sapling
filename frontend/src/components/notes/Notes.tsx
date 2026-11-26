@@ -35,7 +35,7 @@ import { NotesSkeleton } from "./NotesSkeleton";
 import { NotesToast, useNotesToast } from "./NotesToast";
 import { SelectionBubble } from "./SelectionBubble";
 import { NotesToolbar, type ToolbarMenu } from "./NotesToolbar";
-import { SQUEEZE } from "./toolbarModel";
+import { SQUEEZE, TOOLBAR_MIN_CORRIDOR } from "./toolbarModel";
 import { useNotesSelection } from "./useNotesSelection";
 
 /** The skeleton's beat, matched to the Library's. */
@@ -55,6 +55,7 @@ export function Notes({ documentId }: { documentId: string }) {
   const scrollRef = React.useRef<HTMLDivElement>(null);
   const sectionRef = React.useRef<HTMLElement>(null);
   const leftRef = React.useRef<HTMLDivElement>(null);
+  const barRef = React.useRef<HTMLDivElement>(null);
   const rightRef = React.useRef<HTMLDivElement>(null);
 
   const [booted, setBooted] = React.useState(false);
@@ -238,16 +239,49 @@ export function Notes({ documentId }: { documentId: string }) {
   });
 
   // ── where the toolbar's edges sit ───────────────────────────────────────
-  const [bounds, setBounds] = React.useState({ left: 380, right: 600 });
+  // Narrowest corridor the toolbar will still centre itself in. Below this it
+  // takes a row of its own: the wide metrics measure ~656px and the narrow
+  // ones are not much smaller, so anything tighter than this either overlaps
+  // the header actions or squeezes the bar down to a sliver.
+  const [bounds, setBounds] = React.useState(
+    { left: 380, right: 600, stacked: false });
   React.useEffect(() => {
     const measure = () => {
       const l = leftRef.current;
       const r = rightRef.current;
       if (!l || !r) return;
-      setBounds({
-        left: l.offsetLeft + l.offsetWidth + 16,
-        right: (clovOpen ? CLOV_WIDTH : 0) + 28 + r.offsetWidth + 16,
-      });
+      const left = l.offsetLeft + l.offsetWidth + 16;
+      const right = (clovOpen ? CLOV_WIDTH : 0) + 28 + r.offsetWidth + 16;
+      // What is actually left between the breadcrumb and the header actions.
+      // Clov's panel is a fixed width, so this corridor closes fast as the
+      // window narrows — and the toolbar's own width does not follow it.
+      // Below `TOOLBAR_MIN_CORRIDOR` the bar drops to its own row, where the
+      // editor column gives it the room the header row no longer has.
+      //
+      // Measured from the two header elements' own rects, in viewport
+      // coordinates. Deriving it from `left`/`right` and a container width
+      // does not work: those are offsets inside the positioned box whose
+      // width THIS decision sets, so the measurement feeds back on itself and
+      // the bar latches into whichever state it reached first. The gap
+      // between the breadcrumb and the actions does not move when the bar
+      // does, which is what makes it a safe thing to measure.
+      const gapLeft = l.getBoundingClientRect().right;
+      const gapRight = r.getBoundingClientRect().left;
+      const corridor = gapRight - gapLeft - 32;
+      // How wide the bar wants to be. `scrollWidth` reports the full content
+      // width even while `maxWidth` is clamping the box, so this is the bar's
+      // natural size and not a consequence of the decision being made here.
+      //
+      // It has to be measured rather than named by a constant: the bar's
+      // width comes from `METRICS`, which switches on `clovOpen` — ~656px
+      // with the panel open, ~937px with it closed — so any single threshold
+      // is right for one of those two states and wrong for the other.
+      // `TOOLBAR_MIN_CORRIDOR` stands in only for the first pass, before the
+      // bar has rendered.
+      const wanted = barRef.current?.scrollWidth || TOOLBAR_MIN_CORRIDOR;
+      setBounds(corridor >= wanted + 16
+        ? { left, right, stacked: false }
+        : { left: 28, right: (clovOpen ? CLOV_WIDTH : 0) + 28, stacked: true });
     };
     measure();
     // The header's own widths settle after the fonts land, so measure again.
@@ -381,6 +415,8 @@ export function Notes({ documentId }: { documentId: string }) {
             clovOpen={clovOpen}
             left={bounds.left}
             right={bounds.right}
+            stacked={bounds.stacked}
+            barRef={barRef}
             menu={toolbarMenu}
             onMenu={openToolbarMenu}
             menuClosing={menuClosing}

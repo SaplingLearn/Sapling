@@ -19,12 +19,27 @@ import { MENU_IN, MENU_OUT, MENU_SURFACE } from "../library/primitives";
 
 export type ToolbarMenu = "style" | "insert" | "align" | null;
 
+/** Where the bar sits once it has dropped out of the header row. */
+const STACK_TOP = 66;
+
 export interface NotesToolbarProps {
   formats: Formats;
   clovOpen: boolean;
   /** Where the toolbar's left and right edges sit, measured by the page. */
   left: number;
   right: number;
+  /**
+   * The corridor between the breadcrumb and the header actions was too narrow
+   * to hold the bar, so it has dropped to its own row under the header and
+   * spans the editor column instead.
+   */
+  stacked: boolean;
+  /**
+   * The bar itself. The page measures its `scrollWidth` — the width it WANTS,
+   * which it still reports while clamped — to decide whether the header row
+   * can hold it.
+   */
+  barRef: React.RefObject<HTMLDivElement | null>;
   menu: ToolbarMenu;
   onMenu: (m: ToolbarMenu) => void;
   menuClosing: boolean;
@@ -97,7 +112,8 @@ function renderTools(tools: ToolOrSeparator[], metrics: typeof METRICS.wide) {
 
 export function NotesToolbar(props: NotesToolbarProps) {
   const {
-    formats, clovOpen, left, right, menu, onMenu, menuClosing, exec, insertHTML,
+    formats, clovOpen, left, right, stacked, barRef, menu, onMenu, menuClosing,
+    exec, insertHTML,
     insertCode, insertLink, insertEquation, insertBlock, insertGraph, setBlockStyle,
   } = props;
 
@@ -110,7 +126,10 @@ export function NotesToolbar(props: NotesToolbarProps) {
     <div style={{
       animation: "sapFadeIn 220ms cubic-bezier(0.2, 0.7, 0.2, 1) 900ms both",
       position: "absolute",
-      top: m.top,
+      // Stacked, the bar sits below the header actions rather than beside
+      // them; `STACK_TOP` clears Finalize's 56px bottom edge with room to
+      // spare, and the editor's own content does not begin until 112px.
+      top: stacked ? STACK_TOP : m.top,
       left,
       right,
       display: "flex",
@@ -120,6 +139,7 @@ export function NotesToolbar(props: NotesToolbarProps) {
       transition: `top ${SQUEEZE}, left ${SQUEEZE}, right ${SQUEEZE}`,
     }}>
       <div
+        ref={barRef}
         role="toolbar"
         aria-label="Formatting"
         data-testid="notes-toolbar"
@@ -134,6 +154,21 @@ export function NotesToolbar(props: NotesToolbarProps) {
           border: "1px solid rgba(42,39,31,0.10)",
           borderRadius: 14,
           boxShadow: "0 4px 16px rgba(25,37,11,0.07)",
+          // The bar's width is fixed by `METRICS`, which switches only on
+          // `clovOpen` — never on how much room there actually is. Below
+          // about 1600px with Clov open the narrow metrics still come to
+          // ~656px, so the bar used to overflow the corridor at both ends and
+          // sit on top of Finalize (measured 2026-11-26: 9px of clearance at
+          // 1600, −41px at 1500, −151px at 1280).
+          //
+          // `stacked` is the real fix — it gives the bar a row of its own —
+          // and this clamp is the floor under it: whatever room the bar ends
+          // up with, it stays inside it rather than reaching the buttons, and
+          // anything that will not fit is scrolled to rather than hidden.
+          maxWidth: "100%",
+          overflowX: "auto",
+          // Keep the squeeze transition from being read as a scroll jump.
+          scrollbarWidth: "thin",
         }}
       >
         {renderTools(leadingTools({ exec }), m)}
