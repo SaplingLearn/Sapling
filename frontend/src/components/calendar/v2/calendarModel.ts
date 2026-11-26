@@ -1,0 +1,288 @@
+// The redesigned calendar's model (behind `calendar_v2`; design:
+// calendar/v2/__fixtures__/*.design.html, the Claude Design boards). Pure:
+// the screens read everything they show from here.
+//
+// Dates are the calendar's assignments (getAllAssignments). An assignment's
+// kind is the Study hub's rule (`classifyAssessment`: exam, quiz, or else
+// homework); undated ones have no place on a calendar and are left out. Weeks
+// start on Monday, and every date is a local calendar day.
+import type { Assignment, EnrolledCourse } from "@/lib/api";
+import { plural } from "@/lib/learningCopy";
+import { classifyAssessment } from "../../study/studyModel";
+
+export type ItemKind = "Exam" | "Quiz" | "Homework";
+
+export interface CalItem {
+  id: string;
+  title: string;
+  /** YYYY-MM-DD */
+  iso: string;
+  day: Date;
+  kind: ItemKind;
+  courseId: string | null;
+  /** The course's short name ("CS 112"); "No course" when none. */
+  course: string;
+  color: string;
+  notes: string;
+  raw: Assignment;
+}
+
+const DAY_MS = 86_400_000;
+
+/** Courses with no colour of their own, in order; each differs in lightness too. */
+export const COURSE_FALLBACK_COLORS = ["#3a6ea5", "#b5602a", "#2e7a6f", "#7b4f93", "#8a6d1f", "#a3413f"];
+
+export function parseDay(iso: string): Date {
+  const [y, m, d] = iso.slice(0, 10).split("-").map(Number);
+  return new Date(y, (m || 1) - 1, d || 1);
+}
+
+export function dayOf(d: Date): Date {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+}
+
+export function addDays(d: Date, n: number): Date {
+  const out = new Date(d);
+  out.setDate(out.getDate() + n);
+  return out;
+}
+
+export function isoOf(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+/** Whole days from `from` to `to` (local days; negative when `to` is earlier). */
+export function daysBetween(from: Date, to: Date): number {
+  return Math.round((dayOf(to).getTime() - dayOf(from).getTime()) / DAY_MS);
+}
+
+/** The Monday of `d`'s week. */
+export function startOfWeek(d: Date): Date {
+  const day = dayOf(d);
+  return addDays(day, -((day.getDay() + 6) % 7));
+}
+
+export function courseLabel(c: Pick<EnrolledCourse, "course_code" | "course_name">): string {
+  return c.course_code || c.course_name;
+}
+
+/** Each course's colour: its own, else the next fallback, by enrolment order. */
+export function courseColors(courses: readonly EnrolledCourse[]): Map<string, string> {
+  return new Map(courses.map((c, i) => [c.course_id, c.color || COURSE_FALLBACK_COLORS[i % COURSE_FALLBACK_COLORS.length]]));
+}
+
+/** The calendar's dated assignments as items, soonest first. */
+export function toItems(assignments: readonly Assignment[], courses: readonly EnrolledCourse[]): CalItem[] {
+  const colors = courseColors(courses);
+  const byId = new Map(courses.map((c) => [c.course_id, c]));
+  return assignments
+    .filter((a) => !!a.due_date)
+    .map((a) => {
+      const iso = String(a.due_date).slice(0, 10);
+      const course = a.course_id ? byId.get(a.course_id) : undefined;
+      return {
+        id: a.id,
+        title: a.title,
+        iso,
+        day: parseDay(iso),
+        kind: classifyAssessment(a.assignment_type, a.title) as ItemKind,
+        courseId: a.course_id ?? null,
+        course: course ? courseLabel(course) : a.course_code || a.course_name || "No course",
+        color: (a.course_id && colors.get(a.course_id)) || "#6e675a",
+        notes: a.notes ?? "",
+        raw: a,
+      };
+    })
+    .sort((x, y) => x.iso.localeCompare(y.iso) || x.title.localeCompare(y.title));
+}
+
+/** "Today", "Tomorrow", "In 9 days"; past: "Yesterday", "3 days ago". */
+export function countdown(day: Date, today: Date): string {
+  const n = daysBetween(today, day);
+  if (n === 0) return "Today";
+  if (n === 1) return "Tomorrow";
+  if (n === -1) return "Yesterday";
+  return n > 0 ? `In ${n} days` : `${-n} days ago`;
+}
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const MONTHS_LONG = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+export const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+const WEEKDAYS_LONG = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+export const shortDate = (d: Date) => `${MONTHS[d.getMonth()]} ${d.getDate()}`;
+export const weekdayShort = (d: Date) => WEEKDAYS[(d.getDay() + 6) % 7];
+export const longDate = (d: Date) => `${WEEKDAYS_LONG[d.getDay()]}, ${MONTHS_LONG[d.getMonth()]} ${d.getDate()}`;
+export const monthTitle = (d: Date) => `${MONTHS_LONG[d.getMonth()]} ${d.getFullYear()}`;
+
+/** "Mar 9 – 15", "Mar 30 – Apr 5". */
+export function rangeText(start: Date, end: Date): string {
+  return start.getMonth() === end.getMonth()
+    ? `${shortDate(start)} – ${end.getDate()}`
+    : `${shortDate(start)} – ${shortDate(end)}`;
+}
+
+export interface AgendaGroup {
+  key: "this" | "next" | "later";
+  name: string;
+  range: string;
+  items: CalItem[];
+}
+
+/** The agenda: what is still ahead, in this week, next week and later (each
+ *  only when it has something), and what is already past. */
+export function agendaOf(items: readonly CalItem[], today: Date): { earlier: CalItem[]; groups: AgendaGroup[] } {
+  const monday = startOfWeek(today);
+  const nextMonday = addDays(monday, 7);
+  const after = addDays(monday, 14);
+  const earlier = items.filter((i) => daysBetween(today, i.day) < 0);
+  const ahead = items.filter((i) => daysBetween(today, i.day) >= 0);
+  const thisWeek = ahead.filter((i) => i.day < nextMonday);
+  const nextWeek = ahead.filter((i) => i.day >= nextMonday && i.day < after);
+  const later = ahead.filter((i) => i.day >= after);
+  const groups: AgendaGroup[] = [
+    { key: "this" as const, name: "This week", range: rangeText(monday, addDays(monday, 6)), items: thisWeek },
+    { key: "next" as const, name: "Next week", range: rangeText(nextMonday, addDays(nextMonday, 6)), items: nextWeek },
+    { key: "later" as const, name: "Later", range: later.length ? rangeText(after, later[later.length - 1].day) : "", items: later },
+  ].filter((g) => g.items.length > 0);
+  return { earlier, groups };
+}
+
+/** "2 due this week, the next one tomorrow" / "Nothing due this week". */
+export function weekLine(items: readonly CalItem[], today: Date): string {
+  const end = addDays(startOfWeek(today), 7);
+  const left = items.filter((i) => daysBetween(today, i.day) >= 0 && i.day < end);
+  if (left.length === 0) return "Nothing due this week";
+  return `${plural(left.length, "due this week", "due this week")}, the next one ${countdown(left[0].day, today).toLowerCase()}`;
+}
+
+export interface DayCell {
+  day: Date;
+  iso: string;
+  inMonth: boolean;
+  today: boolean;
+  past: boolean;
+  weekend: boolean;
+  items: CalItem[];
+}
+
+function cellOf(day: Date, month: number, today: Date, byIso: Map<string, CalItem[]>): DayCell {
+  const iso = isoOf(day);
+  const wd = (day.getDay() + 6) % 7;
+  return {
+    day, iso,
+    inMonth: day.getMonth() === month,
+    today: daysBetween(today, day) === 0,
+    past: daysBetween(today, day) < 0,
+    weekend: wd >= 5,
+    items: byIso.get(iso) ?? [],
+  };
+}
+
+function itemsByIso(items: readonly CalItem[]): Map<string, CalItem[]> {
+  const map = new Map<string, CalItem[]>();
+  for (const i of items) map.set(i.iso, [...(map.get(i.iso) ?? []), i]);
+  return map;
+}
+
+/** Six Monday-first weeks around `cursor`'s month: every month fits. */
+export function monthCells(cursor: Date, items: readonly CalItem[], today: Date): DayCell[] {
+  const first = new Date(cursor.getFullYear(), cursor.getMonth(), 1);
+  const start = startOfWeek(first);
+  const byIso = itemsByIso(items);
+  return Array.from({ length: 42 }, (_, i) => cellOf(addDays(start, i), first.getMonth(), today, byIso));
+}
+
+/** The seven days of `cursor`'s week. */
+export function weekCells(cursor: Date, items: readonly CalItem[], today: Date): DayCell[] {
+  const start = startOfWeek(cursor);
+  const byIso = itemsByIso(items);
+  return Array.from({ length: 7 }, (_, i) => cellOf(addDays(start, i), addDays(start, i).getMonth(), today, byIso));
+}
+
+/** "10 due in March, 2 of them exams". */
+export function monthLine(cursor: Date, items: readonly CalItem[]): string {
+  const inMonth = items.filter((i) => i.day.getMonth() === cursor.getMonth() && i.day.getFullYear() === cursor.getFullYear());
+  const exams = inMonth.filter((i) => i.kind === "Exam").length;
+  const name = MONTHS_LONG[cursor.getMonth()];
+  if (inMonth.length === 0) return `Nothing due in ${name}`;
+  return `${inMonth.length} due in ${name}` + (exams ? `, ${exams === 1 ? "1 of them an exam" : `${exams} of them exams`}` : "");
+}
+
+export interface WeekLoad {
+  start: Date;
+  label: string;
+  range: string;
+  count: number;
+  exams: number;
+}
+
+/** Each of `weeks` weeks from `start`'s Monday: how much is due in it. */
+export function weekLoads(start: Date, weeks: number, items: readonly CalItem[]): WeekLoad[] {
+  const monday = startOfWeek(start);
+  return Array.from({ length: weeks }, (_, w) => {
+    const s = addDays(monday, w * 7);
+    const e = addDays(s, 7);
+    const inWeek = items.filter((i) => i.day >= s && i.day < e);
+    return {
+      start: s, label: shortDate(s), range: rangeText(s, addDays(s, 6)),
+      count: inWeek.length, exams: inWeek.filter((i) => i.kind === "Exam").length,
+    };
+  });
+}
+
+/** "3 due, 2 exams" / "Nothing due". */
+export function loadText(w: Pick<WeekLoad, "count" | "exams">): string {
+  if (w.count === 0) return "Nothing due";
+  return `${w.count} due` + (w.exams ? `, ${plural(w.exams, "exam")}` : "");
+}
+
+/** The heaviest week from this one on, within `weeks`: the most due (ties to
+ *  the one with more exams, then the earliest), and only when it is heavy
+ *  (3 or more, or 2 exams). */
+export function busiestWeek(items: readonly CalItem[], today: Date, weeks = 8): (WeekLoad & { items: CalItem[] }) | null {
+  const loads = weekLoads(today, weeks, items);
+  let best: WeekLoad | null = null;
+  for (const w of loads) if (!best || w.count > best.count || (w.count === best.count && w.exams > best.exams)) best = w;
+  if (!best || (best.count < 3 && best.exams < 2)) return null;
+  const end = addDays(best.start, 7);
+  return { ...best, items: items.filter((i) => i.day >= best!.start && i.day < end) };
+}
+
+/** The semester view's span: `weeks` weeks from the week before `cursor`'s. */
+export function semesterStart(cursor: Date): Date {
+  return addDays(startOfWeek(cursor), -7);
+}
+
+/** Where on the timeline a day falls, 0..1 across `weeks` weeks from `start`. */
+export function timelinePos(day: Date, start: Date, weeks: number): number {
+  return daysBetween(start, day) / (weeks * 7);
+}
+
+/** How far apart (in days) two labels on one timeline row must be. */
+export const LABEL_GAP_DAYS = 7;
+/** Label rows a course's line has before a crowded label hides. */
+export const LABEL_ROWS = 3;
+
+/** Each item's label row on its course's line, so close labels never overlap:
+ *  the first row whose last label is far enough back, or -1 (only its mark
+ *  shows; its name stays on the mark's button). */
+export function labelRows<T extends { day: Date }>(items: readonly T[]): (T & { row: number })[] {
+  const last: Date[] = [];
+  return items.map((it) => {
+    let row = last.findIndex((d) => daysBetween(d, it.day) >= LABEL_GAP_DAYS);
+    if (row === -1 && last.length < LABEL_ROWS) row = last.length;
+    if (row >= 0) last[row] = it.day;
+    return { ...it, row };
+  });
+}
+
+/** The courses the items name, in first-seen order, with their colours. */
+export function coursesOf(items: readonly CalItem[]): { id: string; label: string; color: string }[] {
+  const seen = new Map<string, { id: string; label: string; color: string }>();
+  for (const i of items) {
+    const id = i.courseId ?? "none";
+    if (!seen.has(id)) seen.set(id, { id, label: i.course, color: i.color });
+  }
+  return [...seen.values()];
+}

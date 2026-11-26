@@ -189,6 +189,8 @@ const FLAG_KILL_SWITCHES = [
   // the Tutor's course setup: apply_graph_update reads it on the worker's
   // document.process too (a removed concept stays out of the upload)
   "course_setup",
+  // the calendar redesign (frontend only; shared so the switch reads the same everywhere)
+  "calendar_v2",
   "quiz_planned_questions",
   "quiz_item_gates",
   "quiz_misconceptions",

@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Calendar: an exam, opened</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Aleo:wght@400;600;700&amp;family=SUSE:wght@400;500;600;700&amp;display=swap">
+<style>
+body{margin:0}
+a{color:#445D22;text-decoration:none}a:hover{color:#2f4115}
+</style>
+</helmet>
+<div style="width: 1440px; height: 980px; position: relative; overflow: hidden; background: #faf8f3; color: #1a1814; font-family: 'SUSE', system-ui, sans-serif;">
+  <div aria-hidden="true" style="position: absolute; inset: 0;">
+    <dc-import name="Main" hint-size="1440px,980px"></dc-import>
+  </div>
+  <div aria-hidden="true" style="position: absolute; inset: 0; background: rgba(26,24,20,0.32);"></div>
+
+  <section role="dialog" aria-modal="true" aria-labelledby="d-title" style="position: absolute; top: 0; right: 0; bottom: 0; width: 480px; box-sizing: border-box; background: #fdfcf9; box-shadow: -12px 0 32px rgba(26,24,20,0.18); padding: 28px 32px; display: flex; flex-direction: column; gap: 22px; overflow: hidden;">
+    <div style="display: flex; align-items: flex-start; gap: 12px;">
+      <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px;">
+        <div style="display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600;">
+          <span aria-hidden="true" style="width: 10px; height: 10px; border-radius: 3px; background: #3a6ea5; display: inline-block;"></span>CS 112
+          <span style="padding: 2px 8px; border-radius: 6px; background: #1a1814; color: #ffffff;">Exam</span>
+        </div>
+        <h2 id="d-title" style="margin: 0; font-family: 'Aleo', Georgia, serif; font-size: 30px; font-weight: 600;">Midterm 2</h2>
+        <p style="margin: 0; font-size: 15px; color: #4a4538;">Friday, March 20 · <strong style="color: #1a1814;">in 9 days</strong></p>
+      </div>
+      <button type="button" aria-label="Close" style="width: 40px; height: 40px; border-radius: 10px; border: 1px solid rgba(42,39,31,0.18); background: #fdfcf9; display: inline-flex; align-items: center; justify-content: center;"><svg aria-hidden="true" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="#1a1814" stroke-width="1.8" stroke-linecap="round"><path d="m3 3 8 8M11 3l-8 8"/></svg></button>
+    </div>
+
+    <section aria-labelledby="ready-h" style="display: flex; flex-direction: column; gap: 12px; padding: 18px; border-radius: 14px; background: #f6f9f2; border: 1px solid #c5d7b2;">
+      <div style="display: flex; align-items: baseline; gap: 8px;">
+        <h3 id="ready-h" style="margin: 0; flex: 1; font-family: 'Aleo', Georgia, serif; font-size: 18px; font-weight: 600;">5 of 8 concepts ready</h3>
+        <span style="font-size: 13px; color: #4a4538;">from your topic outline</span>
+      </div>
+      <ul style="margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 8px;">
+        <sc-for list="{{concepts}}" as="c" hint-placeholder-count="8">
+          <li style="display: flex; align-items: center; gap: 10px; font-size: 14px;">
+            <span style="flex: 1; min-width: 0;">{{c.name}}</span>
+            <span role="meter" aria-label="{{c.name}} skill" aria-valuetext="{{c.level}}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{c.pct}}" style="width: 90px; height: 6px; border-radius: 999px; background: #e6e1d4; overflow: hidden; display: inline-block;"><span style="{{c.fill}}"></span></span>
+            <span style="width: 108px; font-size: 13px; color: #4a4538;">{{c.level}}</span>
+          </li>
+        </sc-for>
+      </ul>
+      <div style="display: flex; gap: 10px; flex-wrap: wrap; padding-top: 4px;">
+        <a href="#" style="height: 44px; padding: 0 18px; border-radius: 10px; background: #445D22; color: #ffffff; display: inline-flex; align-items: center; font-size: 15px; font-weight: 600;">Prepare in a session</a>
+        <a href="#" style="height: 44px; padding: 0 16px; border-radius: 10px; border: 1px solid rgba(42,39,31,0.18); background: #fdfcf9; color: #1a1814; display: inline-flex; align-items: center; font-size: 15px; font-weight: 600;">Make a study guide</a>
+      </div>
+    </section>
+
+    <section aria-labelledby="det-h" style="display: flex; flex-direction: column; gap: 10px;">
+      <div style="display: flex; align-items: center;">
+        <h3 id="det-h" style="margin: 0; flex: 1; font-size: 15px; font-weight: 600;">Details</h3>
+        <button type="button" style="height: 36px; padding: 0 12px; border-radius: 9px; border: 0; background: transparent; font: inherit; font-size: 14px; font-weight: 600; color: #445D22;">Edit</button>
+      </div>
+      <dl style="margin: 0; display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 8px 12px; font-size: 14px;">
+        <dt style="color: #4a4538;">Date</dt><dd style="margin: 0;">Fri, Mar 20, 2026</dd>
+        <dt style="color: #4a4538;">Type</dt><dd style="margin: 0;">Exam</dd>
+        <dt style="color: #4a4538;">Course</dt><dd style="margin: 0;">CS 112</dd>
+        <dt style="color: #4a4538;">Notes</dt><dd style="margin: 0; line-height: 1.5;">Covers lectures 9–16. One page of notes allowed.</dd>
+      </dl>
+    </section>
+
+    <div style="margin-top: auto; display: flex; align-items: center; gap: 12px; padding-top: 16px; border-top: 1px solid rgba(42,39,31,0.10);">
+      <button type="button" style="height: 40px; padding: 0 14px; border-radius: 10px; border: 1px solid rgba(42,39,31,0.18); background: #fdfcf9; font: inherit; font-size: 14px; font-weight: 600; color: #1a1814;">Add to Google Calendar</button>
+      <button type="button" style="margin-left: auto; height: 40px; padding: 0 12px; border-radius: 10px; border: 0; background: transparent; font: inherit; font-size: 14px; font-weight: 600; color: #a3302a;">Delete</button>
+    </div>
+  </section>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":980}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const L = { p: ['Proficient', 88, '#445D22'], d: ['Developing', 55, '#7d9a4e'], g: ['Getting started', 25, '#c4692f'], n: ['Not started', 0, '#c4692f'] };
+    const rows = [['Hash tables', 'p'], ['Linear probing', 'p'], ['Chaining', 'p'], ['Binary search trees', 'p'], ['Tree traversals', 'p'], ['Heaps', 'd'], ['Priority queues', 'g'], ['Heapsort', 'n']];
+    const concepts = rows.map(([name, k]) => ({
+      name, level: L[k][0], pct: L[k][1],
+      fill: `display: block; height: 100%; width: ${L[k][1]}%; background: ${L[k][2]};`,
+    }));
+    return { concepts };
+  }
+}
+</script>
+</body>
+</html>

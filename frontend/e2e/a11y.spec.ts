@@ -821,6 +821,71 @@ test("learning loop: course setup, reviewing dates and unticking a concept (cour
   }
 });
 
+// The redesigned calendar (`calendar_v2`, with `milestones` for an exam's
+// Prepare): Agenda, an item opened, Month, Week, Semester, the empty state and
+// the phone layout, each scanned. The dates are the design boards' own (the
+// frozen test clock is Mar 11 2026), routed so no seeded row changes; an edit
+// is routed too.
+test("calendar redesign: every view, an item opened, empty and phone (calendar_v2, milestones on)", async ({ browser }) => {
+  test.skip(loopOffLane, "loop path: default lane only");
+  test.setTimeout(LOOP_TIMEOUT_MS);
+  for (const flag of ["calendar_v2", "milestones"]) await setUserFlag(flag, USER_LOOP, "on");
+  const [{ course_id: courseId }] = (await queryRaw(
+    `SELECT o.course_id FROM enrollments e JOIN course_offerings o ON o.id = e.offering_id WHERE e.user_id = $1 ORDER BY o.course_id LIMIT 1`,
+    [USER_LOOP],
+  )) as { course_id: string }[];
+  const row = (id: string, title: string, due: string, type: string) =>
+    ({ id, user_id: USER_LOOP, title, due_date: due, assignment_type: type, course_id: courseId, notes: "" });
+  const dates = [
+    row("cal-mid1", "Midterm Exam", "2026-03-02", "exam"), row("cal-hw7", "HW 7", "2026-03-12", "homework"),
+    row("cal-q4", "Quiz 4", "2026-03-13", "quiz"), row("cal-mid2", "Midterm 2", "2026-03-20", "exam"),
+    row("cal-mid3", "Midterm", "2026-03-30", "exam"), row("cal-prop", "Project proposal", "2026-03-31", "homework"),
+    row("cal-prac", "Lab practical", "2026-04-01", "exam"),
+  ];
+  let served: object[] = dates;
+  const { context, page } = await signIn(browser, USER_LOOP, "Lou Loop");
+  try {
+    await page.route(/\/api\/calendar\/all\//, (route) => route.fulfill({ json: { assignments: served } }));
+    await page.route(/\/api\/calendar\/assignments\//, (route) => route.fulfill({ json: { updated: true, deleted: true } }));
+    await page.goto("/calendar");
+    const cal = page.getByTestId("calendar-v2");
+    await expect(cal).toHaveAttribute("data-view", "agenda");
+    await expect(page.getByTestId("calendar-item-cal-hw7")).toContainText("Tomorrow");
+    await expect(page.getByTestId("calendar-prepare-cal-mid2")).toHaveAttribute("href", `/learn?course=${courseId}&milestone=cal-mid2`);
+    await expectAccessible(page, "calendar: agenda");
+
+    const title = page.getByTestId("calendar-item-cal-mid2").getByRole("button", { name: /Midterm 2/ });
+    await title.click();
+    await expect(page.getByRole("heading", { level: 2, name: "Midterm 2" })).toBeFocused();
+    await expectAccessible(page, "calendar: an item opened");
+    await page.getByTestId("calendar-panel-edit").click();
+    await expectAccessible(page, "calendar: editing an item");
+    await page.keyboard.press("Escape");
+    await expect(title).toBeFocused();
+
+    for (const view of ["month", "week", "semester"] as const) {
+      await page.getByTestId(`calendar-view-${view}`).click();
+      await expect(cal).toHaveAttribute("data-view", view);
+      await expectAccessible(page, `calendar: ${view}`);
+    }
+    await expect(page.getByTestId("calendar-semester")).toContainText("3 due, 2 exams");
+
+    await page.getByTestId("calendar-view-agenda").click();
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(page.getByTestId("calendar-agenda")).toBeVisible();
+    await expectAccessible(page, "calendar: agenda on a phone");
+
+    served = [];
+    await page.setViewportSize({ width: 1440, height: 980 });
+    await page.reload();
+    await expect(page.getByTestId("calendar-empty")).toBeVisible();
+    await expectAccessible(page, "calendar: nothing on it yet");
+  } finally {
+    await context.close();
+    await setUserFlag("calendar_v2", USER_LOOP, "off");
+  }
+});
+
 test("learning loop: a segment's ungraded guess and a self-explanation prompt (A138, A139 on)", async ({ browser }) => {
   test.skip(loopOffLane, "loop path: default lane only");
   test.setTimeout(LOOP_TIMEOUT_MS);

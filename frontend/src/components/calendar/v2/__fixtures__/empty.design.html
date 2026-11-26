@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Calendar: nothing on it yet</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Aleo:wght@400;600;700&amp;family=SUSE:wght@400;500;600;700&amp;display=swap">
+<style>
+body{margin:0}
+a{color:#445D22;text-decoration:none}a:hover{color:#2f4115}
+</style>
+</helmet>
+<div style="width: 1440px; height: 980px; display: flex; background: #faf8f3; color: #1a1814; font-family: 'SUSE', system-ui, sans-serif; overflow: hidden;">
+  <dc-import name="AppNav" active="Calendar" hint-size="240px,980px"></dc-import>
+  <main style="flex: 1; min-width: 0; padding: 36px 48px; box-sizing: border-box; display: flex; flex-direction: column; gap: 28px;">
+    <header style="display: flex; flex-direction: column; gap: 6px;">
+      <h1 style="margin: 0; font-family: 'Aleo', Georgia, serif; font-size: 34px; font-weight: 600;">Calendar</h1>
+      <p style="margin: 0; font-size: 15px; color: #4a4538;">Your exams and assignments, every course in one place.</p>
+    </header>
+
+    <section aria-labelledby="empty-h" style="align-self: center; width: 100%; max-width: 760px; margin-top: 40px; padding: 40px; border-radius: 20px; background: #fdfcf9; border: 1px solid rgba(42,39,31,0.10); display: flex; flex-direction: column; gap: 28px;">
+      <div style="display: flex; flex-direction: column; gap: 10px;">
+        <h2 id="empty-h" style="margin: 0; font-family: 'Aleo', Georgia, serif; font-size: 30px; font-weight: 600;">Add your semester's dates</h2>
+        <p style="margin: 0; font-size: 16px; line-height: 1.55; color: #4a4538;">Import a syllabus and Sapling finds its exams, quizzes and homework. You can fix any date afterwards, and each exam gets a countdown and a way to prepare for it.</p>
+      </div>
+      <ol style="margin: 0; padding: 0; list-style: none; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px;">
+        <sc-for list="{{steps}}" as="s" hint-placeholder-count="3">
+          <li style="display: flex; flex-direction: column; gap: 8px; padding: 16px; border-radius: 14px; background: #f6f3ec;">
+            <span style="width: 28px; height: 28px; border-radius: 999px; background: #e1ecd7; color: #445D22; display: inline-flex; align-items: center; justify-content: center; font-weight: 700; font-size: 14px;">{{s.n}}</span>
+            <span style="font-size: 15px; font-weight: 600;">{{s.title}}</span>
+            <span style="font-size: 14px; line-height: 1.5; color: #4a4538;">{{s.text}}</span>
+          </li>
+        </sc-for>
+      </ol>
+      <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+        <button type="button" style="height: 48px; padding: 0 22px; border-radius: 11px; border: 0; background: #445D22; color: #ffffff; font: inherit; font-size: 16px; font-weight: 600;">Import a syllabus</button>
+        <button type="button" style="height: 48px; padding: 0 18px; border-radius: 11px; border: 1px solid rgba(42,39,31,0.18); background: #fdfcf9; font: inherit; font-size: 16px; font-weight: 600; color: #1a1814;">Add a date yourself</button>
+        <a href="#" style="margin-left: auto; font-size: 15px; font-weight: 600;">Or connect Google Calendar</a>
+      </div>
+    </section>
+  </main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":980}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {
+      steps: [
+        { n: 1, title: 'Upload the syllabus', text: 'A PDF, Word or PowerPoint file from any of your courses.' },
+        { n: 2, title: 'Check what we found', text: 'Fix a date, remove one, add one we missed.' },
+        { n: 3, title: 'See it all here', text: 'Exams, quizzes and homework, soonest first.' },
+      ],
+    };
+  }
+}
+</script>
+</body>
+</html>
