@@ -1,0 +1,51 @@
+{
+  "v": 3,
+  "layout": "files",
+  "createdOnFiles": {
+    "v": 1,
+    "at": "2026-11-26T20:00:00Z"
+  },
+  "title": "Sapling",
+  "namespace": "Sapling",
+  "libraries": [],
+  "sections": {},
+  "groups": [
+    "Logos"
+  ],
+  "assetGroups": {
+    "Logos": {
+      "name": "Logos",
+      "tile": "l",
+      "order": [
+        "sapling-icon.svg",
+        "sapling-word-icon.png"
+      ],
+      "files": {
+        "sapling-icon.svg": {
+          "name": "sapling-icon.svg",
+          "blob": "c8f11bf30533260904b1fa1245002fa9",
+          "size": 1533,
+          "type": "image/svg+xml"
+        },
+        "sapling-word-icon.png": {
+          "name": "sapling-word-icon.png",
+          "blob": "a542456aed3f736dcabd094483555625",
+          "size": 35273,
+          "type": "image/png"
+        }
+      }
+    }
+  },
+  "blobs": {},
+  "docs": {
+    "readme": "project/README.md",
+    "sections": []
+  },
+  "editing": "code",
+  "lastChange": {
+    "by": "Andres Lopez",
+    "at": "2026-11-26T14:39:12-05:00",
+    "via": "GitHub · SaplingLearn/Sapling@7f741b038",
+    "note": "Synced from frontend/ at 7f741b038: 17 components, 65 stories."
+  }
+}

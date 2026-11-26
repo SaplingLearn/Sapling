@@ -1,0 +1,43 @@
+<!-- @dsCard height=288 -->
+<style>
+  .cv { position: relative; width: 960px; height: 288px; background: var(--bg); overflow: hidden; }
+  .cv svg { position: absolute; inset: 0; }
+  .forest { fill: var(--brand-forest); }
+  .bright { fill: var(--brand-forest-bright); }
+  .tint { fill: var(--sap-200); }
+  .relief { fill: var(--sap-50); }
+  .ink { fill: var(--ink-800); }
+  .amber { fill: var(--state-progress); }
+  .cv-text { position: absolute; left: 40px; bottom: 36px; max-width: 440px; }
+  .cv-name { margin: 0; font-family: var(--font-display); font-weight: 500; font-size: 112px; line-height: 0.92; letter-spacing: -0.015em; color: var(--text); }
+  .cv-tag { margin: 12px 0 0; font-family: var(--font-sans); font-size: 14px; color: var(--text-muted); }
+</style>
+<div class="cv">
+  <svg width="960" height="288" viewBox="0 0 960 288" aria-hidden="true">
+    <!--
+      blocks: brand-forest 176x288 slab, sap-200 160x160, ink-800 104x120, sap-50 160x80, state-progress 48x48 (small: it means "in progress")
+      arrangement: one tall slab with satellites, bleeding off the top, bottom and right edges
+      pattern: a literal motif, the leaf, built from two quarter-arcs: "Alive, growing ... a thriving plant in a quiet library"
+      scales: 4px spacing step (every side a multiple of 16); leaf radii r-lg 16 (32px leaves) and 3x r-lg (96px leaf)
+    -->
+    <rect class="forest" x="520" y="0" width="176" height="288" />
+    <rect class="tint" x="696" y="48" width="160" height="160" />
+    <rect class="relief" x="696" y="208" width="160" height="80" />
+    <rect class="ink" x="856" y="0" width="104" height="120" />
+    <rect class="amber" x="872" y="224" width="48" height="48" />
+    <!-- a stem of leaves up the forest slab, alternating sides -->
+    <g class="tint">
+      <path d="M576 240 A32 32 0 0 1 608 208 A32 32 0 0 1 576 240 Z" />
+      <path d="M640 192 A32 32 0 0 0 608 160 A32 32 0 0 0 640 192 Z" />
+      <path d="M576 144 A32 32 0 0 1 608 112 A32 32 0 0 1 576 144 Z" />
+      <path d="M640 96 A32 32 0 0 0 608 64 A32 32 0 0 0 640 96 Z" />
+      <path d="M592 48 A32 32 0 0 1 624 16 A32 32 0 0 1 592 48 Z" />
+    </g>
+    <!-- one large leaf on the tint block -->
+    <path class="bright" d="M728 176 A96 96 0 0 1 824 80 A96 96 0 0 1 728 176 Z" />
+  </svg>
+  <div class="cv-text">
+    <p class="cv-name">Sapling</p>
+    <p class="cv-tag">A study companion that grows with what you learn.</p>
+  </div>
+</div>

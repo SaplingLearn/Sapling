@@ -88,6 +88,10 @@ const eslintConfig = [
       "out/**",
       "dist/**",
       "next-env.d.ts",
+      // Generated: the Storybook build and the design system it feeds.
+      "storybook-static/**",
+      "design-system/project/**",
+      "design-system-previews/**",
     ],
   },
   ...nextCoreWebVitals,

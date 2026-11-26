@@ -1,0 +1,87 @@
+name: Design system
+
+# Keeps frontend/design-system/project/ (the files published as Sapling's
+# Claude Design System artifact) in step with the code. On a push to main
+# that touches what the system is built from, it rebuilds Storybook, runs
+# scripts/design-system/build.mjs, and opens or updates a PR with the result
+# when anything changed. Publishing that folder to the artifact is the Trov
+# prompt `sapling-design-system-sync` (frontend/design-system/README.md).
+#
+# It never pushes to main itself: the regenerated files land through a PR,
+# like any other change.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "frontend/src/components/ui/**"
+      - "frontend/src/components/Dialog.tsx"
+      - "frontend/src/components/**/*.stories.tsx"
+      - "frontend/src/styles/**"
+      - "frontend/src/app/fonts/**"
+      - "frontend/.storybook/**"
+      - "frontend/design-system/brand.md"
+      - "frontend/design-system/cover.html"
+      - "frontend/design-system/assets.json"
+      - "frontend/scripts/design-system/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: design-system
+  cancel-in-progress: true
+
+jobs:
+  sync:
+    name: Regenerate the design system
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      pull-requests: write
+    defaults:
+      run:
+        working-directory: ./frontend
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Pin npm to the engines-required version
+        run: npm install -g npm@10.9.2 --engine-strict=false
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run build-storybook
+      - run: npm run design-system
+      - name: Check the previews render
+        run: node scripts/design-system/render-previews.mjs "$RUNNER_TEMP/previews"
+      - name: Open or update the sync PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if git diff --quiet -- design-system/project && [ -z "$(git ls-files --others --exclude-standard design-system/project)" ]; then
+            echo "design-system/project is up to date"
+            exit 0
+          fi
+          branch=chore/design-system-sync
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$branch"
+          git add design-system/project
+          git commit -m "chore(design-system): regenerate from ${GITHUB_SHA::9}"
+          git push --force origin "$branch"
+          if [ -z "$(gh pr list --head "$branch" --state open --json number --jq '.[].number')" ]; then
+            gh pr create --head "$branch" --base main \
+              --title "chore(design-system): regenerate from main" \
+              --body "$(printf '%s\n' \
+                'Regenerated frontend/design-system/project from main by .github/workflows/design-system.yml.' \
+                '' \
+                '## Acceptance criteria' \
+                '- [ ] The previews in design-system/project/components look right' \
+                '- [ ] After merge, run the Trov prompt sapling-design-system-sync to publish the artifact')"
+          fi

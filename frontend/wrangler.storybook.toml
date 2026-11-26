@@ -1,0 +1,23 @@
+#:schema node_modules/wrangler/config-schema.json
+#
+# The component catalog (Storybook) as a static-assets Worker, served at
+# ui.saplinglearn.com. No code runs: Cloudflare serves storybook-static/.
+#
+# Cloudflare Workers Builds, a project of its own (not the app's):
+#   * Build command  -> `npm run build-storybook`
+#   * Deploy command -> `npx wrangler deploy --config wrangler.storybook.toml`
+#   * Root directory -> frontend
+# Put it behind Cloudflare Access (Zero Trust > Access > Applications, the
+# ui.saplinglearn.com hostname, the team's emails) before sharing the link:
+# the catalog shows unreleased UI.
+
+name = "sapling-ui"
+compatibility_date = "2025-06-01"
+
+[assets]
+directory = "storybook-static"
+not_found_handling = "404-page"
+
+[[routes]]
+pattern = "ui.saplinglearn.com"
+custom_domain = true
