@@ -21,12 +21,16 @@
 }
 
 /* In the modal, the queue's and the check's own card frames go: the modal is
-   the card (no card inside a card). */
+   the card (no card inside a card). Their own scrolling goes too (the
+   retention card scrolls past 420px in the chat): the modal scrolls, and a
+   scroll box here would clip the focus ring of a field at its edge. */
 .sheet :global(.card) {
   border: 0;
   box-shadow: none;
   background: transparent;
   padding: 0;
+  max-height: none;
+  overflow: visible;
 }
 
 .rows .readyChip {
