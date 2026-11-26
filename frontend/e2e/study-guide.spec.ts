@@ -648,23 +648,33 @@ test("a guide is made in the dialog, written, read, answered, saved and found ag
   );
   await expect(page.getByTestId(`guides-card-saved-${SEEDED_GUIDE.id}`)).toHaveCount(0);
 
-  // ── In the Library, by the reader's own "Saved to Library" link ─────────
+  // ── Found again by the reader's own "Saved to Library" link ─────────────
+  // Since the Library rebuild (#717) the Study Guides home is the one list of
+  // saved guides, so the link opens it with Saved on.
   await card.click();
   await expect(page).toHaveURL(new RegExp(`/study/guide/${guideId}$`));
   await expect(page.getByTestId("guide-title")).toHaveText(GUIDE_TITLE, { timeout: LOAD_TIMEOUT });
   await page.getByTestId("guide-menu").click();
   await page.getByTestId("guide-menu-saved").click();
-  await expect(page).toHaveURL(/\/library$/);
+  await expect(page).toHaveURL(/\/study\/guide\?saved=1$/);
 
-  const libraryCard = page.getByTestId(`library-guide-${guideId}`);
-  await expect(libraryCard).toBeVisible({ timeout: LOAD_TIMEOUT });
-  await expect(libraryCard).toContainText(GUIDE_TITLE);
-  await expect(libraryCard).toContainText(COURSE_NAME_CS);
-  // Only saved guides are in the Library.
-  await expect(page.getByTestId(`library-guide-${SEEDED_GUIDE.id}`)).toHaveCount(0);
+  const savedOnly = page.getByTestId("guides-saved-only");
+  await expect(savedOnly).toHaveAttribute("aria-pressed", "true");
+  const savedCard = page.getByTestId(`guides-card-${guideId}`);
+  await expect(savedCard).toBeVisible({ timeout: LOAD_TIMEOUT });
+  await expect(savedCard).toContainText(GUIDE_TITLE);
+  await expect(page.getByTestId(`guides-card-saved-${guideId}`)).toContainText("Saved");
+  // Only saved guides are listed: the seeded guide is not saved.
+  await expect(page.getByTestId(`guides-card-${SEEDED_GUIDE.id}`)).toHaveCount(0);
 
-  // The Library card opens the reader on that guide, as the student left it.
-  await libraryCard.click();
+  // Saved off brings every guide back, and the URL follows.
+  await savedOnly.click();
+  await expect(savedOnly).toHaveAttribute("aria-pressed", "false");
+  await expect(page).toHaveURL(/\/study\/guide$/);
+  await expect(page.getByTestId(`guides-card-${SEEDED_GUIDE.id}`)).toBeVisible();
+
+  // The card opens the reader on that guide, as the student left it.
+  await savedCard.click();
   await expect(page).toHaveURL(new RegExp(`/study/guide/${guideId}$`));
   await expect(page.getByTestId("guide-title")).toHaveText(GUIDE_TITLE, { timeout: LOAD_TIMEOUT });
   await expect(page.getByTestId("guide-generating")).toHaveCount(0);

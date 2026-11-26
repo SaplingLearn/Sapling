@@ -45,7 +45,7 @@
  * asserts scoping the library to that course still surfaces the document (and
  * "No Course" does not) — the regression being that
  * GET /api/documents/user/{id} never returned course_id, so every upload
- * silently miscategorized as "Uncategorized" regardless of its real course.
+ * silently landed under "no course" regardless of its real course.
  */
 import path from "node:path";
 
@@ -142,6 +142,9 @@ async function uploadFixture(page: Page): Promise<void> {
  * of the inline affordance. Before the fix, `courses` was a parent-owned
  * prop refreshed only via onComplete (fired at done/close), so the freshly
  * added course never appeared within the same modal session.
+ *
+ * The Library's own upload dialog (#717) has no inline add, so the journey
+ * opens the modal where it still lives: Calendar's "Import syllabus".
  *
  * Uses the REAL catalog search + enroll routes against the seeded catalog:
  * HIST200 (rich-course-hist200, db/seed_local_rich.py) exists in the

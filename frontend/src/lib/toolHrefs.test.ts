@@ -33,6 +33,11 @@ describe("studyGuideHref", () => {
     expect(studyGuideHref({ course: "c1", concept: "node-1" }))
       .toBe("/study/guide?course=c1&concept=node-1");
   });
+
+  it("opens the home on the saved guides only when asked", () => {
+    expect(studyGuideHref({ saved: true })).toBe("/study/guide?saved=1");
+    expect(studyGuideHref({ saved: false })).toBe("/study/guide");
+  });
 });
 
 describe("studyGuideReaderHref", () => {

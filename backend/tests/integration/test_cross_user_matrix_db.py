@@ -63,7 +63,8 @@ def _requires_function_mode():
 def matrix_world(_reset_between_tests, db_conn, seeded_user):
     """On top of the rich baseline: a private room A owns that B is not in
     (with one message by A), a public room A owns, a pending friend request
-    A -> C, and one private chunk of A's. Inserted with the service-role
+    A -> C, a flashcard set and a Library folder of A's, and one private
+    chunk of A's. Inserted with the service-role
     `table()`, like the seed; the autouse reset wipes them between tests.
     Returns A's id for every ID_SOURCES param, resolved over psycopg."""
     from db import seed_local_rich as seed
@@ -108,6 +109,11 @@ def matrix_world(_reset_between_tests, db_conn, seeded_user):
         "id": m.FLASHCARD_SET_ID, "user_id": m.USER_A, "course_id": m.COURSE_SHARED,
         "name": m.FLASHCARD_SET_NAME, "concepts": ["Recursion"], "options": {},
     })
+    # A Library folder of A's (the seed has none): what `folder_id` probes.
+    table("document_folders").insert({
+        "id": m.FOLDER_ID, "user_id": m.USER_A, "course_id": m.COURSE_SHARED,
+        "name": m.FOLDER_NAME,
+    })
 
     codes = {cid: code for cid, code, *_ in seed._COURSES}
     table("course_chunks").insert({
@@ -151,6 +157,7 @@ _A_ROWS: dict[str, str] = {
     "quiz_context": _OWN.format(table="quiz_context", col="user_id"),
     "flashcards": _OWN.format(table="flashcards", col="user_id"),
     "flashcard_sets": _OWN.format(table="flashcard_sets", col="user_id"),
+    "document_folders": _OWN.format(table="document_folders", col="user_id"),
     "study_guides": _OWN.format(table="study_guides", col="user_id"),
     "graph_nodes": _OWN.format(table="graph_nodes", col="user_id"),
     "graph_edges": _OWN.format(table="graph_edges", col="user_id"),

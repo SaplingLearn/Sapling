@@ -332,6 +332,7 @@ export function LibraryHeader(props: LibraryHeaderProps) {
 
             <input
               ref={fileRef}
+              data-testid="library-upload-input"
               type="file"
               multiple
               accept=".pdf,.pptx,.docx"

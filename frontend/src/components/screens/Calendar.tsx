@@ -279,7 +279,7 @@ export function Calendar() {
           </button>
         </>
       )}
-      <button className="btn btn--sm" onClick={() => setUploadOpen(true)}>
+      <button className="btn btn--sm" data-testid="calendar-import-syllabus" onClick={() => setUploadOpen(true)}>
         <Icon name="upload" size={12} /> Import syllabus
       </button>
       {googleConnected ? (

@@ -35,6 +35,8 @@ History:
     as flashcards). Its four policies and its grant ship in the table's own
     migration (20261112060028_flashcard_sets.sql), written as this generator
     prints them; the applied step-2b/2c migrations are not regenerated.
+  * 2026-11-25 document_folders joins bucket A the same way (the Library's
+    folders; 20261125062932_library_folders.sql).
   * 2026-11-26 tutor_saved_items (the Tutor's Saved tab) joins bucket A the
     same way: its policies and grant ship in 20261126055016_tutor_saved_items.sql.
   * 2026-11-26 course_concept_exclusions (concepts a student removed in the
@@ -87,6 +89,8 @@ BUCKETS = {
         "quiz_context", "study_guides", "graph_nodes", "graph_edges", "feedback",
         "issue_reports", "user_achievements", "user_cosmetics", "user_roles", "xp_events",
         "friend_requests", "friendships",
+        "flashcard_sets",
+        "document_folders",
         "flashcard_sets", "tutor_saved_items", "course_concept_exclusions",
     ],
     "B_via_parent": [
@@ -138,6 +142,9 @@ for t in ("oauth_tokens", "gradescope_credentials", "enrollments", "notes",
 # Added after steps 2b/2c were applied: policies + grant live in the table's
 # own migration (20261112060028_flashcard_sets.sql), not in those two.
 owner("flashcard_sets", own); grant("flashcard_sets", "SELECT, INSERT, UPDATE, DELETE")
+# Same shape, own migration (20261125062932_library_folders.sql).
+owner("document_folders", own)
+grant("document_folders", "SELECT, INSERT, UPDATE, DELETE")
 owner("tutor_saved_items", own); grant("tutor_saved_items", "SELECT, INSERT, UPDATE, DELETE")  # 20261126055016
 owner("course_concept_exclusions", own); grant("course_concept_exclusions", "SELECT, INSERT, UPDATE, DELETE")  # 20261126060659
 owner("documents", own)
