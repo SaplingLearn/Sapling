@@ -21,7 +21,6 @@ import { useState } from 'react';
 import Image from 'next/image';
 
 import { Lightbox } from '@/components/companion/Lightbox';
-import { LABEL } from '@/lib/landing/companionType';
 
 export interface ZoomableShotProps {
   src: string;
@@ -53,39 +52,15 @@ export function ZoomableShot({
     <>
       <button
         type="button"
-        className="cp-shot"
+        className="cp-shot relative w-full aspect-[16/10] overflow-hidden [background:#ebe6dc] border border-[rgba(42,39,31,0.10)] [box-shadow:0_10px_28px_-16px_rgba(26,24,20,0.45)] p-0 cursor-pointer block"
         onClick={() => setOpen(true)}
         aria-label={`Expand ${title}`}
-        style={{
-          position: 'relative',
-          width: '100%',
-          aspectRatio: '16 / 10',
-          borderRadius: radius,
-          overflow: 'hidden',
-          background: '#ebe6dc',
-          border: '1px solid rgba(42,39,31,0.10)',
-          boxShadow: '0 10px 28px -16px rgba(26,24,20,0.45)',
-          padding: 0,
-          cursor: 'pointer',
-          display: 'block',
-        }}
+        style={{ borderRadius: radius }}
       >
         <Image src={src} alt="" fill sizes={sizes} style={{ objectFit: 'cover' }} />
         {route && (
           <span
-            style={{
-              position: 'absolute',
-              left: 10,
-              top: 10,
-              padding: '4px 9px',
-              borderRadius: 6,
-              background: 'rgba(250,248,243,0.9)',
-              backdropFilter: 'blur(4px)',
-              fontFamily: LABEL,
-              fontSize: 11,
-              
-              
-              color: '#3f3b31' }}
+            className="absolute left-2.5 top-2.5 py-1 px-[9px] rounded-sm bg-[rgba(250,248,243,0.9)] [backdrop-filter:blur(4px)] font-sans text-xs text-ink-600"
           >
             {route}
           </span>

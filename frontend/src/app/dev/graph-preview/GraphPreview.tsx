@@ -5,6 +5,7 @@ import { KnowledgeGraph } from "@/components/graph/KnowledgeGraph";
 import { useGraphSize } from "@/components/graph/useGraphSize";
 import { CoursesKey, courseProgressFor } from "@/components/graph/CoursesKey";
 import { paletteFor, type GraphEdge, type GraphNode } from "@/lib/data";
+import { cn } from "@/lib/cn";
 
 // "Name < A, B" = A and B are prerequisites of Name.
 // "Name << A"   = Name builds on A.
@@ -142,19 +143,15 @@ function Toggle<T extends string | number | boolean>({
   label, value, options, onChange,
 }: { label: string; value: T; options: { v: T; text: string }[]; onChange: (v: T) => void }) {
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-      <span style={{ fontSize: 12, color: "var(--text-muted)" }}>{label}</span>
-      <div style={{ display: "flex", border: "1px solid var(--border, #ccc)", borderRadius: 8, overflow: "hidden" }}>
+    <div className="flex items-center gap-2">
+      <span className="text-sm text-text-muted">{label}</span>
+      <div className="flex [border:1px_solid_var(--border,_#ccc)] rounded-[8px] overflow-hidden">
         {options.map((o) => (
           <button
             key={String(o.v)}
             type="button"
             onClick={() => onChange(o.v)}
-            style={{
-              padding: "5px 12px", fontSize: 13, border: 0, cursor: "pointer",
-              background: o.v === value ? "var(--text, #222)" : "transparent",
-              color: o.v === value ? "var(--bg, #fff)" : "var(--text, #222)",
-            }}
+            className={cn("py-[5px] px-3 text-md border-0 cursor-pointer", o.v === value ? "[background:var(--text,_#222)]" : "bg-transparent", o.v === value ? "[color:var(--bg,_#fff)]" : "[color:var(--text,_#222)]")}
           >
             {o.text}
           </button>
@@ -192,9 +189,9 @@ export default function GraphPreview() {
   const linkCount = data.edges.filter((e) => !e.source.startsWith("subject_root__")).length;
 
   return (
-    <div style={{ height: "100vh", display: "flex", flexDirection: "column", background: "var(--bg)", color: "var(--text)" }}>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 18, alignItems: "center", padding: "12px 16px", borderBottom: "1px solid var(--border, #ddd)" }}>
-        <strong style={{ fontSize: 15 }}>Graph preview</strong>
+    <div className="h-screen flex flex-col bg-bg text-text">
+      <div className="flex flex-wrap gap-4.5 items-center py-3 px-4 [border-bottom:1px_solid_var(--border,_#ddd)]">
+        <strong className="text-[15px]">Graph preview</strong>
         <Toggle label="Courses" value={courseCount} onChange={setCourseCount}
           options={[{ v: 1, text: "1" }, { v: 3, text: "3" }]} />
         <Toggle label="Concepts per course" value={perCourse} onChange={setPerCourse}
@@ -203,11 +200,11 @@ export default function GraphPreview() {
           options={[{ v: true, text: "On" }, { v: false, text: "Off (today's data)" }]} />
         <Toggle label="Obsidian legibility" value={legible} onChange={setLegible}
           options={[{ v: true, text: "On" }, { v: false, text: "Off" }]} />
-        <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
+        <span className="text-sm text-text-muted">
           {conceptCount} concepts · {linkCount} concept links · hover a concept · scroll to zoom · dev only, made-up data
         </span>
       </div>
-      <div ref={wrapRef} style={{ flex: 1, minHeight: 0, position: "relative" }}>
+      <div ref={wrapRef} className="flex-1 min-h-0 relative">
         {/* The same wrapper the Tree and Dashboard mount (Mastery colors
             toggle, crash boundary), not the bare 2D renderer. */}
         {size && (

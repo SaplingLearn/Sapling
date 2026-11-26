@@ -1,5 +1,6 @@
 "use client";
 import React from "react";
+import { cn } from "@/lib/cn";
 
 // Shared segmented control (the ONE pill-shaped toggle). Replaces the ad-hoc
 // mode/model toggles. Pill shape is correct here — it signals "pick one of these",
@@ -29,14 +30,7 @@ export function Toggle<T extends string>({
       data-testid={testid}
       role={labelledBy ? "group" : undefined}
       aria-labelledby={labelledBy}
-      style={{
-        display: "inline-flex",
-        background: "var(--bg-soft)",
-        borderRadius: "var(--r-full)",
-        padding: 3,
-        gap: 2,
-        flexWrap: "wrap",
-      }}
+      className="inline-flex bg-bg-soft rounded-[var(--r-full)] p-[3px] gap-0.5 flex-wrap"
     >
       {options.map((o) => {
         const on = o.value === value;
@@ -48,18 +42,7 @@ export function Toggle<T extends string>({
             title={o.title}
             aria-pressed={on}
             data-testid={testid ? `${testid}-${o.value}` : undefined}
-            style={{
-              padding: pad,
-              fontSize: fs,
-              fontWeight: on ? 600 : 500,
-              borderRadius: "var(--r-full)",
-              border: 0,
-              cursor: "pointer",
-              background: on ? "var(--brand-forest)" : "transparent",
-              color: on ? "#fff" : "var(--text-dim)",
-              transition: "all var(--dur-fast) var(--ease)",
-              fontFamily: "var(--font-sans)",
-            }}
+            className={cn("rounded-[var(--r-full)] border-0 cursor-pointer [transition:all_var(--dur-fast)_var(--ease)] font-sans", on ? "font-semibold" : "font-medium", on ? "bg-brand-forest" : "bg-transparent", on ? "text-accent-fg" : "text-text-dim")} style={{ padding: pad, fontSize: fs }}
           >
             {o.label}
           </button>

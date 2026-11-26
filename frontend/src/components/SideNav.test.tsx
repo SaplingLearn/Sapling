@@ -54,6 +54,7 @@ vi.mock("./Icon", () => ({
 
 import { SideNav, SIDE_NAV_EXPANDED, SIDE_NAV_COLLAPSED } from "./SideNav";
 import { usePathname } from "next/navigation";
+import { twStyle } from "@/test-utils/twStyle";
 
 const mockedUsePathname = vi.mocked(usePathname);
 
@@ -151,7 +152,7 @@ describe("SideNav — interactive row height floor", () => {
     const rows = navRows(rail);
     expect(rows.length).toBeGreaterThan(0);
     for (const row of rows) {
-      const min = smallestHeight(row.style.minHeight);
+      const min = smallestHeight(twStyle(row).minHeight);
       // Guards the helper itself: an unparseable value must fail loudly here
       // rather than slip through as a NaN comparison below.
       expect(Number.isFinite(min)).toBe(true);
@@ -162,7 +163,7 @@ describe("SideNav — interactive row height floor", () => {
   it("keeps every collapsed nav row at or above the 36px floor", () => {
     const rail = renderRail(true);
     for (const row of navRows(rail)) {
-      const min = smallestHeight(row.style.minHeight);
+      const min = smallestHeight(twStyle(row).minHeight);
       expect(Number.isFinite(min)).toBe(true);
       expect(min).toBeGreaterThanOrEqual(MIN_HIT_TARGET);
     }
@@ -177,15 +178,15 @@ describe("SideNav — the logo", () => {
     let rail = renderRail(false);
     let home = screen.getByRole("link", { name: "Sapling — home" });
     expect(home.getAttribute("href")).toBe("/dashboard");
-    expect(symbolOf(rail).style.opacity).toBe("0");
+    expect(symbolOf(rail)).toHaveTwStyle({ opacity: "0" });
     cleanup();
     rail = renderRail(true);
     home = screen.getByRole("link", { name: "Sapling — home" });
-    expect(symbolOf(rail).style.opacity).toBe("1");
+    expect(symbolOf(rail)).toHaveTwStyle({ opacity: "1" });
     expect(home.contains(symbolOf(rail))).toBe(true);
     // Reachable in the narrow rail too: it is the only logo left on screen.
     expect(home.getAttribute("tabindex")).toBeNull();
-    expect(home.style.pointerEvents).toBe("");
+    expect(twStyle(home).pointerEvents).toBe("");
   });
 });
 
@@ -205,12 +206,12 @@ describe("SideNav — the account footer", () => {
   it("opens the account footer with one full-width rule", () => {
     const rail = renderRail();
     const footer = footerOf(rail);
-    expect(footer.style.borderTop).toBe("1px solid var(--border)");
+    expect(footer).toHaveTwStyle({ borderTop: "1px solid var(--border)" });
 
     // The profile block (the one holding the avatar) owns no rule of its own.
-    let node: HTMLElement | null = screen.getByTestId("avatar").closest("div[style]");
+    let node: HTMLElement | null = screen.getByTestId("avatar").closest("div");
     while (node && node !== footer) {
-      expect(node.style.borderTop).toBe("");
+      expect(twStyle(node).borderTopWidth).toBe("");
       node = node.parentElement;
     }
     expect(node).toBe(footer);
@@ -232,20 +233,20 @@ describe("SideNav — the account footer", () => {
     // Wide rail: a labelled row. Narrow rail: the chevron alone (the label
     // stays mounted so it can fade, but is invisible and aria-hidden).
     const collapseLabel = within(collapse).getByText("Collapse");
-    expect(collapseLabel.style.opacity).toBe("1");
+    expect(collapseLabel).toHaveTwStyle({ opacity: "1" });
     cleanup();
     rail = renderRail(true);
     const expand = screen.getByRole("button", { name: "Expand sidebar" });
     expect(footerOf(rail).firstElementChild).toBe(expand);
-    expect(within(expand).getByText("Collapse").style.opacity).toBe("0");
+    expect(within(expand).getByText("Collapse")).toHaveTwStyle({ opacity: "0" });
   });
 
   it("pins the footer and scrolls only the destinations, scrollbar hidden", () => {
     const rail = renderRail();
-    expect(rail.style.overflow).toBe("hidden");
+    expect(rail).toHaveTwStyle({ overflow: "hidden" });
     const scroller = rail.querySelector<HTMLElement>("[data-sidenav-scroll]")!;
-    expect(scroller.style.overflowY).toBe("auto");
-    expect(scroller.getAttribute("style") || "").toMatch(/scrollbar-width:\s*none/);
+    expect(scroller).toHaveTwStyle({ overflowY: "auto" });
+    expect(twStyle(scroller).cssText || "").toMatch(/scrollbar-width:\s*none/);
     expect(scroller.contains(screen.getByText("Tutor"))).toBe(true);
     expect(scroller.contains(footerOf(rail))).toBe(false);
   });
@@ -261,10 +262,10 @@ describe("SideNav — active vs inactive", () => {
     // The selected row is a plain neutral fill in the ink scale; an unselected one
     // has no background at all. Asserting the TOKEN rather than a computed
     // colour keeps this honest if the scale is retuned.
-    expect(study.getAttribute("style") || "").toMatch(/font-weight:\s*600/);
-    expect(study.getAttribute("style") || "").toMatch(/--bg-soft/);
-    expect(tree.getAttribute("style") || "").toMatch(/font-weight:\s*400/);
-    expect(tree.getAttribute("style") || "").not.toMatch(/--bg-soft/);
+    expect(twStyle(study).cssText || "").toMatch(/font-weight:\s*600/);
+    expect(twStyle(study).cssText || "").toMatch(/--bg-soft/);
+    expect(twStyle(tree).cssText || "").toMatch(/font-weight:\s*400/);
+    expect(twStyle(tree).cssText || "").not.toMatch(/--bg-soft/);
   });
 
   it.each(["/flashcards", "/flashcards/deck-1", "/study/guide"])(
@@ -273,8 +274,8 @@ describe("SideNav — active vs inactive", () => {
       mockedUsePathname.mockReturnValue(path);
       renderRail();
       const study = screen.getByText("Study").closest("a")!;
-      expect(study.getAttribute("style") || "").toMatch(/font-weight:\s*600/);
-      expect(study.getAttribute("style") || "").toMatch(/--bg-soft/);
+      expect(twStyle(study).cssText || "").toMatch(/font-weight:\s*600/);
+      expect(twStyle(study).cssText || "").toMatch(/--bg-soft/);
     },
   );
 
@@ -282,7 +283,7 @@ describe("SideNav — active vs inactive", () => {
     mockedUsePathname.mockReturnValue("/");
     renderRail();
     const dashboard = screen.getByText("Dashboard").closest("a")!;
-    expect(dashboard.getAttribute("style") || "").toMatch(/font-weight:\s*600/);
+    expect(twStyle(dashboard).cssText || "").toMatch(/font-weight:\s*600/);
   });
 });
 
@@ -293,18 +294,18 @@ describe("SideNav — collapsed state", () => {
         .filter(isNavRow);
     renderRail(false);
     for (const r of rows()) {
-      expect(r.style.justifyContent).toBe("");
-      expect(r.style.marginLeft).toBe("0px");
-      expect(r.style.paddingLeft).toBe("12px");
-      expect(r.style.transition).toMatch(/padding/);
+      expect(twStyle(r).justifyContent).toBe("");
+      expect(r).toHaveTwStyle({ marginLeft: "0px" });
+      expect(r).toHaveTwStyle({ paddingLeft: "12px" });
+      expect(twStyle(r).transition).toMatch(/padding/);
     }
     cleanup();
     renderRail(true);
     // 64px rail − 2×6px padding = 52px; a 15px icon centred → 18.5px.
     for (const r of rows()) {
-      expect(r.style.justifyContent).toBe("");
-      expect(r.style.marginLeft).toBe("0px");
-      expect(r.style.paddingLeft).toBe("18.5px");
+      expect(twStyle(r).justifyContent).toBe("");
+      expect(r).toHaveTwStyle({ marginLeft: "0px" });
+      expect(r).toHaveTwStyle({ paddingLeft: "18.5px" });
     }
   });
 
@@ -315,17 +316,15 @@ describe("SideNav — collapsed state", () => {
     // rail they are invisible and hidden from assistive tech...
     for (const label of ["Learn", "Tools"]) {
       const el = screen.getByText(label);
-      expect(el.style.opacity).toBe("0");
+      expect(el).toHaveTwStyle({ opacity: "0" });
       expect(el.closest("[aria-hidden='true']")).toBeTruthy();
     }
     // ...and a hairline shows at each of the 3 group boundaries instead; the
     // footer keeps its own border-top rule in the narrow state too.
     const rules = Array.from(rail.querySelectorAll<HTMLElement>("[data-sidenav-group-rule]"));
     expect(rules).toHaveLength(3);
-    for (const r of rules) expect(r.style.opacity).toBe("1");
-    expect(rail.querySelector<HTMLElement>("[data-sidenav-footer]")!.style.borderTop).toBe(
-      "1px solid var(--border)",
-    );
+    for (const r of rules) expect(r).toHaveTwStyle({ opacity: "1" });
+    expect(rail.querySelector<HTMLElement>("[data-sidenav-footer]")!).toHaveTwStyle({ borderTop: "1px solid var(--border)" });
 
     expect(screen.getByRole("button", { name: "Expand sidebar" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Collapse sidebar" })).toBeNull();

@@ -1,3 +1,4 @@
+@layer components {
 /* The study-guide reader.
 
    The guide sits straight on the page background, like the Study hub: no
@@ -110,24 +111,9 @@
   transition: background-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
 }
 .menuButton:hover, .menuButton[aria-expanded="true"] { background: var(--bg-soft); color: var(--text); }
-.menu {
-  position: absolute; right: 0; top: 52px; z-index: 8; width: 250px; padding: 6px;
-  display: flex; flex-direction: column; gap: 2px;
-  border-radius: var(--r-md); background: var(--bg-panel); border: 1px solid var(--border);
-  box-shadow: var(--shadow-lg);
-}
-.menuItem {
-  display: flex; align-items: center; gap: 12px; width: 100%; min-height: 44px; padding: 0 12px;
-  border-radius: var(--r-sm); color: var(--text); font-size: var(--fs-base); font-weight: 500;
-  text-align: left; text-decoration: none;
-}
-.menuItem:hover:not(:disabled) { background: var(--bg-subtle); }
-.menuItem:disabled { opacity: 0.5; cursor: not-allowed; }
-.menuItem svg { color: var(--text-dim); }
 .menuSaved { display: flex; flex-direction: column; line-height: 1.25; }
 .menuSaved strong { color: var(--sap-800); }
 .menuSaved span { font-size: var(--fs-sm); color: var(--text-muted); }
-.menuRule { height: 1px; margin: 4px 6px; background: var(--border); }
 
 /* ── takeaways ───────────────────────────────────────────────────────────── */
 
@@ -274,4 +260,6 @@
   .shell { max-width: none; padding: 0; }
   .layout { display: block; }
   .sectionBody[hidden] { display: flex !important; }
+}
+
 }

@@ -1,6 +1,7 @@
 import type { CSSProperties } from "react";
-import { ACCENT, BODY, DISPLAY, INK, LABEL, MUTED, SERIF } from "@/lib/landing/companionType";
+import { ACCENT, LABEL, MUTED } from "@/lib/landing/companionType";
 import { legalDateLabel, type LegalDocument, type LegalSection } from "@/lib/legal/documents";
+import { cn } from "@/lib/cn";
 
 /**
  * A legal document as the public /terms and /privacy pages show it, on the
@@ -30,51 +31,7 @@ import { legalDateLabel, type LegalDocument, type LegalSection } from "@/lib/leg
  * clause left edge.
  */
 
-const RULE = "1px solid rgba(42,39,31,0.08)";
-/** Sized off the longest clause titles ("6. Study Rooms and Social Features",
- * "4. How We Share Your Information"). */
-const TITLE_COL = 220;
-const COL_GAP = 32;
-
-/**
- * A clause row.
- *
- * Wrapping flex rather than a grid so the two columns collapse to one on a
- * narrow screen: inline styles cannot carry a media query and these pages
- * have no stylesheet of their own. The text cell's 460px basis is what
- * triggers it — below ~764px of content width there is no room for both.
- */
-const ROW: CSSProperties = {
-  display: "flex", flexWrap: "wrap", alignItems: "flex-start",
-  gap: COL_GAP, padding: "22px 0", borderTop: RULE,
-};
-/**
- * Both cells grow, but the text cell grows a thousand times harder. Side by
- * side that is invisible — the heading takes 264.35px of the 1116 rather than
- * 264 — and once the row wraps it is the whole point: each cell is alone on
- * its line and stretches to fill it, so the stacked heading keeps the same
- * right edge as the text under it instead of stopping 60px short.
- */
-const TITLE_CELL: CSSProperties = { flex: `1 1 ${TITLE_COL}px`, maxWidth: "100%", minWidth: 0 };
-const TEXT_CELL: CSSProperties = { flex: "999 1 330px", minWidth: 0 };
-
-const H2: CSSProperties = {
-  margin: 0, fontSize: 14.5, fontWeight: 600, lineHeight: 1.45,
-  letterSpacing: "-0.01em", color: INK,
-};
-const PROSE: CSSProperties = {
-  margin: 0, fontFamily: SERIF, fontSize: 16, lineHeight: 1.62, color: BODY,
-};
-const LIST: CSSProperties = {
-  margin: "14px 0 0", padding: 0, listStyle: "none",
-  display: "flex", flexDirection: "column", gap: 10,
-};
-const ITEM: CSSProperties = { ...PROSE, display: "flex", gap: 12 };
 const BULLET: CSSProperties = { color: MUTED, flex: "0 0 auto" };
-/** The sans label that introduces a sub-list, held off the serif around it. */
-const SUBLABEL: CSSProperties = {
-  margin: 0, fontSize: 14, fontWeight: 600, letterSpacing: "-0.005em", color: INK,
-};
 const META: CSSProperties = {
   display: "block", fontFamily: LABEL, fontSize: 10.5, letterSpacing: "0.04em", color: MUTED,
 };
@@ -87,9 +44,9 @@ function enter(i: number): CSSProperties {
 
 function Bulleted({ items, style }: { items: React.ReactNode[]; style?: CSSProperties }) {
   return (
-    <ul style={{ ...LIST, ...style }}>
+    <ul className="mt-3.5 mx-0 mb-0 p-0 list-none flex flex-col gap-2.5" style={{ ...style }}>
       {items.map((item, i) => (
-        <li key={i} style={ITEM}>
+        <li key={i} className="m-0 font-serif text-lg leading-[1.62] text-ink-600 flex gap-3">
           <span style={BULLET}>&bull;</span>
           <span>{item}</span>
         </li>
@@ -102,7 +59,7 @@ function SectionText({ section }: { section: LegalSection }) {
   return (
     <>
       {section.body && (
-        <p style={PROSE}>
+        <p className="m-0 font-serif text-lg leading-[1.62] text-ink-600">
           {section.body}
           {section.link && <a href={section.link.href} style={LINK}>{section.link.label}</a>}
           {section.bodySuffix}
@@ -112,10 +69,10 @@ function SectionText({ section }: { section: LegalSection }) {
       {section.list && <Bulleted items={section.list} />}
 
       {section.subsections && (
-        <div style={{ marginTop: section.body ? 16 : 0, display: "flex", flexDirection: "column", gap: 22 }}>
+        <div className={cn("flex flex-col gap-5.5", section.body ? "mt-4" : "mt-0")}>
           {section.subsections.map((sub) => (
             <div key={sub.label}>
-              <p style={SUBLABEL}>{sub.label}</p>
+              <p className="m-0 text-base font-semibold tracking-[-0.005em] text-ink-800">{sub.label}</p>
               <Bulleted items={sub.list} style={{ marginTop: 10 }} />
             </div>
           ))}
@@ -126,13 +83,13 @@ function SectionText({ section }: { section: LegalSection }) {
         <Bulleted
           items={section.highlights.map((h) => (
             <>
-              <strong style={{ color: INK, fontWeight: 600 }}>{h.label}</strong> {h.text}
+              <strong className="text-ink-800 font-semibold">{h.label}</strong> {h.text}
             </>
           ))}
         />
       )}
 
-      {section.bodyAfter && <p style={{ ...PROSE, marginTop: 16 }}>{section.bodyAfter}</p>}
+      {section.bodyAfter && <p className="m-0 font-serif text-lg leading-[1.62] text-ink-600 mt-4">{section.bodyAfter}</p>}
     </>
   );
 }
@@ -145,20 +102,14 @@ export function LegalDocumentPage({ doc }: { doc: LegalDocument }) {
           it — two hairlines stacked between the title and the date. The
           row rule is the structural one (every clause has one), so the
           masthead defers to it and only keeps the space. */}
-      <header style={{ paddingBottom: 30 }}>
+      <header className="pb-7.5">
         <span
-          style={{
-            display: "block", fontFamily: LABEL, fontSize: 12, 
-            color: MUTED, animation: "fadeUp 600ms ease both" }}
+          className="block font-sans text-sm [animation:fadeUp_600ms_ease_both]" style={{ color: MUTED }}
         >
           Legal
         </span>
         <h1
-          style={{
-            margin: "14px 0 0", fontFamily: DISPLAY, fontWeight: 500, fontSize: 34,
-            lineHeight: 1.15, letterSpacing: "-0.015em", color: INK,
-            animation: "fadeUp 700ms ease 60ms both",
-          }}
+          className="mt-3.5 mx-0 mb-0 font-display font-medium text-[34px] leading-[1.15] tracking-[-0.015em] text-ink-800 [animation:fadeUp_700ms_ease_60ms_both]"
         >
           {doc.title}
         </h1>
@@ -169,21 +120,21 @@ export function LegalDocumentPage({ doc }: { doc: LegalDocument }) {
             column and the preamble takes the text column. That puts the
             opening paragraph on the same measure and the same left edge as
             every clause under it, instead of running the full width alone. */}
-        <div style={{ ...ROW, ...enter(0) }}>
-          <div style={TITLE_CELL}>
+        <div className="flex flex-wrap items-start gap-8 py-5.5 px-0 border-t border-t-[rgba(42,39,31,0.08)]" style={{ ...enter(0) }}>
+          <div className="flex-[1_1_220px] max-w-full min-w-0">
             <span style={META} data-testid="legal-updated">Last updated: {legalDateLabel(doc.version)}</span>
           </div>
-          <div style={TEXT_CELL}>
-            <p style={PROSE}>{doc.preamble}</p>
+          <div className="flex-[999_1_330px] min-w-0">
+            <p className="m-0 font-serif text-lg leading-[1.62] text-ink-600">{doc.preamble}</p>
           </div>
         </div>
 
         {doc.sections.map((section, i) => (
-          <div key={section.title} style={{ ...ROW, ...enter(i + 1) }}>
-            <div style={TITLE_CELL}>
-              <h2 style={H2}>{section.title}</h2>
+          <div key={section.title} className="flex flex-wrap items-start gap-8 py-5.5 px-0 border-t border-t-[rgba(42,39,31,0.08)]" style={{ ...enter(i + 1) }}>
+            <div className="flex-[1_1_220px] max-w-full min-w-0">
+              <h2 className="m-0 text-[14.5px] font-semibold leading-[1.45] tracking-[-0.01em] text-ink-800">{section.title}</h2>
             </div>
-            <div style={TEXT_CELL}>
+            <div className="flex-[999_1_330px] min-w-0">
               <SectionText section={section} />
             </div>
           </div>

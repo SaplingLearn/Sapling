@@ -16,17 +16,12 @@
 import React from "react";
 import Link from "next/link";
 import { FOCUS_ARC, chipsThatFit, focusCardsLabel } from "./hubModel";
-import { DISPLAY, Glyph, LABEL, POPOVER, StatusDot, WarnIcon, shownTools, type GlyphName } from "./hubUi";
+import { Glyph, StatusDot, WarnIcon, shownTools, type GlyphName } from "./hubUi";
 import s from "./StudyHub.module.css";
 import { ST_LABEL, ring, type Concept } from "./studyModel";
 import { leaveOnClick, type ToolKey, type ToolNav } from "./useToolNav";
+import { cn } from "@/lib/cn";
 
-/* `.label-micro`, for the one place it sits on the dark block. */
-const MICRO_ON_DARK: React.CSSProperties = { fontFamily: LABEL, fontSize: 12, color: "var(--sap-100)" };
-const BLOCK: React.CSSProperties = { borderRadius: "var(--r-lg)", background: "var(--sidenav-bg)", color: "#FFFFFF", padding: "16px 18px" };
-const FALLBACK_NOTE: React.CSSProperties = { margin: "0 0 10px", fontSize: "var(--fs-sm)", lineHeight: 1.3, color: "rgba(255,255,255,0.86)" };
-const CHIP: React.CSSProperties = { display: "inline-flex", alignItems: "center", height: 22, padding: "0 8px", borderRadius: 11, color: "#FFFFFF", fontSize: "var(--fs-xs)", fontWeight: 600, whiteSpace: "nowrap" };
-const PRETTY = { textWrap: "pretty" } as React.CSSProperties;
 /** The gap mark's own chip: the icon, its padding, and the line's gap after
  *  it. Derived, so it cannot drift from what the mark actually renders. */
 const GAP_MARK_ICON = 13;
@@ -36,12 +31,12 @@ const GAP_MARK_W = GAP_MARK_ICON + GAP_MARK_PAD * 2 + PREREQ_GAP;
 
 function MasteryRing({ concept }: { concept: Concept }) {
   return (
-    <span style={{ position: "relative", width: 72, height: 72, flexShrink: 0 }}>
-      <svg width="72" height="72" viewBox="0 0 72 72" aria-hidden="true" style={{ display: "block", transform: "rotate(-90deg)" }}>
+    <span className="relative w-18 h-18 shrink-0">
+      <svg width="72" height="72" viewBox="0 0 72 72" aria-hidden="true" className="block [transform:rotate(-90deg)]">
         <circle cx="36" cy="36" r="31" fill="none" stroke="rgba(255,255,255,0.18)" strokeWidth="6.5" />
         <circle cx="36" cy="36" r="31" fill="none" stroke={FOCUS_ARC[concept.st]} strokeWidth="6.5" strokeLinecap="round" strokeDasharray={ring(concept.m, 31)} />
       </svg>
-      <span style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 24, fontWeight: 600, letterSpacing: "-0.02em" }}>{concept.m}%</span>
+      <span className="absolute inset-0 flex items-center justify-center text-[24px] font-semibold tracking-[-0.02em]">{concept.m}%</span>
     </span>
   );
 }
@@ -50,13 +45,13 @@ function MasteryRing({ concept }: { concept: Concept }) {
 function MorePrereqs({ rest }: { rest: Concept[] }) {
   const [open, setOpen] = React.useState(false);
   return (
-    <span onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)} style={{ position: "relative", flexShrink: 0 }}>
-      <span tabIndex={0} onFocus={() => setOpen(true)} onBlur={() => setOpen(false)} style={{ ...CHIP, background: "rgba(255,255,255,0.22)", cursor: "default" }}>+{rest.length} more</span>
+    <span onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)} className="relative shrink-0">
+      <span tabIndex={0} onFocus={() => setOpen(true)} onBlur={() => setOpen(false)} className="inline-flex items-center h-5.5 py-0 px-2 rounded-[11px] text-accent-fg text-xs font-semibold whitespace-nowrap bg-[rgba(255,255,255,0.22)] cursor-default">+{rest.length} more</span>
       {open && (
-        <span style={{ position: "absolute", left: 0, top: "100%", paddingTop: 6, zIndex: 25 }}>
-          <span className={s.pop} style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 180, padding: "8px 10px", ...POPOVER, borderRadius: "var(--r-md)" }}>
+        <span className="absolute left-0 top-full pt-1.5 z-25">
+          <span className={cn(s.pop, "flex flex-col gap-1.5 min-w-45 py-2 px-2.5 [background:var(--bg-panel)] border border-border shadow-lg rounded-md")}>
             {rest.map(t => (
-              <span key={t.id} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "var(--fs-md)", fontWeight: 600, color: "var(--text)", whiteSpace: "nowrap" }}>
+              <span key={t.id} className="flex items-center gap-2 text-md font-semibold text-text whitespace-nowrap">
                 <StatusDot st={t.st} size={8} />{t.name}
               </span>
             ))}
@@ -81,17 +76,16 @@ function MorePrereqs({ rest }: { rest: Concept[] }) {
 function GapWarning({ concept }: { concept: Concept }) {
   const [open, setOpen] = React.useState(false);
   return (
-    <span onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)} style={{ position: "relative", flexShrink: 0, display: "flex" }}>
+    <span onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)} className="relative shrink-0 flex">
       <span tabIndex={0} aria-label={`${concept.name} · ${concept.gap}`} onFocus={() => setOpen(true)} onBlur={() => setOpen(false)}
-        style={{ ...CHIP, padding: `0 ${GAP_MARK_PAD}px`, background: "var(--warn-soft)", cursor: "default" }}>
+        className="inline-flex items-center h-5.5 py-0 px-2 rounded-[11px] text-accent-fg text-xs font-semibold whitespace-nowrap bg-warn-soft cursor-default" style={{ padding: `0 ${GAP_MARK_PAD}px` }}>
         <WarnIcon size={GAP_MARK_ICON} />
       </span>
       {open && (
-        <span style={{ position: "absolute", left: -4, top: "100%", paddingTop: 6, zIndex: 25 }}>
-          <span role="tooltip" data-testid="focus-gap-warning" className={s.pop}
-            style={{ display: "flex", alignItems: "flex-start", gap: 8, width: 260, padding: "10px 12px", ...POPOVER, background: "var(--warn-soft)", borderColor: "transparent", color: "var(--warn)", fontSize: "var(--fs-sm)", lineHeight: 1.45, ...PRETTY }}>
+        <span className="absolute -left-1 top-full pt-1.5 z-25">
+          <span role="tooltip" data-testid="focus-gap-warning" className={cn(s.pop, "flex items-start gap-2 w-65 py-2.5 px-3 border rounded-md shadow-lg [background:var(--warn-soft)] border-transparent text-warn text-sm leading-[1.45] text-pretty")}>
             <WarnIcon size={14} />
-            <span><strong style={{ fontWeight: 700 }}>{concept.name}</strong> · {concept.gap}</span>
+            <span><strong className="font-bold">{concept.name}</strong> · {concept.gap}</span>
           </span>
         </span>
       )}
@@ -104,20 +98,20 @@ function Prereqs({ prereqs, gapOn }: { prereqs: Concept[]; gapOn: Concept | null
   const fit = chipsThatFit(prereqs.map(t => t.name), gapOn ? GAP_MARK_W : 0);
   const rest = prereqs.slice(fit);
   return (
-    <div style={{ display: "flex", flexWrap: "nowrap", alignItems: "center", gap: PREREQ_GAP, height: 22, minWidth: 0, fontSize: "var(--fs-sm)", color: "rgba(255,255,255,0.86)" }}>
+    <div className="flex flex-nowrap items-center h-5.5 min-w-0 text-sm text-[rgba(255,255,255,0.86)]" style={{ gap: PREREQ_GAP }}>
       {gapOn && <GapWarning concept={gapOn} />}
       {/* Only the chips clip. The gap mark and "+N more" open their pop-ups
           below the line, and a line that clipped hid both. */}
-      <span style={{ display: "flex", alignItems: "center", gap: PREREQ_GAP, minWidth: 0, overflow: "hidden" }}>
-        {prereqs.length === 0 && <span style={{ flexShrink: 0, whiteSpace: "nowrap" }}>No prerequisites</span>}
+      <span className="flex items-center min-w-0 overflow-hidden" style={{ gap: PREREQ_GAP }}>
+        {prereqs.length === 0 && <span className="shrink-0 whitespace-nowrap">No prerequisites</span>}
         {/* minWidth 0 + ellipsis on each chip: two are shown whether or not they
             fit (chipsThatFit), so one that does not must truncate visibly — the
             row clips, and a hard cut mid-word reads as a rendering bug. The
             title carries the full name either way. */}
         {prereqs.slice(0, fit).map(t => (
-          <span key={t.id} title={`${t.name} · ${ST_LABEL[t.st]}`} style={{ ...CHIP, gap: 5, minWidth: 0, background: "rgba(255,255,255,0.12)" }}>
+          <span key={t.id} title={`${t.name} · ${ST_LABEL[t.st]}`} className="inline-flex items-center h-5.5 py-0 px-2 rounded-[11px] text-accent-fg text-xs font-semibold whitespace-nowrap gap-[5px] min-w-0 bg-[rgba(255,255,255,0.12)]">
             <StatusDot st={t.st} size={7} />
-            <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>{t.name}</span>
+            <span className="min-w-0 overflow-hidden text-ellipsis">{t.name}</span>
           </span>
         ))}
       </span>
@@ -144,11 +138,11 @@ export function FocusCard({ concept, upNext, masteredExam, prereqs, cardCount, q
     { key: "cards", icon: "cards", label: focusCardsLabel(cardCount), href: nav.cardsHref([concept.name]) },
   ];
   return (
-    <div data-testid="focus-card" data-flip="focus" data-flip-how="fade" className={s.focus} style={{ position: "relative", ...BLOCK, minWidth: 0 }}>
+    <div data-testid="focus-card" data-flip="focus" data-flip-how="fade" className={cn(s.focus, "relative rounded-lg [background:var(--sidenav-bg)] text-accent-fg py-4 px-4.5 min-w-0")}>
       {/* The line stays while a clicked concept is shown (only its second half
           is about the queue), so picking one does not change the block's height. */}
       {masteredExam && (
-        <p key={`${masteredExam}:${upNext}`} data-testid="focus-fallback-note" data-flip={`focus-note:${masteredExam}:${upNext}`} data-flip-how="fade" style={FALLBACK_NOTE}>
+        <p key={`${masteredExam}:${upNext}`} data-testid="focus-fallback-note" data-flip={`focus-note:${masteredExam}:${upNext}`} data-flip-how="fade" className="mt-0 mx-0 mb-2.5 text-sm leading-[1.3] text-[rgba(255,255,255,0.86)]">
           Everything on {masteredExam} is mastered.{upNext && " From the rest of the course:"}
         </p>
       )}
@@ -157,11 +151,11 @@ export function FocusCard({ concept, upNext, masteredExam, prereqs, cardCount, q
           block is too narrow for that (StudyHub.module.css). */}
       <div key={`${concept.id}:${upNext}`} className={s.focusBody} data-flip={`focus-body:${concept.id}:${upNext}`} data-flip-how="fade">
         <div className={s.focusMain}>
-          <span style={MICRO_ON_DARK}>{upNext ? "Up Next" : concept.group}</span>
+          <span className="font-sans text-sm text-sap-100">{upNext ? "Up Next" : concept.group}</span>
           <div className={s.focusConcept}>
             <MasteryRing concept={concept} />
-            <div style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 4 }}>
-              <span className={s.focusName} title={concept.name} style={{ fontFamily: DISPLAY, fontSize: 22, fontWeight: 600, lineHeight: 1.2, letterSpacing: "-0.01em" }}>{concept.name}</span>
+            <div className="min-w-0 flex flex-col gap-1">
+              <span className={cn(s.focusName, "font-display text-2xl font-semibold leading-[1.2] tracking-[-0.01em]")} title={concept.name}>{concept.name}</span>
               <Prereqs prereqs={prereqs} gapOn={concept.gap ? concept : null} />
             </div>
           </div>
@@ -172,7 +166,7 @@ export function FocusCard({ concept, upNext, masteredExam, prereqs, cardCount, q
           {shownTools(actions, quizShown).map((ac, i) => (
             <Link key={ac.key} href={ac.href} className={i === 0 ? `${s.focusAct} ${s.focusActPrimary}` : s.focusAct}
               onClick={leaveOnClick(nav.leaveTo, ac.href)}>
-              <span aria-hidden="true" style={{ display: "grid" }}><Glyph name={ac.icon} size={14} /></span>
+              <span aria-hidden="true" className="grid"><Glyph name={ac.icon} size={14} /></span>
               {ac.label}
             </Link>
           ))}
@@ -189,15 +183,15 @@ export function FocusCard({ concept, upNext, masteredExam, prereqs, cardCount, q
  */
 export function FocusEmpty({ hasConcepts, pending = false }: { hasConcepts: boolean; pending?: boolean }) {
   if (pending) {
-    return <div key="pending" className={s.focusEmpty} data-testid="focus-pending" aria-busy="true" data-flip="focus-empty:pending" data-flip-how="fade" style={BLOCK} />;
+    return <div key="pending" className={cn(s.focusEmpty, "rounded-lg [background:var(--sidenav-bg)] text-accent-fg py-4 px-4.5")} data-testid="focus-pending" aria-busy="true" data-flip="focus-empty:pending" data-flip-how="fade" />;
   }
   const [title, body] = hasConcepts
     ? ["Every concept is mastered", "Keep them fresh with a mixed quiz before the exam."]
     : ["No concepts yet", "Upload course material in the Library to build this course's roadmap."];
   return (
-    <div key={String(hasConcepts)} className={s.focusEmpty} data-flip={`focus-empty:${hasConcepts}`} data-flip-how="fade" style={{ ...BLOCK, display: "flex", flexDirection: "column", justifyContent: "center", gap: 6 }}>
-      <span style={{ fontFamily: DISPLAY, fontSize: "var(--fs-xl)", fontWeight: 600 }}>{title}</span>
-      <span style={{ fontSize: "var(--fs-md)", color: "rgba(255,255,255,0.86)" }}>{body}</span>
+    <div key={String(hasConcepts)} className={cn(s.focusEmpty, "rounded-lg [background:var(--sidenav-bg)] text-accent-fg py-4 px-4.5 flex flex-col justify-center gap-1.5")} data-flip={`focus-empty:${hasConcepts}`} data-flip-how="fade">
+      <span className="font-display text-xl font-semibold">{title}</span>
+      <span className="text-md text-[rgba(255,255,255,0.86)]">{body}</span>
     </div>
   );
 }

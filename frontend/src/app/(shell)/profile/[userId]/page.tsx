@@ -29,10 +29,10 @@ export default function PublicProfilePage() {
         title={profile?.name || (loading ? "Loading…" : "Profile")}
         subtitle={profile?.username ? `@${profile.username}` : undefined}
       />
-      <div style={{ padding: "20px 32px" }}>
+      <div className="py-5 px-8">
         {loading && <ProfileSkeleton />}
         {error && !loading && (
-          <div className="card" style={{ padding: 28, textAlign: "center", color: "var(--err)" }}>
+          <div className="card p-7 text-center text-err">
             Couldn&apos;t load this profile. {error}
           </div>
         )}

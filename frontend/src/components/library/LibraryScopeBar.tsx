@@ -11,10 +11,9 @@
 import React from "react";
 
 import { Icon } from "../Icon";
-import {
-  FONT_SERIF, Glyph, MENU_IN, MENU_OUT, MENU_SURFACE, MenuDivider, MenuScrim, TrashIcon,
-} from "./primitives";
+import { Glyph, MENU_IN, MENU_OUT, MenuDivider, MenuScrim, TrashIcon } from "./primitives";
 import { ViewSwitcher, type ViewSwitcherOption } from "./ViewSwitcher";
+import { cn } from "@/lib/cn";
 
 export interface ScopeOption {
   /** "All Documents", a course code, or "No Course". */
@@ -82,29 +81,17 @@ function ScopeSwitcher({
   options: ScopeOption[];
 }) {
   return (
-    <div style={{ position: "relative", flexShrink: 0 }}>
+    <div className="relative shrink-0">
       <button
         data-testid="library-course-switcher"
-        className="sapHoverWarmer"
+        className="sapHoverWarmer inline-flex items-center gap-3 h-10 -ml-3 py-0 px-3 border-0 rounded-[12px] [background:transparent] font-serif text-[24px] font-semibold tracking-[-0.01em] text-ink-800 whitespace-nowrap cursor-pointer"
         onClick={() => onOpen(!open)}
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-label="Choose course"
-        style={{
-          display: "inline-flex", alignItems: "center", gap: 12, height: 40,
-          marginLeft: -12, padding: "0 12px", border: 0, borderRadius: 12,
-          background: "transparent", fontFamily: FONT_SERIF, fontSize: 24,
-          fontWeight: 600, letterSpacing: "-0.01em", color: "#1A1814",
-          whiteSpace: "nowrap", cursor: "pointer",
-        }}
       >
         {showDot && (
-          <span style={{
-            width: 14, height: 14, borderRadius: "50%",
-            background: dotColor || "transparent",
-            border: dotColor ? "0" : "1.5px dashed #8A8372",
-            boxSizing: "border-box", flexShrink: 0,
-          }} />
+          <span className={cn("w-3.5 h-3.5 rounded-[50%] box-border shrink-0", dotColor ? "border-0" : "border-[1.5px] border-dashed border-ink-400")} style={{ background: dotColor || "transparent" }} />
         )}
         {title}
         <Glyph name="chevronDown" size={13} fill="#6F6857" />
@@ -112,51 +99,32 @@ function ScopeSwitcher({
       {open && (
         <>
           <MenuScrim onClick={() => onOpen(false)} />
-          <div role="listbox" style={{
-            position: "absolute", left: 0, top: 50, zIndex: 31, width: 280,
-            transformOrigin: "top left", animation: closing ? MENU_OUT : MENU_IN,
-            ...MENU_SURFACE,
-          }}>
+          <div role="listbox" className="absolute left-0 top-12.5 z-31 w-70 [transform-origin:top_left] bg-bg-panel border border-[rgba(42,39,31,0.14)] rounded-[12px] [box-shadow:0_14px_36px_rgba(25,37,11,0.16)] p-1.5 flex flex-col gap-px" style={{ animation: closing ? MENU_OUT : MENU_IN }}>
             {options.map(o => (
               <React.Fragment key={o.id}>
                 {o.trash && <MenuDivider />}
                 <button
                   role="option"
                   aria-selected={o.on}
-                  className="sapHoverMenu"
+                  className={cn("sapHoverMenu", "flex items-start gap-2.5 py-[9px] px-2.5 border-0 rounded-[8px] [font:inherit] text-left cursor-pointer", o.on ? "[background:#F2F6EE]" : "[background:transparent]")}
                   onClick={o.pick}
-                  style={{
-                    display: "flex", alignItems: "flex-start", gap: 10, padding: "9px 10px",
-                    border: 0, borderRadius: 8, background: o.on ? "#F2F6EE" : "transparent",
-                    font: "inherit", textAlign: "left", cursor: "pointer",
-                  }}
                 >
-                  <span style={{ flex: 1, minWidth: 0 }}>
-                    <span style={{
-                      display: "flex", alignItems: "center", gap: 10,
-                      fontSize: 14, lineHeight: "21px", fontWeight: 700,
-                    }}>
+                  <span className="flex-1 min-w-0">
+                    <span className="flex items-center gap-2.5 text-base leading-[21px] font-bold">
                       {o.trash ? (
                         // The can, drawn at a size its strokes survive, in the
                         // dot's 9px slot so the label and sub-line stay aligned.
-                        <span style={{ position: "relative", width: 9, height: 9, flexShrink: 0 }}>
-                          <span style={{ position: "absolute", left: -2, top: -2 }}>
+                        <span className="relative w-[9px] h-[9px] shrink-0">
+                          <span className="absolute -left-0.5 -top-0.5">
                             <TrashIcon size={13} />
                           </span>
                         </span>
                       ) : (
-                        <span style={{
-                          width: 9, height: 9, borderRadius: "50%",
-                          background: o.color || "transparent",
-                          border: o.color ? "0" : "1.5px dashed #8A8372",
-                          boxSizing: "border-box", flexShrink: 0,
-                        }} />
+                        <span className={cn("w-[9px] h-[9px] rounded-[50%] box-border shrink-0", o.color ? "border-0" : "border-[1.5px] border-dashed border-ink-400")} style={{ background: o.color || "transparent" }} />
                       )}
                       {o.id}
                     </span>
-                    <span style={{
-                      display: "block", paddingLeft: 19, fontSize: 13, color: "#6F6857",
-                    }}>{o.sub}</span>
+                    <span className="block pl-[19px] text-md text-text-muted">{o.sub}</span>
                   </span>
                 </button>
               </React.Fragment>
@@ -198,22 +166,14 @@ const VIEW_OPTIONS: ViewSwitcherOption<"list" | "panel">[] = [
 /** Rename / Delete Folder, shown only while a folder is open. */
 function FolderActions({ onRename, onDelete }: { onRename: () => void; onDelete: () => void }) {
   return (
-    <div style={{ display: "flex", gap: 4 }}>
+    <div className="flex gap-1">
       <button
-        className="sapHoverTint"
+        className="sapHoverTint h-8 py-0 px-2.5 border-0 rounded-[8px] [background:transparent] text-brand-forest [font-family:inherit] [font-style:inherit] [font-variant:inherit] [font-stretch:inherit] [line-height:inherit] text-base font-bold cursor-pointer"
         onClick={onRename}
-        style={{
-          height: 32, padding: "0 10px", border: 0, borderRadius: 8, background: "transparent",
-          color: "#445D22", font: "inherit", fontSize: 14, fontWeight: 700, cursor: "pointer",
-        }}
       >Rename</button>
       <button
-        className="sapHoverDanger"
+        className="sapHoverDanger h-8 py-0 px-2.5 border-0 rounded-[8px] [background:transparent] text-[#A8443F] [font-family:inherit] [font-style:inherit] [font-variant:inherit] [font-stretch:inherit] [line-height:inherit] text-base font-bold cursor-pointer"
         onClick={onDelete}
-        style={{
-          height: 32, padding: "0 10px", border: 0, borderRadius: 8, background: "transparent",
-          color: "#A8443F", font: "inherit", fontSize: 14, fontWeight: 700, cursor: "pointer",
-        }}
       >Delete Folder</button>
     </div>
   );
@@ -223,19 +183,13 @@ function FolderActions({ onRename, onDelete }: { onRename: () => void; onDelete:
 function EmptyTrash({ confirm, onClick }: { confirm: boolean; onClick: () => void }) {
   return (
     <>
-      <span style={{ fontSize: 14, color: "#6F6857" }}>
+      <span className="text-base text-text-muted">
         Documents in Trash are deleted forever after 30 days.
       </span>
       <button
         data-testid="library-empty-trash"
         onClick={onClick}
-        style={{
-          height: 36, padding: "0 14px", border: 0, borderRadius: 9,
-          background: confirm ? "#A8443F" : "#F1D9D6",
-          color: confirm ? "#FFFFFF" : "#A8443F",
-          font: "inherit", fontSize: 14, fontWeight: 700,
-          whiteSpace: "nowrap", cursor: "pointer",
-        }}
+        className={cn("h-9 py-0 px-3.5 border-0 rounded-[9px] [font-family:inherit] [font-style:inherit] [font-variant:inherit] [font-stretch:inherit] [line-height:inherit] text-base font-bold whitespace-nowrap cursor-pointer", confirm ? "bg-[#A8443F]" : "bg-[#F1D9D6]", confirm ? "text-accent-fg" : "text-[#A8443F]")}
       >{confirm ? "Click Again to Empty Trash" : "Empty Trash"}</button>
     </>
   );
@@ -251,16 +205,7 @@ export function LibraryScopeBar(props: LibraryScopeBarProps) {
   } = props;
 
   return (
-    <div style={{
-      position: "relative",
-      zIndex: 10,
-      display: "flex",
-      alignItems: "center",
-      gap: 12,
-      paddingBottom: 14,
-      borderBottom: "1px solid rgba(42,39,31,0.10)",
-      minHeight: 38,
-    }}>
+    <div className="relative z-10 flex items-center gap-3 pb-3.5 border-b border-b-[rgba(42,39,31,0.10)] min-h-9.5">
       {folderRenaming ? (
         <input
           autoFocus
@@ -272,11 +217,7 @@ export function LibraryScopeBar(props: LibraryScopeBarProps) {
           }}
           onBlur={onFolderRenameCommit}
           aria-label="Folder name"
-          style={{
-            height: 36, padding: "0 10px", border: "1.5px solid #597536", borderRadius: 8,
-            background: "#FDFCF9", fontFamily: FONT_SERIF, fontSize: 22, fontWeight: 600,
-            color: "#1A1814", outline: "none",
-          }}
+          className="h-9 py-0 px-2.5 border-[1.5px] border-brand-forest-bright rounded-[8px] bg-bg-panel font-serif text-2xl font-semibold text-ink-800 outline-none"
         />
       ) : (
         <ScopeSwitcher
@@ -294,22 +235,15 @@ export function LibraryScopeBar(props: LibraryScopeBarProps) {
         <FolderActions onRename={onFolderRenameStart} onDelete={onFolderDelete} />
       )}
 
-      <span style={{ flex: 1 }} />
+      <span className="flex-1" />
 
       {courseScanLabel && !isTrash && (
         <button
           data-testid="library-course-scan"
-          className="sapHoverTint"
+          className={cn("sapHoverTint", "inline-flex items-center gap-[7px] h-9 py-0 px-3 border border-[rgba(42,39,31,0.14)] rounded-[9px] [background:#FDFCF9] text-leaf-800 [font-family:inherit] [font-style:inherit] [font-variant:inherit] [font-stretch:inherit] [line-height:inherit] text-base font-semibold whitespace-nowrap", courseScanning ? "cursor-default" : "cursor-pointer", courseScanning ? "opacity-70" : "opacity-100")}
           onClick={onCourseScan}
           disabled={courseScanning}
           title={`Extend the concept graph for ${courseScanLabel}`}
-          style={{
-            display: "inline-flex", alignItems: "center", gap: 7, height: 36, padding: "0 12px",
-            border: "1px solid rgba(42,39,31,0.14)", borderRadius: 9, background: "#FDFCF9",
-            color: "#2F4417", font: "inherit", fontSize: 14, fontWeight: 600,
-            whiteSpace: "nowrap", cursor: courseScanning ? "default" : "pointer",
-            opacity: courseScanning ? 0.7 : 1,
-          }}
         >
           <Icon name="sparkle" size={13} />
           {courseScanning ? "Scanning…" : `Scan ${courseScanLabel}`}
@@ -321,15 +255,11 @@ export function LibraryScopeBar(props: LibraryScopeBarProps) {
       )}
 
       {scoped && (
-        <span style={{ fontSize: 14, color: "#3F3B31" }}>
+        <span className="text-base text-ink-600">
           Searching in {scopeName} ·{" "}
           <button
             onClick={onSearchAll}
-            style={{
-              border: 0, padding: 0, background: "transparent", color: "#445D22",
-              font: "inherit", fontWeight: 700, cursor: "pointer",
-              textDecoration: "underline", textUnderlineOffset: 3,
-            }}
+            className="border-0 p-0 bg-transparent text-brand-forest [font-family:inherit] [font-size:inherit] [font-style:inherit] [font-variant:inherit] [font-stretch:inherit] [line-height:inherit] font-bold cursor-pointer underline [text-underline-offset:3px]"
           >Search All Documents</button>
         </span>
       )}

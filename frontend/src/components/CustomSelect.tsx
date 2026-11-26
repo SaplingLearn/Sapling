@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { cn } from "@/lib/cn";
 
 export interface CustomSelectOption<T extends string = string> {
   value: T;
@@ -152,8 +153,8 @@ export function CustomSelect<T extends string = string>({
   return (
     <div
       ref={wrapperRef}
-      className={className}
-      style={{ position: "relative", display: "inline-block", ...style }}
+      className={cn(className, "relative inline-block")}
+      style={{ ...style }}
     >
       <button
         type="button"
@@ -165,29 +166,12 @@ export function CustomSelect<T extends string = string>({
         disabled={disabled}
         onClick={() => !disabled && toggle()}
         onKeyDown={onButtonKey}
-        style={{
-          display: "inline-flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: 8,
-          width: "100%",
-          padding,
-          fontSize,
-          borderRadius: "var(--r-sm)",
-          border: "1px solid var(--border)",
-          background: "var(--bg-input)",
-          color: selected ? "var(--text)" : "var(--text-muted)",
-          cursor: disabled ? "not-allowed" : "pointer",
-          opacity: disabled ? 0.6 : 1,
-          textAlign: "left",
-          transition: "border-color var(--dur-fast) var(--ease)",
-          ...triggerStyle,
-        }}
+        className={cn("inline-flex items-center justify-between gap-2 w-full rounded-sm border border-border bg-bg-input text-left [transition:border-color_var(--dur-fast)_var(--ease)]", selected ? "text-text" : "text-text-muted", disabled ? "cursor-not-allowed" : "cursor-pointer", disabled ? "opacity-60" : "opacity-100")} style={{ padding, fontSize, ...triggerStyle }}
       >
-        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+        <span className="overflow-hidden text-ellipsis whitespace-nowrap">
           {selected ? selected.label : placeholder}
         </span>
-        <span aria-hidden style={{ fontSize: 10, color: "var(--text-muted)", transform: open ? "rotate(180deg)" : "none", transition: "transform var(--dur-fast) var(--ease)" }}>▾</span>
+        <span aria-hidden className={cn("text-2xs text-text-muted [transition:transform_var(--dur-fast)_var(--ease)]", open ? "[transform:rotate(180deg)]" : "[transform:none]")}>▾</span>
       </button>
       {open && (
         <ul
@@ -196,25 +180,8 @@ export function CustomSelect<T extends string = string>({
           tabIndex={-1}
           onKeyDown={onListKey}
           ref={el => el?.focus({ preventScroll: true })}
-          className="fade-in"
-          style={{
-            position: "absolute",
-            zIndex: 100,
-            top: place.up ? "auto" : `calc(100% + ${LIST_GAP}px)`,
-            bottom: place.up ? `calc(100% + ${LIST_GAP}px)` : "auto",
-            left: align === "left" ? 0 : "auto",
-            right: align === "right" ? 0 : "auto",
-            minWidth: "100%",
-            margin: 0,
-            padding: 4,
-            listStyle: "none",
-            background: "var(--bg-panel)",
-            border: "1px solid var(--border-strong)",
-            borderRadius: "var(--r-md)",
-            boxShadow: "var(--shadow-lg)",
-            maxHeight: place.max,
-            overflowY: "auto",
-          }}
+          className={cn("fade-in", "absolute z-100 min-w-full m-0 p-1 list-none [background:var(--bg-panel)] border border-border-strong rounded-md shadow-lg overflow-y-auto", align === "left" ? "left-0" : "left-auto", align === "right" ? "right-0" : "right-auto")}
+          style={{ top: place.up ? "auto" : `calc(100% + ${LIST_GAP}px)`, bottom: place.up ? `calc(100% + ${LIST_GAP}px)` : "auto", maxHeight: place.max }}
         >
           {options.map((opt, idx) => {
             const active = idx === highlighted;
@@ -228,25 +195,15 @@ export function CustomSelect<T extends string = string>({
                 aria-disabled={opt.disabled}
                 onMouseEnter={() => setHighlighted(idx)}
                 onClick={() => commit(idx)}
-                style={{
-                  padding: "7px 10px",
-                  fontSize,
-                  borderRadius: "var(--r-sm)",
-                  cursor: opt.disabled ? "not-allowed" : "pointer",
-                  color: opt.disabled ? "var(--text-muted)" : "var(--text)",
-                  background: active && !opt.disabled ? "var(--bg-subtle)" : "transparent",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 6,
-                }}
+                className={cn("py-[7px] px-2.5 rounded-sm flex items-center gap-1.5", opt.disabled ? "cursor-not-allowed" : "cursor-pointer", opt.disabled ? "text-text-muted" : "text-text", active && !opt.disabled ? "bg-bg-subtle" : "bg-transparent")} style={{ fontSize }}
               >
-                <span style={{ flex: 1, minWidth: 0 }}>
+                <span className="flex-1 min-w-0">
                   <span>{opt.label}</span>
                   {opt.description && (
-                    <span style={{ display: "block", fontSize: 11, color: "var(--text-muted)" }}>{opt.description}</span>
+                    <span className="block text-xs text-text-muted">{opt.description}</span>
                   )}
                 </span>
-                {isSelected && <span aria-hidden style={{ color: "var(--accent)", fontSize: 12 }}>✓</span>}
+                {isSelected && <span aria-hidden className="text-accent text-sm">✓</span>}
               </li>
             );
           })}

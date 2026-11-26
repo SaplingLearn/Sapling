@@ -19,8 +19,7 @@
 import Link from 'next/link';
 import { SaplingWordmark } from '@/components/SaplingWordmark';
 import { PAGE_MAX, PAGE_PAD } from '@/lib/landing/companionType';
-
-const SANS = "var(--font-suse), 'SUSE', system-ui, sans-serif";
+import { cn } from "@/lib/cn";
 
 /**
  * Page order as it appears in the footer. No Home entry: the wordmark in the
@@ -54,14 +53,6 @@ export const COMPANION_EXTRA_NAV = [
 const GITHUB_URL = 'https://github.com/SaplingLearn/Sapling';
 const KOFI_URL = 'https://ko-fi.com/saplinglearn';
 
-const TAB: React.CSSProperties = {
-  fontFamily: SANS, fontSize: 13.5, letterSpacing: '0.02em',
-  transition: 'color 300ms', whiteSpace: 'nowrap',
-};
-
-const FOOTER_LINK: React.CSSProperties = { fontSize: 14, color: '#6f6857' };
-
-
 export function CompanionShell({
   current,
   children,
@@ -71,7 +62,7 @@ export function CompanionShell({
   children: React.ReactNode;
 }) {
   return (
-    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', background: '#f4f1ea', color: '#1a1814', fontFamily: SANS }}>
+    <div className="min-h-screen flex flex-col bg-ink-50 text-ink-800 font-sans">
       {/* Geometry here is locked to the landing navbar: same horizontal
           padding, same 16px/16px vertical padding, same 92px masked scrim.
           The companion sources inset their bar to `min(1320px,92%)`, which
@@ -79,34 +70,21 @@ export function CompanionShell({
           the mark visibly jumped when you navigated off `/`. Full-bleed wins;
           if you change `max(4.2vw,22px)` here, change it in Navbar.tsx and the
           hero grid too. Only the palette stays warm. */}
-      <header style={{ position: 'sticky', top: 0, zIndex: 50, padding: '16px max(4.2vw,22px)', pointerEvents: 'none' }}>
+      <header className="sticky top-0 z-50 py-4 px-[max(4.2vw,22px)] pointer-events-none">
         <div
           aria-hidden="true"
-          style={{
-            position: 'absolute', left: 0, right: 0, top: 0, height: 92,
-            backdropFilter: 'blur(9px)', WebkitBackdropFilter: 'blur(9px)',
-            // gradient + mask ramps are the ones from `About Sapling.dc.html`,
-            // the most developed of the companion scrims — the others stop at a
-            // bare two-stop fade.
-            background:
-              'linear-gradient(180deg, #f4f1ea 0%, #f4f1ea 44%, rgba(244,241,234,0.82) 66%, rgba(244,241,234,0.45) 82%, rgba(244,241,234,0) 100%)',
-            maskImage:
-              'linear-gradient(180deg, #000 0%, #000 44%, rgba(0,0,0,0.78) 66%, rgba(0,0,0,0.42) 82%, rgba(0,0,0,0) 100%)',
-            WebkitMaskImage:
-              'linear-gradient(180deg, #000 0%, #000 44%, rgba(0,0,0,0.78) 66%, rgba(0,0,0,0.42) 82%, rgba(0,0,0,0) 100%)',
-          }}
+          className="absolute left-0 right-0 top-0 h-23 [backdrop-filter:blur(9px)] [-webkit-backdrop-filter:blur(9px)] [background:linear-gradient(180deg,_#f4f1ea_0%,_#f4f1ea_44%,_rgba(244,241,234,0.82)_66%,_rgba(244,241,234,0.45)_82%,_rgba(244,241,234,0)_100%)] [mask-image:linear-gradient(180deg,_#000_0%,_#000_44%,_rgba(0,0,0,0.78)_66%,_rgba(0,0,0,0.42)_82%,_rgba(0,0,0,0)_100%)] [-webkit-mask-image:linear-gradient(180deg,_#000_0%,_#000_44%,_rgba(0,0,0,0.78)_66%,_rgba(0,0,0,0.42)_82%,_rgba(0,0,0,0)_100%)]"
         />
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 20, position: 'relative', pointerEvents: 'auto' }}>
-          <Link href="/" style={{ display: 'flex', alignItems: 'center', flex: '0 0 auto' }}>
+        <div className="flex items-center justify-between gap-5 relative pointer-events-auto">
+          <Link href="/" className="flex items-center flex-[0_0_auto]">
             <SaplingWordmark width={104} />
           </Link>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: 18, flexWrap: 'nowrap', minWidth: 0 }}>
-            <Link href="/?signin=1" className="cp-navlink" style={{ ...TAB, color: '#6f6857', fontWeight: 500 }}>Sign In</Link>
+          <div className="flex items-center gap-4.5 flex-nowrap min-w-0">
+            <Link href="/?signin=1" className="cp-navlink font-sans text-[13.5px] tracking-[0.02em] [transition:color_300ms] whitespace-nowrap text-text-muted font-medium">Sign In</Link>
             <Link
               href="/#newsletter"
-              className="cp-cta"
-              style={{ background: 'var(--brand-forest)', color: '#fff', borderRadius: 6, padding: '8px 16px', fontFamily: SANS, fontWeight: 600, fontSize: 13.5, whiteSpace: 'nowrap', transition: 'filter 200ms' }}
+              className="cp-cta [background:var(--brand-forest)] text-accent-fg rounded-sm py-2 px-4 font-sans font-semibold text-[13.5px] whitespace-nowrap [transition:filter_200ms]"
             >
               Get Started
             </Link>
@@ -120,34 +98,30 @@ export function CompanionShell({
           article, 1280 on the footer — so content jumped left and right as you
           navigated. Pages render content now, not a container. */}
       <main
-        style={{
-          flex: 1, minWidth: 0, width: '100%', maxWidth: PAGE_MAX,
-          margin: '0 auto', padding: `40px ${PAGE_PAD}px 64px`, boxSizing: 'border-box',
-        }}
+        className="flex-1 min-w-0 w-full my-0 mx-auto box-border" style={{ maxWidth: PAGE_MAX, padding: `40px ${PAGE_PAD}px 64px` }}
       >
         {children}
       </main>
 
-      <footer style={{ borderTop: '1px solid rgba(42,39,31,0.10)', background: '#faf8f3', padding: `48px ${PAGE_PAD}px`, boxSizing: 'border-box' }}>
-        <div style={{ maxWidth: PAGE_MAX, margin: '0 auto', boxSizing: 'border-box', display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 24 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      <footer className="border-t border-t-[rgba(42,39,31,0.10)] bg-ink-0 box-border" style={{ padding: `48px ${PAGE_PAD}px` }}>
+        <div className="my-0 mx-auto box-border flex flex-wrap items-center justify-between gap-6" style={{ maxWidth: PAGE_MAX }}>
+          <div className="flex items-center gap-2">
             <SaplingWordmark width={64} />
-            <span style={{ fontSize: 14, color: '#6f6857' }}>© 2026</span>
+            <span className="text-base text-text-muted">© 2026</span>
           </div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 24 }}>
+          <div className="flex flex-wrap gap-6">
             {COMPANION_NAV.map((n) => (
               <Link
                 key={n.href}
                 href={n.href}
                 aria-current={n.href === current ? 'page' : undefined}
-                className="cp-navlink"
-                style={{ fontSize: 14, color: n.href === current ? '#1a1814' : '#6f6857', fontWeight: n.href === current ? 600 : 400 }}
+                className={cn("cp-navlink", "text-base", n.href === current ? "text-ink-800" : "text-text-muted", n.href === current ? "font-semibold" : "font-normal")}
               >
                 {n.label}
               </Link>
             ))}
-            <a href={GITHUB_URL} target="_blank" rel="noopener noreferrer" className="cp-navlink" style={FOOTER_LINK}>GitHub</a>
-            <a href={KOFI_URL} target="_blank" rel="noopener noreferrer" className="cp-navlink" style={FOOTER_LINK}>Support us</a>
+            <a href={GITHUB_URL} target="_blank" rel="noopener noreferrer" className="cp-navlink text-base text-text-muted">GitHub</a>
+            <a href={KOFI_URL} target="_blank" rel="noopener noreferrer" className="cp-navlink text-base text-text-muted">Support us</a>
             {/* The design's companion footer stops at the nav links. These three
                 are ours: /about used to be the only page linking them, so
                 folding it into this shell would otherwise orphan /careers
@@ -158,8 +132,7 @@ export function CompanionShell({
                 key={n.href}
                 href={n.href}
                 aria-current={n.href === current ? 'page' : undefined}
-                className="cp-navlink"
-                style={{ ...FOOTER_LINK, color: n.href === current ? '#1a1814' : '#6f6857', fontWeight: n.href === current ? 600 : 400 }}
+                className={cn("cp-navlink", "text-base", n.href === current ? "text-ink-800" : "text-text-muted", n.href === current ? "font-semibold" : "font-normal")}
               >
                 {n.label}
               </Link>

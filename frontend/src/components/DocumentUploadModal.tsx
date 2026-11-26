@@ -4,7 +4,7 @@ import React from "react";
 import { createPortal } from "react-dom";
 import { Icon } from "./Icon";
 import { CustomSelect } from "./CustomSelect";
-import { useScrollLock } from "@/lib/useScrollLock";
+import { useOverlayBehaviour } from "./Dialog";
 import { useLatestRequest } from "@/lib/useLatestRequest";
 import { useToast } from "./ToastProvider";
 import {
@@ -18,6 +18,7 @@ import {
   type UploadResultData,
 } from "@/lib/api";
 import { humanizeError } from "@/lib/errorMessage";
+import { cn } from "@/lib/cn";
 
 const MAX_FILES = 5;
 const MAX_SIZE = 100 * 1024 * 1024;
@@ -95,7 +96,6 @@ const CATEGORY_OPTIONS = [
 
 export function DocumentUploadModal({ open, userId, courses, onClose, onComplete }: Props) {
   const toast = useToast();
-  const [mounted, setMounted] = React.useState(false);
   const [items, setItems] = React.useState<UploadItem[]>([]);
   const [dragging, setDragging] = React.useState(false);
   const [courseQuery, setCourseQuery] = React.useState("");
@@ -114,10 +114,8 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
     controllersRef.current.clear();
   }, []);
 
-  React.useEffect(() => setMounted(true), []);
   React.useEffect(() => abortAll, [abortAll]);
 
-  useScrollLock(open);
 
   React.useEffect(() => {
     if (!open) {
@@ -325,6 +323,10 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
     }
   };
 
+  // Dialog's modal engine: portal readiness, scroll lock, focus in and
+  // back out, Escape and the Tab trap, with this modal's own chrome.
+  const { mounted, panelRef, onKeyDown: onOverlayKeyDown } = useOverlayBehaviour({ open, onClose: handleClose });
+
   const allFinished = items.length > 0 && items.every(i => i.status !== "uploading" && i.status !== "pending");
 
   if (!open || !mounted) return null;
@@ -332,28 +334,30 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
   return createPortal(
     <div
       onClick={handleClose}
-      style={{
-        position: "fixed", inset: 0, background: "rgba(25, 37, 11,0.45)",
-        zIndex: 200, display: "grid", placeItems: "center", padding: 20,
-      }}
+      onKeyDown={onOverlayKeyDown}
+      className="fixed inset-0 bg-[rgba(25,_37,_11,0.45)] z-200 grid place-items-center p-5"
     >
       <div
         data-testid="upload-modal"
+        ref={panelRef}
+        tabIndex={-1}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="upload-modal-title"
         onClick={e => e.stopPropagation()}
-        className="card slide-up"
-        style={{ width: "min(720px, 100%)", maxHeight: "88vh", overflow: "hidden", padding: 0, display: "flex", flexDirection: "column" }}
+        className="card slide-up w-[min(720px,_100%)] max-h-[88vh] overflow-hidden p-0 flex flex-col outline-none"
       >
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 20px", borderBottom: "1px solid var(--border)" }}>
+        <div className="flex justify-between items-center py-4 px-5 border-b border-b-border">
           <div>
             <div className="label-micro">Upload</div>
-            <div className="h-serif" style={{ fontSize: 20 }}>Add course materials</div>
+            <div id="upload-modal-title" className="h-serif text-[20px]">Add course materials</div>
           </div>
           <button data-testid="upload-modal-close" className="btn btn--ghost btn--sm" onClick={handleClose} aria-label="Close">
             <Icon name="x" size={14} />
           </button>
         </div>
 
-        <div style={{ padding: 20, overflowY: "auto" }}>
+        <div className="p-5 overflow-y-auto">
           <div
             data-testid="upload-modal-dropzone"
             onDragOver={e => { e.preventDefault(); setDragging(true); }}
@@ -363,17 +367,12 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
               setDragging(false);
               addFiles(Array.from(e.dataTransfer.files));
             }}
-            style={{
-              border: `2px dashed ${dragging ? "var(--accent)" : "var(--border-strong)"}`,
-              borderRadius: "var(--r-md)", padding: 28, textAlign: "center",
-              background: dragging ? "var(--accent-soft)" : "var(--bg-subtle)",
-              transition: "all var(--dur-fast) var(--ease)",
-            }}
+            className={cn(cn("rounded-md p-7 text-center [transition:all_var(--dur-fast)_var(--ease)]", dragging ? "bg-accent-soft" : "bg-bg-subtle"), dragging ? "border-2 border-dashed border-accent" : "border-2 border-dashed border-border-strong")}
           >
-            <div className="h-serif" style={{ fontSize: 17, marginBottom: 6 }}>
+            <div className="h-serif text-[17px] mb-1.5">
               {dragging ? "Drop to add files" : "Drag & drop up to 5 files"}
             </div>
-            <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 12 }}>
+            <div className="text-sm text-text-muted mb-3">
               PDF, DOCX, PPTX · max 100 MB each
             </div>
             <label data-testid="upload-modal-browse" className="btn btn--primary btn--sm">
@@ -393,32 +392,24 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
           </div>
 
           {allCourses.length < 10 && (
-            <div style={{ marginTop: 16 }}>
-              <div className="label-micro" style={{ marginBottom: 6 }}>+ Add a course</div>
+            <div className="mt-4">
+              <div className="label-micro mb-1.5">+ Add a course</div>
               <input
                 data-testid="upload-modal-course-search"
                 value={courseQuery}
                 onChange={e => setCourseQuery(e.target.value)}
                 placeholder="Search a course to add"
-                style={{
-                  width: "100%", padding: "7px 12px", fontSize: 13,
-                  border: "1px solid var(--border)", borderRadius: "var(--r-sm)",
-                  background: "var(--bg-input)",
-                }}
+                className="w-full py-[7px] px-3 text-md border border-border rounded-sm bg-bg-input"
               />
               {courseResults.length > 0 && (
-                <div style={{ marginTop: 6, border: "1px solid var(--border)", borderRadius: "var(--r-sm)", maxHeight: 140, overflowY: "auto" }}>
+                <div className="mt-1.5 border border-border rounded-sm max-h-35 overflow-y-auto">
                   {courseResults.map(c => (
                     <button
                       key={c.id}
                       data-testid={`upload-modal-course-result-${c.id}`}
                       disabled={addingCourse}
                       onClick={() => addCourseInline(c)}
-                      style={{
-                        width: "100%", padding: "7px 12px", fontSize: 12,
-                        display: "flex", justifyContent: "space-between", alignItems: "center",
-                        borderBottom: "1px solid var(--border)", textAlign: "left",
-                      }}
+                      className="w-full py-[7px] px-3 text-sm flex justify-between items-center border-b border-b-border text-left"
                     >
                       <span><strong>{c.course_code}</strong> · {c.course_name}</span>
                       <Icon name="plus" size={12} />
@@ -429,30 +420,25 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
             </div>
           )}
 
-          <div style={{ marginTop: 20 }}>
+          <div className="mt-5">
             {items.length === 0 && (
-              <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Files you add will appear here.</div>
+              <div className="text-sm text-text-muted">Files you add will appear here.</div>
             )}
             {items.map((item, idx) => (
               <div
                 key={item.id}
                 data-testid={`upload-modal-file-row-${idx}`}
-                className="card"
-                style={{ padding: 14, marginBottom: 10, display: "flex", flexDirection: "column", gap: 10 }}
+                className="card p-3.5 mb-2.5 flex flex-col gap-2.5"
               >
-                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <div style={{
-                    width: 28, height: 36, borderRadius: "var(--r-xs)",
-                    background: "var(--accent-soft)", color: "var(--accent)",
-                    display: "flex", alignItems: "center", justifyContent: "center",
-                  }}>
+                <div className="flex items-center gap-2.5">
+                  <div className="w-7 h-9 rounded-xs bg-accent-soft text-accent flex items-center justify-center">
                     <Icon name="doc" size={14} />
                   </div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 13, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-md font-medium overflow-hidden text-ellipsis whitespace-nowrap">
                       {item.file.name}
                     </div>
-                    <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
+                    <div className="text-xs text-text-muted">
                       {(item.file.size / 1024 / 1024).toFixed(1)} MB · {item.file.name.split(".").pop()?.toUpperCase()}
                     </div>
                   </div>
@@ -469,8 +455,8 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
                     <Icon name="x" size={12} />
                   </button>
                 </div>
-                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                  <span style={{ fontSize: 11, color: "var(--text-muted)" }}>Course:</span>
+                <div className="flex gap-2 items-center flex-wrap">
+                  <span className="text-xs text-text-muted">Course:</span>
                   <CustomSelect
                     size="sm"
                     value={item.courseId || ""}
@@ -481,7 +467,7 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
                   />
                   {item.status === "processed" && (
                     <>
-                      <span style={{ fontSize: 11, color: "var(--text-muted)" }}>Category:</span>
+                      <span className="text-xs text-text-muted">Category:</span>
                       <CustomSelect
                         size="sm"
                         value={item.category || "other"}
@@ -503,31 +489,26 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
                 {item.status === "uploading" && item.progress && (
                   <div
                     aria-live="polite"
-                    style={{
-                      fontSize: 12,
-                      color: "var(--text-muted)",
-                      fontStyle: "italic",
-                      lineHeight: 1.4,
-                    }}
+                    className="text-sm text-text-muted italic leading-[1.4]"
                   >
                     {item.progress}
                   </div>
                 )}
                 {item.summary && (
-                  <div style={{ fontSize: 12, color: "var(--text-dim)", lineHeight: 1.5 }}>{item.summary}</div>
+                  <div className="text-sm text-text-dim leading-[1.5]">{item.summary}</div>
                 )}
                 {item.conceptNames && item.conceptNames.length > 0 && (
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                  <div className="flex flex-wrap gap-1">
                     {item.conceptNames.slice(0, 4).map(t => (
                       <span key={t} className="chip chip--accent">{t}</span>
                     ))}
                   </div>
                 )}
                 {item.error && (
-                  <div style={{ fontSize: 11, color: "var(--err)" }}>{item.error}</div>
+                  <div className="text-xs text-err">{item.error}</div>
                 )}
                 {item.status === "error" && item.requestId && (
-                  <div style={{ fontSize: 11, color: "var(--text-muted)", display: "flex", gap: 6, alignItems: "center" }}>
+                  <div className="text-xs text-text-muted flex gap-1.5 items-center">
                     <span>Reference: {item.requestId.slice(0, 8)}…</span>
                     <button
                       type="button"
@@ -541,8 +522,7 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
                           );
                         }
                       }}
-                      className="btn btn--ghost btn--sm"
-                      style={{ padding: "0 6px", fontSize: 10 }}
+                      className="btn btn--ghost btn--sm py-0 px-1.5 text-2xs"
                     >
                       copy
                     </button>
@@ -553,12 +533,12 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
           </div>
         </div>
 
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 20px", borderTop: "1px solid var(--border)" }}>
-          <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
+        <div className="flex justify-between items-center py-3 px-5 border-t border-t-border">
+          <div className="text-sm text-text-muted">
             {items.length} file{items.length === 1 ? "" : "s"} queued
             {activeUploads > 0 && ` · ${activeUploads} uploading`}
           </div>
-          <div style={{ display: "flex", gap: 8 }}>
+          <div className="flex gap-2">
             <button data-testid="upload-modal-cancel" className="btn btn--ghost btn--sm" onClick={handleClose}>Cancel</button>
             {allFinished ? (
               <button data-testid="upload-modal-done" className="btn btn--sm btn--primary" onClick={finish}>Done</button>
@@ -596,7 +576,7 @@ function extractConceptNames(resp: UploadResultData): string[] {
 function StatusBadge({ status }: { status: UploadStatus }) {
   const meta = statusMeta(status);
   return (
-    <span className={`chip ${meta.cls}`} style={{ fontSize: 10 }}>
+    <span className={cn(`chip ${meta.cls}`, "text-2xs")}>
       {meta.label}
     </span>
   );

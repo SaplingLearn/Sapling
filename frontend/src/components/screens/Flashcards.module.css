@@ -1,3 +1,4 @@
+@layer components {
 /* The Flashcards page, in the Study hub's language: the Dashboard's page
    padding, the big display title with the course field beside it and the
    page's actions on the right. Under it, either the home
@@ -32,4 +33,6 @@
 @media (max-width: 768px) {
   .page { padding: 8px 20px 16px; }
   .head { padding: 14px 0; }
+}
+
 }

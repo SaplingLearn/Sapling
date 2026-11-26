@@ -24,28 +24,14 @@ export function AchievementUnlockToast({ achievement }: Props) {
 
   return (
     <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 10,
-      }}
+      className="flex items-center gap-2.5"
     >
       <div
-        style={{
-          width: 28,
-          height: 28,
-          borderRadius: "var(--r-sm)",
-          background: "var(--bg-subtle)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          flexShrink: 0,
-          fontSize: 14,
-        }}
+        className="w-7 h-7 rounded-sm bg-bg-subtle flex items-center justify-center shrink-0 text-base"
       >
         {achievement.icon ? (
           achievement.icon.startsWith("http") || achievement.icon.startsWith("/") ? (
-            <img src={achievement.icon} alt="" style={{ width: 20, height: 20 }} />
+            <img src={achievement.icon} alt="" className="w-5 h-5" />
           ) : (
             <span>{achievement.icon}</span>
           )
@@ -56,40 +42,22 @@ export function AchievementUnlockToast({ achievement }: Props) {
           </svg>
         )}
       </div>
-      <div style={{ flex: 1, minWidth: 0 }}>
+      <div className="flex-1 min-w-0">
         <div
-          style={{
-            fontSize: 11,
-            color: "var(--text-dim)",
-            fontWeight: 500,
-            letterSpacing: "0.02em",
-          }}
+          className="text-xs text-text-dim font-medium tracking-[0.02em]"
         >
           Achievement unlocked
         </div>
         <div
-          style={{
-            fontSize: 13,
-            color: "var(--text)",
-            fontWeight: 500,
-          }}
+          className="text-md text-text font-medium"
         >
           {achievement.name}
         </div>
       </div>
       <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 5,
-          fontSize: 12,
-          fontWeight: 600,
-          
-          
-          color: "var(--text)",
-          flexShrink: 0 }}
+        className="flex items-center gap-[5px] text-sm font-semibold text-text shrink-0"
       >
-        <span aria-hidden="true" style={{ width: 6, height: 6, borderRadius: "50%", background: borderColor, flexShrink: 0 }} />
+        <span aria-hidden="true" className="w-1.5 h-1.5 rounded-[50%] shrink-0" style={{ background: borderColor }} />
         {achievement.rarity}
       </div>
     </div>

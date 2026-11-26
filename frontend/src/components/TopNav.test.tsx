@@ -89,19 +89,18 @@ describe("TopNav — desktop group labels", () => {
     mockedUsePathname.mockReturnValue("/dashboard");
     render(<TopNav />);
     const learn = screen.getByRole("button", { name: /^Learn/ });
-    // Active state = font-weight 700 inline. The button's style
-    // attribute is the source of truth for the active styling.
-    expect(learn.getAttribute("style") || "").toMatch(/font-weight:\s*700/);
+    // Active state = font-weight 700 (font-bold).
+    expect(learn).toHaveTwStyle({ fontWeight: 700 });
   });
 
   it("highlights the Organize group when on /library", () => {
     mockedUsePathname.mockReturnValue("/library");
     render(<TopNav />);
     const organize = screen.getByRole("button", { name: /^Organize/ });
-    expect(organize.getAttribute("style") || "").toMatch(/font-weight:\s*700/);
+    expect(organize).toHaveTwStyle({ fontWeight: 700 });
     // And Learn should NOT be active in this case.
     const learn = screen.getByRole("button", { name: /^Learn/ });
-    expect(learn.getAttribute("style") || "").toMatch(/font-weight:\s*500/);
+    expect(learn).toHaveTwStyle({ fontWeight: 500 });
   });
 
   it.each(["/flashcards", "/study/guide", "/quiz"])(
@@ -110,7 +109,7 @@ describe("TopNav — desktop group labels", () => {
       mockedUsePathname.mockReturnValue(path);
       render(<TopNav />);
       const learn = screen.getByRole("button", { name: /^Learn/ });
-      expect(learn.getAttribute("style") || "").toMatch(/font-weight:\s*700/);
+      expect(learn).toHaveTwStyle({ fontWeight: 700 });
     },
   );
 
@@ -118,7 +117,7 @@ describe("TopNav — desktop group labels", () => {
     mockedUsePathname.mockReturnValue("/gradebook");
     render(<TopNav />);
     const tools = screen.getByRole("button", { name: /^Tools/ });
-    expect(tools.getAttribute("style") || "").toMatch(/font-weight:\s*700/);
+    expect(tools).toHaveTwStyle({ fontWeight: 700 });
   });
 });
 

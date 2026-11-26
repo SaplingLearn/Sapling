@@ -1,3 +1,4 @@
+@layer components {
 /* The course field and its menu: one control. Same fill, border, corner radius
    and width; the same row (dot, code, name) at the same inset, so the open menu
    reads as the field unfolding rather than as a separate box under it. */
@@ -31,3 +32,5 @@ button.field[aria-expanded="true"] { background: var(--bg-panel); border-color: 
   font: inherit; text-align: left; cursor: pointer;
 }
 .option:hover, .option[aria-selected="true"] { background: var(--bg-subtle); }
+
+}

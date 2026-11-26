@@ -2,6 +2,7 @@
 import React from "react";
 import Link from "next/link";
 import type { GradebookCourseSummary } from "@/lib/types";
+import { cn } from "@/lib/cn";
 
 export const COURSE_CARD_HEIGHT = 244;
 export const COURSE_CARD_BAND_HEIGHT = 132;
@@ -89,13 +90,7 @@ const DiscsWatermark = ({ seed, courseColor }: { seed: string; courseColor: stri
       viewBox="0 0 240 160"
       preserveAspectRatio="xMaxYMid slice"
       aria-hidden="true"
-      style={{
-        position: "absolute",
-        inset: 0,
-        width: "100%",
-        height: "100%",
-        pointerEvents: "none",
-      }}
+      className="absolute inset-0 w-full h-full pointer-events-none"
     >
       {discs.map((d, i) => (
         <circle key={i} cx={d.cx} cy={d.cy} r={d.r} fill={d.fill} />
@@ -125,47 +120,15 @@ export function CourseCard({ course, variant, courseColor, semester }: CourseCar
       href={`/gradebook/${encodeURIComponent(course.course_id)}${
         semester ? `?semester=${encodeURIComponent(semester)}` : ""
       }`}
-      className="course-card"
-      style={{
-        gridColumn: isHero ? "span 2" : undefined,
-        gridRow: isHero ? "span 2" : undefined,
-        display: "flex",
-        flexDirection: "column",
-        borderRadius: "var(--r-md)",
-        background: "var(--bg-panel)",
-        textDecoration: "none",
-        color: "var(--text)",
-        overflow: "hidden",
-        height: isHero ? COURSE_CARD_HERO_HEIGHT : COURSE_CARD_HEIGHT,
-      }}
+      className={cn("course-card", "flex flex-col rounded-md [background:var(--bg-panel)] no-underline text-text overflow-hidden", isHero ? "[grid-column:span_2]" : "", isHero ? "[grid-row:span_2]" : "")}
+      style={{ height: isHero ? COURSE_CARD_HERO_HEIGHT : COURSE_CARD_HEIGHT }}
     >
       <div
-        style={{
-          background: courseColor,
-          color: "#ffffff",
-          height: isHero ? COURSE_CARD_HERO_BAND_HEIGHT : COURSE_CARD_BAND_HEIGHT,
-          padding: isHero ? "28px 36px" : "14px 18px",
-          display: "flex",
-          flexDirection: "column",
-          justifyContent: "space-between",
-          alignItems: "flex-start",
-          gap: isHero ? 32 : 14,
-          position: "relative",
-          overflow: "hidden",
-        }}
+        className={cn("text-accent-fg flex flex-col justify-between items-start relative overflow-hidden", isHero ? "h-85" : "h-33", isHero ? "py-7 px-9" : "py-3.5 px-4.5", isHero ? "gap-8" : "gap-3.5")} style={{ background: courseColor }}
       >
         <DiscsWatermark seed={course.course_id} courseColor={courseColor} />
         <div
-          className="mono"
-          style={{
-            position: "relative",
-            zIndex: 1,
-            fontSize: isHero ? 12 : 10.5,
-            fontWeight: 600,
-            
-            
-            color: "#ffffff",
-            opacity: 0.92 }}
+          className={cn("mono", "relative z-1 font-semibold text-accent-fg opacity-92", isHero ? "text-sm" : "text-[10.5px]")}
         >
           {course.course_code}
         </div>
@@ -175,77 +138,30 @@ export function CourseCard({ course, variant, courseColor, semester }: CourseCar
               ? "No assignments graded yet. Your letter appears after the first grade lands."
               : "Letter scale: A 90+, B 80+, C 70+, D 60+, F below 60"
           }
-          style={{
-            position: "relative",
-            zIndex: 1,
-            display: "inline-block",
-            color: "#ffffff",
-            fontFamily: "var(--font-display), 'Aleo', Georgia, serif",
-            fontWeight: isPlaceholder ? 400 : 500,
-            fontStyle: isPlaceholder ? "italic" : "normal",
-            fontSize: isHero ? 168 : 64,
-            lineHeight: 0.9,
-            letterSpacing: "-0.02em",
-            opacity: isPlaceholder ? 0.6 : 1,
-            cursor: "help",
-          }}
+          className={cn("relative z-1 inline-block text-accent-fg font-display leading-[0.9] tracking-[-0.02em] cursor-help", isPlaceholder ? "font-normal" : "font-medium", isPlaceholder ? "italic" : "not-italic", isHero ? "text-[168px]" : "text-[64px]", isPlaceholder ? "opacity-60" : "opacity-100")}
         >
           {isPlaceholder ? "—" : (course.letter ?? "—")}
         </span>
       </div>
       <div
-        style={{
-          padding: isHero ? "20px 32px 28px" : "12px 16px 14px",
-          flex: 1,
-          display: "flex",
-          flexDirection: "column",
-        }}
+        className={cn("flex-1 flex flex-col", isHero ? "pt-5 px-8 pb-7" : "pt-3 px-4 pb-3.5")}
       >
         <div
-          style={{
-            fontFamily: "var(--font-display), 'Aleo', Georgia, serif",
-            fontWeight: 500,
-            fontSize: isHero ? 28 : 18,
-            lineHeight: 1.25,
-            letterSpacing: "-0.01em",
-            color: "var(--text)",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            display: "-webkit-box",
-            WebkitLineClamp: 2,
-            WebkitBoxOrient: "vertical",
-          }}
+          className={cn("font-display font-medium leading-[1.25] tracking-[-0.01em] text-text overflow-hidden text-ellipsis [display:-webkit-box] [-webkit-line-clamp:2] [-webkit-box-orient:vertical]", isHero ? "text-[28px]" : "text-xl")}
         >
           {course.course_name}
         </div>
-        <div style={{ flex: 1, minHeight: isHero ? 16 : 8 }} />
+        <div className={cn("flex-1", isHero ? "min-h-4" : "min-h-2")} />
         <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "baseline",
-            gap: 8,
-          }}
+          className="flex justify-between items-baseline gap-2"
         >
           <span
-            style={{
-              fontSize: course.percent === null ? (isHero ? 20 : 16) : (isHero ? 36 : 26),
-              fontWeight: 500,
-              lineHeight: 1,
-              letterSpacing: "-0.02em",
-              color: percentColor(course.percent),
-              fontFamily: "var(--font-display)",
-            }}
+            className="font-medium leading-none tracking-[-0.02em] font-display" style={{ fontSize: course.percent === null ? (isHero ? 20 : 16) : (isHero ? 36 : 26), color: percentColor(course.percent) }}
           >
             {course.percent === null ? "Awaiting First Assignment" : `${course.percent.toFixed(1)}%`}
           </span>
           <span
-            className="mono"
-            style={{
-              fontSize: isHero ? 12 : 11,
-              letterSpacing: "0.02em",
-              color: "var(--text-dim)",
-            }}
+            className={cn("mono", "tracking-[0.02em] text-text-dim", isHero ? "text-sm" : "text-xs")}
           >
             {course.graded_count}/{course.total_count} graded
           </span>

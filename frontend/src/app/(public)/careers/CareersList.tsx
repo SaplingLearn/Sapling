@@ -22,9 +22,8 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { JOBS, DEPT_COLORS } from './jobs';
 import { CompanionShell } from '@/components/companion/CompanionShell';
-import { ACCENT, BODY, DISPLAY, INK, LABEL, MUTED, SERIF } from '@/lib/landing/companionType';
-
-const HAIRLINE = '1px solid rgba(42,39,31,0.10)';
+import { ACCENT, LABEL, MUTED } from '@/lib/landing/companionType';
+import { cn } from "@/lib/cn";
 
 const EYEBROW: React.CSSProperties = {
   display: 'block', fontFamily: LABEL, fontSize: 12, 
@@ -52,14 +51,14 @@ export default function CareersList() {
         {/* The dot is the live-role tell: forest green while something is
             open, neutral once nothing is. An accent dot over "not hiring"
             reads as a broken state rather than a deliberate one. */}
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontFamily: LABEL, fontSize: 12, color: MUTED, animation: 'fadeUp 600ms ease both' }}>
-          <span aria-hidden="true" style={{ width: 6, height: 6, borderRadius: 99, background: hiring ? ACCENT : 'rgba(42,39,31,0.28)' }} />
+        <span className="inline-flex items-center gap-2 font-sans text-sm [animation:fadeUp_600ms_ease_both]" style={{ color: MUTED }}>
+          <span aria-hidden="true" className="w-1.5 h-1.5 rounded-[99px]" style={{ background: hiring ? ACCENT : 'rgba(42,39,31,0.28)' }} />
           {hiring ? "We're hiring" : 'Not hiring right now'}
         </span>
-        <h1 style={{ margin: '14px 0 0', fontFamily: DISPLAY, fontWeight: 500, fontSize: 48, lineHeight: 1.15, letterSpacing: '-0.015em', color: INK, animation: 'fadeUp 700ms ease 60ms both' }}>
+        <h1 className="mt-3.5 mx-0 mb-0 font-display font-medium text-[48px] leading-[1.15] tracking-[-0.015em] text-ink-800 [animation:fadeUp_700ms_ease_60ms_both]">
           Opportunities
         </h1>
-        <p style={{ margin: '24px 0 0', fontFamily: SERIF, fontSize: 16, lineHeight: 1.6, color: BODY, maxWidth: '62ch', animation: 'fadeUp 700ms ease 140ms both' }}>
+        <p className="mt-6 mx-0 mb-0 font-serif text-lg leading-[1.6] text-ink-600 max-w-[62ch] [animation:fadeUp_700ms_ease_140ms_both]">
           We&apos;re a small team building tools that help students learn better. If that sounds like
           work worth doing, we&apos;d love to meet you.
         </p>
@@ -68,7 +67,7 @@ export default function CareersList() {
             row and hairline rules rather than floating cards. With nothing
             open, the same rule carries the empty state — a header reading
             "0 positions" above blank space is how a page looks broken. */}
-        <div style={{ marginTop: 48, paddingBottom: 12, borderBottom: HAIRLINE, display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 16, animation: 'fadeUp 700ms ease 200ms both' }}>
+        <div className="mt-12 pb-3 border-b border-b-[rgba(42,39,31,0.10)] flex items-baseline justify-between gap-4 [animation:fadeUp_700ms_ease_200ms_both]">
           <span style={EYEBROW}>{hiring ? 'Open roles' : 'Openings'}</span>
           {hiring ? (
             <span style={META}>
@@ -78,7 +77,7 @@ export default function CareersList() {
         </div>
 
         {!hiring ? (
-          <p style={{ margin: '44px auto', fontFamily: SERIF, fontSize: 17, lineHeight: 1.65, color: BODY, maxWidth: '52ch', textAlign: 'center', animation: 'fadeUp 700ms ease 260ms both' }}>
+          <p className="my-11 mx-auto font-serif text-[17px] leading-[1.65] text-ink-600 max-w-[52ch] text-center [animation:fadeUp_700ms_ease_260ms_both]">
             No opportunities at the moment. We post roles here as they open — and the note below
             reaches us either way.
           </p>
@@ -91,32 +90,21 @@ export default function CareersList() {
           return (
             <div
               key={job.id}
-              style={{
-                borderBottom: '1px solid rgba(42,39,31,0.08)',
-                animation: 'fadeUp 700ms ease both',
-                animationDelay: `${260 + i * 60}ms`,
-              }}
+              className="border-b border-b-[rgba(42,39,31,0.08)] [animation:fadeUp_700ms_ease_both]" style={{ animationDelay: `${260 + i * 60}ms` }}
             >
               <button
                 onClick={() => setExpandedId(isOpen ? null : job.id)}
                 aria-expanded={isOpen}
                 type="button"
-                style={{
-                  width: '100%', textAlign: 'left', background: 'none', border: 'none',
-                  cursor: 'pointer', padding: '24px 0', display: 'flex', alignItems: 'center',
-                  justifyContent: 'space-between', gap: 24,
-                }}
+                className="w-full text-left [background:none] border-0 cursor-pointer py-6 px-0 flex items-center justify-between gap-6"
               >
-                <span style={{ display: 'flex', flexDirection: 'column', gap: 8, minWidth: 0 }}>
-                  <span style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
-                    <span style={{ fontSize: 19, fontWeight: 600, color: INK, letterSpacing: '-0.015em' }}>
+                <span className="flex flex-col gap-2 min-w-0">
+                  <span className="flex items-center flex-wrap gap-2.5">
+                    <span className="text-[19px] font-semibold text-ink-800 tracking-[-0.015em]">
                       {job.title}
                     </span>
                     <span
-                      style={{
-                        fontSize: 11, fontWeight: 500, padding: '3px 10px', borderRadius: 99,
-                        background: dept.bg, color: dept.text, border: `1px solid ${dept.border}`,
-                      }}
+                      className="text-xs font-medium py-[3px] px-2.5 rounded-[99px]" style={{ background: dept.bg, color: dept.text, border: `1px solid ${dept.border}` }}
                     >
                       {job.department}
                     </span>
@@ -129,15 +117,7 @@ export default function CareersList() {
                 {/* Same affordance as the /faq accordion: a hairline circle that
                     fills forest green once the row is open. */}
                 <span
-                  style={{
-                    flex: '0 0 auto', width: 26, height: 26, borderRadius: 99,
-                    border: `1px solid ${isOpen ? 'var(--brand-forest)' : 'rgba(42,39,31,0.16)'}`,
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    background: isOpen ? 'var(--brand-forest)' : 'transparent',
-                    color: isOpen ? '#faf8f3' : MUTED,
-                    transform: isOpen ? 'rotate(180deg)' : 'rotate(0deg)',
-                    transition: 'all 260ms cubic-bezier(0.22,1,0.36,1)',
-                  }}
+                  className={cn("flex-[0_0_auto] w-6.5 h-6.5 rounded-[99px] flex items-center justify-center [transition:all_260ms_cubic-bezier(0.22,1,0.36,1)]", isOpen ? "border border-brand-forest" : "border border-[rgba(42,39,31,0.16)]", isOpen ? "bg-brand-forest" : "bg-transparent", isOpen ? "[transform:rotate(180deg)]" : "[transform:rotate(0deg)]")} style={{ color: isOpen ? '#faf8f3' : MUTED }}
                 >
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round">
                     <path d="M19 9l-7 7-7-7" />
@@ -146,52 +126,22 @@ export default function CareersList() {
               </button>
 
               <div
-                style={{
-                  overflow: 'hidden',
-                  // The cap has to clear the TALLEST the panel ever gets, which
-                  // is a phone: one column, a description running past fifteen
-                  // lines and the tags stacked five deep. Anything shorter
-                  // clips the apply button off the bottom. The ease-out curve
-                  // spends its travel early, so the slack costs nothing to look at.
-                  maxHeight: isOpen ? 1100 : 0,
-                  opacity: isOpen ? 1 : 0,
-                  // A collapsed panel still holds a link, so opacity alone would
-                  // leave an invisible tab stop. `visibility` takes it out of the
-                  // tab order — flipped instantly on open, and held until the
-                  // collapse finishes on close so the content does not vanish
-                  // mid-animation.
-                  visibility: isOpen ? 'visible' : 'hidden',
-                  transition: isOpen
-                    ? 'max-height 620ms cubic-bezier(0.22,1,0.36,1), opacity 400ms ease'
-                    : 'max-height 620ms cubic-bezier(0.22,1,0.36,1), opacity 400ms ease, visibility 0s linear 620ms',
-                }}
+                className={cn("overflow-hidden", isOpen ? "max-h-275" : "max-h-0", isOpen ? "opacity-100" : "opacity-0", isOpen ? "visible" : "invisible", isOpen ? "[transition:max-height_620ms_cubic-bezier(0.22,1,0.36,1),_opacity_400ms_ease]" : "[transition:max-height_620ms_cubic-bezier(0.22,1,0.36,1),_opacity_400ms_ease,_visibility_0s_linear_620ms]")}
               >
                 <div
-                  style={{
-                    paddingBottom: 32,
-                    display: 'grid',
-                    // auto-fit rather than a fixed 2fr/1fr split so the panel
-                    // collapses to one column without a media query, which
-                    // inline styles cannot express.
-                    gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%,320px),1fr))',
-                    gap: 44,
-                    alignItems: 'start',
-                  }}
+                  className="pb-8 grid grid-cols-[repeat(auto-fit,_minmax(min(100%,320px),1fr))] gap-11 [align-items:start]"
                 >
-                  <p style={{ margin: 0, fontFamily: SERIF, fontSize: 17, lineHeight: 1.62, color: BODY }}>
+                  <p className="m-0 font-serif text-[17px] leading-[1.62] text-ink-600">
                     {job.description}
                   </p>
 
                   <div>
                     <span style={EYEBROW}>What you&apos;d touch</span>
-                    <div style={{ marginTop: 14, display: 'flex', flexWrap: 'wrap', gap: 7 }}>
+                    <div className="mt-3.5 flex flex-wrap gap-[7px]">
                       {job.tags.map((tag) => (
                         <span
                           key={tag}
-                          style={{
-                            fontSize: 12, padding: '4px 11px', borderRadius: 7,
-                            background: '#faf8f3', border: HAIRLINE, color: BODY,
-                          }}
+                          className="text-sm py-1 px-[11px] rounded-[7px] bg-ink-0 border border-[rgba(42,39,31,0.10)] text-ink-600"
                         >
                           {tag}
                         </span>
@@ -199,12 +149,7 @@ export default function CareersList() {
                     </div>
                     <Link
                       href={`/careers/${job.slug}`}
-                      className="cp-cta"
-                      style={{
-                        marginTop: 24, display: 'inline-flex', alignItems: 'center', gap: 9,
-                        background: 'var(--brand-forest)', color: '#fff', borderRadius: 8,
-                        padding: '13px 22px', fontSize: 14.5, fontWeight: 600,
-                      }}
+                      className="cp-cta mt-6 inline-flex items-center gap-[9px] [background:var(--brand-forest)] text-accent-fg rounded-[8px] py-[13px] px-5.5 text-[14.5px] font-semibold"
                     >
                       Apply for this role
                       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
@@ -218,18 +163,17 @@ export default function CareersList() {
           );
         })}
 
-        <div style={{ marginTop: 52, borderRadius: 18, background: '#faf8f3', border: HAIRLINE, padding: 'clamp(26px,4vw,40px)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 24, flexWrap: 'wrap' }}>
-          <div style={{ maxWidth: '46ch' }}>
+        <div className="mt-13 rounded-[18px] bg-ink-0 border border-[rgba(42,39,31,0.10)] p-[clamp(26px,4vw,40px)] flex items-center justify-between gap-6 flex-wrap">
+          <div className="max-w-[46ch]">
             <span style={EYEBROW}>Don&apos;t see your role?</span>
-            <p style={{ margin: '10px 0 0', fontFamily: SERIF, fontSize: 15.5, lineHeight: 1.65, color: BODY }}>
+            <p className="mt-2.5 mx-0 mb-0 font-serif text-[15.5px] leading-[1.65] text-ink-600">
               We&apos;re always interested in meeting talented people. Send us a note and tell us what
               you&apos;d build.
             </p>
           </div>
           <a
             href="mailto:careers@saplinglearn.com"
-            className="cp-cta"
-            style={{ background: 'var(--brand-forest)', color: '#fff', borderRadius: 8, padding: '13px 22px', fontSize: 14.5, fontWeight: 600, whiteSpace: 'nowrap' }}
+            className="cp-cta [background:var(--brand-forest)] text-accent-fg rounded-[8px] py-[13px] px-5.5 text-[14.5px] font-semibold whitespace-nowrap"
           >
             Get in touch
           </a>

@@ -80,14 +80,8 @@ function useMeasuredWidth(fallback: number): [React.RefObject<HTMLDivElement | n
 }
 
 function EmptyNote() {
-  return <div style={{ color: "var(--text-muted)", fontSize: 13 }}>No data in this range.</div>;
+  return <div className="text-text-muted text-md">No data in this range.</div>;
 }
-
-const AXIS_TEXT: React.CSSProperties = {
-  fontSize: 10,
-  fill: "var(--text-muted)",
-  fontVariantNumeric: "tabular-nums",
-};
 
 export function DayLineChart({
   points,
@@ -130,7 +124,7 @@ export function DayLineChart({
   };
 
   return (
-    <div ref={wrapRef} style={{ position: "relative" }}>
+    <div ref={wrapRef} className="relative">
       <svg role="img" aria-label={ariaLabel} width="100%" height={height} viewBox={`0 0 ${width} ${height}`}>
         <g transform={`translate(${PAD_L},${PAD_T})`}>
           {ticks.map((t) => {
@@ -138,7 +132,7 @@ export function DayLineChart({
             return (
               <g key={t}>
                 <line x1={0} x2={plotW} y1={y} y2={y} stroke="var(--border)" strokeWidth={1} />
-                <text x={-6} y={y + 3} textAnchor="end" style={AXIS_TEXT}>{format(t)}</text>
+                <text x={-6} y={y + 3} textAnchor="end" className="text-2xs fill-text-muted tabular-nums">{format(t)}</text>
               </g>
             );
           })}
@@ -150,8 +144,8 @@ export function DayLineChart({
               <circle cx={hovered.x} cy={hovered.y} r={4.5} fill={color} stroke="var(--bg-panel)" strokeWidth={2} />
             </>
           )}
-          <text x={0} y={plotH + 13} style={AXIS_TEXT}>{points[0].date}</text>
-          <text x={plotW} y={plotH + 13} textAnchor="end" style={AXIS_TEXT}>{points.at(-1)!.date}</text>
+          <text x={0} y={plotH + 13} className="text-2xs fill-text-muted tabular-nums">{points[0].date}</text>
+          <text x={plotW} y={plotH + 13} textAnchor="end" className="text-2xs fill-text-muted tabular-nums">{points.at(-1)!.date}</text>
           <rect
             x={0} y={0} width={plotW} height={plotH} fill="transparent"
             onPointerMove={onMove} onPointerLeave={() => setHover(null)}
@@ -161,23 +155,10 @@ export function DayLineChart({
       {hovered && (
         <div
           role="status"
-          style={{
-            position: "absolute",
-            left: `${tooltipLeftPct(hovered.x, PAD_L, width)}%`,
-            transform: "translateX(-50%)",
-            top: 0,
-            background: "var(--bg-panel)",
-            border: "1px solid var(--border)",
-            borderRadius: "var(--r-sm)",
-            boxShadow: "var(--shadow-sm)",
-            padding: "4px 8px",
-            fontSize: 12,
-            pointerEvents: "none",
-            whiteSpace: "nowrap",
-          }}
+          className="absolute [transform:translateX(-50%)] top-0 bg-bg-panel border border-border rounded-sm shadow-sm py-1 px-2 text-sm pointer-events-none whitespace-nowrap" style={{ left: `${tooltipLeftPct(hovered.x, PAD_L, width)}%` }}
         >
-          <span style={{ color: "var(--text-muted)" }}>{hovered.point.date}</span>{" "}
-          <strong style={{ fontVariantNumeric: "tabular-nums" }}>{format(hovered.point.value)}</strong>
+          <span className="text-text-muted">{hovered.point.date}</span>{" "}
+          <strong className="tabular-nums">{format(hovered.point.value)}</strong>
         </div>
       )}
     </div>
@@ -204,29 +185,24 @@ export function CategoryBars({
   if (rows.length === 0) return <EmptyNote />;
   const max = Math.max(...rows.map((r) => r.value), 1);
   return (
-    <div role="img" aria-label={ariaLabel} style={{ display: "grid", gap: 6 }}>
+    <div role="img" aria-label={ariaLabel} className="grid gap-1.5">
       {rows.map((row) => {
         const pct = Math.max((row.value / max) * 100, 0.5);
         return (
           <div
             key={row.label}
-            style={{
-              display: "grid",
-              gridTemplateColumns: "minmax(120px, 220px) 1fr 64px",
-              alignItems: "center",
-              gap: 8,
-            }}
+            className="grid grid-cols-[minmax(120px,_220px)_1fr_64px] items-center gap-2"
           >
-            <span style={{ fontSize: 12, color: "var(--text-dim)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            <span className="text-sm text-text-dim overflow-hidden text-ellipsis whitespace-nowrap">
               {row.label}
             </span>
-            <svg width={`${pct}%`} height={14} viewBox="0 0 100 14" preserveAspectRatio="none" style={{ minWidth: 3 }}>
+            <svg width={`${pct}%`} height={14} viewBox="0 0 100 14" preserveAspectRatio="none" className="min-w-[3px]">
               <path d={barPath(100, 14)} data-part="bar-shape" fill={color} />
               <rect data-part="bar" x={0} y={0} width={100} height={14} fill="transparent">
                 <title>{`${row.label}: ${format(row.value)}`}</title>
               </rect>
             </svg>
-            <span style={{ fontSize: 12, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
+            <span className="text-sm text-right tabular-nums">
               {format(row.value)}
             </span>
           </div>

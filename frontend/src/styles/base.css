@@ -1,0 +1,15 @@
+/* Element defaults. Layered as base, so components and utilities win. */
+@layer base {
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text); font-family: var(--font-sans); -webkit-font-smoothing: antialiased; }
+  body { font-size: 14px; line-height: 1.5; }
+
+  ::selection { background: var(--accent); color: var(--accent-fg); }
+
+  *::-webkit-scrollbar { width: 10px; height: 10px; }
+  *::-webkit-scrollbar-track { background: transparent; }
+  *::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 999px; border: 2px solid var(--bg); }
+  *::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+  button { font-family: inherit; color: inherit; background: none; border: 0; cursor: pointer; padding: 0; }
+  input, textarea, select { font-family: inherit; color: inherit; }
+}

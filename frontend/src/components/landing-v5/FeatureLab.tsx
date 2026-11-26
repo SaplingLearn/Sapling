@@ -18,8 +18,7 @@
 
 import { GAL, LAB_KIND } from '@/lib/landing/content';
 import { FeatureLabDemo } from './lab';
-
-const LABEL: React.CSSProperties = { fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif" };
+import { cn } from "@/lib/cn";
 
 export function FeatureLab({
   index,
@@ -38,44 +37,44 @@ export function FeatureLab({
   if (!g) return null;
 
   return (
-    <div style={{ position: 'fixed', inset: 0, zIndex: 80 }}>
+    <div className="fixed inset-0 z-80">
       <div
         onClick={onClose}
-        style={{ position: 'absolute', inset: 0, background: 'rgba(21,29,10,0.62)', animation: 'panelFade 420ms ease both' }}
+        className="absolute inset-0 bg-[rgba(21,29,10,0.62)] [animation:panelFade_420ms_ease_both]"
       />
 
       <div
         ref={panelRef}
-        style={{ position: 'absolute', inset: 0, background: '#FDFCF9', overflow: 'hidden', display: 'flex', flexDirection: 'column', willChange: 'transform' }}
+        className="absolute inset-0 bg-bg-panel overflow-hidden flex flex-col [will-change:transform]"
       >
-        <div className="ld-lab-grid" style={{ flex: 1, minHeight: 0, display: 'grid', gridTemplateColumns: 'minmax(320px,4fr) 7fr', animation: 'panelFade 420ms ease 160ms both' }}>
-          <div className="ld-lab-copy" style={{ padding: 'clamp(28px,5vh,56px) clamp(28px,4vw,56px)', display: 'flex', flexDirection: 'column', borderRight: '1px solid #ECE9DE', overflow: 'auto' }}>
-            <span style={{ ...LABEL, fontSize: 12.5, color: '#445D22' }}>
+        <div className="ld-lab-grid flex-1 min-h-0 grid grid-cols-[minmax(320px,4fr)_7fr] [animation:panelFade_420ms_ease_160ms_both]">
+          <div className="ld-lab-copy py-[clamp(28px,5vh,56px)] px-[clamp(28px,4vw,56px)] flex flex-col border-r border-r-paper-100 overflow-auto">
+            <span className="font-sans text-[12.5px] text-brand-forest">
               {g.num} · {g.kicker}
             </span>
-            <h3 style={{ margin: '16px 0 0', fontFamily: "var(--font-gummi), Georgia, serif", fontSize: 'clamp(1.9rem,3.2vw,2.9rem)', fontWeight: 600, lineHeight: 1.06, letterSpacing: '-0.018em', color: '#191F13' }}>
+            <h3 className="mt-4 mx-0 mb-0 font-display text-[length:clamp(1.9rem,3.2vw,2.9rem)] font-semibold leading-[1.06] tracking-[-0.018em] text-moss-900">
               {g.title}
             </h3>
-            <p style={{ margin: '18px 0 0', color: '#3B4233', fontSize: 15, lineHeight: 1.75, maxWidth: '44ch' }}>{g.desc}</p>
+            <p className="mt-4.5 mx-0 mb-0 text-moss-700 text-[15px] leading-[1.75] max-w-[44ch]">{g.desc}</p>
 
-            <div className="ld-lab-bullets" style={{ marginTop: 26, display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <div className="ld-lab-bullets mt-6.5 flex flex-col gap-3.5">
               {g.bullets.map((b, i) => (
-                <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
-                  <span style={{ flexShrink: 0, width: 22, height: 22, borderRadius: 99, background: '#EAF1E4', display: 'flex', alignItems: 'center', justifyContent: 'center', marginTop: 1 }}>
+                <div key={i} className="flex items-start gap-3">
+                  <span className="shrink-0 w-5.5 h-5.5 rounded-[99px] bg-leaf-50 flex items-center justify-center mt-px">
                     <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#445D22" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
                       <path d="M20 6L9 17l-5-5" />
                     </svg>
                   </span>
-                  <span style={{ fontSize: 14, lineHeight: 1.65, color: '#3B4233' }}>{b.t}</span>
+                  <span className="text-base leading-[1.65] text-moss-700">{b.t}</span>
                 </div>
               ))}
             </div>
 
           </div>
 
-          <div className="ld-lab-demo" style={{ background: '#F2F4F0', padding: 'clamp(20px,3.4vh,40px) clamp(20px,2.6vw,44px)', display: 'flex', alignItems: 'center', justifyContent: 'center', minWidth: 0 }}>
-            <div className="ld-lab-demo-frame" style={{ position: 'relative', width: '100%', height: '100%', maxHeight: 660, borderRadius: 20, overflow: 'hidden', border: '1px solid #E2E6DF', background: '#FDFCF9', boxShadow: '0 30px 70px -30px rgba(25,31,19,0.32)' }}>
-              <div style={{ position: 'absolute', inset: 0 }}>
+          <div className="ld-lab-demo [background:#F2F4F0] py-[clamp(20px,3.4vh,40px)] px-[clamp(20px,2.6vw,44px)] flex items-center justify-center min-w-0">
+            <div className="ld-lab-demo-frame relative w-full h-full max-h-165 rounded-[20px] overflow-hidden border border-[#E2E6DF] [background:#FDFCF9] [box-shadow:0_30px_70px_-30px_rgba(25,31,19,0.32)]">
+              <div className="absolute inset-0">
                 <FeatureLabDemo kind={LAB_KIND[g.kind]} />
               </div>
             </div>
@@ -83,8 +82,7 @@ export function FeatureLab({
         </div>
 
         <div
-          className="ld-lab-rail"
-          style={{ flex: '0 0 auto', borderTop: '1px solid #ECE9DE', background: '#F6F8F4', padding: '12px clamp(20px,3vw,40px)', display: 'flex', gap: 10, overflowX: 'auto', animation: 'panelFade 420ms ease 260ms both' }}
+          className="ld-lab-rail flex-[0_0_auto] border-t border-t-paper-100 [background:#F6F8F4] py-3 px-[clamp(20px,3vw,40px)] flex gap-2.5 overflow-x-auto [animation:panelFade_420ms_ease_260ms_both]"
         >
           {GAL.map((r, i) => {
             const on = i === index;
@@ -94,21 +92,12 @@ export function FeatureLab({
                 data-rail={i}
                 type="button"
                 onClick={() => onPick(i)}
-                className="ld-rail"
-                style={{
-                  flex: '0 0 auto', display: 'flex', flexDirection: 'column', gap: 2,
-                  textAlign: 'left', padding: '9px 15px', borderRadius: 11, cursor: 'pointer',
-                  fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif",
-                  transition: 'all 220ms cubic-bezier(0.22,1,0.36,1)',
-                  background: on ? '#445D22' : '#FDFCF9',
-                  border: `1px solid ${on ? '#445D22' : '#E8E5DA'}`,
-                  color: on ? '#FDFCF9' : '#3B4233',
-                }}
+                className={cn(cn("ld-rail", "flex-[0_0_auto] flex flex-col gap-0.5 text-left py-[9px] px-[15px] rounded-[11px] cursor-pointer font-sans [transition:all_220ms_cubic-bezier(0.22,1,0.36,1)]", on ? "[background:#445D22]" : "[background:#FDFCF9]", on ? "text-bg-panel" : "text-moss-700"), on ? "border border-brand-forest" : "border border-paper-200")}
               >
-                <span style={{ ...LABEL, fontSize: 10, letterSpacing: '0.01em', color: on ? 'rgba(253,252,249,0.7)' : '#9FA49A' }}>
+                <span className={cn("font-sans text-2xs tracking-[0.01em]", on ? "text-[rgba(253,252,249,0.7)]" : "text-moss-300")}>
                   {r.num}
                 </span>
-                <span style={{ fontSize: 12.5, fontWeight: 600, whiteSpace: 'nowrap' }}>{r.kicker}</span>
+                <span className="text-[12.5px] font-semibold whitespace-nowrap">{r.kicker}</span>
               </button>
             );
           })}
@@ -117,8 +106,7 @@ export function FeatureLab({
         <button
           onClick={onClose}
           aria-label="Close"
-          className="ld-labclose"
-          style={{ position: 'absolute', top: 20, right: 20, width: 42, height: 42, borderRadius: 99, border: '1px solid rgba(25,31,19,0.12)', background: '#FDFCF9', color: '#191F13', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 250ms', zIndex: 3, animation: 'panelFade 420ms ease 240ms both' }}
+          className="ld-labclose absolute top-5 right-5 w-10.5 h-10.5 rounded-[99px] border border-[rgba(25,31,19,0.12)] [background:#FDFCF9] text-moss-900 cursor-pointer flex items-center justify-center [transition:all_250ms] z-3 [animation:panelFade_420ms_ease_240ms_both]"
         >
           <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
             <path d="M18 6L6 18M6 6l12 12" />

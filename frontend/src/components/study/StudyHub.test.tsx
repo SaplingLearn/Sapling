@@ -293,8 +293,8 @@ describe("StudyHub", () => {
     renderHub();
     await hubLoaded();
     fireEvent.click(screen.getByRole("button", { name: /1\s*Mastered/ }));
-    expect(screen.getByTestId("tile-var").style.opacity).toBe("1");
-    expect(screen.getByTestId("tile-rec").style.opacity).toBe("0.3");
+    expect(screen.getByTestId("tile-var")).toHaveTwStyle({ opacity: "1" });
+    expect(screen.getByTestId("tile-rec")).toHaveTwStyle({ opacity: "0.3" });
     // The tile itself only selects; the menu is behind its "..." button.
     fireEvent.click(screen.getByTestId("tile-loop"));
     expect(screen.queryByRole("menu")).toBeNull();
@@ -320,7 +320,7 @@ describe("StudyHub", () => {
     expect(loopMore.getAttribute("aria-expanded")).toBe("true");
     // The open menu's tile (and its column) are lifted over the later tiles,
     // or the next tile paints over the menu.
-    expect(loop.style.zIndex).toBe("2");
+    expect(loop).toHaveTwStyle({ zIndex: "2" });
     expect(screen.getByTestId("tile-rec").style.zIndex).toBe("");
 
     // Esc closes it and hands focus back to the "..." that opened it.
@@ -735,8 +735,8 @@ describe("StudyHub readiness follows the selected exam", () => {
     for (const id of ["var", "arr"]) expect(screen.queryByTestId(`tile-${id}`)).toBeNull();
     expect(within(screen.getByTestId("focus-card")).getByText("Recursion")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /^1\s*Learning$/ }));
-    expect(screen.getByTestId("tile-loop").style.opacity).toBe("1");
-    expect(screen.getByTestId("tile-rec").style.opacity).toBe("0.3");
+    expect(screen.getByTestId("tile-loop")).toHaveTwStyle({ opacity: "1" });
+    expect(screen.getByTestId("tile-rec")).toHaveTwStyle({ opacity: "0.3" });
 
     // Quiz 3 has nothing linked: the course's number, under QUIZ 3's name.
     expect(unlinkedNote()).toBeNull();

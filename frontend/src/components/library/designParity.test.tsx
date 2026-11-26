@@ -54,6 +54,7 @@ import { Library } from "./Library";
 import { ToastProvider } from "../ToastProvider";
 import { GLYPHS } from "./glyphs";
 import { CONTROL_H } from "./primitives";
+import { twStyle } from "@/test-utils/twStyle";
 
 const read = (p: string) => fs.readFileSync(path.join(__dirname, p), "utf8");
 const LIBRARY_DESIGN = read("__fixtures__/library-v2.design.html");
@@ -142,19 +143,19 @@ describe("the design's measurements are the rebuild's", () => {
   it("the upload split button keeps the design's fill and weight", async () => {
     await renderLibrary();
     const upload = screen.getByTestId("library-upload");
-    expect(upload.style.height).toBe(`${CONTROL_H}px`);
-    expect(upload.style.borderRadius).toBe("6px");
-    expect(upload.style.background).toBe("rgb(68, 93, 34)"); // #445D22
-    expect(upload.style.fontWeight).toBe("700");
+    expect(twStyle(upload).height).toBe(`${CONTROL_H}px`);
+    expect(upload).toHaveTwStyle({ borderRadius: "6px" });
+    expect(upload).toHaveTwStyle({ background: "rgb(68, 93, 34)" }); // #445D22
+    expect(upload).toHaveTwStyle({ fontWeight: "700" });
   });
 
   it("a row's file tile is the design's 30×38 at radius 5", async () => {
     await renderLibrary();
     const row = screen.getByTestId("library-doc-d1");
     const tile = row.querySelector("[title]") as HTMLElement;
-    expect(tile.style.width).toBe("30px");
-    expect(tile.style.height).toBe("38px");
-    expect(tile.style.borderRadius).toBe("5px");
+    expect(tile).toHaveTwStyle({ width: "30px" });
+    expect(tile).toHaveTwStyle({ height: "38px" });
+    expect(tile).toHaveTwStyle({ borderRadius: "5px" });
   });
 
 });
@@ -320,14 +321,14 @@ describe("the animations are the design's", () => {
     await renderLibrary();
     const row = screen.getByTestId("library-doc-d1");
     // The first row: 0 × 30 + 40.
-    expect(row.style.animationDelay).toBe("40ms");
-    expect(row.style.animation).toContain("sapSlideUp 420ms");
+    expect(row).toHaveTwStyle({ animationDelay: "40ms" });
+    expect(twStyle(row).animation).toContain("sapSlideUp 420ms");
   });
 
   it("the skeleton fades out at 720ms, under content that enters later", async () => {
     render(<ToastProvider><Library /></ToastProvider>);
     const skeleton = await screen.findByTestId("library-skeleton");
-    expect(skeleton.style.animation).toBe("sapSkelOut 260ms ease 720ms both");
+    expect(skeleton).toHaveTwStyle({ animation: "sapSkelOut 260ms ease 720ms both" });
   });
 
   it("reduced motion is honoured, scoped to the page", () => {
@@ -361,8 +362,8 @@ describe("the three faces are used where the design uses them", () => {
   it("the Library title is Aleo at the design's 34px", async () => {
     await renderLibrary();
     const h1 = screen.getByRole("heading", { name: "Library", level: 1 });
-    expect(h1.style.fontSize).toBe("34px");
-    expect(h1.style.fontWeight).toBe("600");
-    expect(h1.style.fontFamily).toContain("--font-serif");
+    expect(h1).toHaveTwStyle({ fontSize: "34px" });
+    expect(h1).toHaveTwStyle({ fontWeight: "600" });
+    expect(twStyle(h1).fontFamily).toContain("--font-serif");
   });
 });

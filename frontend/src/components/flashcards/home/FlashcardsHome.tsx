@@ -31,6 +31,7 @@ import { Hero } from "./Hero";
 import type { SetsState } from "./useFlashcardsData";
 import { useSetActions } from "./useSetActions";
 import { startStatus, type StartPlan, type StartProgress } from "./useStart";
+import { cn } from "@/lib/cn";
 
 /** New cards per concept when a deck is played from the home (the builder's default). */
 const PER_CONCEPT = 5;
@@ -185,7 +186,7 @@ function NoConcepts({ hasCourse }: { hasCourse: boolean }) {
   const libraryHidden = useIsNavHidden()("/library");
   const library = libraryHidden ? null : <Link href="/library">Library</Link>;
   return (
-    <p className={h.quiet} style={{ marginTop: 20 }} data-testid="flashcards-no-concepts">
+    <p className={cn(h.quiet, "mt-5")} data-testid="flashcards-no-concepts">
       {hasCourse
         ? library
           ? <>No concepts for this course yet. Upload its material in the {library} and you can make sets of them here.</>

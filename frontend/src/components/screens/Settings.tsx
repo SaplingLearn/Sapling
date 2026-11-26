@@ -1,10 +1,10 @@
 "use client";
+import { PanelModal } from "@/components/ui/PanelModal";
 import React from "react";
 import Link from "next/link";
 import { TopBar } from "../TopBar";
 import { FullHeightScreen } from "../FullHeightScreen";
 import { Icon } from "../Icon";
-import { useScrollLock } from "@/lib/useScrollLock";
 import { Avatar } from "../Avatar";
 import { CustomSelect } from "../CustomSelect";
 import { ProfileView } from "../ProfileView";
@@ -43,6 +43,7 @@ import {
 } from "./settingsUsername";
 import { humanizeError } from "@/lib/errorMessage";
 import { sentenceCase } from "@/lib/sentenceCase";
+import { cn } from "@/lib/cn";
 
 type Tab = "profile" | "cosmetics" | "preferences" | "notifications" | "data";
 
@@ -73,33 +74,11 @@ function Toggle({
       data-testid={testId}
       disabled={disabled}
       onClick={() => onChange(!on)}
-      style={{
-        flexShrink: 0,
-        width: 36,
-        height: 20,
-        padding: 0,
-        border: "none",
-        borderRadius: "var(--r-full)",
-        background: on ? "var(--accent)" : "var(--bg-soft)",
-        position: "relative",
-        cursor: disabled ? "not-allowed" : "pointer",
-        opacity: disabled ? 0.5 : 1,
-        transition: "all var(--dur) var(--ease)",
-      }}
+      className={cn("shrink-0 w-9 h-5 p-0 border-0 rounded-[var(--r-full)] relative [transition:all_var(--dur)_var(--ease)]", on ? "bg-accent" : "bg-bg-soft", disabled ? "cursor-not-allowed" : "cursor-pointer", disabled ? "opacity-50" : "opacity-100")}
     >
       <span
         aria-hidden
-        style={{
-          position: "absolute",
-          top: 2,
-          left: on ? 18 : 2,
-          width: 16,
-          height: 16,
-          borderRadius: "50%",
-          background: "#fff",
-          boxShadow: "var(--shadow-sm)",
-          transition: "all var(--dur) var(--ease)",
-        }}
+        className={cn("absolute top-0.5 w-4 h-4 rounded-[50%] bg-accent-fg shadow-sm [transition:all_var(--dur)_var(--ease)]", on ? "left-4.5" : "left-0.5")}
       />
     </button>
   );
@@ -377,28 +356,27 @@ export function Settings() {
       {/* Fills whatever `<main>` leaves below TopBar. `minHeight: 0` lets this
           shrink past its content so the panes below scroll internally rather
           than pushing the screen taller than `<main>`. */}
-      <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
-        <div style={{ flex: 1, minWidth: 0, padding: "24px 32px", overflowY: "auto" }}>
+      <div className="flex flex-1 min-h-0">
+        <div className="flex-1 min-w-0 py-6 px-8 overflow-y-auto">
           {!settings && tab !== "cosmetics" && <SettingsFormSkeleton />}
           {tab === "profile" && settings && (
-            <div style={{ maxWidth: 640, margin: "0 auto" }}>
-              <div className="h-serif" style={{ fontSize: 22, marginBottom: 20 }}>Profile</div>
+            <div className="max-w-160 my-0 mx-auto">
+              <div className="h-serif text-2xl mb-5">Profile</div>
               <div
-                className="card"
-                style={{ padding: "var(--pad-lg)", display: "flex", gap: 20, alignItems: "center", marginBottom: 16 }}
+                className="card p-(--pad-lg) flex gap-5 items-center mb-4"
               >
                 <Avatar name={userName || "?"} size={72} img={avatarUrl || undefined} />
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 18, fontWeight: 600, fontFamily: "var(--font-display)" }}>
+                <div className="flex-1">
+                  <div className="text-xl font-semibold font-display">
                     {userName}
                   </div>
-                  <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 2 }}>PNG or JPG, up to 5 MB.</div>
+                  <div className="text-sm text-text-muted mt-0.5">PNG or JPG, up to 5 MB.</div>
                 </div>
                 <input
                   ref={avatarFileRef}
                   type="file"
                   accept="image/*"
-                  style={{ display: "none" }}
+                  className="hidden"
                   onChange={e => handleAvatarFile(e.target.files?.[0] ?? null)}
                 />
                 <button className="btn btn--sm" onClick={() => avatarFileRef.current?.click()} disabled={uploadingAvatar}>
@@ -408,8 +386,8 @@ export function Settings() {
               <div className="settings-field-row">
                 <div className="label-micro">Username</div>
                 <div>
-                  <div style={{ position: "relative" }}>
-                    <span style={{ position: "absolute", left: 10, top: 9, fontSize: 13, color: "var(--text-muted)" }}>@</span>
+                  <div className="relative">
+                    <span className="absolute left-2.5 top-[9px] text-md text-text-muted">@</span>
                     <input
                       value={usernameDraft}
                       onChange={e => setUsernameDraft(e.target.value)}
@@ -426,22 +404,11 @@ export function Settings() {
                         }
                       }}
                       placeholder="your-handle"
-                      style={{
-                        padding: "8px 12px 8px 26px",
-                        background: "var(--bg-input)",
-                        border: `1px solid ${usernameBorderColor(usernameState.status)}`,
-                        borderRadius: "var(--r-sm)",
-                        fontSize: 13,
-                        width: "100%",
-                      }}
+                      className="pt-2 pr-3 pb-2 pl-6.5 bg-bg-input rounded-sm text-md w-full" style={{ border: `1px solid ${usernameBorderColor(usernameState.status)}` }}
                     />
                   </div>
                   {usernameState.message && (
-                    <div style={{
-                      fontSize: 11,
-                      marginTop: 4,
-                      color: usernameMessageColor(usernameState.status),
-                    }}>
+                    <div className="text-xs mt-1" style={{ color: usernameMessageColor(usernameState.status) }}>
                       {usernameMessageText(usernameState)}
                     </div>
                   )}
@@ -466,30 +433,17 @@ export function Settings() {
                         patchProfile({ [key]: v || undefined });
                       }
                     }}
-                    style={{
-                      padding: "8px 12px",
-                      background: "var(--bg-input)",
-                      border: "1px solid var(--border)",
-                      borderRadius: "var(--r-sm)",
-                      fontSize: 13,
-                    }}
+                    className="py-2 px-3 bg-bg-input border border-border rounded-sm text-md"
                   />
                 </div>
               ))}
 
               <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  padding: "16px 0",
-                  gap: 20,
-                  marginTop: 8,
-                }}
+                className="flex justify-between items-center py-4 px-0 gap-5 mt-2"
               >
                 <div>
-                  <div style={{ fontSize: 13, fontWeight: 500 }}>Sign out</div>
-                  <div style={{ fontSize: 11, color: "var(--text-dim)", marginTop: 2 }}>
+                  <div className="text-md font-medium">Sign out</div>
+                  <div className="text-xs text-text-dim mt-0.5">
                     End your session on this device.
                   </div>
                 </div>
@@ -511,26 +465,19 @@ export function Settings() {
           )}
 
           {tab === "preferences" && settings && (
-            <div style={{ maxWidth: 640, margin: "0 auto" }}>
-              <div className="h-serif" style={{ fontSize: 22, marginBottom: 20 }}>Preferences</div>
+            <div className="max-w-160 my-0 mx-auto">
+              <div className="h-serif text-2xl mb-5">Preferences</div>
               <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  padding: "16px 0",
-                  borderBottom: "1px solid var(--border)",
-                  gap: 20,
-                }}
+                className="flex justify-between items-center py-4 px-0 border-b border-b-border gap-5"
               >
                 <div>
-                  <div style={{ fontSize: 13, fontWeight: 500 }}>Layout</div>
-                  <div style={{ fontSize: 11, color: "var(--text-dim)", marginTop: 2 }}>
+                  <div className="text-md font-medium">Layout</div>
+                  <div className="text-xs text-text-dim mt-0.5">
                     Choose between a top navigation bar or a full-height sidebar.
                     Falls back to top nav on small screens.
                   </div>
                 </div>
-                <div style={{ minWidth: 180 }}>
+                <div className="min-w-45">
                   <CustomSelect
                     size="sm"
                     value={layoutPref}
@@ -551,17 +498,10 @@ export function Settings() {
               ).map(([label, key, options]) => (
                 <div
                   key={key}
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    padding: "16px 0",
-                    borderBottom: "1px solid var(--border)",
-                    gap: 20,
-                  }}
+                  className="flex justify-between items-center py-4 px-0 border-b border-b-border gap-5"
                 >
-                  <div style={{ fontSize: 13, fontWeight: 500 }}>{label}</div>
-                  <div style={{ minWidth: 180 }}>
+                  <div className="text-md font-medium">{label}</div>
+                  <div className="min-w-45">
                     <CustomSelect
                       size="sm"
                       value={(settings[key] as string) ?? options[0]}
@@ -572,22 +512,15 @@ export function Settings() {
                 </div>
               ))}
               <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  padding: "16px 0",
-                  borderBottom: "1px solid var(--border)",
-                  gap: 20,
-                }}
+                className="flex justify-between items-center py-4 px-0 border-b border-b-border gap-5"
               >
                 <div>
-                  <div style={{ fontSize: 13, fontWeight: 500 }}>Accent color</div>
-                  <div style={{ fontSize: 11, color: "var(--text-dim)", marginTop: 2 }}>
+                  <div className="text-md font-medium">Accent color</div>
+                  <div className="text-xs text-text-dim mt-0.5">
                     Hue used for highlights and active states.
                   </div>
                 </div>
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <div className="flex items-center gap-2">
                   {["#2b5221", "#2b8c96", "#e8a33a", "#8a63d2", "#dc2626"].map(c => {
                     const active = (settings.accent_color ?? "#2b5221") === c;
                     return (
@@ -598,32 +531,12 @@ export function Settings() {
                           patch({ accent_color: c });
                         }}
                         aria-label={`Accent ${c}`}
-                        style={{
-                          width: 24,
-                          height: 24,
-                          borderRadius: "50%",
-                          background: c,
-                          border: active ? "2px solid var(--text)" : "2px solid transparent",
-                          outline: active ? `2px solid ${c}` : "none",
-                          outlineOffset: 2,
-                          cursor: "pointer",
-                          padding: 0,
-                          transition: "transform var(--dur) var(--ease)",
-                        }}
+                        className={cn("w-6 h-6 rounded-[50%] cursor-pointer p-0 [transition:transform_var(--dur)_var(--ease)]", active ? "border-2 border-text" : "border-2 border-transparent")} style={{ background: c, outline: active ? `2px solid ${c}` : "none", outlineOffset: 2 }}
                       />
                     );
                   })}
                   <label
-                    style={{
-                      position: "relative",
-                      width: 24,
-                      height: 24,
-                      borderRadius: "50%",
-                      background:
-                        "conic-gradient(from 0deg, #ff6b6b, #f9d423, #6bcf7f, #4dabf7, #b197fc, #ff6b6b)",
-                      cursor: "pointer",
-                      border: "2px solid transparent",
-                    }}
+                    className="relative w-6 h-6 rounded-[50%] [background:conic-gradient(from_0deg,_#ff6b6b,_#f9d423,_#6bcf7f,_#4dabf7,_#b197fc,_#ff6b6b)] cursor-pointer border-2 border-transparent"
                     title="Custom color"
                   >
                     <input
@@ -633,7 +546,7 @@ export function Settings() {
                         document.documentElement.style.setProperty("--accent", e.target.value);
                         patch({ accent_color: e.target.value });
                       }}
-                      style={{ position: "absolute", inset: 0, opacity: 0, cursor: "pointer" }}
+                      className="absolute inset-0 opacity-0 cursor-pointer"
                     />
                   </label>
                 </div>
@@ -642,8 +555,8 @@ export function Settings() {
           )}
 
           {tab === "notifications" && settings && (
-            <div style={{ maxWidth: 640, margin: "0 auto" }}>
-              <div className="h-serif" style={{ fontSize: 22, marginBottom: 20 }}>Notifications</div>
+            <div className="max-w-160 my-0 mx-auto">
+              <div className="h-serif text-2xl mb-5">Notifications</div>
               {(
                 [
                   ["Email", "notification_email"],
@@ -654,15 +567,9 @@ export function Settings() {
               ).map(([label, key]) => (
                 <div
                   key={key}
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    padding: "14px 0",
-                    borderBottom: "1px solid var(--border)",
-                  }}
+                  className="flex justify-between items-center py-3.5 px-0 border-b border-b-border"
                 >
-                  <div style={{ fontSize: 13 }} id={`settings-toggle-${key}-label`}>{label}</div>
+                  <div className="text-md" id={`settings-toggle-${key}-label`}>{label}</div>
                   <Toggle
                     on={Boolean(settings[key])}
                     onChange={(v) => patch({ [key]: v } as Partial<UserSettings>)}
@@ -676,11 +583,11 @@ export function Settings() {
           )}
 
           {tab === "data" && (
-            <div style={{ maxWidth: 640, margin: "0 auto" }}>
-              <div className="h-serif" style={{ fontSize: 22, marginBottom: 20 }}>Your Data</div>
-              <div className="card" style={{ padding: "var(--pad-lg)" }}>
-                <div style={{ fontWeight: 600, marginBottom: 4 }}>Export your data</div>
-                <div style={{ fontSize: 12, color: "var(--text-dim)", marginBottom: 12 }}>
+            <div className="max-w-160 my-0 mx-auto">
+              <div className="h-serif text-2xl mb-5">Your Data</div>
+              <div className="card p-(--pad-lg)">
+                <div className="font-semibold mb-1">Export your data</div>
+                <div className="text-sm text-text-dim mb-3">
                   Download a JSON bundle of your sessions, notes, and knowledge graph.
                 </div>
                 <button
@@ -718,19 +625,18 @@ export function Settings() {
               />
 
               <div
-                className="h-serif"
-                style={{ fontSize: 18, margin: "28px 0 12px", color: "var(--err)" }}
+                className="h-serif text-xl mt-7 mx-0 mb-3 text-err"
               >
                 Danger Zone
               </div>
-              <div className="card" style={{ padding: "var(--pad-lg)", borderColor: "var(--err)" }}>
-                <div style={{ fontWeight: 600, marginBottom: 4 }}>Delete account</div>
-                <div style={{ fontSize: 12, color: "var(--text-dim)", marginBottom: 12 }}>
+              <div className="card p-(--pad-lg) border-err">
+                <div className="font-semibold mb-1">Delete account</div>
+                <div className="text-sm text-text-dim mb-3">
                   Your account is hidden and you are signed out right away, and your Google and
                   Gradescope connections are removed. Your personal data is permanently erased
                   30 days later. Records without your content (AI usage and cost, usage
                   telemetry) are kept; see section 5 of the{" "}
-                  <Link href="/privacy" style={{ color: "var(--accent)" }}>
+                  <Link href="/privacy" className="text-accent">
                     Privacy Policy
                   </Link>
                   .
@@ -741,34 +647,14 @@ export function Settings() {
           )}
         </div>
         <div
-          style={{
-            width: 200,
-            flexShrink: 0,
-            borderLeft: "1px solid var(--border)",
-            padding: "18px 12px",
-            background: "var(--bg-subtle)",
-            overflowY: "auto",
-          }}
+          className="w-50 shrink-0 border-l border-l-border py-4.5 px-3 bg-bg-subtle overflow-y-auto"
         >
           {tabs.map((t) => (
             <button
               key={t}
               data-testid={`settings-tab-${t}`}
               onClick={() => setTab(t)}
-              style={{
-                display: "block",
-                width: "100%",
-                textAlign: "left",
-                padding: "8px 12px",
-                fontSize: 13,
-                background: tab === t ? "var(--bg-soft)" : "transparent",
-                color: tab === t ? "var(--text)" : "var(--text-dim)",
-                borderRadius: "var(--r-sm)",
-                marginBottom: 2,
-                fontWeight: tab === t ? 600 : 400,
-                textTransform: "capitalize",
-                transition: "background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease)",
-              }}
+              className={cn("block w-full text-left py-2 px-3 text-md rounded-sm mb-0.5 capitalize [transition:background_var(--dur-fast)_var(--ease),_color_var(--dur-fast)_var(--ease)]", tab === t ? "bg-bg-soft" : "bg-transparent", tab === t ? "text-text" : "text-text-dim", tab === t ? "font-semibold" : "font-normal")}
             >
               {t}
             </button>
@@ -778,20 +664,7 @@ export function Settings() {
               for visual continuity with the rest of the sidebar. */}
           <Link
             href="/settings/connections"
-            style={{
-              display: "block",
-              width: "100%",
-              textAlign: "left",
-              padding: "8px 12px",
-              fontSize: 13,
-              color: "var(--text-dim)",
-              borderRadius: "var(--r-sm)",
-              marginTop: 6,
-              textDecoration: "none",
-              borderTop: "1px solid var(--border)",
-              paddingTop: 14,
-              transition: "background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease)",
-            }}
+            className="block w-full text-left py-2 px-3 text-md text-text-dim rounded-sm mt-1.5 no-underline border-t border-t-border pt-3.5 [transition:background_var(--dur-fast)_var(--ease),_color_var(--dur-fast)_var(--ease)]"
           >
             Connected accounts ↗
           </Link>
@@ -852,13 +725,13 @@ function AnalyticsPreference({
   const loaded = state !== "unknown" && state !== "unreadable";
 
   return (
-    <div className="card" data-testid="settings-analytics" style={{ padding: "var(--pad-lg)", marginTop: 16 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 20 }}>
+    <div className="card p-(--pad-lg) mt-4" data-testid="settings-analytics">
+      <div className="flex justify-between items-start gap-5">
         <div>
-          <div style={{ fontWeight: 600, marginBottom: 4 }} id="settings-analytics-label">
+          <div className="font-semibold mb-1" id="settings-analytics-label">
             Product analytics
           </div>
-          <div style={{ fontSize: 12, color: "var(--text-dim)" }}>
+          <div className="text-sm text-text-dim">
             Share how you use Sapling with PostHog, our analytics provider, so we can see what to
             improve: the app pages you view (with basic browser and device details, but not your IP
             address), actions you take (like starting a quiz, messaging the
@@ -866,19 +739,18 @@ function AnalyticsPreference({
             response, and error reports from our servers. It&apos;s tied to your Sapling account ID —
             never your name or email, and never what you type or the text of your notes, documents,
             messages or AI replies. Turning it off stops all of this within about a minute.{" "}
-            <Link href="/privacy" style={{ color: "var(--accent)" }}>Privacy Policy</Link>
+            <Link href="/privacy" className="text-accent">Privacy Policy</Link>
           </div>
-          <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 6 }} data-testid="settings-analytics-note">
+          <div className="text-xs text-text-muted mt-1.5" data-testid="settings-analytics-note">
             {ANALYTICS_NOTES[state]}
             {state === "unreadable" && (
               <>
                 {" "}
                 <button
                   type="button"
-                  className="btn btn--sm"
+                  className="btn btn--sm ml-1"
                   data-testid="settings-analytics-reload"
                   onClick={onReload}
-                  style={{ marginLeft: 4 }}
                 >
                   Try again
                 </button>
@@ -889,11 +761,10 @@ function AnalyticsPreference({
                 {" "}
                 <button
                   type="button"
-                  className="btn btn--sm"
+                  className="btn btn--sm ml-1"
                   data-testid="settings-analytics-retry"
                   disabled={saving}
                   onClick={onRetry}
-                  style={{ marginLeft: 4 }}
                 >
                   Retry saving
                 </button>
@@ -973,37 +844,26 @@ function CosmeticsManager({ userId }: { userId: string }) {
   const lockedCount = catalogList.filter(c => !c.owned).length;
 
   return (
-    <div style={{ maxWidth: 720, margin: "0 auto" }}>
-      <div className="h-serif" style={{ fontSize: 22, marginBottom: 12 }}>Cosmetics</div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid var(--border)", marginBottom: 16 }}>
-        <div style={{ display: "flex", gap: 4 }}>
+    <div className="max-w-180 my-0 mx-auto">
+      <div className="h-serif text-2xl mb-3">Cosmetics</div>
+      <div className="flex justify-between items-center border-b border-b-border mb-4">
+        <div className="flex gap-1">
           {(Object.keys(COSMETIC_TAB_LABELS) as CosmeticType[]).map(t => (
             <button
               key={t}
               onClick={() => setSubTab(t)}
-              style={{
-                padding: "8px 14px", fontSize: 13,
-                fontWeight: subTab === t ? 600 : 400,
-                color: subTab === t ? "var(--text)" : "var(--text-dim)",
-                borderBottom: subTab === t ? "2px solid var(--text)" : "2px solid transparent",
-              }}
+              className={cn("py-2 px-3.5 text-md", subTab === t ? "font-semibold" : "font-normal", subTab === t ? "text-text" : "text-text-dim", subTab === t ? "border-b-2 border-b-text" : "border-b-2 border-b-transparent")}
             >
               {COSMETIC_TAB_LABELS[t]}
             </button>
           ))}
         </div>
-        <div style={{ display: "flex", gap: 4, padding: "4px 0" }}>
+        <div className="flex gap-1 py-1 px-0">
           {(["owned", "catalog"] as const).map(v => (
             <button
               key={v}
               onClick={() => setView(v)}
-              style={{
-                padding: "4px 10px", fontSize: 11, borderRadius: "var(--r-full)",
-                background: view === v ? "var(--bg-soft)" : "transparent",
-                color: view === v ? "var(--text)" : "var(--text-dim)",
-                border: `1px solid var(--border)`,
-                textTransform: "capitalize",
-              }}
+              className={cn("py-1 px-2.5 text-xs rounded-[var(--r-full)] border border-border capitalize", view === v ? "bg-bg-soft" : "bg-transparent", view === v ? "text-text" : "text-text-dim")}
             >
               {v === "catalog" ? `Catalog · ${catalogList.length}` : `Owned · ${ownedList.length}`}
             </button>
@@ -1013,10 +873,10 @@ function CosmeticsManager({ userId }: { userId: string }) {
 
       {view === "owned" ? (
         ownedList.length === 0 ? (
-          <div className="card" style={{ padding: 28, textAlign: "center", color: "var(--text-muted)" }}>
+          <div className="card p-7 text-center text-text-muted">
             No {COSMETIC_TAB_LABELS[subTab].toLowerCase()} unlocked yet.
             {catalogList.length > 0 && (
-              <div style={{ marginTop: 8 }}>
+              <div className="mt-2">
                 <button className="btn btn--sm" onClick={() => setView("catalog")}>
                   Browse catalog ({catalogList.length})
                 </button>
@@ -1024,7 +884,7 @@ function CosmeticsManager({ userId }: { userId: string }) {
             )}
           </div>
         ) : (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 12 }}>
+          <div className="grid grid-cols-[repeat(auto-fill,_minmax(180px,_1fr))] gap-3">
             {ownedList.map(uc => {
               const c = uc.cosmetic;
               const isEquipped = equippedId === c.id;
@@ -1046,11 +906,11 @@ function CosmeticsManager({ userId }: { userId: string }) {
       ) : (
         <>
           {catalogList.length === 0 ? (
-            <div className="card" style={{ padding: 28, textAlign: "center", color: "var(--text-muted)" }}>
+            <div className="card p-7 text-center text-text-muted">
               Nothing in the catalog yet.
             </div>
           ) : (
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 12 }}>
+            <div className="grid grid-cols-[repeat(auto-fill,_minmax(180px,_1fr))] gap-3">
               {catalogList.map(c => {
                 const isEquipped = equippedId === c.id;
                 return (
@@ -1070,7 +930,7 @@ function CosmeticsManager({ userId }: { userId: string }) {
             </div>
           )}
           {lockedCount > 0 && (
-            <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 12, textAlign: "center" }}>
+            <div className="text-xs text-text-muted mt-3 text-center">
               {lockedCount} locked · earn achievements or unlock via the ways shown on each card.
             </div>
           )}
@@ -1094,39 +954,29 @@ function CosmeticCard({
 }) {
   return (
     <div
-      className="card"
-      style={{
-        padding: 12,
-        display: "flex", flexDirection: "column", alignItems: "center", gap: 8,
-        borderTop: `3px solid var(--rarity-${cosmetic.rarity}, var(--border))`,
-        outline: isEquipped ? "2px solid var(--accent)" : "none",
-        outlineOffset: -1,
-        opacity: locked ? 0.6 : 1,
-        position: "relative",
-      }}
+      className={cn("card", "p-3 flex flex-col items-center gap-2 [outline-offset:-1px] relative", isEquipped ? "[outline:2px_solid_var(--accent)]" : "outline-none", locked ? "opacity-60" : "opacity-100")}
+      style={{ borderTop: `3px solid var(--rarity-${cosmetic.rarity}, var(--border))` }}
     >
       {locked && (
         <span
-          className="chip"
-          style={{ position: "absolute", top: 8, right: 8, fontSize: 11 }}
+          className="chip absolute top-2 right-2 text-xs"
           title={unlockSource || "Locked"}
         >
           🔒 locked
         </span>
       )}
       <CosmeticPreview cosmetic={cosmetic} userName={userName} avatarUrl={avatarUrl} />
-      <div style={{ fontSize: 12, fontWeight: 600, textAlign: "center" }}>{cosmetic.name}</div>
-      <div style={{ fontSize: 12, color: "var(--text-muted)" }}>{sentenceCase(cosmetic.rarity)}</div>
+      <div className="text-sm font-semibold text-center">{cosmetic.name}</div>
+      <div className="text-sm text-text-muted">{sentenceCase(cosmetic.rarity)}</div>
       {locked ? (
-        <div style={{ fontSize: 10, color: "var(--text-muted)", textAlign: "center", minHeight: 14 }}>
+        <div className="text-2xs text-text-muted text-center min-h-3.5">
           {unlockSource ? `Unlock: ${unlockSource}` : "Locked"}
         </div>
       ) : (
         <button
-          className={`btn btn--sm ${isEquipped ? "" : "btn--primary"}`}
+          className={cn(`btn btn--sm ${isEquipped ? "" : "btn--primary"}`, "w-full")}
           onClick={onClick}
           disabled={disabled || !onClick}
-          style={{ width: "100%" }}
         >
           {isEquipped ? "Unequip" : "Equip"}
         </button>
@@ -1144,7 +994,7 @@ function CosmeticPreview({
 }) {
   if (cosmetic.type === "avatar_frame") {
     return (
-      <div style={{ position: "relative", width: 64, height: 64 }}>
+      <div className="relative w-16 h-16">
         <Avatar name={userName || "?"} size={52} img={avatarUrl || undefined} />
         {cosmetic.asset_url && (
           <img
@@ -1154,7 +1004,7 @@ function CosmeticPreview({
             height={64}
             loading="lazy"
             decoding="async"
-            style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none", objectFit: "contain" }}
+            className="absolute inset-0 w-full h-full pointer-events-none object-contain"
           />
         )}
       </div>
@@ -1162,8 +1012,8 @@ function CosmeticPreview({
   }
   if (cosmetic.type === "banner" && cosmetic.asset_url) {
     return (
-      <div style={{ width: "100%", height: 48, borderRadius: "var(--r-sm)", overflow: "hidden", border: "1px solid var(--border)" }}>
-        <img src={cosmetic.asset_url} alt="" width={180} height={48} loading="lazy" decoding="async" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+      <div className="w-full h-12 rounded-sm overflow-hidden border border-border">
+        <img src={cosmetic.asset_url} alt="" width={180} height={48} loading="lazy" decoding="async" className="w-full h-full object-cover" />
       </div>
     );
   }
@@ -1173,11 +1023,11 @@ function CosmeticPreview({
     const style: React.CSSProperties = isGradient
       ? { backgroundImage: css, WebkitBackgroundClip: "text", backgroundClip: "text", color: "transparent" }
       : { color: css };
-    return <div className="h-serif" style={{ fontSize: 18, fontWeight: 600, ...style }}>{userName || "Preview"}</div>;
+    return <div className="h-serif text-xl font-semibold" style={{ ...style }}>{userName || "Preview"}</div>;
   }
   if (cosmetic.type === "title") {
     return (
-      <span className="chip" style={{ fontSize: 12 }}>
+      <span className="chip text-sm">
         {cosmetic.css_value || cosmetic.name}
       </span>
     );
@@ -1186,49 +1036,11 @@ function CosmeticPreview({
 }
 
 function PreviewModal({ profile, onClose }: { profile: UserProfile; onClose: () => void }) {
-  // This modal only exists while it's open, so the lock is unconditional.
-  useScrollLock(true);
-
-  React.useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
-    window.addEventListener("keydown", onKey);
-    return () => {
-      window.removeEventListener("keydown", onKey);
-    };
-  }, [onClose]);
-
   return (
-    <div
-      onClick={onClose}
-      style={{
-        position: "fixed", inset: 0, zIndex: 120,
-        background: "rgba(25, 37, 11,0.45)",
-        display: "flex", alignItems: "center", justifyContent: "center",
-        padding: 24,
-      }}
-    >
-      <div
-        onClick={e => e.stopPropagation()}
-        style={{
-          background: "var(--bg)", borderRadius: "var(--r-lg)",
-          border: "1px solid var(--border)",
-          maxWidth: 920, width: "100%", maxHeight: "88vh", overflow: "auto",
-        }}
-      >
-        <div style={{
-          display: "flex", justifyContent: "space-between", alignItems: "center",
-          padding: "14px 20px", borderBottom: "1px solid var(--border)",
-          position: "sticky", top: 0, background: "var(--bg)", zIndex: 1,
-        }}>
-          <div className="label-micro">Profile preview</div>
-          <button className="btn btn--sm btn--ghost" onClick={onClose} aria-label="Close">
-            <Icon name="x" size={12} /> Close
-          </button>
-        </div>
-        <div style={{ padding: 20 }}>
+    <PanelModal label="Profile preview" onClose={onClose} maxWidth="max-w-230" maxHeight="max-h-[88vh]">
+        <div className="p-5">
           <ProfileView profile={profile} embedded />
         </div>
-      </div>
-    </div>
+    </PanelModal>
   );
 }

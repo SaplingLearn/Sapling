@@ -97,7 +97,7 @@ export function BadgeArt({
   const [main, shade] = locked ? LOCKED_COLORS : (ICON_COLORS[slug] ?? ["#bcd678", "#e4ef9c"]);
 
   return (
-    <svg viewBox="0 0 64 64" width={size} height={size} style={{ display: "block", overflow: "visible" }}>
+    <svg viewBox="0 0 64 64" width={size} height={size} className="block overflow-visible">
       <defs>
         <radialGradient id={`bg-${id}`} cx="40%" cy="33%" r="72%">
           <stop offset="0%" stopColor={d.gl} />

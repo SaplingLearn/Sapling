@@ -89,12 +89,12 @@ export function WikiSearchBox({ style }: { style?: React.CSSProperties }) {
   const { query, setQuery, index } = useWikiSearch();
 
   return (
-    <div style={{ position: 'relative', maxWidth: 420, ...style }}>
+    <div className="relative max-w-105" style={{ ...style }}>
       <svg
         aria-hidden="true"
         width="15" height="15" viewBox="0 0 24 24" fill="none"
         stroke="#8d866f" strokeWidth="2" strokeLinecap="round"
-        style={{ position: 'absolute', left: 13, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }}
+        className="absolute left-[13px] top-1/2 [transform:translateY(-50%)] pointer-events-none"
       >
         <circle cx="11" cy="11" r="7" /><path d="M20 20l-3.5-3.5" />
       </svg>
@@ -108,13 +108,7 @@ export function WikiSearchBox({ style }: { style?: React.CSSProperties }) {
         onKeyDown={(e) => { if (e.key === 'Escape') setQuery(''); }}
         placeholder="Search the wiki"
         aria-label="Search the wiki"
-        className="wiki-search"
-        style={{
-          width: '100%', boxSizing: 'border-box', padding: '11px 14px 11px 38px',
-          borderRadius: 10, border: '1px solid rgba(42,39,31,0.16)', background: '#fffdf7',
-          fontFamily: 'inherit', fontSize: 15, color: '#2b2619', outline: 'none',
-          transition: 'border-color 140ms ease',
-        }}
+        className="wiki-search w-full box-border pt-[11px] pr-3.5 pb-[11px] pl-9.5 rounded-md border border-[rgba(42,39,31,0.16)] [background:#fffdf7] [font-family:inherit] text-[15px] text-[#2b2619] outline-none [transition:border-color_140ms_ease]"
       />
     </div>
   );

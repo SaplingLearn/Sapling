@@ -15,6 +15,7 @@ import { LeaderboardTab } from "./achievements/LeaderboardTab";
 import { ActivityTab } from "./achievements/ActivityTab";
 import { humanizeError } from "@/lib/errorMessage";
 import { sentenceCase } from "@/lib/sentenceCase";
+import { cn } from "@/lib/cn";
 
 // Rarity colors come only from the canonical --rarity-* tokens (globals.css);
 // rarity text itself stays neutral (colored text fails 4.5:1 on several tiers).
@@ -32,7 +33,7 @@ const TABS: { value: Tab; label: string }[] = [
 
 function TabBar({ tab, onChange }: { tab: Tab; onChange: (t: Tab) => void }) {
   return (
-    <div role="tablist" style={{ display: "flex", gap: 4, padding: "0 32px", borderBottom: "1px solid var(--border)" }}>
+    <div role="tablist" className="flex gap-1 py-0 px-8 border-b border-b-border">
       {TABS.map((t) => (
         <button
           key={t.value}
@@ -40,12 +41,7 @@ function TabBar({ tab, onChange }: { tab: Tab; onChange: (t: Tab) => void }) {
           role="tab"
           aria-selected={tab === t.value}
           onClick={() => onChange(t.value)}
-          style={{
-            padding: "10px 16px", fontSize: 13, fontWeight: tab === t.value ? 600 : 500,
-            color: tab === t.value ? "var(--text)" : "var(--text-dim)",
-            borderBottom: `2px solid ${tab === t.value ? "var(--accent)" : "transparent"}`,
-            marginBottom: -1,
-          }}
+          className={cn("py-2.5 px-4 text-md -mb-px", tab === t.value ? "font-semibold" : "font-medium", tab === t.value ? "text-text" : "text-text-dim", tab === t.value ? "border-b-2 border-b-accent" : "border-b-2 border-b-transparent")}
         >
           {t.label}
         </button>
@@ -56,10 +52,10 @@ function TabBar({ tab, onChange }: { tab: Tab; onChange: (t: Tab) => void }) {
 
 function StatTile({ label, value, sub }: { label: string; value: React.ReactNode; sub?: string }) {
   return (
-    <div className="card" style={{ padding: "16px 18px" }}>
+    <div className="card py-4 px-4.5">
       <div className="label-micro">{label}</div>
-      <div style={{ fontSize: 22, fontWeight: 600, marginTop: 4 }}>{value}</div>
-      {sub && <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>{sub}</div>}
+      <div className="text-2xl font-semibold mt-1">{value}</div>
+      {sub && <div className="text-xs text-text-muted mt-0.5">{sub}</div>}
     </div>
   );
 }
@@ -69,7 +65,7 @@ function GoalRing({ value, max, size = 40 }: { value: number; max: number; size?
   const c = 2 * Math.PI * r;
   const pct = max > 0 ? Math.min(1, value / max) : 0;
   return (
-    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} style={{ flexShrink: 0, transform: "rotate(-90deg)" }}>
+    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="shrink-0 [transform:rotate(-90deg)]">
       <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="var(--bg-soft)" strokeWidth={5} />
       <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="var(--accent)" strokeWidth={5}
               strokeLinecap="round" strokeDasharray={c} strokeDashoffset={c * (1 - pct)} />
@@ -79,17 +75,17 @@ function GoalRing({ value, max, size = 40 }: { value: number; max: number; size?
 
 function StatRow({ me }: { me: GamificationMe }) {
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 14, marginBottom: 30 }}>
+    <div className="grid grid-cols-[repeat(3,_1fr)] gap-3.5 mb-7.5">
       <StatTile
         label="Streak"
         value={`${me.streak} day${me.streak === 1 ? "" : "s"}`}
         sub={`longest ${me.longest_streak}`}
       />
-      <div className="card" style={{ padding: "16px 18px", display: "flex", alignItems: "center", gap: 12 }}>
+      <div className="card py-4 px-4.5 flex items-center gap-3">
         <GoalRing value={me.today_xp} max={me.daily_goal_xp} />
-        <div style={{ minWidth: 0 }}>
+        <div className="min-w-0">
           <div className="label-micro">Daily goal</div>
-          <div style={{ fontSize: 16, fontWeight: 600, marginTop: 2 }}>{me.today_xp} / {me.daily_goal_xp} XP</div>
+          <div className="text-lg font-semibold mt-0.5">{me.today_xp} / {me.daily_goal_xp} XP</div>
         </div>
       </div>
       <StatTile label="Badges" value={`${me.earned_count} / ${me.total_count}`} sub="earned" />
@@ -288,7 +284,7 @@ export function Achievements() {
 
       {tab === "achievements" && (
         <>
-          <div style={{ padding: "14px 32px", borderBottom: "1px solid var(--border)" }}>
+          <div className="py-3.5 px-8 border-b border-b-border">
             <FilterPills
               options={filterOptions}
               value={filter}
@@ -297,15 +293,15 @@ export function Achievements() {
           </div>
 
           {loading && <AchievementsSkeleton />}
-          {!loading && <div style={{ padding: "24px 32px" }}>
+          {!loading && <div className="py-6 px-8">
             {me && <HeroCard me={me} />}
             {me && <StatRow me={me} />}
 
-            <div className="label-micro" style={{ marginBottom: 12, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div className="label-micro mb-3 flex justify-between items-center">
               <span>Showcase · featured on your profile</span>
-              <span style={{ color: "var(--text-muted)" }}>{featuredIds.length} / {MAX_FEATURED}</span>
+              <span className="text-text-muted">{featuredIds.length} / {MAX_FEATURED}</span>
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: `repeat(${MAX_FEATURED}, 1fr)`, gap: 10, marginBottom: 30 }}>
+            <div className="grid gap-2.5 mb-7.5" style={{ gridTemplateColumns: `repeat(${MAX_FEATURED}, 1fr)` }}>
               {featuredIds.map((id, idx) => {
                 const ua = earnedById.get(id);
                 if (!ua) return null;
@@ -326,52 +322,38 @@ export function Achievements() {
                     onDragOver={(e) => e.preventDefault()}
                     onDrop={() => { if (dragId && dragId !== id) reorder(dragId, id); setDragId(null); }}
                     onDragEnd={() => setDragId(null)}
-                    className="card"
-                    style={{
-                      padding: 12, textAlign: "center",
-                      borderTop: `3px solid ${c}`,
-                      opacity: dragId === id ? 0.5 : 1,
-                      cursor: "grab",
-                      position: "relative",
-                    }}
+                    className={cn("card", "p-3 text-center cursor-grab relative", dragId === id ? "opacity-50" : "opacity-100")}
+                    style={{ borderTop: `3px solid ${c}` }}
                   >
                     <button
                       data-testid={`achievements-showcase-remove-${id}`}
                       onClick={() => toggleFeature(id)}
                       aria-label="Remove from showcase"
-                      style={{
-                        position: "absolute", top: 4, right: 4,
-                        width: 18, height: 18, borderRadius: "50%",
-                        background: "var(--bg-soft)", color: "var(--text-muted)",
-                        display: "flex", alignItems: "center", justifyContent: "center",
-                        fontSize: 10,
-                      }}
+                      className="absolute top-1 right-1 w-4.5 h-4.5 rounded-[50%] bg-bg-soft text-text-muted flex items-center justify-center text-2xs"
                     >
                       <Icon name="x" size={10} />
                     </button>
-                    <div style={{ fontSize: 26, marginBottom: 4 }}>{ua.achievement.icon || "★"}</div>
-                    <div style={{ fontSize: 11, fontWeight: 600 }}>{ua.achievement.name}</div>
-                    <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 2 }}>
+                    <div className="text-3xl mb-1">{ua.achievement.icon || "★"}</div>
+                    <div className="text-xs font-semibold">{ua.achievement.name}</div>
+                    <div className="text-sm text-text-muted mt-0.5">
                       {sentenceCase(ua.achievement.rarity)}
                     </div>
-                    <div style={{ display: "flex", justifyContent: "center", gap: 4, marginTop: 6 }}>
+                    <div className="flex justify-center gap-1 mt-1.5">
                       <button
                         data-testid={`achievements-showcase-left-${id}`}
-                        className="btn btn--sm btn--ghost"
+                        className="btn btn--sm btn--ghost py-0 px-1.5 text-xs leading-[18px]"
                         aria-label={`Move ${ua.achievement.name} earlier in the showcase`}
                         disabled={idx === 0}
                         onClick={() => move(-1)}
-                        style={{ padding: "0 6px", fontSize: 11, lineHeight: "18px" }}
                       >
                         ←
                       </button>
                       <button
                         data-testid={`achievements-showcase-right-${id}`}
-                        className="btn btn--sm btn--ghost"
+                        className="btn btn--sm btn--ghost py-0 px-1.5 text-xs leading-[18px]"
                         aria-label={`Move ${ua.achievement.name} later in the showcase`}
                         disabled={idx === featuredIds.length - 1}
                         onClick={() => move(1)}
-                        style={{ padding: "0 6px", fontSize: 11, lineHeight: "18px" }}
                       >
                         →
                       </button>
@@ -382,12 +364,7 @@ export function Achievements() {
               {Array.from({ length: Math.max(0, MAX_FEATURED - featuredIds.length) }).map((_, i) => (
                 <div
                   key={`slot-${i}`}
-                  style={{
-                    border: "1.5px dashed var(--border-strong)",
-                    borderRadius: "var(--r-lg)", padding: 12, minHeight: 80,
-                    textAlign: "center", color: "var(--text-muted)", fontSize: 11,
-                    display: "flex", alignItems: "center", justifyContent: "center",
-                  }}
+                  className="border-[1.5px] border-dashed border-border-strong rounded-lg p-3 min-h-20 text-center text-text-muted text-xs flex items-center justify-center"
                 >
                   + empty slot
                 </div>

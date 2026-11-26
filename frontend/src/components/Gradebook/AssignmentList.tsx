@@ -3,6 +3,7 @@ import React from "react";
 import type { GradedAssignment, GradeCategory } from "@/lib/types";
 import { categoryColor } from "@/components/Gradebook/categoryColor";
 import { now } from "@/lib/testMode";
+import { cn } from "@/lib/cn";
 
 interface Props {
   assignments: GradedAssignment[];
@@ -80,43 +81,21 @@ export function AssignmentList({
   return (
     <section>
       <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "baseline",
-          marginBottom: 28,
-          gap: 16,
-          paddingBottom: 14,
-          borderBottom: "1px solid var(--border)",
-        }}
+        className="flex justify-between items-baseline mb-7 gap-4 pb-3.5 border-b border-b-border"
       >
         <h2
-          style={{
-            fontFamily: "var(--font-display), 'Aleo', Georgia, serif",
-            fontWeight: 500,
-            fontSize: 22,
-            lineHeight: 1.15,
-            letterSpacing: "-0.01em",
-            color: "var(--text)",
-            margin: 0,
-          }}
+          className="font-display font-medium text-2xl leading-[1.15] tracking-[-0.01em] text-text m-0"
         >
           Assignments
         </h2>
-        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+        <div className="flex gap-2.5 items-center flex-wrap">
           {onSyncGradescope && (
-            <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2 }}>
+            <div className="flex flex-col items-end gap-0.5">
               <button
                 type="button"
                 onClick={onSyncGradescope}
                 disabled={gradescopeBusy}
-                className="btn"
-                style={{
-                  padding: "8px 14px",
-                  fontSize: 13,
-                  opacity: gradescopeBusy ? 0.7 : 1,
-                  cursor: gradescopeBusy ? "wait" : "pointer",
-                }}
+                className={cn("btn", "py-2 px-3.5 text-md", gradescopeBusy ? "opacity-70" : "opacity-100", gradescopeBusy ? "cursor-wait" : "cursor-pointer")}
                 title={
                   gradescopeReady
                     ? "Pull latest grades from your linked Gradescope course"
@@ -131,15 +110,7 @@ export function AssignmentList({
               </button>
               {(gradescopeLastSyncedAt || onGradescopeSettings) && (
                 <div
-                  className="mono"
-                  style={{
-                    fontSize: 10,
-                    color: "var(--text-muted)",
-                    letterSpacing: "-0.01em",
-                    display: "flex",
-                    gap: 8,
-                    alignItems: "center",
-                  }}
+                  className="mono text-2xs text-text-muted tracking-[-0.01em] flex gap-2 items-center"
                 >
                   {gradescopeLastSyncedAt && (
                     <span title={new Date(gradescopeLastSyncedAt).toLocaleString()}>
@@ -150,18 +121,7 @@ export function AssignmentList({
                     <button
                       type="button"
                       onClick={onGradescopeSettings}
-                      style={{
-                        background: "none",
-                        border: 0,
-                        padding: 0,
-                        margin: 0,
-                        font: "inherit",
-                        color: "var(--text-dim)",
-                        textDecoration: "underline",
-                        textUnderlineOffset: 3,
-                        textDecorationColor: "var(--border-strong)",
-                        cursor: "pointer",
-                      }}
+                      className="[background:none] border-0 p-0 m-0 [font:inherit] text-text-dim underline [text-underline-offset:3px] decoration-border-strong cursor-pointer"
                     >
                       Settings
                     </button>
@@ -174,8 +134,7 @@ export function AssignmentList({
             type="button"
             data-testid="gradebook-add-assignment"
             onClick={onAdd}
-            className="btn btn--primary"
-            style={{ padding: "8px 14px", fontSize: 13 }}
+            className="btn btn--primary py-2 px-3.5 text-md"
           >
             + Add Assignment
           </button>
@@ -184,12 +143,7 @@ export function AssignmentList({
 
       {hasAny && (
         <div
-          style={{
-            display: "flex",
-            gap: 6,
-            flexWrap: "wrap",
-            marginBottom: 28,
-          }}
+          className="flex gap-1.5 flex-wrap mb-7"
         >
           {sortedCats.map((cat) => {
             const items = grouped.get(cat.id) ?? [];
@@ -205,26 +159,13 @@ export function AssignmentList({
                 }}
                 onMouseEnter={() => setHoveredTab(cat.id)}
                 onMouseLeave={() => setHoveredTab(null)}
-                style={{
-                  padding: "5px 14px",
-                  borderRadius: "var(--r-full)",
-                  border: `1.5px solid ${isActive ? categoryColor(cat.name) : hoveredTab === cat.id ? "var(--border-strong)" : "var(--border)"}`,
-                  background: isActive
+                className={cn("py-[5px] px-3.5 rounded-[var(--r-full)] text-sm font-sans cursor-pointer [transition:border-color_0.12s,_background_0.12s,_color_0.12s] whitespace-nowrap", isActive ? "font-semibold" : "font-normal")} style={{ border: `1.5px solid ${isActive ? categoryColor(cat.name) : hoveredTab === cat.id ? "var(--border-strong)" : "var(--border)"}`, background: isActive
                     ? `color-mix(in oklch, ${categoryColor(cat.name)}, transparent 85%)`
-                    : hoveredTab === cat.id ? "var(--bg-subtle)" : "var(--bg)",
-                  color: isActive ? categoryColor(cat.name) : hoveredTab === cat.id ? "var(--text)" : "var(--text-dim)",
-                  fontSize: 12,
-                  fontWeight: isActive ? 600 : 400,
-                  fontFamily: "var(--font-sans)",
-                  cursor: "pointer",
-                  transition: "border-color 0.12s, background 0.12s, color 0.12s",
-                  whiteSpace: "nowrap",
-                }}
+                    : hoveredTab === cat.id ? "var(--bg-subtle)" : "var(--bg)", color: isActive ? categoryColor(cat.name) : hoveredTab === cat.id ? "var(--text)" : "var(--text-dim)" }}
               >
                 {cat.name}
                 <span
-                  className="mono"
-                  style={{ fontSize: 10, color: "var(--text-muted)", marginLeft: 5 }}
+                  className="mono text-2xs text-text-muted ml-[5px]"
                 >
                   {items.length}
                 </span>
@@ -240,21 +181,10 @@ export function AssignmentList({
               }}
               onMouseEnter={() => setHoveredTab("__uncategorized__")}
               onMouseLeave={() => setHoveredTab(null)}
-              style={{
-                padding: "5px 14px",
-                borderRadius: "var(--r-full)",
-                border: `1.5px solid ${hoveredTab === "__uncategorized__" ? "var(--border-strong)" : "var(--border)"}`,
-                background: hoveredTab === "__uncategorized__" ? "var(--bg-subtle)" : "var(--bg)",
-                color: hoveredTab === "__uncategorized__" ? "var(--text)" : "var(--text-dim)",
-                fontSize: 12,
-                fontFamily: "var(--font-sans)",
-                cursor: "pointer",
-                transition: "border-color 0.12s, background 0.12s, color 0.12s",
-                whiteSpace: "nowrap",
-              }}
+              className={cn(cn("py-[5px] px-3.5 rounded-[var(--r-full)] text-sm font-sans cursor-pointer [transition:border-color_0.12s,_background_0.12s,_color_0.12s] whitespace-nowrap", hoveredTab === "__uncategorized__" ? "bg-bg-subtle" : "bg-bg", hoveredTab === "__uncategorized__" ? "text-text" : "text-text-dim"), hoveredTab === "__uncategorized__" ? "border-[1.5px] border-border-strong" : "border-[1.5px] border-border")}
             >
               Uncategorized
-              <span className="mono" style={{ fontSize: 10, color: "var(--text-muted)", marginLeft: 5 }}>
+              <span className="mono text-2xs text-text-muted ml-[5px]">
                 {uncategorized.length}
               </span>
             </button>
@@ -265,7 +195,7 @@ export function AssignmentList({
       {!hasAny ? (
         <EmptyEntries onAdd={onAdd} />
       ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: 44 }}>
+        <div className="flex flex-col gap-11">
           {sortedCats.map((cat) => {
             const items = grouped.get(cat.id) ?? [];
             if (items.length === 0) return null;
@@ -335,80 +265,36 @@ function CategoryGroup({
   return (
     <div
       id={id}
-      style={{
-        scrollMarginTop: 16,
-        background: highlighted
-          ? "color-mix(in oklab, var(--accent) 9%, transparent)"
-          : "transparent",
-        borderRadius: "var(--r-md)",
-        transition: "background-color var(--dur-slow) var(--ease)",
-        padding: "8px 12px",
-        margin: "-8px -12px",
-      }}
+      className={cn("[scroll-margin-top:16px] rounded-md [transition:background-color_var(--dur-slow)_var(--ease)] py-2 px-3 -my-2 -mx-3", highlighted ? "bg-[color-mix(in_oklab,_var(--accent)_9%,_transparent)]" : "bg-transparent")}
     >
       <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 12,
-          marginBottom: 14,
-          flexWrap: "wrap",
-        }}
+        className="flex items-center gap-3 mb-3.5 flex-wrap"
       >
         <span
           aria-hidden="true"
-          style={{ width: 8, height: 8, borderRadius: "50%", background: color, flexShrink: 0 }}
+          className="w-2 h-2 rounded-[50%] shrink-0" style={{ background: color }}
         />
         <span
-          className="mono"
-          style={{
-            fontSize: 13,
-            
-            
-            color: "var(--text-dim)",
-            fontWeight: 600 }}
+          className="mono text-md text-text-dim font-semibold"
         >
           {title}
         </span>
         <span
-          className="mono"
-          style={{
-            fontSize: 11,
-            color: "var(--text-muted)",
-            letterSpacing: "-0.01em",
-          }}
+          className="mono text-xs text-text-muted tracking-[-0.01em]"
         >
           {graded}/{items.length}
         </span>
         {dropLowest > 0 && (
           <span
-            className="mono"
+            className="mono text-sm text-accent bg-accent-soft border border-accent-border rounded-[var(--r-full)] py-0.5 px-2 font-semibold leading-[1.4]"
             title={`Drops the ${dropLowest} lowest graded assignment${dropLowest === 1 ? "" : "s"}. ${droppedCount}/${dropLowest} dropped so far.`}
-            style={{
-              fontSize: 12,
-              
-              
-              color: "var(--accent)",
-              background: "var(--accent-soft)",
-              border: "1px solid var(--accent-border)",
-              borderRadius: "var(--r-full)",
-              padding: "2px 8px",
-              fontWeight: 600,
-              lineHeight: 1.4 }}
           >
             {dropLowest} Drops
           </span>
         )}
       </div>
       <ul
-        style={{
-          listStyle: "none",
-          margin: 0,
-          padding: "0 0 0 20px",
-          borderLeft: "1px solid var(--border)",
-          display: "flex",
-          flexDirection: "column",
-        }}
+        className="list-none m-0 pt-0 pr-0 pb-0 pl-5 border-l border-l-border flex flex-col"
       >
         {items.map((a) => {
           const isDropped = droppedIds.has(a.id);
@@ -420,99 +306,45 @@ function CategoryGroup({
           return (
             <li
               key={a.id}
-              className="assignment-row"
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 12,
-                padding: "14px 12px",
-                margin: "0 -12px",
-                borderRadius: 6,
-                position: "relative",
-              }}
+              className="assignment-row flex items-center gap-3 py-3.5 px-3 my-0 -mx-3 rounded-sm relative"
             >
               <button
                 type="button"
                 onClick={() => onEditFull(a)}
-                style={{
-                  flex: 1,
-                  minWidth: 0,
-                  textAlign: "left",
-                  background: "none",
-                  border: 0,
-                  padding: 0,
-                  cursor: "pointer",
-                  color: "var(--text)",
-                }}
+                className="flex-1 min-w-0 text-left [background:none] border-0 p-0 cursor-pointer text-text"
               >
                 <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 8,
-                    minWidth: 0,
-                    overflow: "hidden",
-                  }}
+                  className="flex items-center gap-2 min-w-0 overflow-hidden"
                 >
                   <span
-                    style={{
-                      fontFamily: "var(--font-serif), var(--font-aleo), 'Aleo', Georgia, serif",
-                      fontWeight: 500,
-                      fontSize: 15,
-                      color: isDropped ? "var(--text-muted)" : "var(--text)",
-                      textDecoration: isDropped ? "line-through" : "none",
-                      textDecorationColor: "var(--text-muted)",
-                      textDecorationThickness: 1,
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                      minWidth: 0,
-                      flexShrink: 1,
-                    }}
+                    className={cn("font-serif font-medium text-[15px] decoration-text-muted [text-decoration-thickness:1px] text-ellipsis whitespace-nowrap min-w-0 shrink", isDropped ? "text-text-muted" : "text-text", isDropped ? "line-through" : "no-underline")}
                   >
                     {a.title}
                   </span>
                   {isDropped && (
                     <span
-                      className="chip chip--accent"
+                      className="chip chip--accent shrink-0"
                       title="This is currently your lowest score in the category and is excluded from the average."
-                      style={{ flexShrink: 0 }}
                     >
                       Dropped
                     </span>
                   )}
                   {hasCurvedScore && (
                     <span
-                      className="mono"
+                      className="mono shrink-0 text-xs text-c-sky bg-[color-mix(in_oklch,_var(--c-sky),_transparent_88%)] border border-[color-mix(in_oklch,_var(--c-sky),_transparent_70%)] rounded-[var(--r-full)] py-0.5 px-2 font-semibold"
                       title="Bell curve has been applied to this assignment's score."
-                      style={{
-                        flexShrink: 0,
-                        fontSize: 11,
-                        
-                        
-                        color: "var(--c-sky)",
-                        background: "color-mix(in oklch, var(--c-sky), transparent 88%)",
-                        border: "1px solid color-mix(in oklch, var(--c-sky), transparent 70%)",
-                        borderRadius: "var(--r-full)",
-                        padding: "2px 8px",
-                        fontWeight: 600 }}
                     >
                       Curved
                     </span>
                   )}
                 </div>
                 <div
-                  className="mono"
-                  style={{
-                    fontSize: 11,
-                    color: "var(--text-dim)",
-                    marginTop: 3,
-                    letterSpacing: "-0.01em",
-                  }}
+                  className="mono text-xs text-text-dim mt-[3px] tracking-[-0.01em]"
                 >
                   {a.due_date ? `Due ${a.due_date.slice(5, 7)}/${a.due_date.slice(8, 10)}/${a.due_date.slice(0, 4)}` : "No Due Date"}
                 </div>
               </button>
-              <div style={{ display: "flex", alignItems: "center", gap: 2, flexShrink: 0 }}>
+              <div className="flex items-center gap-0.5 shrink-0">
                 <input
                   type="number"
                   placeholder="—"
@@ -533,24 +365,16 @@ function CategoryGroup({
                       ? `0–${a.points_possible} pts (extra credit allowed)`
                       : "Points earned"
                   }
-                  className="assignment-grade-input"
-                  style={{ opacity: isDropped ? 0.4 : 1 }}
+                  className={cn("assignment-grade-input", isDropped ? "opacity-40" : "opacity-100")}
                 />
-                <span className="mono" style={{ fontSize: 13, color: "var(--text-muted)", opacity: isDropped ? 0.4 : 1 }}>/</span>
-                <span className="mono" style={{ fontSize: 13, color: "var(--text-muted)", opacity: isDropped ? 0.4 : 1, whiteSpace: "nowrap" }}>
+                <span className={cn("mono", "text-md text-text-muted", isDropped ? "opacity-40" : "opacity-100")}>/</span>
+                <span className={cn("mono", "text-md text-text-muted whitespace-nowrap", isDropped ? "opacity-40" : "opacity-100")}>
                   {a.points_possible ?? "—"}
                 </span>
                 {hasCurvedScore && curved && (
                   <span
-                    className="mono"
+                    className={cn("mono", "text-sm text-accent whitespace-nowrap ml-1", isDropped ? "opacity-40" : "opacity-100")}
                     title="Curved score"
-                    style={{
-                      fontSize: 12,
-                      color: "var(--accent)",
-                      whiteSpace: "nowrap",
-                      opacity: isDropped ? 0.4 : 1,
-                      marginLeft: 4,
-                    }}
                   >
                     → {curved.points_earned!.toFixed(1)}
                   </span>
@@ -566,37 +390,22 @@ function CategoryGroup({
 
 function EmptyEntries({ onAdd }: { onAdd: () => void }) {
   return (
-    <div style={{ padding: "48px 0", maxWidth: 560 }}>
+    <div className="py-12 px-0 max-w-140">
       <h3
-        style={{
-          fontFamily: "var(--font-display), 'Aleo', Georgia, serif",
-          fontWeight: 500,
-          fontSize: 28,
-          lineHeight: 1.1,
-          margin: "0 0 12px",
-          color: "var(--text)",
-          letterSpacing: "-0.01em",
-        }}
+        className="font-display font-medium text-[28px] leading-[1.1] mt-0 mx-0 mb-3 text-text tracking-[-0.01em]"
       >
         Nothing entered yet.
       </h3>
       <p
-        style={{
-          fontFamily: "var(--font-serif), var(--font-aleo), 'Aleo', Georgia, serif",
-          fontSize: 16,
-          lineHeight: 1.6,
-          color: "var(--text-dim)",
-          margin: "0 0 24px",
-        }}
+        className="font-serif text-lg leading-[1.6] text-text-dim mt-0 mx-0 mb-6"
       >
         Add an assignment by hand, or upload your syllabus from the Gradebook
         page to populate this list automatically.
       </p>
       <button
         type="button"
-        className="btn btn--primary"
+        className="btn btn--primary py-2.5 px-4.5 text-base"
         onClick={onAdd}
-        style={{ padding: "10px 18px", fontSize: 14 }}
       >
         + Add an assignment
       </button>

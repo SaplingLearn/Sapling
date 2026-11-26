@@ -13,8 +13,7 @@ import Link from 'next/link';
 import { FAQS } from '@/lib/landing/content';
 import { DragField } from './DragField';
 import { FadeIn } from '@/components/landing/anim';
-
-const LABEL: React.CSSProperties = { fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif" };
+import { cn } from "@/lib/cn";
 
 const MOTES: { d: number; s: React.CSSProperties }[] = [
   { d: 0.25, s: { left: '7.4%', top: '8.0%', width: 6.1, height: 6.1, background: '#597731', opacity: 0.39, animation: 'nodeFloatB 13s ease-in-out -4s infinite' } },
@@ -40,39 +39,35 @@ export function Faq({
   return (
     <section
       id="faq"
-      className="ld-faq"
-      style={{
-        position: 'relative', padding: '120px 24px', zIndex: 1,
-        background: 'linear-gradient(180deg, rgba(234,241,228,0) 0%, rgba(234,241,228,0.55) 18%, rgba(234,241,228,0.55) 82%, rgba(234,241,228,0) 100%)',
-      }}
+      className="ld-faq relative py-30 px-6 z-1 [background:linear-gradient(180deg,_rgba(234,241,228,0)_0%,_rgba(234,241,228,0.55)_18%,_rgba(234,241,228,0.55)_82%,_rgba(234,241,228,0)_100%)]"
     >
       <DragField section="faq" />
 
-      <div aria-hidden="true" style={{ position: 'absolute', inset: 0, pointerEvents: 'none', overflow: 'hidden', zIndex: 0 }}>
+      <div aria-hidden="true" className="absolute inset-0 pointer-events-none overflow-hidden z-0">
         {MOTES.map((m, i) => (
-          <span key={i} data-depth={m.d} style={{ position: 'absolute', borderRadius: 99, ...m.s }} />
+          <span key={i} data-depth={m.d} className="absolute rounded-[99px]" style={{ ...m.s }} />
         ))}
       </div>
 
-      <div className="ld-faq-grid" style={{ maxWidth: 1150, margin: '0 auto', display: 'grid', gridTemplateColumns: '4fr 7fr', gap: 72, alignItems: 'start' }}>
+      <div className="ld-faq-grid max-w-287.5 my-0 mx-auto grid grid-cols-[4fr_7fr] gap-18 [align-items:start]">
         {/*
           Sticky, so it holds while the accordion scrolls past — and named,
           because `DragField`'s `Tracks` welds CS 112 and PH 150 to this
           column. If it stops being sticky, drop the entry there too.
         */}
         <FadeIn data-drag-anchor="faq" className="ld-faq-intro" style={{ position: 'sticky', top: 110 }}>
-          <h2 style={{ margin: 0, fontFamily: "var(--font-gummi), Georgia, serif", fontSize: 'clamp(2.2rem, 4vw, 3.4rem)', fontWeight: 600, lineHeight: 1.06, letterSpacing: '-0.02em', color: '#191F13' }}>
-            Honest answers about <em style={{ color: '#445D22' }}>AI.</em>
+          <h2 className="m-0 font-display text-[length:clamp(2.2rem,_4vw,_3.4rem)] font-semibold leading-[1.06] tracking-[-0.02em] text-moss-900">
+            Honest answers about <em className="text-brand-forest">AI.</em>
           </h2>
-          <p style={{ margin: '20px 0 0', color: '#3B4233', fontSize: 15, lineHeight: 1.75, maxWidth: '38ch' }}>
+          <p className="mt-5 mx-0 mb-0 text-moss-700 text-[15px] leading-[1.75] max-w-[38ch]">
             The question we hear most: isn&rsquo;t AI just going to do the work for me? Sapling
             exists because we think AI should deepen your understanding, not replace it. Here&rsquo;s
             where we stand.
           </p>
-          <div style={{ marginTop: 28, display: 'flex', alignItems: 'center' }}>
-            <span style={{ ...LABEL, fontSize: 12, color: '#697062' }}>
+          <div className="mt-7 flex items-center">
+            <span className="font-sans text-sm text-moss-500">
               Still curious?{' '}
-              <Link href="/faq" style={{ color: '#445D22', textDecoration: 'underline' }}>Read the full FAQ</Link>
+              <Link href="/faq" className="text-brand-forest underline">Read the full FAQ</Link>
             </span>
           </div>
         </FadeIn>
@@ -81,25 +76,17 @@ export function Faq({
           {FAQS.map((q, i) => {
             const open = openFaq === i;
             return (
-              <div key={q.q} style={{ borderBottom: '1px solid rgba(25,31,19,0.12)' }}>
+              <div key={q.q} className="border-b border-b-[rgba(25,31,19,0.12)]">
                 <button
                   onClick={() => onToggle(open ? -1 : i)}
                   aria-expanded={open}
-                  style={{ width: '100%', background: 'none', border: 'none', cursor: 'pointer', padding: '22px 4px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 20, textAlign: 'left' }}
+                  className="w-full [background:none] border-0 cursor-pointer py-5.5 px-1 flex items-center justify-between gap-5 text-left"
                 >
-                  <span style={{ fontFamily: "var(--font-gummi), Georgia, serif", fontSize: 19, fontWeight: 600, letterSpacing: '-0.01em', color: open ? '#445D22' : '#191F13', transition: 'color 300ms' }}>
+                  <span className={cn("font-display text-[19px] font-semibold tracking-[-0.01em] [transition:color_300ms]", open ? "text-brand-forest" : "text-moss-900")}>
                     {q.q}
                   </span>
                   <span
-                    style={{
-                      flexShrink: 0, width: 28, height: 28, borderRadius: 99,
-                      border: '1px solid rgba(25,31,19,0.18)', display: 'flex',
-                      alignItems: 'center', justifyContent: 'center',
-                      background: open ? '#EAF1E4' : 'transparent',
-                      // the plus rotates into a cross rather than swapping glyphs
-                      transform: open ? 'rotate(45deg)' : 'rotate(0deg)',
-                      transition: 'transform 300ms cubic-bezier(0.22,1,0.36,1), background 300ms',
-                    }}
+                    className={cn("shrink-0 w-7 h-7 rounded-[99px] border border-[rgba(25,31,19,0.18)] flex items-center justify-center [transition:transform_300ms_cubic-bezier(0.22,1,0.36,1),_background_300ms]", open ? "bg-leaf-50" : "bg-transparent", open ? "[transform:rotate(45deg)]" : "[transform:rotate(0deg)]")}
                   >
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#445D22" strokeWidth="2" strokeLinecap="round">
                       <path d="M12 5v14M5 12h14" />
@@ -107,16 +94,9 @@ export function Faq({
                   </span>
                 </button>
                 <div
-                  style={{
-                    // a shared ceiling, not a measured height — keeps the
-                    // transition interruptible without a layout read
-                    maxHeight: open ? 300 : 0,
-                    opacity: open ? 1 : 0,
-                    overflow: 'hidden',
-                    transition: 'max-height 450ms cubic-bezier(0.22,1,0.36,1), opacity 350ms ease',
-                  }}
+                  className={cn("overflow-hidden [transition:max-height_450ms_cubic-bezier(0.22,1,0.36,1),_opacity_350ms_ease]", open ? "max-h-75" : "max-h-0", open ? "opacity-100" : "opacity-0")}
                 >
-                  <p className="ld-faq-a" style={{ margin: 0, padding: '0 44px 24px 4px', color: '#3B4233', fontSize: 14.5, lineHeight: 1.8 }}>
+                  <p className="ld-faq-a m-0 pt-0 pr-11 pb-6 pl-1 text-moss-700 text-[14.5px] leading-[1.8]">
                     {q.a}
                   </p>
                 </div>

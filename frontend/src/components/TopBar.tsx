@@ -1,4 +1,5 @@
 import React from "react";
+import { cn } from "@/lib/cn";
 
 export function TopBar({
   title,
@@ -17,26 +18,16 @@ export function TopBar({
   const hasTitle = title !== undefined && title !== null && title !== "";
   return (
     <header
-      style={{
-        display: "flex",
-        alignItems: "flex-end",
-        justifyContent: "space-between",
-        padding: hasTitle ? "22px 32px 16px" : "16px 32px",
-        borderBottom: "1px solid var(--border)",
-        background: "var(--bg)",
-        position: "sticky",
-        top: 0,
-        zIndex: 5,
-      }}
+      className={cn("flex items-end justify-between border-b border-b-border bg-bg sticky top-0 z-5", hasTitle ? "pt-5.5 px-8 pb-4" : "py-4 px-8")}
     >
       <div>
-        {breadcrumb && <div className="label-micro" style={{ marginBottom: hasTitle ? 4 : 0 }}>{breadcrumb}</div>}
+        {breadcrumb && <div className={cn("label-micro", hasTitle ? "mb-1" : "mb-0")}>{breadcrumb}</div>}
         {hasTitle && (
-          <h1 className="h-serif" style={{ margin: 0, fontSize: 30, fontWeight: 500 }}>{title}</h1>
+          <h1 className="h-serif m-0 text-4xl font-medium">{title}</h1>
         )}
-        {subtitle && <div style={{ color: "var(--text-dim)", marginTop: 4, fontSize: 13 }}>{subtitle}</div>}
+        {subtitle && <div className="text-text-dim mt-1 text-md">{subtitle}</div>}
       </div>
-      <div style={{ display: "flex", gap: 8, alignItems: "center", justifyContent: "flex-end", flexWrap: "wrap" }}>{actions}</div>
+      <div className="flex gap-2 items-center justify-end flex-wrap">{actions}</div>
     </header>
   );
 }

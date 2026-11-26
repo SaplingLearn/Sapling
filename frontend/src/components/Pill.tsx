@@ -1,5 +1,6 @@
 "use client";
 import React from "react";
+import { cn } from "@/lib/cn";
 
 export function Pill({
   children,
@@ -27,19 +28,7 @@ export function Pill({
       type="button"
       onClick={onClick}
       aria-pressed={active}
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 6,
-        padding: md ? "7px 15px" : "5px 11px",
-        borderRadius: "var(--r-full)",
-        fontSize: md ? 14 : 12,
-        background: active ? (color || "var(--accent-soft)") : "transparent",
-        color: active ? (color ? "#fff" : "var(--accent)") : "var(--text-dim)",
-        border: `1px solid ${active ? (color || "var(--accent-border)") : "var(--border)"}`,
-        transition: "all var(--dur-fast) var(--ease)",
-        fontFamily: "var(--font-sans)",
-      }}
+      className={cn("inline-flex items-center gap-1.5 rounded-[var(--r-full)] [transition:all_var(--dur-fast)_var(--ease)] font-sans", md ? "py-[7px] px-[15px]" : "py-[5px] px-[11px]", md ? "text-base" : "text-sm")} style={{ background: active ? (color || "var(--accent-soft)") : "transparent", color: active ? (color ? "#fff" : "var(--accent)") : "var(--text-dim)", border: `1px solid ${active ? (color || "var(--accent-border)") : "var(--border)"}` }}
     >
       {icon}
       {children}

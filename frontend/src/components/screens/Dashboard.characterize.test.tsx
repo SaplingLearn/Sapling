@@ -350,7 +350,7 @@ describe("Dashboard legacy (topnav) wiring", () => {
 
     fireEvent.pointerEnter(chips[2]);
     expect(mainGraph().focusCourseId).toBe("c-C");
-    expect(chips[2]).toHaveStyle({ fontWeight: "600" });
+    expect(chips[2]).toHaveTwStyle({ fontWeight: "600" });
     fireEvent.pointerLeave(chips[2]);
     expect(mainGraph().focusCourseId).toBe("c-B");
 

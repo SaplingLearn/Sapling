@@ -28,7 +28,7 @@ describe("NavFeatureGate", () => {
     const gate = screen.getByTestId("nav-feature-gate");
     expect(gate.dataset.veiled).toBeUndefined();
     expect(gate.style.visibility).toBe("");
-    expect(gate.style.display).toBe("contents");
+    expect(gate).toHaveTwStyle({ display: "contents" });
     expect(replace).not.toHaveBeenCalled();
   });
 
@@ -39,13 +39,13 @@ describe("NavFeatureGate", () => {
     expect(replace).toHaveBeenCalledWith("/dashboard");
     const gate = screen.getByTestId("nav-feature-gate");
     expect(gate.dataset.veiled).toBe("true");
-    expect(gate.style.visibility).toBe("hidden");
+    expect(gate).toHaveTwStyle({ visibility: "hidden" });
   });
 
   it("veils a flagged route while flags load, without redirecting", () => {
     flagState = { flags: {}, ready: false };
     renderGate();
-    expect(screen.getByTestId("nav-feature-gate").style.visibility).toBe("hidden");
+    expect(screen.getByTestId("nav-feature-gate")).toHaveTwStyle({ visibility: "hidden" });
     expect(screen.getByTestId("page")).toBeTruthy(); // mounted, so its fetches start
     expect(replace).not.toHaveBeenCalled();
   });
@@ -74,7 +74,7 @@ describe("NavFeatureGate", () => {
       renderGate();
       expect(replace).toHaveBeenCalledTimes(1);
       expect(replace).toHaveBeenCalledWith("/dashboard");
-      expect(screen.getByTestId("nav-feature-gate").style.visibility).toBe("hidden");
+      expect(screen.getByTestId("nav-feature-gate")).toHaveTwStyle({ visibility: "hidden" });
     },
   );
 

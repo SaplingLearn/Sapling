@@ -46,6 +46,7 @@ import {
 import { updateDocument } from "@/lib/libraryApi";
 import { Library } from "./Library";
 import { ToastProvider } from "../ToastProvider";
+import { twStyle } from "@/test-utils/twStyle";
 
 const COURSE = {
   enrollment_id: "e1", course_id: "c1", course_code: "MATH210",
@@ -320,8 +321,8 @@ describe("what the redesign adds, end to end", () => {
     fireEvent.click(row);
     expect(row.getAttribute("aria-selected")).toBe("true");
     // A neutral tint with no outline: never the selection bar's green.
-    expect(row.style.background).not.toBe("");
-    expect(row.style.boxShadow).toBe("");
+    expect(twStyle(row).background).not.toBe("");
+    expect(twStyle(row).boxShadow).toBe("");
 
     fireEvent.click(screen.getByLabelText("Select all"));
     expect(row.getAttribute("aria-selected")).toBe("false");

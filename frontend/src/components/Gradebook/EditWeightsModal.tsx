@@ -5,6 +5,7 @@ import { Button } from "@/components/ui";
 import Dialog from "@/components/Dialog";
 import { useToast } from "@/components/ToastProvider";
 import { humanizeError } from "@/lib/errorMessage";
+import { cn } from "@/lib/cn";
 
 interface Draft {
   id?: string;
@@ -79,8 +80,6 @@ export function EditWeightsModal({ open, initial, onClose, onSave }: Props) {
     setDragOver(null);
   };
 
-  const COLS = "24px minmax(0, 1fr) 80px 80px 28px";
-
   return (
     <Dialog
       open={open}
@@ -90,36 +89,22 @@ export function EditWeightsModal({ open, initial, onClose, onSave }: Props) {
       padding="20px"
     >
       <p
-        style={{
-          margin: "0 0 16px",
-          fontSize: 12,
-          color: "var(--text-dim)",
-          lineHeight: 1.5,
-        }}
+        className="mt-0 mx-0 mb-4 text-sm text-text-dim leading-[1.5]"
       >
         Weights must sum to 100%. Set <strong>Drop</strong> to the number of
         lowest-scoring graded assignments to exclude from that category&apos;s
         average (e.g. &quot;drop 2 lowest homeworks&quot;). Drag the handle to reorder.
       </p>
       <div
-        className="mono"
-        style={{
-          display: "grid",
-          gridTemplateColumns: COLS,
-          gap: 6,
-          fontSize: 12,
-          
-          
-          color: "var(--text-muted)",
-          padding: "0 2px 6px" }}
+        className="mono grid grid-cols-[24px_minmax(0,_1fr)_80px_80px_28px] gap-1.5 text-sm text-text-muted pt-0 px-0.5 pb-1.5"
       >
         <span />
         <span>Name</span>
-        <span style={{ textAlign: "right" }}>Weight</span>
-        <span style={{ textAlign: "right" }}>Drop</span>
+        <span className="text-right">Weight</span>
+        <span className="text-right">Drop</span>
         <span />
       </div>
-      <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
+      <ul className="list-none m-0 p-0">
         {drafts.map((d, i) => (
           <li
             key={d.id ?? i}
@@ -128,31 +113,11 @@ export function EditWeightsModal({ open, initial, onClose, onSave }: Props) {
             onDragOver={(e) => handleDragOver(e, i)}
             onDrop={() => handleDrop(i)}
             onDragEnd={handleDragEnd}
-            style={{
-              display: "grid",
-              gridTemplateColumns: COLS,
-              gap: 6,
-              alignItems: "center",
-              marginBottom: 8,
-              borderRadius: 6,
-              outline: dragOver === i ? "2px solid var(--accent)" : "none",
-              outlineOffset: 2,
-              opacity: dragIndex.current === i ? 0.4 : 1,
-              transition: "opacity 0.15s",
-            }}
+            className={cn("grid grid-cols-[24px_minmax(0,_1fr)_80px_80px_28px] gap-1.5 items-center mb-2 rounded-sm [outline-offset:2px] [transition:opacity_0.15s]", dragOver === i ? "[outline:2px_solid_var(--accent)]" : "outline-none", dragIndex.current === i ? "opacity-40" : "opacity-100")}
           >
             <span
               title="Drag to reorder"
-              style={{
-                cursor: "grab",
-                color: "var(--text-muted)",
-                fontSize: 16,
-                lineHeight: 1,
-                userSelect: "none",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-              }}
+              className="cursor-grab text-text-muted text-lg leading-none select-none flex items-center justify-center"
             >
               ⠿
             </span>
@@ -160,33 +125,19 @@ export function EditWeightsModal({ open, initial, onClose, onSave }: Props) {
               value={d.name}
               placeholder="Category name"
               onChange={(e) => update(i, { name: e.target.value })}
-              style={{ padding: 6, border: "1px solid var(--border)", borderRadius: 6, minWidth: 0 }}
+              className="p-1.5 border border-border rounded-sm min-w-0"
             />
-            <div style={{ position: "relative" }}>
+            <div className="relative">
               <input
                 type="number"
                 value={d.weight}
                 min={0}
                 max={100}
                 onChange={(e) => update(i, { weight: Number(e.target.value) })}
-                style={{
-                  width: "100%",
-                  padding: "6px 22px 6px 6px",
-                  border: "1px solid var(--border)",
-                  borderRadius: 6,
-                  textAlign: "right",
-                }}
+                className="w-full pt-1.5 pr-5.5 pb-1.5 pl-1.5 border border-border rounded-sm text-right"
               />
               <span
-                style={{
-                  position: "absolute",
-                  right: 8,
-                  top: "50%",
-                  transform: "translateY(-50%)",
-                  fontSize: 11,
-                  color: "var(--text-muted)",
-                  pointerEvents: "none",
-                }}
+                className="absolute right-2 top-1/2 [transform:translateY(-50%)] text-xs text-text-muted pointer-events-none"
               >
                 %
               </span>
@@ -201,48 +152,30 @@ export function EditWeightsModal({ open, initial, onClose, onSave }: Props) {
               onChange={(e) =>
                 update(i, { drop_lowest: Math.max(0, Math.floor(Number(e.target.value) || 0)) })
               }
-              style={{
-                width: "100%",
-                padding: "6px",
-                border: "1px solid var(--border)",
-                borderRadius: 6,
-                textAlign: "right",
-              }}
+              className="w-full p-1.5 border border-border rounded-sm text-right"
             />
             <button
               type="button"
               onClick={() => remove(i)}
               aria-label="Remove category"
               title="Remove"
-              style={{
-                background: "transparent",
-                border: 0,
-                color: "var(--text-muted)",
-                cursor: "pointer",
-                fontSize: 16,
-                lineHeight: 1,
-              }}
+              className="bg-transparent border-0 text-text-muted cursor-pointer text-lg leading-none"
             >
               ✕
             </button>
           </li>
         ))}
       </ul>
-      <button type="button" onClick={add} style={{ fontSize: 13, marginTop: 4 }}>
+      <button type="button" onClick={add} className="text-md mt-1">
         + Add category
       </button>
       <div
-        style={{
-          marginTop: 16, padding: "8px 0",
-          borderTop: "1px solid var(--border)",
-          display: "flex", flexWrap: "wrap", gap: 8,
-          justifyContent: "space-between", alignItems: "center",
-        }}
+        className="mt-4 py-2 px-0 border-t border-t-border flex flex-wrap gap-2 justify-between items-center"
       >
-        <span style={{ color: valid ? "var(--accent)" : "var(--err)" }}>
+        <span className={cn(valid ? "text-accent" : "text-err")}>
           Total: {total.toFixed(1)}% {valid ? "✓" : `(need 100%)`}
         </span>
-        <div style={{ display: "flex", gap: 8 }}>
+        <div className="flex gap-2">
           <button type="button" onClick={onClose}>Cancel</button>
           <Button
             variant="primary"

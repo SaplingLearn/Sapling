@@ -164,7 +164,8 @@ describe("EmailBroadcastsTab (characterization)", () => {
       expect(chip.getAttribute("title")).toBe(
         "{{signin_link}}\nOn its own line it's a \"Sign in\" button. {{signin_link|Your label}} changes the label.",
       );
-      expect(chip.className).toBe("chip");
+      expect(chip).toHaveClass("chip");
+      expect(chip.className).not.toMatch(/chip--/);
     });
   });
 

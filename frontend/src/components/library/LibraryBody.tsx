@@ -13,7 +13,7 @@ import type { DocFolder, Document as Doc } from "@/lib/types";
 
 import { EmptyState } from "./LibraryBits";
 import { DocRow, FolderRow, ListHeader } from "./LibraryList";
-import { DocCard, FolderCard, PANEL_GRID } from "./LibraryPanel";
+import { DocCard, FolderCard } from "./LibraryPanel";
 import type { DocRowProps } from "./LibraryList";
 import type { FolderRowProps } from "./LibraryList";
 
@@ -37,7 +37,6 @@ export interface LibraryBodyProps {
   hasDocuments: boolean;
   onRetry: () => void;
 
-
   empty: boolean;
   emptyTitle: string;
   emptyBody: string;
@@ -56,43 +55,28 @@ function LoadError({
 }) {
   if (hasDocuments) {
     return (
-      <div data-testid="library-load-error" role="alert" style={{
-        display: "flex", alignItems: "center", gap: 8, marginBottom: 12,
-        fontSize: 14, color: "#6F6857",
-      }}>
+      <div data-testid="library-load-error" role="alert" className="flex items-center gap-2 mb-3 text-base text-text-muted">
         Couldn&apos;t refresh your library — showing what was last loaded.
         <button
           data-testid="library-load-retry"
           onClick={onRetry}
-          style={{
-            border: 0, padding: 0, background: "transparent", color: "#445D22",
-            font: "inherit", fontWeight: 700, cursor: "pointer",
-            textDecoration: "underline", textUnderlineOffset: 3,
-          }}
+          className="border-0 p-0 bg-transparent text-brand-forest [font-family:inherit] [font-size:inherit] [font-style:inherit] [font-variant:inherit] [font-stretch:inherit] [line-height:inherit] font-bold cursor-pointer underline [text-underline-offset:3px]"
         >Retry</button>
       </div>
     );
   }
   return (
-    <div data-testid="library-load-error" role="alert" style={{
-      maxWidth: 440, margin: "72px auto 0", textAlign: "center",
-      display: "flex", flexDirection: "column", alignItems: "center", gap: 10,
-    }}>
-      <div style={{ fontFamily: "var(--font-serif)", fontSize: 22, fontWeight: 600 }}>
+    <div data-testid="library-load-error" role="alert" className="max-w-110 mt-18 mx-auto mb-0 text-center flex flex-col items-center gap-2.5">
+      <div className="font-serif text-2xl font-semibold">
         Couldn&apos;t load your library
       </div>
-      <div style={{ fontSize: 15, color: "#3F3B31" }}>
+      <div className="text-[15px] text-ink-600">
         Your documents are safe. Check your connection and try again.
       </div>
       <button
         data-testid="library-load-retry"
-        className="sapHoverForest"
+        className="sapHoverForest mt-1.5 h-9.5 py-0 px-4 border-0 [background:#445D22] text-accent-fg rounded-md [font-family:inherit] [font-style:inherit] [font-variant:inherit] [font-stretch:inherit] [line-height:inherit] text-base font-bold cursor-pointer"
         onClick={onRetry}
-        style={{
-          marginTop: 6, height: 38, padding: "0 16px", border: 0, background: "#445D22",
-          color: "#FFFFFF", borderRadius: 10, font: "inherit", fontSize: 14,
-          fontWeight: 700, cursor: "pointer",
-        }}
       >Try again</button>
     </div>
   );
@@ -174,7 +158,7 @@ export function LibraryBody(props: LibraryBodyProps) {
     ) : (
       <div
         key={`panel-${dir}`}
-        style={{ ...PANEL_GRID, ...slide("panel", dir) }}
+        className="pt-4 grid grid-cols-[repeat(auto-fill,_minmax(250px,_1fr))] gap-6" style={{ ...slide("panel", dir) }}
         aria-hidden={dir === "out"}
       >
         {folders.map((f, i) => <FolderCard key={f.id} {...folderProps(f.id, i)} />)}
@@ -186,13 +170,7 @@ export function LibraryBody(props: LibraryBodyProps) {
 
   return (
     <div
-      style={{
-        // The PAGE scrolls, not this list: the title, search and scope bar
-        // travel up with the documents rather than staying pinned.
-        overflowX: "hidden",
-        padding: "6px 6px 96px 0",
-        animation: "sapFadeIn 260ms cubic-bezier(0.2, 0.7, 0.2, 1) 900ms both",
-      }}
+      className="overflow-x-hidden pt-1.5 pr-1.5 pb-24 pl-0 [animation:sapFadeIn_260ms_cubic-bezier(0.2,_0.7,_0.2,_1)_900ms_both]"
     >
       {loadError && <LoadError hasDocuments={hasDocuments} onRetry={onRetry} />}
 
@@ -203,7 +181,7 @@ export function LibraryBody(props: LibraryBodyProps) {
       {!empty && (
         <div
           data-sliding={leaving ? "" : undefined}
-          style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)" }}
+          className="grid grid-cols-[minmax(0,_1fr)]"
         >
           {leaving && renderView(leaving, "out")}
           {renderView(view, "in")}

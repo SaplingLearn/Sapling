@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import { cn } from "@/lib/cn";
 
 /**
  * Full-height root for screens rendered inside `ShellFrame`'s `<main>`.
@@ -32,13 +33,8 @@ export function FullHeightScreen({
 }) {
   return (
     <div
-      className={className}
-      style={{
-        display: "flex",
-        flexDirection: direction,
-        height: "100%",
-        ...style,
-      }}
+      className={cn(className, "flex h-full")}
+      style={{ flexDirection: direction, ...style }}
     >
       {children}
     </div>

@@ -8,6 +8,7 @@
 import React from "react";
 import { SAPLING_WORDMARK_SRC } from "@/components/SaplingWordmark";
 import { CHAPTERS, SCREENS } from "./flow";
+import { cn } from "@/lib/cn";
 
 const fade = (on: boolean): React.CSSProperties => ({ opacity: on ? 1 : 0 });
 
@@ -125,7 +126,7 @@ export function OutroMoment({ shown, complete }: { shown: boolean; complete: boo
 /** The white hand-off. While it waits on the save it says so. */
 export function Whiteout({ on, settingUp }: { on: boolean; settingUp: boolean }) {
   return (
-    <div className="ob-whiteout" style={{ opacity: on ? 1 : 0, pointerEvents: on ? "auto" : "none" }}>
+    <div className={cn("ob-whiteout", on ? "opacity-100" : "opacity-0", on ? "pointer-events-auto" : "pointer-events-none")}>
       <p className="ob-setting-up" role="status" data-testid="onboarding-setting-up">
         {on && settingUp ? "Setting up…" : ""}
       </p>

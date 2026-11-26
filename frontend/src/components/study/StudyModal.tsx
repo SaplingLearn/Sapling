@@ -3,6 +3,7 @@ import React from "react";
 import { createPortal } from "react-dom";
 import { useOverlayBehaviour } from "@/components/Dialog";
 import s from "./StudyModal.module.css";
+import { cn } from "@/lib/cn";
 
 /**
  * StudyModal — the shell of the Study hub's centred modal (Exams and
@@ -43,14 +44,9 @@ export function StudyModal({ open, onClose, label, width, maxHeight, top, gap, i
 
   return createPortal(
     <div
-      className={s.overlay}
+      className={cn(s.overlay, "z-100")}
       onKeyDown={onKeyDown}
-      style={{
-        zIndex: 100,
-        "--study-modal-top": `${top}px`,
-        "--study-modal-width": `${width}px`,
-        "--study-modal-max-h": `${maxHeight}px`,
-      } as React.CSSProperties}
+      style={{ "--study-modal-top": `${top}px`, "--study-modal-width": `${width}px`, "--study-modal-max-h": `${maxHeight}px` } as React.CSSProperties}
     >
       <div className={s.backdrop} data-testid="study-modal-backdrop" onClick={onClose} />
       <div

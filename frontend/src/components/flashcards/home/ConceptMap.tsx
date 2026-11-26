@@ -23,6 +23,7 @@ import {
 } from "./flashcardsModel";
 import { columnPalette } from "./decksModel";
 import h from "./home.module.css";
+import { cn } from "@/lib/cn";
 
 export function ConceptMap({
   columns, hasConcepts, hasCourse, selected, onToggle, onColumn, onRemoveOwn,
@@ -42,7 +43,7 @@ export function ConceptMap({
         <span className="label-micro">Concepts</span>
       </div>
       {!hasConcepts && (
-        <p className={h.quiet} style={{ marginBottom: columns.length ? 16 : 0 }}>
+        <p className={cn(h.quiet, columns.length ? "mb-4" : "mb-0")}>
           {hasCourse
             ? <>No concepts for this course yet. Upload its material in the <Link href="/library">Library</Link> and the concepts will show up here.</>
             : <>Add a course to see its concepts here. Material you upload in the <Link href="/library">Library</Link> becomes the concepts you can make cards for.</>}

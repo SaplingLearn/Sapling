@@ -1,4 +1,5 @@
 "use client";
+import Dialog from "@/components/Dialog";
 import React, { Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Icon } from "@/components/Icon";
@@ -40,6 +41,7 @@ import {
   chatRailStyle,
 } from "@/lib/notes/notetakerLayout";
 import { sentenceCase } from "@/lib/sentenceCase";
+import { cn } from "@/lib/cn";
 
 type Mastery = "mastered" | "learning" | "struggling" | "unexplored";
 
@@ -499,6 +501,8 @@ function NotetakerScreen() {
     return () => document.removeEventListener("keydown", onKey);
   }, [fullscreen]);
 
+  // Escape anywhere on the page closes an open picker, even with focus
+  // outside it (the Dialog itself handles Escape from inside).
   React.useEffect(() => {
     if (!pickerOpen && !conceptPickerOpen) return;
     const onKey = (e: KeyboardEvent) => {
@@ -511,17 +515,11 @@ function NotetakerScreen() {
     return () => document.removeEventListener("keydown", onKey);
   }, [pickerOpen, conceptPickerOpen]);
 
+
   if (!userReady || loading) {
     return (
       <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          height: "100%",
-          color: "var(--text-muted)",
-          fontSize: 13,
-        }}
+        className="flex items-center justify-center h-full text-text-muted text-md"
       >
         Loading notes…
       </div>
@@ -539,7 +537,7 @@ function NotetakerScreen() {
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+    <div className="flex flex-col h-full">
       <div style={layoutRowStyle(fullscreen)}>
         <div style={notesListRailStyle(fullscreen)} aria-hidden={fullscreen}>
           <NotesList
@@ -558,12 +556,7 @@ function NotetakerScreen() {
         </div>
 
         <div
-          style={{
-            flex: 1,
-            minWidth: 0,
-            display: "flex",
-            justifyContent: "center",
-          }}
+          className="flex-1 min-w-0 flex justify-center"
         >
           <div style={editorFrameStyle(fullscreen)}>
             <NoteEditor
@@ -642,35 +635,17 @@ function renderEmptyState({
   return (
     <>
       <div
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          height: "100%",
-          padding: 32,
-          gap: 12,
-        }}
+        className="flex flex-col h-full p-8 gap-3"
       >
-        <div style={{ display: "flex", width: "100%", alignItems: "center", justifyContent: "space-between", gap: 16 }}><div className="label-micro">Notetaker</div></div>
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", textAlign: "center", gap: 12 }}>
+        <div className="flex w-full items-center justify-between gap-4"><div className="label-micro">Notetaker</div></div>
+        <div className="flex-1 flex flex-col items-center justify-center text-center gap-3">
         <h2
-          className="h-serif"
-          style={{
-            margin: 0,
-            fontSize: 28,
-            fontWeight: 500,
-            letterSpacing: "-0.015em",
-          }}
+          className="h-serif m-0 text-[28px] font-medium tracking-[-0.015em]"
         >
           No notes yet
         </h2>
         <p
-          style={{
-            margin: 0,
-            maxWidth: 420,
-            color: "var(--text-dim)",
-            fontSize: 14,
-            lineHeight: 1.6,
-          }}
+          className="m-0 max-w-105 text-text-dim text-base leading-[1.6]"
         >
           Pick a course to start — Sapling will link the concepts you write to its
           knowledge graph.
@@ -678,14 +653,13 @@ function renderEmptyState({
         <button
           type="button"
           onClick={onOpenPicker}
-          className="btn btn--primary"
+          className="btn btn--primary mt-2"
           disabled={courses.length === 0}
-          style={{ marginTop: 8 }}
         >
           <Icon name="plus" size={13} /> Create your first note
         </button>
         {courses.length === 0 && (
-          <p style={{ margin: 0, fontSize: 12, color: "var(--text-muted)" }}>
+          <p className="m-0 text-sm text-text-muted">
             Add a course first to start taking notes.
           </p>
         )}
@@ -729,41 +703,21 @@ function NotesList({
 }) {
   return (
     <aside
-      className="card"
-      style={{
-        padding: 0,
-        display: "flex",
-        flexDirection: "column",
-        minHeight: 0,
-        overflow: "hidden",
-      }}
+      className="card p-0 flex flex-col min-h-0 overflow-hidden"
     >
-      <div style={{ padding: "14px 16px 10px", borderBottom: "1px solid var(--border)" }}>
+      <div className="pt-3.5 px-4 pb-2.5 border-b border-b-border">
         <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            marginBottom: 10,
-          }}
+          className="flex items-center justify-between mb-2.5"
         >
           <div className="label-micro">All notes</div>
-          <span className="mono" style={{ fontSize: 11, color: "var(--text-muted)" }}>
+          <span className="mono text-xs text-text-muted">
             {notes.length}
             {courseFilter ? ` / ${totalCount}` : ""}
           </span>
         </div>
-        <div style={{ position: "relative", marginBottom: 10 }}>
+        <div className="relative mb-2.5">
           <span
-            style={{
-              position: "absolute",
-              left: 10,
-              top: "50%",
-              transform: "translateY(-50%)",
-              color: "var(--text-muted)",
-              display: "inline-flex",
-              pointerEvents: "none",
-            }}
+            className="absolute left-2.5 top-1/2 [transform:translateY(-50%)] text-text-muted inline-flex pointer-events-none"
           >
             <Icon name="search" size={13} />
           </span>
@@ -772,20 +726,11 @@ function NotesList({
             value={query}
             onChange={(e) => onQueryChange(e.target.value)}
             placeholder="Search notes…"
-            style={{
-              width: "100%",
-              padding: "8px 10px 8px 30px",
-              fontSize: 13,
-              fontFamily: "var(--font-sans)",
-              background: "var(--bg-input)",
-              border: "1px solid var(--border)",
-              borderRadius: "var(--r-sm)",
-              color: "var(--text)",
-            }}
+            className="w-full pt-2 pr-2.5 pb-2 pl-7.5 text-md font-sans bg-bg-input border border-border rounded-sm text-text"
           />
         </div>
         {courses.length > 0 && (
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+          <div className="flex flex-wrap gap-1">
             <CourseFilterChip
               active={courseFilter === null}
               label="All"
@@ -806,15 +751,10 @@ function NotesList({
         )}
       </div>
 
-      <div style={{ flex: 1, overflowY: "auto", padding: "6px" }}>
+      <div className="flex-1 overflow-y-auto p-1.5">
         {notes.length === 0 ? (
           <div
-            style={{
-              padding: "20px 12px",
-              fontSize: 12,
-              color: "var(--text-muted)",
-              textAlign: "center",
-            }}
+            className="py-5 px-3 text-sm text-text-muted text-center"
           >
             No notes match the current filters.
           </div>
@@ -827,50 +767,18 @@ function NotesList({
                 key={n.id}
                 type="button"
                 onClick={() => onSelect(n.id)}
-                style={{
-                  display: "block",
-                  width: "100%",
-                  textAlign: "left",
-                  padding: "10px 12px",
-                  marginBottom: 2,
-                  borderRadius: "var(--r-sm)",
-                  background: isActive ? "var(--bg-soft)" : "transparent",
-                  color: isActive ? "var(--text)" : "var(--text-dim)",
-                  fontWeight: isActive ? 600 : 400,
-                  border: "none",
-                  cursor: "pointer",
-                  transition: "background var(--dur-fast) var(--ease)",
-                }}
+                className={cn("block w-full text-left py-2.5 px-3 mb-0.5 rounded-sm border-0 cursor-pointer [transition:background_var(--dur-fast)_var(--ease)]", isActive ? "bg-bg-soft" : "bg-transparent", isActive ? "text-text" : "text-text-dim", isActive ? "font-semibold" : "font-normal")}
               >
                 <div
-                  style={{
-                    fontSize: 13,
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                    marginBottom: 4,
-                  }}
+                  className="text-md overflow-hidden text-ellipsis whitespace-nowrap mb-1"
                 >
                   {n.title || "Untitled note"}
                 </div>
                 <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 6,
-                    fontSize: 11,
-                    color: "var(--text-muted)",
-                    fontWeight: 400,
-                  }}
+                  className="flex items-center gap-1.5 text-xs text-text-muted font-normal"
                 >
                   <span
-                    style={{
-                      width: 7,
-                      height: 7,
-                      borderRadius: "50%",
-                      background: c.color,
-                      flexShrink: 0,
-                    }}
+                    className="w-[7px] h-[7px] rounded-[50%] shrink-0" style={{ background: c.color }}
                   />
                   <span>{c.code}</span>
                   <span aria-hidden>·</span>
@@ -882,12 +790,11 @@ function NotesList({
         )}
       </div>
 
-      <div style={{ padding: 10, borderTop: "1px solid var(--border)" }}>
+      <div className="p-2.5 border-t border-t-border">
         <button
           type="button"
           onClick={onCreate}
-          className="btn btn--primary"
-          style={{ width: "100%", justifyContent: "center", display: "inline-flex" }}
+          className="btn btn--primary w-full justify-center inline-flex"
         >
           <Icon name="plus" size={13} /> New note
         </button>
@@ -911,27 +818,11 @@ function CourseFilterChip({
     <button
       type="button"
       onClick={onClick}
-      className="chip"
-      style={{
-        cursor: "pointer",
-        border: "1px solid transparent",
-        background: active ? "var(--accent-soft)" : "var(--bg-soft)",
-        color: active ? "var(--accent)" : "var(--text-dim)",
-        borderColor: active ? "var(--accent-border)" : "transparent",
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 5,
-      }}
+      className={cn("chip", "cursor-pointer border border-transparent inline-flex items-center gap-[5px]", active ? "bg-accent-soft" : "bg-bg-soft", active ? "text-accent" : "text-text-dim", active ? "border-accent-border" : "border-transparent")}
     >
       {color && (
         <span
-          style={{
-            width: 7,
-            height: 7,
-            borderRadius: "50%",
-            background: color,
-            display: "inline-block",
-          }}
+          className="w-[7px] h-[7px] rounded-[50%] inline-block" style={{ background: color }}
         />
       )}
       {label}
@@ -954,140 +845,63 @@ function NoteEditor({
   fullscreen: boolean;
   onToggleFullscreen: () => void;
 }) {
-  const surfaceTransition =
-    "background var(--dur-slow) var(--ease), border-color var(--dur-slow) var(--ease), box-shadow var(--dur-slow) var(--ease), border-radius var(--dur-slow) var(--ease)";
 
   return (
     <section
-      style={{
-        padding: 0,
-        display: "flex",
-        flexDirection: "column",
-        minHeight: 0,
-        overflow: "hidden",
-        width: "100%",
-        background: fullscreen ? "transparent" : "var(--bg-panel)",
-        border: "1px solid",
-        borderColor: fullscreen ? "transparent" : "var(--border)",
-        borderRadius: fullscreen ? 0 : "var(--r-lg)",
-        boxShadow: fullscreen ? "none" : "var(--shadow-sm)",
-        transition: surfaceTransition,
-      }}
+      className={cn("p-0 flex flex-col min-h-0 overflow-hidden w-full border border-current [transition:background_var(--dur-slow)_var(--ease),_border-color_var(--dur-slow)_var(--ease),_box-shadow_var(--dur-slow)_var(--ease),_border-radius_var(--dur-slow)_var(--ease)]", fullscreen ? "bg-transparent" : "bg-bg-panel", fullscreen ? "border-transparent" : "border-border", fullscreen ? "rounded-none" : "rounded-lg", fullscreen ? "shadow-none" : "shadow-sm")}
     >
       <div
-        style={{
-          padding: fullscreen ? "48px 56px 20px" : "20px 28px 16px",
-          borderBottom: "1px solid",
-          borderColor: fullscreen ? "transparent" : "var(--border)",
-          display: "flex",
-          alignItems: "flex-start",
-          gap: 12,
-          transition:
-            "padding var(--dur-slow) var(--ease), border-color var(--dur-slow) var(--ease)",
-        }}
+        className={cn("border-b border-b-current flex items-start gap-3 [transition:padding_var(--dur-slow)_var(--ease),_border-color_var(--dur-slow)_var(--ease)]", fullscreen ? "pt-12 px-14 pb-5" : "pt-5 px-7 pb-4", fullscreen ? "border-transparent" : "border-border")}
       >
         <input
           value={note.title}
           maxLength={NOTE_TITLE_MAX}
           onChange={(e) => onChange({ title: e.target.value })}
           placeholder="Untitled note"
-          className="h-serif"
-          style={{
-            flex: 1,
-            minWidth: 0,
-            fontSize: fullscreen ? 42 : 30,
-            fontWeight: 500,
-            letterSpacing: "-0.015em",
-            lineHeight: 1.2,
-            color: "var(--text)",
-            background: "transparent",
-            border: "none",
-            padding: 0,
-            transition: "font-size var(--dur-slow) var(--ease)",
-          }}
+          className={cn("h-serif", "flex-1 min-w-0 font-medium tracking-[-0.015em] leading-[1.2] text-text bg-transparent border-0 p-0 [transition:font-size_var(--dur-slow)_var(--ease)]", fullscreen ? "text-[42px]" : "text-4xl")}
         />
         <button
           type="button"
-          className="btn btn--ghost btn--sm"
+          className="btn btn--ghost btn--sm shrink-0"
           onClick={onToggleFullscreen}
           title={fullscreen ? "Exit fullscreen (Esc)" : "Fullscreen editor"}
-          style={{ flexShrink: 0 }}
         >
           <Icon name={fullscreen ? "x" : "max"} size={12} />
         </button>
       </div>
 
       <div
-        style={{
-          flex: 1,
-          minHeight: 0,
-          overflowY: "auto",
-          padding: fullscreen ? "24px 56px" : "20px 28px",
-          transition: "padding var(--dur-slow) var(--ease)",
-        }}
+        className={cn("flex-1 min-h-0 overflow-y-auto [transition:padding_var(--dur-slow)_var(--ease)]", fullscreen ? "py-6 px-14" : "py-5 px-7")}
       >
         <textarea
           value={note.body}
           maxLength={NOTE_BODY_MAX}
           onChange={(e) => onChange({ body: e.target.value })}
           placeholder="Start writing — Sapling will pick up concepts as you go."
-          className="body-serif"
-          style={{
-            width: "100%",
-            minHeight: fullscreen ? "calc(100vh - 280px)" : 320,
-            border: "none",
-            resize: "none",
-            background: "transparent",
-            fontSize: fullscreen ? 14 : 15,
-            lineHeight: 1.7,
-            color: "var(--text)",
-            fontFamily: "var(--font-serif)",
-            transition: "font-size var(--dur-slow) var(--ease)",
-          }}
+          className={cn("body-serif", "w-full border-0 resize-none [background:transparent] leading-[1.7] text-text font-serif [transition:font-size_var(--dur-slow)_var(--ease)]", fullscreen ? "min-h-[calc(100vh_-_280px)]" : "min-h-80", fullscreen ? "text-base" : "text-[15px]")}
         />
       </div>
 
       <div
-        style={{
-          padding: fullscreen ? "14px 56px" : "10px 22px",
-          borderTop: "1px solid",
-          borderColor: fullscreen ? "transparent" : "var(--border)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: 12,
-          background: fullscreen ? "transparent" : "var(--bg-inset)",
-          fontSize: 11,
-          color: "var(--text-muted)",
-          fontFamily: "var(--font-sans)",
-          letterSpacing: "0.04em",
-          transition:
-            "padding var(--dur-slow) var(--ease), background var(--dur-slow) var(--ease), border-color var(--dur-slow) var(--ease)",
-        }}
+        className={cn("border-t border-t-current flex items-center justify-between gap-3 text-xs text-text-muted font-sans tracking-[0.04em] [transition:padding_var(--dur-slow)_var(--ease),_background_var(--dur-slow)_var(--ease),_border-color_var(--dur-slow)_var(--ease)]", fullscreen ? "py-3.5 px-14" : "py-2.5 px-5.5", fullscreen ? "border-transparent" : "border-border", fullscreen ? "bg-transparent" : "bg-bg-inset")}
       >
         {saveStatus === "error" ? (
           <span
             role="status"
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 6,
-              color: "var(--state-struggle)",
-            }}
+            className="inline-flex items-center gap-1.5 text-state-struggle"
           >
             <Icon name="x" size={11} />
             Couldn&apos;t save ·
             <button
               type="button"
-              className="btn btn--ghost btn--sm"
+              className="btn btn--ghost btn--sm py-0 px-1.5 text-xs text-inherit"
               onClick={onRetrySave}
-              style={{ padding: "0 6px", fontSize: 11, color: "inherit" }}
             >
               Retry
             </button>
           </span>
         ) : (
-          <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+          <span className="inline-flex items-center gap-1.5">
             <Icon name={saveStatus === "saved" ? "check" : "pencil"} size={11} />
             {saveStatus === "saving"
               ? "Saving…"
@@ -1096,7 +910,7 @@ function NoteEditor({
                 : `Saved · ${relTime(note.updatedAt)}`}
           </span>
         )}
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 12 }}>
+        <span className="inline-flex items-center gap-3">
           <span>{note.body.split(/\s+/).filter(Boolean).length} words</span>
           <span>{note.body.length} chars</span>
           {fullscreen && <span>Esc to exit</span>}
@@ -1149,54 +963,31 @@ function NoteDetail({
 
   return (
     <aside
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        gap: 16,
-        minHeight: 0,
-        overflowY: "auto",
-      }}
+      className="flex flex-col gap-4 min-h-0 overflow-y-auto"
     >
-      <div className="card" style={{ padding: "var(--pad-lg)" }}>
-        <div className="label-micro" style={{ marginBottom: 10 }}>
+      <div className="card p-(--pad-lg)">
+        <div className="label-micro mb-2.5">
           Linked concepts
         </div>
         {note.linkedConcepts.length === 0 ? (
-          <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
+          <div className="text-sm text-text-muted">
             No concepts linked yet. Sapling will surface them as you write.
           </div>
         ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <div className="flex flex-col gap-1">
             {note.linkedConcepts.map((c) => (
               <div
                 key={c.id}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 10,
-                  padding: "8px 10px",
-                  borderRadius: "var(--r-sm)",
-                  background: "var(--bg-subtle)",
-                  width: "100%",
-                }}
+                className="flex items-center gap-2.5 py-2 px-2.5 rounded-sm bg-bg-subtle w-full"
               >
                 <span
-                  style={{
-                    width: 8,
-                    height: 8,
-                    borderRadius: "50%",
-                    background: MASTERY_COLOR[c.mastery],
-                    flexShrink: 0,
-                  }}
+                  className="w-2 h-2 rounded-[50%] shrink-0" style={{ background: MASTERY_COLOR[c.mastery] }}
                 />
-                <span style={{ flex: 1, fontSize: 13, color: "var(--text)" }}>
+                <span className="flex-1 text-md text-text">
                   {c.name}
                 </span>
                 <span
-                  className="mono"
-                  style={{
-                    fontSize: 12,
-                    color: "var(--text-muted)" }}
+                  className="mono text-sm text-text-muted"
                 >
                   {sentenceCase(c.mastery)}
                 </span>
@@ -1205,14 +996,7 @@ function NoteDetail({
                   onClick={() => onUnlinkConcept(c.id)}
                   title="Unlink concept"
                   aria-label={`Unlink ${c.name}`}
-                  style={{
-                    background: "transparent",
-                    border: "none",
-                    cursor: "pointer",
-                    color: "var(--text-muted)",
-                    padding: 2,
-                    display: "inline-flex",
-                  }}
+                  className="bg-transparent border-0 cursor-pointer text-text-muted p-0.5 inline-flex"
                 >
                   <Icon name="x" size={11} />
                 </button>
@@ -1222,26 +1006,20 @@ function NoteDetail({
         )}
         <button
           type="button"
-          className="btn btn--ghost btn--sm"
+          className="btn btn--ghost btn--sm mt-2.5 w-full justify-center inline-flex"
           onClick={onOpenConceptPicker}
-          style={{
-            marginTop: 10,
-            width: "100%",
-            justifyContent: "center",
-            display: "inline-flex",
-          }}
         >
           <Icon name="plus" size={11} /> Link concept
         </button>
       </div>
 
-      <div className="card" style={{ padding: "var(--pad-lg)" }}>
-        <div className="label-micro" style={{ marginBottom: 10 }}>
+      <div className="card p-(--pad-lg)">
+        <div className="label-micro mb-2.5">
           Tags
         </div>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+        <div className="flex flex-wrap gap-1.5">
           {note.tags.length === 0 && !adding && (
-            <span style={{ fontSize: 12, color: "var(--text-muted)" }}>No tags.</span>
+            <span className="text-sm text-text-muted">No tags.</span>
           )}
           {note.tags.map((t) => (
             <button
@@ -1249,14 +1027,7 @@ function NoteDetail({
               type="button"
               onClick={() => onRemoveTag(t)}
               title={`Remove ${t}`}
-              className="chip"
-              style={{
-                cursor: "pointer",
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 5,
-                border: "1px solid transparent",
-              }}
+              className="chip cursor-pointer inline-flex items-center gap-[5px] border border-transparent"
             >
               {t}
               <Icon name="x" size={9} />
@@ -1279,24 +1050,13 @@ function NoteDetail({
                 }
               }}
               placeholder="tag"
-              className="chip"
-              style={{
-                background: "var(--bg-input)",
-                border: "1px dashed var(--border-strong)",
-                color: "var(--text)",
-                width: 80,
-              }}
+              className="chip bg-bg-input border border-dashed border-border-strong text-text w-20"
             />
           ) : (
             <button
               type="button"
               onClick={() => setAdding(true)}
-              className="chip"
-              style={{
-                background: "transparent",
-                border: "1px dashed var(--border-strong)",
-                cursor: "pointer",
-              }}
+              className="chip bg-transparent border border-dashed border-border-strong cursor-pointer"
             >
               + Add
             </button>
@@ -1304,47 +1064,43 @@ function NoteDetail({
         </div>
       </div>
 
-      <div className="card" style={{ padding: "var(--pad-lg)" }}>
-        <div className="label-micro" style={{ marginBottom: 10 }}>
+      <div className="card p-(--pad-lg)">
+        <div className="label-micro mb-2.5">
           Sapling actions
         </div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        <div className="flex flex-col gap-1.5">
           <button
             type="button"
-            className="btn btn--ghost"
+            className="btn btn--ghost justify-start text-left"
             onClick={onSummarize}
             disabled={busy !== null}
-            style={{ justifyContent: "flex-start", textAlign: "left" }}
           >
             <Icon name="sparkle" size={13} />{" "}
             {busy === "summarize" ? "Summarizing…" : "Summarize note"}
           </button>
           <button
             type="button"
-            className="btn btn--ghost"
+            className="btn btn--ghost justify-start text-left"
             onClick={onExtract}
             disabled={busy !== null}
-            style={{ justifyContent: "flex-start", textAlign: "left" }}
           >
             <Icon name="brain" size={13} />{" "}
             {busy === "extract" ? "Extracting…" : "Extract concepts"}
           </button>
           <button
             type="button"
-            className="btn btn--ghost"
+            className="btn btn--ghost justify-start text-left"
             onClick={onGenerateQuiz}
             disabled={busy !== null || note.linkedConcepts.length === 0}
-            style={{ justifyContent: "flex-start", textAlign: "left" }}
           >
             <Icon name="flask" size={13} />{" "}
             {busy === "quiz" ? "Building quiz…" : "Generate quiz"}
           </button>
           <button
             type="button"
-            className="btn btn--ghost"
+            className="btn btn--ghost justify-start text-left"
             onClick={onSendToTutor}
             disabled={busy !== null}
-            style={{ justifyContent: "flex-start", textAlign: "left" }}
           >
             <Icon name="bolt" size={13} />{" "}
             {busy === "tutor" ? "Opening tutor…" : "Send to tutor"}
@@ -1352,19 +1108,10 @@ function NoteDetail({
         </div>
         {note.lastSummary && (
           <div
-            style={{
-              marginTop: 12,
-              padding: 10,
-              borderRadius: "var(--r-sm)",
-              background: "var(--bg-subtle)",
-              fontSize: 12,
-              lineHeight: 1.6,
-              color: "var(--text-dim)",
-            }}
+            className="mt-3 p-2.5 rounded-sm bg-bg-subtle text-sm leading-[1.6] text-text-dim"
           >
             <div
-              className="label-micro"
-              style={{ marginBottom: 4, fontSize: 10 }}
+              className="label-micro mb-1 text-2xs"
             >
               Last summary
             </div>
@@ -1373,26 +1120,19 @@ function NoteDetail({
         )}
       </div>
 
-      <div className="card" style={{ padding: "var(--pad-lg)" }}>
-        <div className="label-micro" style={{ marginBottom: 10 }}>
+      <div className="card p-(--pad-lg)">
+        <div className="label-micro mb-2.5">
           Note info
         </div>
         <dl
-          style={{
-            margin: 0,
-            display: "grid",
-            gridTemplateColumns: "auto 1fr",
-            rowGap: 6,
-            columnGap: 12,
-            fontSize: 12,
-          }}
+          className="m-0 grid grid-cols-[auto_1fr] gap-y-1.5 gap-x-3 text-sm"
         >
-          <dt style={{ color: "var(--text-muted)" }}>Course</dt>
-          <dd style={{ margin: 0, color: "var(--text)" }}>{course.name}</dd>
-          <dt style={{ color: "var(--text-muted)" }}>Updated</dt>
-          <dd style={{ margin: 0, color: "var(--text)" }}>{relTime(note.updatedAt)}</dd>
-          <dt style={{ color: "var(--text-muted)" }}>Concepts</dt>
-          <dd className="mono" style={{ margin: 0, color: "var(--text)" }}>
+          <dt className="text-text-muted">Course</dt>
+          <dd className="m-0 text-text">{course.name}</dd>
+          <dt className="text-text-muted">Updated</dt>
+          <dd className="m-0 text-text">{relTime(note.updatedAt)}</dd>
+          <dt className="text-text-muted">Concepts</dt>
+          <dd className="mono m-0 text-text">
             {note.linkedConcepts.length}
           </dd>
         </dl>
@@ -1400,13 +1140,7 @@ function NoteDetail({
           type="button"
           onClick={onDelete}
           disabled={busy !== null}
-          className="btn btn--danger btn--sm"
-          style={{
-            marginTop: 12,
-            width: "100%",
-            justifyContent: "center",
-            display: "inline-flex",
-          }}
+          className="btn btn--danger btn--sm mt-3 w-full justify-center inline-flex"
         >
           <Icon name="x" size={11} />{" "}
           {busy === "delete" ? "Deleting…" : "Delete note"}
@@ -1426,61 +1160,29 @@ function CoursePickerModal({
   onClose: () => void;
 }) {
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      onClick={onClose}
-      style={{
-        position: "fixed",
-        inset: 0,
-        zIndex: 200,
-        background: "rgba(19, 17, 13, 0.45)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: 24,
-      }}
-    >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        className="card"
-        style={{
-          width: "100%",
-          maxWidth: 520,
-          padding: 0,
-          boxShadow: "var(--shadow-lg)",
-          overflow: "hidden",
-        }}
-      >
+    <Dialog open onClose={onClose} padding="0" width="520px" zIndex={200} showCloseButton={false} labelledBy="course-picker-title">
+      <div className="overflow-hidden">
         <div
-          style={{
-            padding: "20px 24px 12px",
-            borderBottom: "1px solid var(--border)",
-          }}
+          className="pt-5 px-6 pb-3 border-b border-b-border"
         >
-          <div className="label-micro" style={{ marginBottom: 6 }}>
+          <div className="label-micro mb-1.5">
             New note
           </div>
           <h2
-            className="h-serif"
-            style={{ margin: 0, fontSize: 22, fontWeight: 500, letterSpacing: "-0.01em" }}
+            id="course-picker-title"
+            className="h-serif m-0 text-2xl font-medium tracking-[-0.01em]"
           >
             Which course is this for?
           </h2>
-          <p style={{ margin: "6px 0 0", fontSize: 13, color: "var(--text-dim)" }}>
+          <p className="mt-1.5 mx-0 mb-0 text-md text-text-dim">
             Pick a course so Sapling can link concepts to the right knowledge graph.
           </p>
         </div>
 
-        <div style={{ padding: 10, display: "flex", flexDirection: "column", gap: 4 }}>
+        <div className="p-2.5 flex flex-col gap-1">
           {courses.length === 0 ? (
             <div
-              style={{
-                padding: "20px 14px",
-                fontSize: 12,
-                color: "var(--text-muted)",
-                textAlign: "center",
-              }}
+              className="py-5 px-3.5 text-sm text-text-muted text-center"
             >
               No courses enrolled yet.
             </div>
@@ -1490,18 +1192,7 @@ function CoursePickerModal({
                 key={c.id}
                 type="button"
                 onClick={() => onPick(c.id)}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 12,
-                  padding: "12px 14px",
-                  borderRadius: "var(--r-md)",
-                  border: "1px solid var(--border)",
-                  background: "var(--bg-panel)",
-                  cursor: "pointer",
-                  textAlign: "left",
-                  transition: "background var(--dur-fast) var(--ease)",
-                }}
+                className="flex items-center gap-3 py-3 px-3.5 rounded-md border border-border bg-bg-panel cursor-pointer text-left [transition:background_var(--dur-fast)_var(--ease)]"
                 onMouseEnter={(e) => {
                   e.currentTarget.style.background = "var(--bg-soft)";
                 }}
@@ -1510,21 +1201,14 @@ function CoursePickerModal({
                 }}
               >
                 <span
-                  style={{
-                    width: 12,
-                    height: 12,
-                    borderRadius: "50%",
-                    background: c.color,
-                    flexShrink: 0,
-                  }}
+                  className="w-3 h-3 rounded-[50%] shrink-0" style={{ background: c.color }}
                 />
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text)" }}>
+                <div className="flex-1 min-w-0">
+                  <div className="text-base font-semibold text-text">
                     {c.name}
                   </div>
                   <div
-                    className="mono"
-                    style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}
+                    className="mono text-xs text-text-muted mt-0.5"
                   >
                     {c.code}
                   </div>
@@ -1536,16 +1220,9 @@ function CoursePickerModal({
         </div>
 
         <div
-          style={{
-            padding: "12px 16px",
-            borderTop: "1px solid var(--border)",
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            background: "var(--bg-subtle)",
-          }}
+          className="py-3 px-4 border-t border-t-border flex justify-between items-center bg-bg-subtle"
         >
-          <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
+          <span className="text-sm text-text-muted">
             You can change this later.
           </span>
           <button type="button" className="btn btn--ghost btn--sm" onClick={onClose}>
@@ -1553,7 +1230,7 @@ function CoursePickerModal({
           </button>
         </div>
       </div>
-    </div>
+    </Dialog>
   );
 }
 
@@ -1604,122 +1281,57 @@ function ConceptPickerModal({
   }, [nodes, query, alreadyLinkedIds]);
 
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      onClick={onClose}
-      style={{
-        position: "fixed",
-        inset: 0,
-        zIndex: 200,
-        background: "rgba(19, 17, 13, 0.45)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: 24,
-      }}
-    >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        className="card"
-        style={{
-          width: "100%",
-          maxWidth: 520,
-          padding: 0,
-          boxShadow: "var(--shadow-lg)",
-          overflow: "hidden",
-          display: "flex",
-          flexDirection: "column",
-          maxHeight: "80vh",
-        }}
-      >
+    <Dialog open onClose={onClose} padding="0" width="520px" zIndex={200} showCloseButton={false} labelledBy="concept-picker-title">
+      <div className="overflow-hidden flex flex-col max-h-[80vh]">
         <div
-          style={{
-            padding: "20px 24px 12px",
-            borderBottom: "1px solid var(--border)",
-          }}
+          className="pt-5 px-6 pb-3 border-b border-b-border"
         >
-          <div className="label-micro" style={{ marginBottom: 6 }}>
+          <div className="label-micro mb-1.5">
             Link concept
           </div>
           <h2
-            className="h-serif"
-            style={{
-              margin: 0,
-              fontSize: 22,
-              fontWeight: 500,
-              letterSpacing: "-0.01em",
-            }}
+            id="concept-picker-title"
+            className="h-serif m-0 text-2xl font-medium tracking-[-0.01em]"
           >
             Pick a concept to link
           </h2>
-          <p style={{ margin: "6px 0 0", fontSize: 13, color: "var(--text-dim)" }}>
+          <p className="mt-1.5 mx-0 mb-0 text-md text-text-dim">
             From your knowledge graph for this course.
           </p>
         </div>
 
-        <div style={{ padding: "10px 14px", borderBottom: "1px solid var(--border)" }}>
+        <div className="py-2.5 px-3.5 border-b border-b-border">
           <input
             type="search"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search concepts…"
             autoFocus
-            style={{
-              width: "100%",
-              padding: "8px 10px",
-              fontSize: 13,
-              fontFamily: "var(--font-sans)",
-              background: "var(--bg-input)",
-              border: "1px solid var(--border)",
-              borderRadius: "var(--r-sm)",
-              color: "var(--text)",
-            }}
+            className="w-full py-2 px-2.5 text-md font-sans bg-bg-input border border-border rounded-sm text-text"
           />
         </div>
 
-        <div style={{ flex: 1, overflowY: "auto", padding: 10 }}>
+        <div className="flex-1 overflow-y-auto p-2.5">
           {nodes === null ? (
             <div
-              style={{
-                padding: "20px 14px",
-                fontSize: 12,
-                color: "var(--text-muted)",
-                textAlign: "center",
-              }}
+              className="py-5 px-3.5 text-sm text-text-muted text-center"
             >
               Loading…
             </div>
           ) : visible.length === 0 ? (
             <div
-              style={{
-                padding: "20px 14px",
-                fontSize: 12,
-                color: "var(--text-muted)",
-                textAlign: "center",
-              }}
+              className="py-5 px-3.5 text-sm text-text-muted text-center"
             >
               No matching concepts.
             </div>
           ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <div className="flex flex-col gap-1">
               {visible.map((n) => (
                 <button
                   key={n.id}
                   type="button"
                   onClick={() => onPick(n.id)}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 10,
-                    padding: "10px 12px",
-                    borderRadius: "var(--r-md)",
-                    border: "1px solid var(--border)",
-                    background: "var(--bg-panel)",
-                    cursor: "pointer",
-                    textAlign: "left",
-                    transition: "background var(--dur-fast) var(--ease)",
-                  }}
+                  className="flex items-center gap-2.5 py-2.5 px-3 rounded-md border border-border bg-bg-panel cursor-pointer text-left [transition:background_var(--dur-fast)_var(--ease)]"
                   onMouseEnter={(e) => {
                     e.currentTarget.style.background = "var(--bg-soft)";
                   }}
@@ -1728,23 +1340,14 @@ function ConceptPickerModal({
                   }}
                 >
                   <span
-                    style={{
-                      width: 8,
-                      height: 8,
-                      borderRadius: "50%",
-                      background:
-                        MASTERY_COLOR[normalizeMastery(n.mastery_tier)],
-                      flexShrink: 0,
-                    }}
+                    className="w-2 h-2 rounded-[50%] shrink-0" style={{ background:
+                        MASTERY_COLOR[normalizeMastery(n.mastery_tier)] }}
                   />
-                  <span style={{ flex: 1, fontSize: 13, color: "var(--text)" }}>
+                  <span className="flex-1 text-md text-text">
                     {n.concept_name}
                   </span>
                   <span
-                    className="mono"
-                    style={{
-                      fontSize: 12,
-                      color: "var(--text-muted)" }}
+                    className="mono text-sm text-text-muted"
                   >
                     {sentenceCase(n.mastery_tier)}
                   </span>
@@ -1755,20 +1358,14 @@ function ConceptPickerModal({
         </div>
 
         <div
-          style={{
-            padding: "12px 16px",
-            borderTop: "1px solid var(--border)",
-            display: "flex",
-            justifyContent: "flex-end",
-            background: "var(--bg-subtle)",
-          }}
+          className="py-3 px-4 border-t border-t-border flex justify-end bg-bg-subtle"
         >
           <button type="button" className="btn btn--ghost btn--sm" onClick={onClose}>
             Cancel
           </button>
         </div>
       </div>
-    </div>
+    </Dialog>
   );
 }
 
@@ -1841,25 +1438,10 @@ function AIChatPanel({ noteId, userId }: { noteId: string; userId: string }) {
 
   return (
     <aside
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        height: "100%",
-        background: "var(--bg-panel)",
-        border: "1px solid var(--border)",
-        borderRadius: "var(--r-lg)",
-        boxShadow: "var(--shadow-sm)",
-        overflow: "hidden",
-      }}
+      className="flex flex-col h-full bg-bg-panel border border-border rounded-lg shadow-sm overflow-hidden"
     >
       <div
-        style={{
-          padding: "14px 16px",
-          borderBottom: "1px solid var(--border)",
-          display: "flex",
-          alignItems: "center",
-          gap: 8,
-        }}
+        className="py-3.5 px-4 border-b border-b-border flex items-center gap-2"
       >
         <Icon name="sparkle" size={13} />
         <span className="label-micro">Quick questions</span>
@@ -1867,23 +1449,11 @@ function AIChatPanel({ noteId, userId }: { noteId: string; userId: string }) {
 
       <div
         ref={scrollRef}
-        style={{
-          flex: 1,
-          minHeight: 0,
-          overflowY: "auto",
-          padding: "14px 16px",
-          display: "flex",
-          flexDirection: "column",
-          gap: 10,
-        }}
+        className="flex-1 min-h-0 overflow-y-auto py-3.5 px-4 flex flex-col gap-2.5"
       >
         {messages.length === 0 ? (
           <div
-            style={{
-              fontSize: 12,
-              color: "var(--text-muted)",
-              lineHeight: 1.6,
-            }}
+            className="text-sm text-text-muted leading-[1.6]"
           >
             Ask Sapling anything about what you&apos;re writing — clarify a concept,
             check a definition, or surface related ideas.
@@ -1894,18 +1464,7 @@ function AIChatPanel({ noteId, userId }: { noteId: string; userId: string }) {
           ) : (
             <div
               key={i}
-              style={{
-                alignSelf: m.role === "user" ? "flex-end" : "flex-start",
-                maxWidth: "85%",
-                padding: "8px 11px",
-                borderRadius: "var(--r-md)",
-                background:
-                  m.role === "user" ? "var(--accent-soft)" : "var(--bg-subtle)",
-                color: m.role === "user" ? "var(--accent)" : "var(--text)",
-                fontSize: 13,
-                lineHeight: 1.5,
-                whiteSpace: "pre-wrap",
-              }}
+              className={cn("max-w-[85%] py-2 px-[11px] rounded-md text-md leading-[1.5] whitespace-pre-wrap", m.role === "user" ? "self-end" : "self-start", m.role === "user" ? "bg-accent-soft" : "bg-bg-subtle", m.role === "user" ? "text-accent" : "text-text")}
             >
               {m.text}
             </div>
@@ -1913,12 +1472,7 @@ function AIChatPanel({ noteId, userId }: { noteId: string; userId: string }) {
         )}
         {sending && (
           <div
-            style={{
-              alignSelf: "flex-start",
-              fontSize: 12,
-              color: "var(--text-muted)",
-              fontStyle: "italic",
-            }}
+            className="self-start text-sm text-text-muted italic"
           >
             Sapling is thinking…
           </div>
@@ -1926,18 +1480,7 @@ function AIChatPanel({ noteId, userId }: { noteId: string; userId: string }) {
         {error && (
           <div
             role="alert"
-            style={{
-              alignSelf: "stretch",
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
-              padding: "8px 11px",
-              borderRadius: "var(--r-md)",
-              border: "1px solid var(--state-struggle)",
-              color: "var(--state-struggle)",
-              fontSize: 12,
-              lineHeight: 1.5,
-            }}
+            className="self-stretch flex items-center gap-1.5 py-2 px-[11px] rounded-md border border-state-struggle text-state-struggle text-sm leading-[1.5]"
           >
             <Icon name="x" size={11} />
             {error}
@@ -1946,12 +1489,7 @@ function AIChatPanel({ noteId, userId }: { noteId: string; userId: string }) {
       </div>
 
       <div
-        style={{
-          padding: 10,
-          borderTop: "1px solid var(--border)",
-          display: "flex",
-          gap: 6,
-        }}
+        className="p-2.5 border-t border-t-border flex gap-1.5"
       >
         <input
           value={input}
@@ -1965,24 +1503,13 @@ function AIChatPanel({ noteId, userId }: { noteId: string; userId: string }) {
           }}
           placeholder="Ask a quick question…"
           disabled={sending}
-          style={{
-            flex: 1,
-            minWidth: 0,
-            padding: "8px 10px",
-            fontSize: 13,
-            fontFamily: "var(--font-sans)",
-            background: "var(--bg-input)",
-            border: "1px solid var(--border)",
-            borderRadius: "var(--r-sm)",
-            color: "var(--text)",
-          }}
+          className="flex-1 min-w-0 py-2 px-2.5 text-md font-sans bg-bg-input border border-border rounded-sm text-text"
         />
         <button
           type="button"
           onClick={send}
-          className="btn btn--sm btn--primary"
+          className="btn btn--sm btn--primary shrink-0"
           disabled={!input.trim() || sending}
-          style={{ flexShrink: 0 }}
         >
           <Icon name="bolt" size={12} />
         </button>

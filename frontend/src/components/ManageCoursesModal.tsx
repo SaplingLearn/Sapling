@@ -1,10 +1,9 @@
 "use client";
 
 import React from "react";
-import { createPortal } from "react-dom";
 import { Icon } from "./Icon";
 import { useToast } from "./ToastProvider";
-import { useScrollLock } from "@/lib/useScrollLock";
+import Dialog from "./Dialog";
 import { useConfirm } from "@/lib/useConfirm";
 import {
   addCourse,
@@ -17,6 +16,7 @@ import {
 import { useActiveSemester, distinctTerms, courseInTerm } from "@/lib/useActiveSemester";
 import { useLatestRequest } from "@/lib/useLatestRequest";
 import { humanizeError } from "@/lib/errorMessage";
+import { cn } from "@/lib/cn";
 
 const COLOR_RE = /^#[0-9a-fA-F]{6}$/;
 
@@ -44,20 +44,6 @@ export function ManageCoursesModal({ open, userId, courses, onClose, onChanged }
   const [query, setQuery] = React.useState("");
   const [results, setResults] = React.useState<OnboardingCourse[]>([]);
   const [loading, setLoading] = React.useState(false);
-  const [mounted, setMounted] = React.useState(false);
-
-  React.useEffect(() => setMounted(true), []);
-
-  useScrollLock(open);
-
-  React.useEffect(() => {
-    if (!open) return;
-    const handler = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
-    document.addEventListener("keydown", handler);
-    return () => {
-      document.removeEventListener("keydown", handler);
-    };
-  }, [open, onClose]);
 
   // Latest query wins (#769). Clearing the debounce timer only stops a search
   // that hasn't been SENT; one already in flight for an older query could
@@ -116,49 +102,30 @@ export function ManageCoursesModal({ open, userId, courses, onClose, onChanged }
     }
   };
 
-  if (!open || !mounted) return null;
-
-  return createPortal(
-    <div
-      onClick={onClose}
-      style={{
-        position: "fixed", inset: 0, background: "rgba(25, 37, 11,0.45)",
-        // Anchored near the top, not centred: a centred card re-centres (jumps)
-        // every time its content changes height.
-        zIndex: 200, display: "grid", placeItems: "start center", padding: "10vh 20px 20px",
-      }}
-    >
-      <div
-        onClick={e => e.stopPropagation()}
-        className="card slide-up"
-        style={{ width: "min(620px, 100%)", maxHeight: "80vh", overflow: "hidden", padding: 0, display: "flex", flexDirection: "column" }}
-      >
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 20px", borderBottom: "1px solid var(--border)" }}>
-          <div className="h-serif" style={{ fontSize: 20 }}>Courses & Semesters</div>
+  return (
+    <Dialog open={open} onClose={onClose} labelledBy="manage-courses-title" width="620px" padding="0" zIndex={200} showCloseButton={false}>
+      <div className="max-h-[80vh] overflow-hidden flex flex-col">
+        <div className="flex justify-between items-center py-4 px-5 border-b border-b-border">
+          <div id="manage-courses-title" className="h-serif text-[20px]">Courses & Semesters</div>
           <button className="btn btn--ghost btn--sm" onClick={onClose} aria-label="Close">
             <Icon name="x" size={14} />
           </button>
         </div>
 
-        <div style={{ padding: 20, overflowY: "auto" }}>
-          <div className="label-micro" style={{ marginBottom: 8 }}>Semester</div>
+        <div className="p-5 overflow-y-auto">
+          <div className="label-micro mb-2">Semester</div>
           {terms.length === 0 ? (
-            <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 16 }}>
+            <div className="text-sm text-text-muted mb-4">
               No semesters yet — add a course below.
             </div>
           ) : (
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 16 }}>
+            <div className="flex gap-1.5 flex-wrap mb-4">
               {/* "All semesters" is the default (empty stored value); clicking
                   it clears the stored term so every surface goes unscoped. */}
               <button
                 onClick={() => setActiveSemester("")}
-                className="btn btn--sm"
+                className={cn("btn btn--sm", "border border-border", activeTerm === "" ? "bg-accent-soft" : "bg-bg-panel", activeTerm === "" ? "text-accent" : "text-text-dim")}
                 aria-pressed={activeTerm === ""}
-                style={{
-                  background: activeTerm === "" ? "var(--accent-soft)" : "var(--bg-panel)",
-                  color: activeTerm === "" ? "var(--accent)" : "var(--text-dim)",
-                  border: "1px solid var(--border)",
-                }}
               >
                 All semesters
               </button>
@@ -166,13 +133,8 @@ export function ManageCoursesModal({ open, userId, courses, onClose, onChanged }
                 <button
                   key={t}
                   onClick={() => setActiveSemester(t)}
-                  className="btn btn--sm"
+                  className={cn("btn btn--sm", "border border-border", t === activeTerm ? "bg-accent-soft" : "bg-bg-panel", t === activeTerm ? "text-accent" : "text-text-dim")}
                   aria-pressed={t === activeTerm}
-                  style={{
-                    background: t === activeTerm ? "var(--accent-soft)" : "var(--bg-panel)",
-                    color: t === activeTerm ? "var(--accent)" : "var(--text-dim)",
-                    border: "1px solid var(--border)",
-                  }}
                 >
                   {t}
                 </button>
@@ -180,12 +142,12 @@ export function ManageCoursesModal({ open, userId, courses, onClose, onChanged }
             </div>
           )}
 
-          <div className="label-micro" style={{ marginBottom: 8 }}>
+          <div className="label-micro mb-2">
             {activeTerm ? `Courses · ${activeTerm}` : "Your courses"}
           </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 20 }}>
+          <div className="flex flex-col gap-2 mb-5">
             {courses.filter((c) => courseInTerm(c, activeTerm)).length === 0 && (
-              <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
+              <div className="text-sm text-text-muted">
                 No courses in this semester yet.
               </div>
             )}
@@ -205,50 +167,39 @@ export function ManageCoursesModal({ open, userId, courses, onClose, onChanged }
               ))}
           </div>
 
-          <div className="label-micro" style={{ marginBottom: 8 }}>Add a course</div>
-          <div style={{ position: "relative", marginBottom: 10 }}>
+          <div className="label-micro mb-2">Add a course</div>
+          <div className="relative mb-2.5">
             <input
               autoFocus
               aria-label="Search courses"
               value={query}
               onChange={e => setQuery(e.target.value)}
               placeholder="Search by code or name (e.g. MATH 242)"
-              style={{
-                width: "100%", padding: "8px 12px",
-                border: "1px solid var(--border)", borderRadius: "var(--r-sm)",
-                background: "var(--bg-input)", fontSize: 13,
-              }}
+              className="w-full py-2 px-3 border border-border rounded-sm bg-bg-input text-md"
             />
           </div>
           {/* Fixed height: "Searching…" swapping in for the results must not
               resize the modal (it made the whole card jump as it opened). */}
-          <div style={{ border: "1px solid var(--border)", borderRadius: "var(--r-sm)", height: 220, overflowY: "auto" }}>
-            {loading && <div style={{ padding: 12, fontSize: 12, color: "var(--text-muted)" }}>Searching…</div>}
+          <div className="border border-border rounded-sm h-55 overflow-y-auto">
+            {loading && <div className="p-3 text-sm text-text-muted">Searching…</div>}
             {!loading && results.length === 0 && (
-              <div style={{ padding: 12, fontSize: 12, color: "var(--text-muted)" }}>No matches.</div>
+              <div className="p-3 text-sm text-text-muted">No matches.</div>
             )}
             {!loading && results.map(c => {
               const enrolled = enrolledIds.has(c.id);
               return (
                 <div
                   key={c.id}
-                  style={{
-                    display: "flex", alignItems: "center", justifyContent: "space-between",
-                    padding: "8px 12px", borderBottom: "1px solid var(--border)", fontSize: 13,
-                  }}
+                  className="flex items-center justify-between py-2 px-3 border-b border-b-border text-md"
                 >
-                  <div style={{ minWidth: 0 }}>
-                    <div style={{ fontWeight: 500 }}>{c.course_code}</div>
-                    <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{c.course_name}</div>
+                  <div className="min-w-0">
+                    <div className="font-medium">{c.course_code}</div>
+                    <div className="text-xs text-text-muted">{c.course_name}</div>
                   </div>
                   <button
-                    className="btn btn--sm"
+                    className={cn("btn btn--sm", enrolled ? "opacity-55" : "opacity-100", enrolled ? "bg-bg-subtle" : "")}
                     disabled={enrolled || addingId !== null}
                     onClick={() => handleAdd(c)}
-                    style={{
-                      opacity: enrolled ? 0.55 : 1,
-                      background: enrolled ? "var(--bg-subtle)" : undefined,
-                    }}
                     title={enrolled ? "A course can only be taken once across semesters" : undefined}
                   >
                     {enrolled
@@ -262,23 +213,21 @@ export function ManageCoursesModal({ open, userId, courses, onClose, onChanged }
             })}
           </div>
 
-          <div style={{ borderTop: "1px solid var(--border)", marginTop: 20, paddingTop: 16 }}>
+          <div className="border-t border-t-border mt-5 pt-4">
             <button
-              className="btn btn--sm"
+              className="btn btn--sm opacity-50 cursor-not-allowed"
               disabled
               aria-disabled="true"
-              style={{ opacity: 0.5, cursor: "not-allowed" }}
             >
               <Icon name="sparkle" size={12} /> Personal learning
             </button>
-            <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 6 }}>
+            <div className="text-xs text-text-muted mt-1.5">
               Coming soon
             </div>
           </div>
         </div>
       </div>
-    </div>,
-    document.body,
+    </Dialog>
   );
 }
 
@@ -326,35 +275,25 @@ function EnrolledRow({
 
   return (
     <div
-      style={{
-        display: "flex", alignItems: "center", gap: 10,
-        padding: "8px 10px", border: "1px solid var(--border)", borderRadius: "var(--r-sm)",
-        background: "var(--bg-subtle)",
-      }}
+      className="flex items-center gap-2.5 py-2 px-2.5 border border-border rounded-sm bg-bg-subtle"
     >
-      <div style={{ position: "relative", width: 24, height: 24, flexShrink: 0 }}>
+      <div className="relative w-6 h-6 shrink-0">
         <input
           type="color"
           value={valid ? color : "#888888"}
           onChange={e => { setColor(e.target.value); setDirty(true); }}
           onBlur={saveColor}
           aria-label={`Color for ${course.course_name}`}
-          style={{
-            position: "absolute", inset: 0, opacity: 0, cursor: "pointer", width: "100%", height: "100%",
-          }}
+          className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
         />
         <span
           aria-hidden
-          style={{
-            display: "block", width: 24, height: 24, borderRadius: "50%",
-            background: valid ? color : "var(--bg-soft)",
-            border: "1px solid var(--border-strong)",
-          }}
+          className="block w-6 h-6 rounded-[50%] border border-border-strong" style={{ background: valid ? color : "var(--bg-soft)" }}
         />
       </div>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 13, fontWeight: 500 }}>{course.course_code || course.course_name}</div>
-        <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
+      <div className="flex-1 min-w-0">
+        <div className="text-md font-medium">{course.course_code || course.course_name}</div>
+        <div className="text-xs text-text-muted">
           {course.course_code ? course.course_name : ""} · {course.node_count} concepts
         </div>
       </div>
@@ -363,12 +302,7 @@ function EnrolledRow({
         onChange={e => { setColor(e.target.value); setDirty(true); }}
         onBlur={saveColor}
         onKeyDown={e => { if (e.key === "Enter") saveColor(); }}
-        className="mono"
-        style={{
-          width: 84, padding: "4px 6px",
-          border: `1px solid ${valid ? "var(--border)" : "var(--err)"}`,
-          borderRadius: "var(--r-xs)", background: "var(--bg-input)", fontSize: 11,
-        }}
+        className={cn("mono w-21 py-1 px-1.5 rounded-xs bg-bg-input text-xs", valid ? "border border-border" : "border border-err")}
       />
       <button
         onClick={del.trigger}

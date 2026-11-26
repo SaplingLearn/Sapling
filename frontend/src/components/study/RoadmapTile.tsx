@@ -5,18 +5,17 @@
  */
 import React from "react";
 import Link from "next/link";
-import { INHERIT_FONT } from "@/lib/inheritFont";
 import { Icon } from "../Icon";
 import { tileActionsHint, tileCardsLabel, type RoadmapTile as Tile, type TileRelation } from "./hubModel";
-import { Glyph, LABEL, POPOVER, TOOL, WarnIcon, shownTools } from "./hubUi";
+import { Glyph, LABEL, TOOL, WarnIcon, shownTools } from "./hubUi";
 import s from "./StudyHub.module.css";
 import { SC, ST_LABEL, TC, ring, type Concept } from "./studyModel";
 import type { SetHub } from "./useHubState";
 import type { ToolKey, ToolNav } from "./useToolNav";
+import { cn } from "@/lib/cn";
 
 /* The small tags that ride a tile's top edge: the `.chip` voice, tile-sized. */
 const TAG: React.CSSProperties = { position: "absolute", top: -7, right: 8, height: 15, padding: "0 6px", borderRadius: "var(--r-full)", fontFamily: LABEL, fontSize: 11, fontWeight: 600, display: "inline-flex", alignItems: "center", boxShadow: "0 0 0 2px var(--bg)" };
-const NEXT_TAG: React.CSSProperties = { ...TAG, background: "var(--brand-forest)", color: "#FFFFFF" };
 const RELATION_TAG: Record<Exclude<TileRelation, "">, React.CSSProperties> = {
   "Needed First": { ...TAG, background: "var(--warn-soft)", color: "var(--warn)" },
   Unlocks: { ...TAG, background: "var(--info-soft)", color: "var(--info)" },
@@ -63,13 +62,13 @@ function useMenuDismiss(open: boolean, owner: React.RefObject<HTMLDivElement | n
 function TileRing({ concept }: { concept: Concept }) {
   const color = TC[concept.st];
   return (
-    <span style={{ position: "relative", width: 28, height: 28, flexShrink: 0 }}>
-      <svg width="28" height="28" viewBox="0 0 28 28" aria-hidden="true" style={{ display: "block", transform: "rotate(-90deg)" }}>
+    <span className="relative w-7 h-7 shrink-0">
+      <svg width="28" height="28" viewBox="0 0 28 28" aria-hidden="true" className="block [transform:rotate(-90deg)]">
         <circle cx="14" cy="14" r="11.5" fill="none" stroke="var(--bg-soft)" strokeWidth="3" />
         <circle cx="14" cy="14" r="11.5" fill="none" stroke={color} strokeWidth="3" strokeLinecap="round" strokeDasharray={ring(concept.m, 11.5)} />
         <circle cx="14" cy="14" r="7.5" fill={concept.st === "new" ? "transparent" : color} />
       </svg>
-      <span style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", color: "#FFFFFF" }}>
+      <span className="absolute inset-0 flex items-center justify-center text-accent-fg">
         {concept.st === "mastered" && <Icon name="check" size={10} />}
       </span>
     </span>
@@ -82,9 +81,9 @@ function TileMarks({ tile }: { tile: Tile }) {
   const { t, isSel, isNext, rel } = tile;
   return (
     <>
-      {isNext && !isSel && <span style={NEXT_TAG}>Next</span>}
+      {isNext && !isSel && <span className="absolute top-[-7px] right-2 h-[15px] py-0 px-1.5 rounded-[var(--r-full)] font-sans text-xs font-semibold inline-flex items-center [box-shadow:0_0_0_2px_var(--bg)] bg-brand-forest text-accent-fg">Next</span>}
       {rel && <span style={RELATION_TAG[rel]}>{rel}</span>}
-      {!!t.gap && !rel && <span title={t.gap} style={{ display: "block", lineHeight: 0, flexShrink: 0 }}><WarnIcon size={14} /></span>}
+      {!!t.gap && !rel && <span title={t.gap} className="block leading-[0] shrink-0"><WarnIcon size={14} /></span>}
     </>
   );
 }
@@ -110,12 +109,10 @@ function TileMenu({ concept, cardCount, quizShown, nav, onClose }: {
   };
   return (
     // Enter/Space on an item must follow the link, not reach the tile's toggle.
-    <div role="menu" aria-label={`${concept.name} actions`} className={s.pop} onClick={e => e.stopPropagation()} onKeyDown={keepPress}
-      style={{ position: "absolute", left: 0, right: 0, top: "calc(100% + 6px)", zIndex: 21, minWidth: 200, ...POPOVER, borderRadius: "var(--r-md)", padding: 4, display: "flex", flexDirection: "column", gap: 2, cursor: "default" }}>
+    <div role="menu" aria-label={`${concept.name} actions`} className={cn(s.pop, "absolute left-0 right-0 top-[calc(100%_+_6px)] z-21 min-w-50 [background:var(--bg-panel)] border border-border shadow-lg rounded-md p-1 flex flex-col gap-0.5 cursor-default")} onClick={e => e.stopPropagation()} onKeyDown={keepPress}>
       {shownTools(actions, quizShown).map(ac => (
-        <Link key={ac.label} role="menuitem" href={ac.href} className={s.hoverOption} onClick={follow(ac.href)}
-          style={{ display: "flex", alignItems: "center", gap: 8, height: 32, padding: "0 6px", border: 0, borderRadius: "var(--r-sm)", background: "transparent", ...INHERIT_FONT, fontSize: "var(--fs-md)", fontWeight: 600, color: "var(--text)", textAlign: "left", textDecoration: "none", cursor: "pointer" }}>
-          <span style={{ width: 24, height: 24, borderRadius: 6, background: TOOL[ac.key].bg, color: TOOL[ac.key].fg, display: "flex", alignItems: "center", justifyContent: "center" }}><Glyph name={TOOL[ac.key].icon} size={12} /></span>
+        <Link key={ac.label} role="menuitem" href={ac.href} className={cn(s.hoverOption, "flex items-center gap-2 h-8 py-0 px-1.5 border-0 rounded-sm [background:transparent] [font-family:inherit] [font-style:inherit] [line-height:inherit] text-md font-semibold text-text text-left no-underline cursor-pointer")} onClick={follow(ac.href)}>
+          <span className="w-6 h-6 rounded-sm flex items-center justify-center" style={{ background: TOOL[ac.key].bg, color: TOOL[ac.key].fg }}><Glyph name={TOOL[ac.key].icon} size={12} /></span>
           {ac.label}
         </Link>
       ))}
@@ -146,16 +143,16 @@ export function RoadmapTile({ tile, menuOpen, cardCount, quizShown, nav, set, cl
   useMenuDismiss(menuOpen, owner, closeMenu);
   const toggle = () => set({ topic: isSel ? null : t.id, tileMenu: null });
   return (
-    <div ref={owner} role="button" tabIndex={0} aria-pressed={isSel} data-testid={`tile-${t.id}`} data-flip={`tile:${t.id}`} className={tileClass(isSel, isNext)}
+    <div ref={owner} role="button" tabIndex={0} aria-pressed={isSel} data-testid={`tile-${t.id}`} data-flip={`tile:${t.id}`} className={cn(tileClass(isSel, isNext), "relative flex items-center gap-2.5 py-[9px] px-[11px] rounded-md cursor-pointer", menuOpen ? "z-2" : "", dim ? "opacity-30" : "opacity-100")}
       onClick={toggle}
       onKeyDown={e => { if (isPress(e)) { e.preventDefault(); toggle(); } }}
       onMouseEnter={() => set({ hover: t.id })} onMouseLeave={() => set({ hover: null })}
       // The tile that owns the open menu is lifted above its siblings, or the next tile paints over the menu.
-      style={{ position: "relative", zIndex: menuOpen ? 2 : undefined, display: "flex", alignItems: "center", gap: 10, padding: "9px 11px", borderRadius: "var(--r-md)", opacity: dim ? 0.3 : 1, cursor: "pointer" }}>
+>
       <TileRing concept={t} />
-      <span style={{ flex: 1, minWidth: 0, overflow: "hidden", display: "flex", flexDirection: "column" }}>
-        <span style={{ fontSize: "var(--fs-md)", fontWeight: 600, lineHeight: 1.25, textWrap: "pretty" } as React.CSSProperties}>{t.name}</span>
-        <span style={{ fontSize: "var(--fs-xs)", color: SC[t.st], whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{statusLine(t)}</span>
+      <span className="flex-1 min-w-0 overflow-hidden flex flex-col">
+        <span className="text-md font-semibold leading-[1.25] text-pretty">{t.name}</span>
+        <span className="text-xs whitespace-nowrap overflow-hidden text-ellipsis" style={{ color: SC[t.st] }}>{statusLine(t)}</span>
       </span>
       <TileMarks tile={tile} />
       <button type="button" className={s.tileMore} data-testid={`tile-actions-${t.id}`} data-tile-actions=""

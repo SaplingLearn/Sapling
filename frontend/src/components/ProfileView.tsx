@@ -17,6 +17,7 @@ import {
   type StudyGroup,
 } from "./profileViewHelpers";
 import { sentenceCase } from "@/lib/sentenceCase";
+import { cn } from "@/lib/cn";
 
 // Rarity colors come only from the canonical --rarity-* tokens (globals.css).
 const rarityVar = (r: string) => `var(--rarity-${r}, var(--text-muted))`;
@@ -161,7 +162,7 @@ export function AddFriendAction({ profileUserId }: { profileUserId: string }) {
 
   if (status === "pending" && requestId) {
     return (
-      <span style={{ display: "inline-flex", gap: 6 }}>
+      <span className="inline-flex gap-1.5">
         <button data-testid="profile-add-friend" className="btn btn--sm btn--primary" disabled>
           Request sent
         </button>
@@ -199,7 +200,7 @@ export function ProfileView({ profile, embedded = false }: { profile: UserProfil
   const stats = profile.stats || ({} as UserProfile["stats"]);
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 16, padding: embedded ? 0 : "20px 0", maxWidth: 900, margin: "0 auto" }}>
+    <div className={cn("flex flex-col gap-4 max-w-225 my-0 mx-auto", embedded ? "p-0" : "py-5 px-0")}>
       <ProfileHero profile={profile} />
 
       {hasStatsStrip(stats) && <StatsStrip stats={stats} />}
@@ -211,7 +212,7 @@ export function ProfileView({ profile, embedded = false }: { profile: UserProfil
       )}
 
       {isPrivateProfile(profile.stats) ? (
-        <div style={{ fontSize: 12, color: "var(--text-muted)", textAlign: "center", padding: 24 }}>
+        <div className="text-sm text-text-muted text-center p-6">
           This profile is private.
         </div>
       ) : null}
@@ -225,19 +226,9 @@ function ProfileHero({ profile }: { profile: UserProfile }) {
 
   return (
     <section
-      style={{
-        display: "flex",
-        gap: 20,
-        alignItems: "flex-start",
-        padding: "var(--pad-lg)",
-        background: heroBackground(eq.banner),
-        border: "1px solid var(--border)",
-        borderRadius: "var(--r-xl)",
-        position: "relative",
-        overflow: "hidden",
-      }}
+      className="flex gap-5 items-start p-(--pad-lg) border border-border rounded-xl relative overflow-hidden" style={{ background: heroBackground(eq.banner) }}
     >
-      <div style={{ position: "absolute", top: "var(--pad-lg)", right: "var(--pad-lg)" }}>
+      <div className="absolute top-(--pad-lg) right-(--pad-lg)">
         <AddFriendAction key={profile.id} profileUserId={profile.id} />
       </div>
       <div>
@@ -248,8 +239,8 @@ function ProfileHero({ profile }: { profile: UserProfile }) {
           frame={eq.avatar_frame ?? null}
         />
       </div>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2.5 flex-wrap">
           <NameColorRenderer
             name={profile.name || "Unnamed"}
             cosmetic={eq.name_color ?? null}
@@ -259,17 +250,17 @@ function ProfileHero({ profile }: { profile: UserProfile }) {
           {eq.title && <TitleFlair cosmetic={eq.title} />}
         </div>
         {profile.username && (
-          <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 4 }}>
+          <div className="text-sm text-text-muted mt-1">
             @{profile.username}
           </div>
         )}
-        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 10 }}>
+        <div className="flex gap-1.5 flex-wrap mt-2.5">
           {roles.map(r => (
             <RoleBadge key={r.role.id} role={r.role} />
           ))}
         </div>
         {profile.bio && (
-          <p style={{ margin: "12px 0 0", fontSize: 13, color: "var(--text-dim)", lineHeight: 1.55 }}>
+          <p className="mt-3 mx-0 mb-0 text-md text-text-dim leading-[1.55]">
             {profile.bio}
           </p>
         )}
@@ -283,7 +274,7 @@ function ProfileMetaRow({ profile }: { profile: UserProfile }) {
   // Only an http(s) URL becomes a link; any other value is not shown.
   const websiteHref = safeWebsiteHref(profile.website);
   return (
-    <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginTop: 12, fontSize: 12, color: "var(--text-muted)" }}>
+    <div className="flex gap-3.5 flex-wrap mt-3 text-sm text-text-muted">
       {profile.school && <Meta icon="tree" text={profile.school} />}
       {profile.year && <Meta icon="star" text={profile.year} />}
       {profile.location && <Meta icon="home" text={profile.location} />}
@@ -292,7 +283,7 @@ function ProfileMetaRow({ profile }: { profile: UserProfile }) {
           href={websiteHref}
           target="_blank"
           rel="noopener noreferrer nofollow"
-          style={{ color: "var(--accent)", textDecoration: "underline", display: "inline-flex", alignItems: "center", gap: 4 }}
+          className="text-accent underline inline-flex items-center gap-1"
         >
           <Icon name="send" size={11} /> {prettyUrl(websiteHref)}
         </a>
@@ -306,34 +297,28 @@ function ProfileMetaRow({ profile }: { profile: UserProfile }) {
 function StatsStrip({ stats }: { stats: UserProfile["stats"] }) {
   return (
     <section
-      className="body-serif"
-      style={{
-        fontSize: 14, color: "var(--text-dim)",
-        padding: "10px 0", borderTop: "1px solid var(--border)",
-        borderBottom: "1px solid var(--border)",
-        display: "flex", flexWrap: "wrap", gap: "4px 14px",
-      }}
+      className="body-serif text-base text-text-dim py-2.5 px-0 border-t border-t-border border-b border-b-border flex flex-wrap gap-y-1 gap-x-3.5"
     >
-      <span><span className="h-serif" style={{ color: "var(--text)" }}>{stats.streak_count ?? 0}</span>-day streak</span>
+      <span><span className="h-serif text-text">{stats.streak_count ?? 0}</span>-day streak</span>
       <span>·</span>
-      <span><span className="h-serif" style={{ color: "var(--text)" }}>{stats.session_count ?? 0}</span> sessions</span>
+      <span><span className="h-serif text-text">{stats.session_count ?? 0}</span> sessions</span>
       <span>·</span>
-      <span><span className="h-serif" style={{ color: "var(--text)" }}>{stats.documents_count ?? 0}</span> documents</span>
+      <span><span className="h-serif text-text">{stats.documents_count ?? 0}</span> documents</span>
       <span>·</span>
-      <span><span className="h-serif" style={{ color: "var(--text)" }}>{stats.achievements_count ?? 0}</span> achievements</span>
+      <span><span className="h-serif text-text">{stats.achievements_count ?? 0}</span> achievements</span>
     </section>
   );
 }
 
 function FieldsOfStudy({ studies }: { studies: StudyGroup[] }) {
   return (
-    <section className="card" style={{ padding: "var(--pad-lg)" }}>
-      <div className="label-micro" style={{ marginBottom: 10 }}>Fields of study</div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+    <section className="card p-(--pad-lg)">
+      <div className="label-micro mb-2.5">Fields of study</div>
+      <div className="flex flex-col gap-2.5">
         {studies.map(s => (
-          <div key={s.label} style={{ display: "flex", gap: 10, alignItems: "baseline" }}>
-            <div style={{ fontSize: 12, color: "var(--text-muted)", minWidth: 60 }}>{s.label}</div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+          <div key={s.label} className="flex gap-2.5 items-baseline">
+            <div className="text-sm text-text-muted min-w-15">{s.label}</div>
+            <div className="flex flex-wrap gap-1.5">
               {s.values.map(v => (
                 <span key={v} className="chip">{v}</span>
               ))}
@@ -347,9 +332,9 @@ function FieldsOfStudy({ studies }: { studies: StudyGroup[] }) {
 
 function FeaturedAchievements({ achievements }: { achievements: UserAchievement[] }) {
   return (
-    <section className="card" style={{ padding: "var(--pad-lg)" }}>
-      <div className="label-micro" style={{ marginBottom: 10 }}>Featured achievements</div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: 10 }}>
+    <section className="card p-(--pad-lg)">
+      <div className="label-micro mb-2.5">Featured achievements</div>
+      <div className="grid grid-cols-[repeat(auto-fill,_minmax(140px,_1fr))] gap-2.5">
         {achievements.map(ua => (
           <FeaturedAchievementCard key={ua.achievement.id} achievement={ua.achievement} />
         ))}
@@ -362,18 +347,11 @@ function FeaturedAchievementCard({ achievement }: { achievement: UserAchievement
   const c = rarityVar(achievement.rarity);
   return (
     <div
-      style={{
-        padding: 12,
-        textAlign: "center",
-        border: `1px solid color-mix(in srgb, ${c} 20%, transparent)`,
-        background: `color-mix(in srgb, ${c} 6%, transparent)`,
-        borderRadius: "var(--r-md)",
-        borderTop: `3px solid ${c}`,
-      }}
+      className="p-3 text-center rounded-md" style={{ border: `1px solid color-mix(in srgb, ${c} 20%, transparent)`, background: `color-mix(in srgb, ${c} 6%, transparent)`, borderTop: `3px solid ${c}` }}
     >
-      <div style={{ fontSize: 26, marginBottom: 4 }}>{achievement.icon || "★"}</div>
-      <div style={{ fontSize: 11, fontWeight: 600 }}>{achievement.name}</div>
-      <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 2 }}>
+      <div className="text-3xl mb-1">{achievement.icon || "★"}</div>
+      <div className="text-xs font-semibold">{achievement.name}</div>
+      <div className="text-sm text-text-muted mt-0.5">
         {sentenceCase(achievement.rarity)}
       </div>
     </div>
@@ -382,7 +360,7 @@ function FeaturedAchievementCard({ achievement }: { achievement: UserAchievement
 
 function Meta({ icon, text }: { icon: string; text: string }) {
   return (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+    <span className="inline-flex items-center gap-[5px]">
       <Icon name={icon} size={11} />
       {text}
     </span>

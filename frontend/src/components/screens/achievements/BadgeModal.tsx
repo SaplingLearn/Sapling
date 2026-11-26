@@ -2,7 +2,7 @@
 import React from "react";
 import { createPortal } from "react-dom";
 import { Icon } from "../../Icon";
-import { useScrollLock } from "@/lib/useScrollLock";
+import { useOverlayBehaviour } from "@/components/Dialog";
 import { BadgeArt } from "@/components/growth/BadgeArt";
 import type { Achievement, UserAchievement } from "@/lib/types";
 import { CAT_META } from "./BadgeGrid";
@@ -28,58 +28,10 @@ export function BadgeModal({
   earned?: UserAchievement;
   onClose: () => void;
 }) {
-  const [mounted, setMounted] = React.useState(false);
-  React.useEffect(() => setMounted(true), []);
-  useScrollLock(true);
-
-  const panelRef = React.useRef<HTMLDivElement>(null);
-  const previousFocusRef = React.useRef<Element | null>(null);
-
-  React.useEffect(() => {
-    const handler = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
-    document.addEventListener("keydown", handler);
-    return () => document.removeEventListener("keydown", handler);
-  }, [onClose]);
-
-  // Move focus into the panel on open and put it back on close. Without this
-  // the overlay is purely visual: focus stays on the badge tile behind it, so
-  // a keyboard user tabs through the whole page underneath while the modal
-  // covers it. Keyed on `mounted` because the panel isn't in the DOM until
-  // the portal renders. Mirrors components/Dialog.tsx, which BadgeModal can't
-  // simply reuse — it imposes its own panel chrome over this one's layout.
-  React.useEffect(() => {
-    if (!mounted) return;
-    previousFocusRef.current = document.activeElement;
-    const panel = panelRef.current;
-    panel?.focus();
-    return () => {
-      const prev = previousFocusRef.current;
-      if (prev instanceof HTMLElement) prev.focus();
-    };
-  }, [mounted]);
-
-  const FOCUSABLE =
-    'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), '
-    + 'textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
-
-  // Cycle Tab within the panel so it can't reach the page behind the overlay.
-  const trapTab = (e: React.KeyboardEvent) => {
-    if (e.key !== "Tab" || !panelRef.current) return;
-    const focusable = Array.from(
-      panelRef.current.querySelectorAll<HTMLElement>(FOCUSABLE),
-    );
-    if (!focusable.length) { e.preventDefault(); return; }
-    const first = focusable[0];
-    const last = focusable[focusable.length - 1];
-    const active = document.activeElement as HTMLElement | null;
-    if (e.shiftKey && (active === first || active === panelRef.current)) {
-      e.preventDefault();
-      last.focus();
-    } else if (!e.shiftKey && active === last) {
-      e.preventDefault();
-      first.focus();
-    }
-  };
+  // The app's one modal engine (Dialog's): portal readiness, scroll lock,
+  // focus in and back out, Escape and the Tab trap. This panel keeps its own
+  // chrome, so it takes the behaviour rather than <Dialog>.
+  const { mounted, panelRef, onKeyDown } = useOverlayBehaviour({ open: true, onClose });
 
   if (!mounted) return null;
 
@@ -93,10 +45,8 @@ export function BadgeModal({
   return createPortal(
     <div
       onClick={onClose}
-      style={{
-        position: "fixed", inset: 0, background: "rgba(25, 37, 11,0.45)",
-        zIndex: 200, display: "grid", placeItems: "center", padding: 20,
-      }}
+      onKeyDown={onKeyDown}
+      className="fixed inset-0 bg-[rgba(25,_37,_11,0.45)] z-200 grid place-items-center p-5"
     >
       <div
         ref={panelRef}
@@ -104,36 +54,27 @@ export function BadgeModal({
         aria-modal="true"
         aria-label={secret ? "Secret achievement" : achievement.name}
         tabIndex={-1}
-        onKeyDown={trapTab}
         onClick={(e) => e.stopPropagation()}
-        className="card slide-up"
-        style={{ width: "min(380px, 100%)", padding: "30px 26px 26px", textAlign: "center", position: "relative", outline: "none" }}
+        className="card slide-up w-[min(380px,_100%)] pt-7.5 px-6.5 pb-6.5 text-center relative outline-none"
       >
         <button
           onClick={onClose}
           aria-label="Close"
-          className="btn btn--ghost btn--sm"
-          style={{ position: "absolute", top: 10, right: 10 }}
+          className="btn btn--ghost btn--sm absolute top-2.5 right-2.5"
         >
           <Icon name="x" size={14} />
         </button>
 
-        <div style={{ position: "relative", width: 130, height: 130, margin: "0 auto 18px" }}>
+        <div className="relative w-32.5 h-32.5 mt-0 mx-auto mb-4.5">
           {isEarned && (
-            <div aria-hidden style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
+            <div aria-hidden className="absolute inset-0 pointer-events-none">
               {BURST_SPANS.map((b, i) => (
                 <span
                   key={i}
-                  style={{
-                    position: "absolute", top: "50%", left: "50%",
-                    transform: `rotate(${b.rot}deg) translate(0, -68px)`,
-                  }}
+                  className="absolute top-1/2 left-1/2" style={{ transform: `rotate(${b.rot}deg) translate(0, -68px)` }}
                 >
                   <span
-                    style={{
-                      display: "inline-block", fontSize: 13,
-                      animation: `sap-burst 900ms ease-out ${b.delay}s both`,
-                    }}
+                    className="inline-block text-md" style={{ animation: `sap-burst 900ms ease-out ${b.delay}s both` }}
                   >
                     🍃
                   </span>
@@ -145,31 +86,31 @@ export function BadgeModal({
                     locked={!isEarned} iconUrl={achievement.icon_url} emoji={achievement.icon} size={130} />
         </div>
 
-        <div style={{ fontSize: 20, fontWeight: 600 }}>{secret ? "???" : achievement.name}</div>
-        <div style={{ display: "flex", justifyContent: "center", marginTop: 8 }}>
+        <div className="text-[20px] font-semibold">{secret ? "???" : achievement.name}</div>
+        <div className="flex justify-center mt-2">
           <span className="chip">{sentenceCase(achievement.rarity)} · {CAT_META[achievement.category].label}</span>
         </div>
-        <div style={{ fontSize: 13, color: "var(--text-dim)", marginTop: 14, lineHeight: 1.5 }}>
+        <div className="text-md text-text-dim mt-3.5 leading-[1.5]">
           {secret ? "A hidden achievement. Keep exploring to discover it." : achievement.description}
         </div>
 
         {isEarned && earned && (
-          <div style={{ marginTop: 18, fontSize: 12.5, color: "var(--accent)", fontWeight: 500 }}>
+          <div className="mt-4.5 text-[12.5px] text-accent font-medium">
             Earned {new Date(earned.earned_at).toLocaleDateString()} · +{achievement.xp_reward} XP
           </div>
         )}
         {!isEarned && pct !== null && (
-          <div style={{ marginTop: 18 }}>
-            <div style={{ height: 6, background: "var(--bg-soft)", borderRadius: "var(--r-full)", overflow: "hidden" }}>
-              <div style={{ height: "100%", width: `${pct}%`, background: "var(--accent)" }} />
+          <div className="mt-4.5">
+            <div className="h-1.5 bg-bg-soft rounded-[var(--r-full)] overflow-hidden">
+              <div className="h-full bg-accent" style={{ width: `${pct}%` }} />
             </div>
-            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "var(--text-muted)", marginTop: 6 }}>
+            <div className="flex justify-between text-xs text-text-muted mt-1.5">
               <span>{progress!.current} / {progress!.target}</span><span>{pct}%</span>
             </div>
           </div>
         )}
         {!isEarned && pct === null && (
-          <div style={{ marginTop: 18, fontSize: 13, color: "var(--text-muted)" }}>
+          <div className="mt-4.5 text-md text-text-muted">
             Not yet unlocked · +{achievement.xp_reward} XP
           </div>
         )}

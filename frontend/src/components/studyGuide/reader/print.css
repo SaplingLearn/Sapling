@@ -1,3 +1,4 @@
+@layer components {
 /* Export PDF: the app shell's side of the reader's print stylesheet.
 
    The reader's own parts are hidden or opened in its CSS modules. The shell
@@ -23,4 +24,6 @@
     height: auto !important;
     overflow: visible !important;
   }
+}
+
 }

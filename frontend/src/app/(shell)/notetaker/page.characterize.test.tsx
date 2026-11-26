@@ -65,6 +65,7 @@ import {
   unlinkNoteConcept,
   getGraph,
 } from "@/lib/api";
+import { twStyle } from "@/test-utils/twStyle";
 
 const COURSE: EnrolledCourse = {
   enrollment_id: "e-cs",
@@ -166,9 +167,9 @@ describe("loading and empty states", () => {
     vi.mocked(getCourses).mockReturnValue(new Promise(() => {}));
     const { container } = render(<NotetakerPage />);
     expect(screen.getByText("Loading notes…")).toBeInTheDocument();
-    expect((container.firstElementChild as HTMLElement).getAttribute("style")).toBe(
-      "display: flex; align-items: center; justify-content: center; height: 100%; color: var(--text-muted); font-size: 13px;",
-    );
+    expect(container.firstElementChild as HTMLElement).toHaveTwStyle({
+      display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "var(--text-muted)", fontSize: "13px",
+    });
     expect(screen.queryByPlaceholderText("Untitled note")).toBeNull();
   });
 
@@ -273,14 +274,14 @@ describe("four-rail layout", () => {
   it("pins rail styles and aria-hidden in normal and fullscreen modes, toggled by the button and Escape", async () => {
     const { container } = await renderPage();
     const snapshot = (l: ReturnType<typeof layout>) => ({
-      row: l.row.getAttribute("style"),
-      list: [l.list.getAttribute("style"), l.list.getAttribute("aria-hidden")],
+      row: twStyle(l.row).cssText,
+      list: [twStyle(l.list).cssText, l.list.getAttribute("aria-hidden")],
       editor: [
-        l.editor.getAttribute("style"),
+        twStyle(l.editor).cssText,
         (l.editor.firstElementChild as HTMLElement).getAttribute("style"),
       ],
-      detail: [l.detail.getAttribute("style"), l.detail.getAttribute("aria-hidden")],
-      chat: [l.chat.getAttribute("style"), l.chat.getAttribute("aria-hidden")],
+      detail: [twStyle(l.detail).cssText, l.detail.getAttribute("aria-hidden")],
+      chat: [twStyle(l.chat).cssText, l.chat.getAttribute("aria-hidden")],
     });
     const normal = layout(container);
     expect(snapshot(normal)).toEqual(NORMAL);

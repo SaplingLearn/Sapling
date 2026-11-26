@@ -35,11 +35,7 @@
 
 import { SaplingWordmark } from '@/components/SaplingWordmark';
 import type { NavTheme } from './navTheme';
-
-const TAB: React.CSSProperties = {
-  fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif", fontWeight: 700, fontSize: 16,
-  letterSpacing: '0.02em', transition: 'color 400ms', whiteSpace: 'nowrap',
-};
+import { cn } from "@/lib/cn";
 
 export function Navbar({
   navRef,
@@ -61,24 +57,13 @@ export function Navbar({
   return (
     <nav
       ref={navRef}
-      className="sapling-nav"
-      style={{
-        position: 'fixed', top: 0, left: 0, right: 0, zIndex: 50,
-        // must stay equal to the hero grid's horizontal padding
-        // (the phone override lives in globals.css, `.ld-nav-*`)
-        padding: '20px max(4.2vw,22px)',
-        opacity: exploring ? 0 : heroMounted ? 1 : 0,
-        pointerEvents: exploring ? 'none' : 'auto',
-        transform: heroMounted ? 'translateY(0)' : 'translateY(-30px)',
-        transition:
-          'opacity 800ms cubic-bezier(0.22,1,0.36,1), transform 400ms cubic-bezier(0.22,1,0.36,1)',
-      }}
+      className={cn("sapling-nav", "fixed top-0 left-0 right-0 z-50 py-5 px-[max(4.2vw,22px)] [transition:opacity_800ms_cubic-bezier(0.22,1,0.36,1),_transform_400ms_cubic-bezier(0.22,1,0.36,1)]", exploring ? "pointer-events-none" : "pointer-events-auto", heroMounted ? "[transform:translateY(0)]" : "[transform:translateY(-30px)]")}
+      style={{ opacity: exploring ? 0 : heroMounted ? 1 : 0 }}
     >
-      <div className="ld-nav-row" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 20 }}>
+      <div className="ld-nav-row flex items-center justify-between gap-5">
         <button
           onClick={onLogoClick}
-          className="ld-nav-logo"
-          style={{ display: 'flex', alignItems: 'center', gap: 5, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+          className="ld-nav-logo flex items-center gap-[5px] [background:none] border-0 cursor-pointer p-0"
         >
           <SaplingWordmark
             width={132}
@@ -87,25 +72,20 @@ export function Navbar({
           />
         </button>
 
-        <div className="ld-nav-actions" style={{ display: 'flex', alignItems: 'center', gap: 22, flexWrap: 'nowrap', flexShrink: 0 }}>
+        <div className="ld-nav-actions flex items-center gap-5.5 flex-nowrap shrink-0">
           <button
             data-testid="signin-trigger"
             onClick={onSignIn}
-            className="ld-navlink ld-nav-signin"
-            style={{ ...TAB, background: 'none', border: 'none', cursor: 'pointer', color: theme.ink }}
+            className="ld-navlink ld-nav-signin font-sans font-bold text-lg tracking-[0.02em] [transition:color_400ms] whitespace-nowrap [background:none] border-0 cursor-pointer"
+            style={{ color: theme.ink }}
           >
             Sign In
           </button>
           <button
             data-testid="landing-get-started"
             onClick={onGetStarted}
-            style={{
-              background: theme.btnBg, color: theme.btnFg, border: 'none', borderRadius: 7,
-              padding: '11px 21px', fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif", fontWeight: 600,
-              fontSize: 16, cursor: 'pointer', boxShadow: theme.lift, whiteSpace: 'nowrap',
-              transition: 'filter 200ms, background 500ms, color 500ms',
-            }}
-            className="ld-btn-solid ld-nav-cta"
+            style={{ background: theme.btnBg, color: theme.btnFg, boxShadow: theme.lift }}
+            className="ld-btn-solid ld-nav-cta border-0 rounded-[7px] py-[11px] px-[21px] font-sans font-semibold text-lg cursor-pointer whitespace-nowrap [transition:filter_200ms,_background_500ms,_color_500ms]"
           >
             Get Started
           </button>

@@ -4,8 +4,7 @@ import { useEffect, useRef, useState, useCallback, useId } from 'react';
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import { useScrollLock } from '@/lib/useScrollLock';
-
-const UI_FONT = "var(--font-suse), 'SUSE', system-ui, sans-serif";
+import { cn } from "@/lib/cn";
 
 const SIZE_WIDTH: Record<string, string> = {
   sm: '420px',
@@ -52,11 +51,16 @@ export function useOverlayBehaviour({
   useEffect(() => {
     if (!open) { setVisible(false); return; }
     previousFocusRef.current = document.activeElement;
+    const focusAtOpen = document.activeElement;
     const raf = requestAnimationFrame(() => setVisible(true));
 
     const focusTimer = setTimeout(() => {
       const panel = panelRef.current;
       if (!panel) return;
+      // The user clicked into the panel before this ran (a fast click, or
+      // a slow machine): don't pull focus away from what they picked.
+      const active = document.activeElement;
+      if (active !== focusAtOpen && active !== panel && panel.contains(active)) return;
       const preferred = initialFocusRef?.current;
       if (preferred) { preferred.focus(); return; }
       const focusable = panel.querySelector<HTMLElement>(FOCUSABLE);
@@ -159,51 +163,18 @@ export default function Dialog({
       aria-modal="true"
       aria-labelledby={effectiveLabelledBy}
       onKeyDown={handleKeyDown}
-      style={{
-        position: 'fixed',
-        inset: 0,
-        background: visible ? 'rgba(15,23,42,0.45)' : 'rgba(15,23,42,0)',
-        zIndex,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: '20px',
-        transition: 'background 220ms var(--ease)',
-      }}
+      className={cn("fixed inset-0 flex items-center justify-center p-5 [transition:background_220ms_var(--ease)]", visible ? "bg-[rgba(15,23,42,0.45)]" : "bg-[rgba(15,23,42,0)]")} style={{ zIndex }}
       onClick={e => { if (dismissible && e.target === e.currentTarget) onClose(); }}
     >
       <div
         ref={panelRef}
         tabIndex={-1}
-        style={{
-          background: 'var(--bg-panel)',
-          borderRadius: 'var(--r-lg)',
-          padding,
-          width: width ?? SIZE_WIDTH[size],
-          maxWidth: 'min(95vw, calc(100vw - 32px))',
-          maxHeight: 'calc(100vh - 48px)',
-          overflowY: 'auto',
-          position: 'relative',
-          border: '1px solid var(--border)',
-          boxShadow: 'var(--shadow-lg)',
-          fontFamily: UI_FONT,
-          color: 'var(--text)',
-          opacity: visible ? 1 : 0,
-          transform: visible ? 'scale(1) translateY(0)' : 'scale(0.96) translateY(8px)',
-          transition: 'opacity 220ms var(--ease), transform 220ms var(--ease)',
-          outline: 'none',
-        }}
+        className={cn("bg-bg-panel rounded-lg max-w-[min(95vw,_calc(100vw_-_32px))] max-h-[calc(100vh_-_48px)] overflow-y-auto relative border border-border shadow-lg font-sans text-text [transition:opacity_220ms_var(--ease),_transform_220ms_var(--ease)] outline-none", visible ? "opacity-100" : "opacity-0", visible ? "[transform:scale(1)_translateY(0)]" : "[transform:scale(0.96)_translateY(8px)]")} style={{ padding, width: width ?? SIZE_WIDTH[size] }}
       >
         {title && (
           <h2
             id={effectiveLabelledBy}
-            style={{
-              fontSize: '18px',
-              fontWeight: 700,
-              color: 'var(--text)',
-              margin: '0 0 16px',
-              paddingRight: showCloseButton && dismissible ? '36px' : 0,
-            }}
+            className={cn("text-xl font-bold text-text mt-0 mx-0 mb-4", showCloseButton && dismissible ? "pr-9" : "pr-0")}
           >
             {title}
           </h2>
@@ -213,22 +184,7 @@ export default function Dialog({
             type="button"
             onClick={onClose}
             aria-label="Close dialog"
-            style={{
-              position: 'absolute',
-              top: '14px',
-              right: '14px',
-              width: '44px',
-              height: '44px',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              background: 'none',
-              border: 'none',
-              borderRadius: 'var(--r-sm)',
-              cursor: 'pointer',
-              color: 'var(--text-muted)',
-              padding: 0,
-            }}
+            className="absolute top-3.5 right-3.5 w-11 h-11 flex items-center justify-center [background:none] border-0 rounded-sm cursor-pointer text-text-muted p-0"
           >
             <X size={16} />
           </button>

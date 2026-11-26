@@ -4,6 +4,7 @@ import { usePathname, useRouter } from "next/navigation";
 
 import { useFlagMap } from "@/context/FlagsContext";
 import { navFlagForPath } from "@/lib/navFeatures";
+import { cn } from "@/lib/cn";
 
 /**
  * Sends a hidden feature's routes to /dashboard (#620). While flags load, a
@@ -30,7 +31,7 @@ export function NavFeatureGate({ children }: { children: React.ReactNode }) {
       data-testid="nav-feature-gate"
       data-veiled={veiled || undefined}
       aria-hidden={veiled || undefined}
-      style={{ display: "contents", visibility: veiled ? "hidden" : undefined }}
+      className={cn("contents", veiled ? "invisible" : "")}
     >
       {children}
     </div>

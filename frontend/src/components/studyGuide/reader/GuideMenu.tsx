@@ -3,7 +3,7 @@ import React from "react";
 import Link from "next/link";
 
 import { Icon } from "@/components/Icon";
-import { useMenu } from "@/components/studyGuide/shared/useMenu";
+import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from "@/components/ui/Menu";
 import { studyGuideHref } from "@/lib/toolHrefs";
 
 import s from "./reader.module.css";
@@ -39,7 +39,7 @@ export function GuideMenu({
   onSave: () => void;
   onRegenerate: () => void;
 }) {
-  const { open, toggle, close, owner, onKeyDown, onBlur } = useMenu();
+  const [open, setOpen] = React.useState(false);
   const savedItem = React.useRef<HTMLAnchorElement>(null);
   // Save swaps the item that has the focus for this one. Follow it, or the
   // focus falls to the page and the keyboard loses the menu.
@@ -47,71 +47,51 @@ export function GuideMenu({
     if (open && saved) savedItem.current?.focus();
   }, [open, saved]);
 
-  const exportPdf = () => {
-    close();
-    window.print();
-  };
-  const regenerate = () => {
-    close();
-    onRegenerate();
-  };
-
   return (
-    <div className={s.menuWrap} ref={owner} onKeyDown={onKeyDown} onBlur={onBlur}>
-      <button
-        type="button"
-        className={s.menuButton}
-        data-testid="guide-menu"
-        aria-haspopup="menu"
-        aria-expanded={open}
-        aria-label="More actions for this guide"
-        onClick={toggle}
-      >
-        <DotsGlyph />
-      </button>
-      {open && (
-        <div role="menu" aria-label="Guide actions" className={`${s.menu} fade-in`}>
+    <div className={s.menuWrap}>
+      <Menu open={open} onOpenChange={setOpen}>
+        <MenuTrigger asChild>
+          <button
+            type="button"
+            className={s.menuButton}
+            data-testid="guide-menu"
+            aria-label="More actions for this guide"
+          >
+            <DotsGlyph />
+          </button>
+        </MenuTrigger>
+        <MenuContent label="Guide actions" align="end" width="w-62.5">
           {saved ? (
             // The Study Guides home with Saved on, not /library: since the
             // Library rebuild (#717) the home is the one place that lists
             // saved guides.
-            <Link
-              ref={savedItem}
-              role="menuitem"
-              href={studyGuideHref({ saved: true })}
-              className={s.menuItem}
-              data-testid="guide-menu-saved"
-            >
-              <Icon name="check" size={14} />
-              <span className={s.menuSaved}>
-                <strong>Saved to Library</strong>
-                <span>Open it there</span>
-              </span>
-            </Link>
+            <MenuItem asChild>
+              <Link ref={savedItem} href={studyGuideHref({ saved: true })} data-testid="guide-menu-saved">
+                <Icon name="check" size={14} />
+                <span className={s.menuSaved}>
+                  <strong>Saved to Library</strong>
+                  <span>Open it there</span>
+                </span>
+              </Link>
+            </MenuItem>
           ) : (
-            <button type="button" role="menuitem" className={s.menuItem} data-testid="guide-menu-save" onClick={onSave}>
+            // Saving keeps the menu open: the item turns into "Saved to Library".
+            <MenuItem data-testid="guide-menu-save" onSelect={(e) => { e.preventDefault(); onSave(); }}>
               <Icon name="library" size={16} />
               Save to Library
-            </button>
+            </MenuItem>
           )}
-          <button type="button" role="menuitem" className={s.menuItem} data-testid="guide-menu-export" onClick={exportPdf}>
+          <MenuItem data-testid="guide-menu-export" onSelect={() => window.print()}>
             <Icon name="download" size={16} />
             Export PDF
-          </button>
-          <span className={s.menuRule} aria-hidden="true" />
-          <button
-            type="button"
-            role="menuitem"
-            className={s.menuItem}
-            data-testid="guide-menu-regenerate"
-            onClick={regenerate}
-            disabled={busy}
-          >
+          </MenuItem>
+          <MenuSeparator />
+          <MenuItem data-testid="guide-menu-regenerate" disabled={busy} onSelect={onRegenerate}>
             <RegenerateGlyph />
             Regenerate whole guide
-          </button>
-        </div>
-      )}
+          </MenuItem>
+        </MenuContent>
+      </Menu>
     </div>
   );
 }

@@ -161,14 +161,7 @@ export function Library() {
           upload.pickFiles(files);
         }}
         onScroll={() => { if (ui.docMenu) ui.closeAllMenus(); }}
-        style={{
-          position: "relative", flex: 1, minWidth: 0, display: "grid",
-          gridTemplateColumns: "minmax(0, 1fr)", gridTemplateRows: "auto auto",
-          alignContent: "start", overflowY: "auto", overflowX: "hidden",
-          padding: "0 64px 0 56px", boxSizing: "border-box",
-          background: "#FAF8F3", color: "#1A1814", fontSize: 15, lineHeight: 1.45,
-          WebkitFontSmoothing: "antialiased",
-        }}
+        className="relative flex-1 min-w-0 grid grid-cols-[minmax(0,_1fr)] grid-rows-[auto_auto] [align-content:start] overflow-y-auto overflow-x-hidden pt-0 pr-16 pb-0 pl-14 box-border bg-ink-0 text-ink-800 text-[15px] leading-[1.45] [-webkit-font-smoothing:antialiased]"
       >
         {!booted && <LibrarySkeleton view={ui.view} />}
 
@@ -187,11 +180,7 @@ export function Library() {
           * block's, so the air above the title comes WITH it when it sticks
           * and the background covers the rows passing underneath.
           */}
-        <div style={{
-          gridColumn: 1, gridRow: 1,
-          position: "sticky", top: 0, zIndex: 25,
-          background: "#FAF8F3", paddingTop: 36,
-        }}>
+        <div className="[grid-column:1] [grid-row:1] sticky top-0 z-25 bg-ink-0 pt-9">
           <LibraryHeader
             query={ui.query}
             onQuery={ui.setQuery}
@@ -254,10 +243,7 @@ export function Library() {
         <section
           ref={sectionRef}
           aria-label="Documents"
-          style={{
-            gridColumn: 1, gridRow: 2, position: "relative", display: "flex",
-            flexDirection: "column", minWidth: 0,
-          }}
+          className="[grid-column:1] [grid-row:2] relative flex flex-col min-w-0"
         >
 
           {/* Mounted through its exit: it animates in and out, and the list

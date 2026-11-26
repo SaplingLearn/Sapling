@@ -29,17 +29,11 @@ export function ShellFrame({ children }: { children: React.ReactNode }) {
   if (useSidebar) {
     return (
       <div
-        style={{
-          display: "flex",
-          flexDirection: "row",
-          height: "100dvh",
-          overflow: "hidden",
-          position: "relative",
-        }}
+        className="flex flex-row h-dvh overflow-hidden relative"
       >
         <a href="#main-content" className="skip-link">Skip to content</a>
         <SideNav />
-        <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", position: "relative" }}>
+        <div className="flex-1 min-w-0 flex flex-col relative">
           <main
             id="main-content"
             tabIndex={-1}
@@ -50,12 +44,7 @@ export function ShellFrame({ children }: { children: React.ReactNode }) {
             // The shell's scrollport: the root above is height:100dvh/overflow:hidden,
             // so this — not <body> — is what scrolls. `useScrollLock` targets it.
             data-scroll-container=""
-            style={{
-              flex: 1,
-              overflowY: "auto",
-              minWidth: 0,
-              position: "relative",
-            }}
+            className="flex-1 overflow-y-auto min-w-0 relative"
           >
             <NavFeatureGate>{children}</NavFeatureGate>
           </main>
@@ -73,13 +62,7 @@ export function ShellFrame({ children }: { children: React.ReactNode }) {
 
   return (
     <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        height: "100dvh",
-        overflow: "hidden",
-        position: "relative",
-      }}
+      className="flex flex-col h-dvh overflow-hidden relative"
     >
       <a href="#main-content" className="skip-link">Skip to content</a>
       <TopNav />
@@ -90,13 +73,7 @@ export function ShellFrame({ children }: { children: React.ReactNode }) {
         data-testid="app-shell"
         // The shell's scrollport — see the sidebar layout above.
         data-scroll-container=""
-        style={{
-          flex: 1,
-          overflowY: "auto",
-          minWidth: 0,
-          position: "relative",
-          zIndex: 1,
-        }}
+        className="flex-1 overflow-y-auto min-w-0 relative z-1"
       >
         <NavFeatureGate>{children}</NavFeatureGate>
       </main>

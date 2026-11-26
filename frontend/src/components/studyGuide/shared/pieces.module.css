@@ -1,3 +1,4 @@
+@layer components {
 /* The small pieces every study-guide surface shares, so the home's cards, the
    Library's saved guides and the New study guide dialog say the same thing
    the same way: a label pill, a mastery swatch and its label, a class. */
@@ -23,4 +24,6 @@
 .readOut {
   position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; border: 0;
   overflow: hidden; clip-path: inset(50%); white-space: nowrap;
+}
+
 }

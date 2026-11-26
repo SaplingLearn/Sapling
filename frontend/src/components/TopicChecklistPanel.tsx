@@ -89,22 +89,22 @@ export function TopicChecklistPanel({ userId, courseId, semester, semesters = []
   const names = new Map(data?.topics.map((topic) => [topic.id, topic.name]));
   const topics = data?.topics.filter((topic) => filter === "all" || topic.status === filter) ?? [];
   return (
-    <section data-testid="topic-checklist" style={{ borderBottom: "1px solid var(--border)", padding: "10px 16px", flexShrink: 0 }}>
+    <section data-testid="topic-checklist" className="border-b border-b-border py-2.5 px-4 shrink-0">
       <button data-testid="topic-checklist-toggle" className="btn btn--sm" type="button" aria-expanded={open} aria-controls="topic-checklist-content" onClick={() => setOpen(!open)}>
         {open ? "Hide topic checklist" : "Topic checklist"}
       </button>
       {open && (
-        <div id="topic-checklist-content" style={{ maxHeight: "35vh", overflowY: "auto", paddingTop: 10 }} aria-busy={busy}>
-          <p style={{ fontSize: 13 }}>Course topics from BU catalog information and your materials. Check a topic after studying it; mastery and review needs remain separate.</p>
-          {data?.semester && <p style={{ fontSize: 13 }}>Semester: {data.semester}</p>}
-          <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center", margin: "10px 0" }}>
-            {!semester && semesters.length > 1 && <label style={{ fontSize: 13 }}>Semester {" "}
+        <div id="topic-checklist-content" className="max-h-[35vh] overflow-y-auto pt-2.5" aria-busy={busy}>
+          <p className="text-md">Course topics from BU catalog information and your materials. Check a topic after studying it; mastery and review needs remain separate.</p>
+          {data?.semester && <p className="text-md">Semester: {data.semester}</p>}
+          <div className="flex gap-3 flex-wrap items-center my-2.5 mx-0">
+            {!semester && semesters.length > 1 && <label className="text-md">Semester {" "}
               <select data-testid="topic-checklist-semester" aria-label="Checklist semester" value={selectedSemester} onChange={(e) => setSelectedSemester(e.target.value)}>
                 <option value="">Current or most recent enrollment</option>
                 {semesters.map((term) => <option key={term} value={term}>{term}</option>)}
               </select>
             </label>}
-            <label style={{ fontSize: 13 }}>Show topics {" "}
+            <label className="text-md">Show topics {" "}
               <select data-testid="topic-checklist-filter" aria-label="Filter checklist topics" value={filter} onChange={(e) => setFilter(e.target.value)}>
                 <option value="all">All topics</option>
                 {Object.entries(STATUS_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
@@ -114,25 +114,25 @@ export function TopicChecklistPanel({ userId, courseId, semester, semesters = []
             {busy && <span role="status">Updating checklist…</span>}
           </div>
           {error && <p role="alert">{error}</p>}
-          {data?.needs_refresh && !busy && <p style={{ fontSize: 13 }}>Showing the previous outline. Update from materials to include recent changes.</p>}
-          {data?.warnings.map((warning) => <p key={warning} style={{ fontSize: 13 }}>{warning}</p>)}
+          {data?.needs_refresh && !busy && <p className="text-md">Showing the previous outline. Update from materials to include recent changes.</p>}
+          {data?.warnings.map((warning) => <p key={warning} className="text-md">{warning}</p>)}
           {!!data?.assessments.length && (
-            <p style={{ fontSize: 13 }}>Upcoming assessments: {data.assessments.map((a) => `${a.title} (${a.due_date})`).join("; ")}. Topic coverage is shown only when supported by your materials.</p>
+            <p className="text-md">Upcoming assessments: {data.assessments.map((a) => `${a.title} (${a.due_date})`).join("; ")}. Topic coverage is shown only when supported by your materials.</p>
           )}
           {!busy && data && !topics.length && <p>No topics match this view.</p>}
-          <ul style={{ listStyle: "none", padding: 0 }}>
+          <ul className="list-none p-0">
             {topics.map((topic) => (
-              <li key={topic.id} data-testid={`topic-checklist-topic-${topic.id}`} style={{ borderTop: "1px solid var(--border)", padding: "10px 0" }}>
+              <li key={topic.id} data-testid={`topic-checklist-topic-${topic.id}`} className="border-t border-t-border py-2.5 px-0">
                 {topic.parent_id && <small>{names.get(topic.parent_id)}</small>}
-                <div style={{ display: "flex", gap: 10, alignItems: "baseline", flexWrap: "wrap" }}>
+                <div className="flex gap-2.5 items-baseline flex-wrap">
                   <label><input data-testid={`topic-checklist-check-${topic.id}`} type="checkbox" aria-label={`Studied ${topic.name}`} checked={topic.checked} disabled={busy} onChange={(e) => update(topic.id, e.target.checked)} /> {topic.name}</label>
-                  <span style={{ fontSize: 12 }}>{STATUS_LABELS[topic.status]}{topic.priority === "high" ? " · Prioritize" : ""}</span>
-                  {topic.mastery_score !== null && <span style={{ fontSize: 12 }}>Mastery {Math.round(topic.mastery_score * 100)}%</span>}
+                  <span className="text-sm">{STATUS_LABELS[topic.status]}{topic.priority === "high" ? " · Prioritize" : ""}</span>
+                  {topic.mastery_score !== null && <span className="text-sm">Mastery {Math.round(topic.mastery_score * 100)}%</span>}
                 </div>
-                <p style={{ fontSize: 13, margin: "6px 0" }}>{topic.description}</p>
-                {!!topic.review_reasons.length && <p style={{ fontSize: 12 }}>{topic.review_reasons.join(" · ")}</p>}
-                {!!topic.prerequisite_gaps.length && <p style={{ fontSize: 12 }}>Review prerequisites: {topic.prerequisite_gaps.join(", ")}</p>}
-                {!!topic.assessments.length && <p style={{ fontSize: 12 }}>For: {topic.assessments.map((a) => `${a.title} · ${a.due_date}`).join("; ")}</p>}
+                <p className="text-md my-1.5 mx-0">{topic.description}</p>
+                {!!topic.review_reasons.length && <p className="text-sm">{topic.review_reasons.join(" · ")}</p>}
+                {!!topic.prerequisite_gaps.length && <p className="text-sm">Review prerequisites: {topic.prerequisite_gaps.join(", ")}</p>}
+                {!!topic.assessments.length && <p className="text-sm">For: {topic.assessments.map((a) => `${a.title} · ${a.due_date}`).join("; ")}</p>}
                 {!!topic.sources.length && <small>Sources: {topic.sources.map((s) => s.label).join(", ")}</small>}
               </li>
             ))}

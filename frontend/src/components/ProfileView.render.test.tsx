@@ -32,6 +32,7 @@ vi.mock("@/lib/api", () => ({
 import { ProfileView } from "./ProfileView";
 import { fetchFriends } from "@/lib/api";
 import type { Achievement, Cosmetic, Role, UserProfile } from "@/lib/types";
+import { twStyle } from "@/test-utils/twStyle";
 
 function role(id: string, name: string, display_priority: number): Role {
   return {
@@ -170,19 +171,19 @@ describe("ProfileView rendering", () => {
 
   it("paints the hero from the banner only when it has an asset", () => {
     const plain = render(<ProfileView profile={minimal()} />);
-    expect(heroSection(plain.container).getAttribute("style")).toContain("background: var(--bg-panel)");
+    expect(twStyle(heroSection(plain.container)).cssText).toContain("background: var(--bg-panel)");
     plain.unmount();
 
     const noAsset = render(<ProfileView profile={minimal({
       equipped_cosmetics: { banner: cosmetic({ css_value: "red" }) },
     })} />);
-    expect(heroSection(noAsset.container).getAttribute("style")).toContain("background: var(--bg-panel)");
+    expect(twStyle(heroSection(noAsset.container)).cssText).toContain("background: var(--bg-panel)");
     noAsset.unmount();
 
     const withAsset = render(<ProfileView profile={minimal({
       equipped_cosmetics: { banner: cosmetic({ asset_url: "/b.png", css_value: "red" }) },
     })} />);
-    const styled = heroSection(withAsset.container).getAttribute("style") ?? "";
+    const styled = twStyle(heroSection(withAsset.container)).cssText ?? "";
     expect(styled).not.toContain("background: var(--bg-panel)");
     expect(styled).toContain("linear-gradient");
     withAsset.unmount();
@@ -238,7 +239,7 @@ describe("ProfileView rendering", () => {
     expect(screen.getByText("★")).toBeTruthy();
     expect(screen.getByText("Epic")).toBeTruthy();
     const card = screen.getByText("First Steps").parentElement as HTMLElement;
-    expect(card.getAttribute("style")).toContain("var(--rarity-epic, var(--text-muted))");
+    expect(twStyle(card).cssText).toContain("var(--rarity-epic, var(--text-muted))");
     expect(container.innerHTML).toContain("No Icon");
   });
 
@@ -254,16 +255,18 @@ describe("ProfileView rendering", () => {
 
   it("drops the outer padding when embedded", () => {
     const page = render(<ProfileView profile={minimal()} />);
-    expect((page.container.firstChild as HTMLElement).style.padding).toBe("20px 0px");
+    expect((page.container.firstChild as HTMLElement)).toHaveTwStyle({ padding: "20px 0px" });
     page.unmount();
     const embedded = render(<ProfileView profile={minimal()} embedded />);
-    expect((embedded.container.firstChild as HTMLElement).style.padding).toBe("0px");
+    expect((embedded.container.firstChild as HTMLElement)).toHaveTwStyle({ padding: "0px" });
   });
 
   it("keeps the section order: hero, stats, studies, achievements", () => {
     const { container } = render(<ProfileView profile={full()} />);
     const root = container.firstChild as HTMLElement;
-    const kids = Array.from(root.children).map((el) => el.className || el.tagName);
+    const kids = Array.from(root.children).map((el) =>
+      el.classList.contains("body-serif") ? "body-serif" : el.classList.contains("card") ? "card" : el.tagName,
+    );
     expect(kids).toEqual(["SECTION", "body-serif", "card", "card"]);
   });
 });

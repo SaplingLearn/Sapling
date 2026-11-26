@@ -36,12 +36,12 @@ export function LetterScaleEditor({ open, initial, onClose, onSave }: Props) {
 
   return (
     <Dialog open={open} onClose={onClose} title="Letter scale" size="sm" padding="20px">
-      <p style={{ fontSize: 12, color: "var(--text-dim)", margin: "0 0 12px" }}>
+      <p className="text-sm text-text-dim mt-0 mx-0 mb-3">
         Edit the floor percentage for each letter. Tiers must stay in descending order.
       </p>
-      <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
+      <ul className="list-none m-0 p-0">
         {tiers.map((t, i) => (
-          <li key={i} style={{ display: "flex", gap: 8, marginBottom: 6 }}>
+          <li key={i} className="flex gap-2 mb-1.5">
             <input
               value={t.letter}
               onChange={(e) =>
@@ -49,7 +49,7 @@ export function LetterScaleEditor({ open, initial, onClose, onSave }: Props) {
                   arr.map((x, idx) => (idx === i ? { ...x, letter: e.target.value } : x)),
                 )
               }
-              style={{ width: 48, padding: 4, border: "1px solid var(--border)", borderRadius: 4 }}
+              className="w-12 p-1 border border-border rounded-xs"
             />
             <input
               type="number"
@@ -61,17 +61,14 @@ export function LetterScaleEditor({ open, initial, onClose, onSave }: Props) {
                   ),
                 )
               }
-              style={{ width: 70, padding: 4, border: "1px solid var(--border)", borderRadius: 4 }}
+              className="w-17.5 p-1 border border-border rounded-xs"
             />
-            <span style={{ alignSelf: "center", color: "var(--text-dim)" }}>%+</span>
+            <span className="self-center text-text-dim">%+</span>
           </li>
         ))}
       </ul>
       <div
-        style={{
-          marginTop: 12, display: "flex", flexWrap: "wrap", gap: 8,
-          justifyContent: "space-between", alignItems: "center",
-        }}
+        className="mt-3 flex flex-wrap gap-2 justify-between items-center"
       >
         <button
           type="button"
@@ -87,7 +84,7 @@ export function LetterScaleEditor({ open, initial, onClose, onSave }: Props) {
         >
           Reset to default
         </button>
-        <div style={{ display: "flex", gap: 8 }}>
+        <div className="flex gap-2">
           <button type="button" onClick={onClose}>Cancel</button>
           <Button
             variant="primary"
@@ -107,7 +104,7 @@ export function LetterScaleEditor({ open, initial, onClose, onSave }: Props) {
         </div>
       </div>
       {!monotonic && (
-        <p style={{ color: "var(--err)", fontSize: 12, marginTop: 6 }}>
+        <p className="text-err text-sm mt-1.5">
           Tiers must be sorted descending by minimum.
         </p>
       )}

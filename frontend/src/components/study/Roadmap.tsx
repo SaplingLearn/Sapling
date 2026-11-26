@@ -9,39 +9,28 @@
  * the same roadmap rearranging (./useFlip.ts, over the `data-flip` items).
  */
 import React from "react";
-import { INHERIT_FONT } from "@/lib/inheritFont";
 import { Icon } from "../Icon";
 import { cardsFor, type RoadmapColumn } from "./hubModel";
-import { ELLIPSIS } from "./hubUi";
 import { RoadmapTile } from "./RoadmapTile";
 import s from "./StudyHub.module.css";
 import { TC, type ExamScope } from "./studyModel";
 import { useFlip } from "./useFlip";
 import type { SetHub } from "./useHubState";
 import type { ToolNav } from "./useToolNav";
+import { cn } from "@/lib/cn";
 
-/* auto-fit, not auto-fill: the columns share the whole row instead of leaving
-   empty tracks (a blank strip) to their right. A course with only one or two
-   columns is capped so its tiles don't stretch into banners.
-   At most four columns across, at any width: a track is never narrower than a
-   quarter of the row (less the three 16px gaps between four), so a fifth
-   cannot fit beside four and a course with more categories wraps onto a second
-   row. Below ~850px that quarter is under 200px and the 200px floor takes
-   over, wrapping earlier as before. The 0.1px keeps four quarters from
-   rounding up past the row's width, which would leave room for only three. */
-const TRACKS = "repeat(auto-fit, minmax(max(200px, calc((100% - 48px) / 4 - 0.1px)), 1fr))";
 const gridWidth = (columns: number) => (columns < 3 ? columns * 336 - 16 : undefined);
 
 /** A column's name, its mastered count, and a bar per concept. */
 function ColumnHead({ column }: { column: RoadmapColumn }) {
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 5, paddingBottom: 2 }}>
-      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8 }}>
-        <span style={{ fontSize: "var(--fs-md)", fontWeight: 600, ...ELLIPSIS }}>{column.label}</span>
-        <span key={column.frac} className="mono" data-flip={`frac:${column.key}:${column.frac}`} data-flip-how="fade" style={{ fontSize: "var(--fs-xs)", color: "var(--text-dim)", flexShrink: 0 }}>{column.frac}</span>
+    <div className="flex flex-col gap-[5px] pb-0.5">
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="text-md font-semibold whitespace-nowrap overflow-hidden text-ellipsis">{column.label}</span>
+        <span key={column.frac} className="mono text-xs text-text-dim shrink-0" data-flip={`frac:${column.key}:${column.frac}`} data-flip-how="fade">{column.frac}</span>
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(8, minmax(0, 1fr))", gap: "4px 3px" }}>
-        {column.bars.map((b, i) => <span key={i} className={s.bar} style={{ height: 4, borderRadius: "var(--r-full)", background: b }} />)}
+      <div className="grid grid-cols-[repeat(8,_minmax(0,_1fr))] gap-y-1 gap-x-[3px]">
+        {column.bars.map((b, i) => <span key={i} className={cn(s.bar, "h-1 rounded-[var(--r-full)]")} style={{ background: b }} />)}
       </div>
     </div>
   );
@@ -50,11 +39,10 @@ function ColumnHead({ column }: { column: RoadmapColumn }) {
 /** "N more mastered" / "Show Less": opens and closes a column's fold. */
 function FoldToggle({ column, onToggle }: { column: RoadmapColumn; onToggle: () => void }) {
   return (
-    <button className={s.hoverMore} onClick={onToggle} data-flip={`fold:${column.key}`}
-      style={{ display: "flex", alignItems: "center", gap: 8, height: 32, padding: "0 10px", border: "1px dashed var(--border-strong)", borderRadius: "var(--r-md)", background: "transparent", ...INHERIT_FONT, fontSize: "var(--fs-sm)", fontWeight: 600, color: "var(--text-dim)", cursor: "pointer" }}>
-      <span style={{ display: "flex", gap: 3 }}>{column.hidden.map(x => <span key={x.t.id} style={{ width: 7, height: 7, borderRadius: 2, background: TC[x.t.st] }} />)}</span>
-      <span style={{ flex: 1, textAlign: "left", whiteSpace: "nowrap" }}>{column.open ? "Show Less" : `${column.hidden.length} more mastered`}</span>
-      <span style={{ display: "flex", flexShrink: 0, transform: column.open ? "rotate(180deg)" : "none" }}><Icon name="chevron-down" size={10} /></span>
+    <button className={cn(s.hoverMore, "flex items-center gap-2 h-8 py-0 px-2.5 border border-dashed border-border-strong rounded-md [background:transparent] [font-family:inherit] [font-style:inherit] [line-height:inherit] text-sm font-semibold text-text-dim cursor-pointer")} onClick={onToggle} data-flip={`fold:${column.key}`}>
+      <span className="flex gap-[3px]">{column.hidden.map(x => <span key={x.t.id} className="w-[7px] h-[7px] rounded-[2px]" style={{ background: TC[x.t.st] }} />)}</span>
+      <span className="flex-1 text-left whitespace-nowrap">{column.open ? "Show Less" : `${column.hidden.length} more mastered`}</span>
+      <span className={cn("flex shrink-0", column.open ? "[transform:rotate(180deg)]" : "[transform:none]")}><Icon name="chevron-down" size={10} /></span>
     </button>
   );
 }
@@ -96,18 +84,18 @@ export function Roadmap({ columns, pending = false, scope, cards, tileMenu, open
   const grid = React.useRef<HTMLDivElement | null>(null);
   useFlip(grid, scope?.id ?? "");
   return (
-    <section aria-label="Roadmap" className={`${s.areaRoadmap} ${s.paneEnter}`}
-      style={{ position: "relative", zIndex: lift(!!tileMenu), padding: "16px 6px 24px 0" }}>
-      <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 12 }}>
-        <span className="label-micro" style={{ flexShrink: 0 }}>Roadmap</span>
-        {scope && <span data-testid="roadmap-exam-caption" style={{ minWidth: 0, fontSize: "var(--fs-sm)", color: "var(--text-muted)", ...ELLIPSIS }}>{scopeCaption(scope)}</span>}
+    <section aria-label="Roadmap" className={cn(`${s.areaRoadmap} ${s.paneEnter}`, "relative pt-4 pr-1.5 pb-6 pl-0")}
+      style={{ zIndex: lift(!!tileMenu) }}>
+      <div className="flex items-baseline gap-2.5 mb-3">
+        <span className="label-micro shrink-0">Roadmap</span>
+        {scope && <span data-testid="roadmap-exam-caption" className="min-w-0 text-sm text-text-muted whitespace-nowrap overflow-hidden text-ellipsis">{scopeCaption(scope)}</span>}
       </div>
       {/* Positioned, and its rows packed to the top, for useFlip: it reads each
           column's place against this box and tweens this box's height. */}
-      <div ref={grid} style={{ position: "relative", display: "grid", gridTemplateColumns: TRACKS, gap: "20px 16px", alignItems: "start", alignContent: "start", maxWidth: gridWidth(columns.length) }}>
+      <div ref={grid} className="relative grid grid-cols-[repeat(auto-fit,_minmax(max(200px,_calc((100%_-_48px)_/_4_-_0.1px)),_1fr))] gap-y-5 gap-x-4 [align-items:start] [align-content:start]" style={{ maxWidth: gridWidth(columns.length) }}>
         {columns.map((col, ci) => (
-          <div key={col.key} className={s.colEnter} data-flip={`col:${col.key}`}
-            style={{ "--i": Math.min(ci, 6), position: "relative", zIndex: lift(col.shown.some(x => x.t.id === tileMenu)), display: "flex", flexDirection: "column", gap: 6, minWidth: 0 } as React.CSSProperties}>
+          <div key={col.key} className={cn(s.colEnter, "relative flex flex-col gap-1.5 min-w-0")} data-flip={`col:${col.key}`}
+            style={{ "--i": Math.min(ci, 6), zIndex: lift(col.shown.some(x => x.t.id === tileMenu)) } as React.CSSProperties}>
             <ColumnHead column={col} />
             {col.shown.map(tile => (
               <RoadmapTile key={tile.t.id} tile={tile} menuOpen={tileMenu === tile.t.id} cardCount={cardsFor(cards, tile.t.name)}
@@ -119,7 +107,7 @@ export function Roadmap({ columns, pending = false, scope, cards, tileMenu, open
       </div>
       {/* Never while `pending`: "this course has nothing" is a claim about
           the student's data, and a course mid-read has not made it yet. */}
-      {columns.length === 0 && !pending && <div style={{ fontSize: "var(--fs-md)", color: "var(--text-muted)" }}>Concepts from this course&apos;s knowledge graph will appear here.</div>}
+      {columns.length === 0 && !pending && <div className="text-md text-text-muted">Concepts from this course&apos;s knowledge graph will appear here.</div>}
     </section>
   );
 }

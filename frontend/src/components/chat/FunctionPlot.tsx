@@ -11,17 +11,8 @@ import { parsePlotSpec } from "./plotSpec";
 function FenceAsCode({ spec }: { spec: string }) {
   return (
     <pre
-      className="mono"
+      className="mono py-2.5 px-3 rounded-sm bg-bg-inset border border-border overflow-x-auto text-sm mt-1.5 mx-0 mb-2.5"
       data-testid="plot-fence-as-code"
-      style={{
-        padding: "10px 12px",
-        borderRadius: "var(--r-sm)",
-        background: "var(--bg-inset)",
-        border: "1px solid var(--border)",
-        overflowX: "auto",
-        fontSize: 12,
-        margin: "6px 0 10px",
-      }}
     >
       <code>{spec}</code>
     </pre>
@@ -70,17 +61,7 @@ export function FunctionPlot({ spec }: { spec: string }) {
   if (err) {
     return (
       <pre
-        className="mono"
-        style={{
-          padding: "10px 12px",
-          color: "var(--err)",
-          border: "1px solid var(--border)",
-          borderRadius: "var(--r-sm)",
-          background: "var(--bg-inset)",
-          fontSize: 12,
-          margin: "8px 0 12px",
-          whiteSpace: "pre-wrap",
-        }}
+        className="mono py-2.5 px-3 text-err border border-border rounded-sm bg-bg-inset text-sm mt-2 mx-0 mb-3 whitespace-pre-wrap"
       >
         {`Plot error: ${err}\n\n${spec}`}
       </pre>
@@ -92,15 +73,7 @@ export function FunctionPlot({ spec }: { spec: string }) {
       ref={containerRef}
       role="img"
       aria-label={`Function plot: ${spec.replace(/\s+/g, " ").trim()}`}
-      style={{
-        margin: "10px 0 14px",
-        padding: "8px",
-        background: "var(--bg-panel)",
-        border: "1px solid var(--border)",
-        borderRadius: "var(--r-sm)",
-        overflowX: "auto",
-        fontFamily: "var(--font-sans)",
-      }}
+      className="mt-2.5 mx-0 mb-3.5 p-2 bg-bg-panel border border-border rounded-sm overflow-x-auto font-sans"
     />
   );
 }

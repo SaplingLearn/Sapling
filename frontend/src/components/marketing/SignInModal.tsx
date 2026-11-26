@@ -9,6 +9,7 @@ import { postSignInRoute } from "@/lib/localSeed";
 import { stashPendingToken } from "@/lib/pendingToken";
 import { signInStartPath } from "@/lib/signinStart";
 import { signInErrorMessage } from "./signInErrors";
+import { cn } from "@/lib/cn";
 
 const POPUP_TIMEOUT_MS = 3 * 60 * 1000;
 
@@ -233,8 +234,7 @@ export default function SignInModal({ open, onClose, errorCode, variant = "signi
 
   return (
     <div
-      className={`fixed inset-0 z-[100] flex items-center justify-center p-4 ${closing ? "modal-backdrop-out" : "modal-backdrop-in"}`}
-      style={{ background: "rgba(12,18,26,0.55)" }}
+      className={cn(`fixed inset-0 z-[100] flex items-center justify-center p-4 ${closing ? "modal-backdrop-out" : "modal-backdrop-in"}`, "[background:rgba(12,18,26,0.55)]")}
       onClick={close}
     >
       <HeroCard
@@ -255,42 +255,22 @@ export default function SignInModal({ open, onClose, errorCode, variant = "signi
           data-testid="signin-close"
           onClick={close}
           aria-label="Close dialog"
-          style={{
-            position: "absolute", top: 14, right: 14,
-            width: 32, height: 32, borderRadius: 16,
-            display: "flex", alignItems: "center", justifyContent: "center",
-            color: "#4b5563", fontSize: 20, lineHeight: 1,
-            background: "none", border: "none", cursor: "pointer",
-            transition: "background 0.15s",
-          }}
+          className="absolute top-3.5 right-3.5 w-8 h-8 rounded-lg flex items-center justify-center text-[#4b5563] text-[20px] leading-none [background:none] border-0 cursor-pointer [transition:background_0.15s]"
           onMouseEnter={e => (e.currentTarget.style.background = "rgba(107,114,128,0.1)")}
           onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
         >×</button>
 
         <SaplingWordmark width={88} style={{ marginBottom: 24 }} />
 
-        <h2 id="signin-modal-title" data-testid="signin-title" style={{
-          margin: 0,
-          fontFamily: "var(--font-aleo), 'Aleo', Georgia, serif",
-          fontSize: 34, lineHeight: 1.05, fontWeight: 600,
-          letterSpacing: "-0.02em", color: "#1a1a1a",
-        }}>
-          {heading.lead} <span style={{ fontStyle: "italic", color: "var(--brand-forest)" }}>{heading.accent}</span>
+        <h2 id="signin-modal-title" data-testid="signin-title" className="m-0 font-serif text-[34px] leading-[1.05] font-semibold tracking-[-0.02em] text-[#1a1a1a]">
+          {heading.lead} <span className="italic text-brand-forest">{heading.accent}</span>
         </h2>
-        <p style={{ margin: "12px 0 0", fontSize: 14, color: "#4b5563", lineHeight: 1.55 }}>
+        <p className="mt-3 mx-0 mb-0 text-base text-[#4b5563] leading-[1.55]">
           {heading.sub}
         </p>
 
         {errorMessage && (
-          <div data-testid="signin-error" role="alert" style={{
-            marginTop: 20,
-            background: "rgba(220,38,38,0.08)",
-            color: "#b91c1c",
-            padding: "10px 12px",
-            borderRadius: 10,
-            fontSize: 13,
-            border: "1px solid rgba(220,38,38,0.2)",
-          }}>
+          <div data-testid="signin-error" role="alert" className="mt-5 bg-[rgba(220,38,38,0.08)] text-[#b91c1c] py-2.5 px-3 rounded-md text-md border border-[rgba(220,38,38,0.2)]">
             {errorMessage}
           </div>
         )}
@@ -300,19 +280,7 @@ export default function SignInModal({ open, onClose, errorCode, variant = "signi
           data-testid="signin-google-button"
           onClick={signInWithGoogle}
           disabled={waiting}
-          style={{
-            marginTop: 28,
-            width: "100%", padding: "14px 16px", borderRadius: 12,
-            background: "#fff", color: "#1a1a1a",
-            fontSize: 14, fontWeight: 600, letterSpacing: "0.01em",
-            border: "1.5px solid rgba(107,114,128,0.25)",
-            cursor: waiting ? "wait" : "pointer",
-            opacity: waiting ? 0.7 : 1,
-            display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
-            fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif",
-            transition: "all 0.18s",
-            boxShadow: "0 4px 14px rgba(15,23,42,0.06)",
-          }}
+          className={cn("mt-7 w-full py-3.5 px-4 rounded-[12px] bg-accent-fg text-[#1a1a1a] text-base font-semibold tracking-[0.01em] border-[1.5px] border-[rgba(107,114,128,0.25)] flex items-center justify-center gap-2.5 font-sans [transition:all_0.18s] [box-shadow:0_4px_14px_rgba(15,23,42,0.06)]", waiting ? "cursor-wait" : "cursor-pointer", waiting ? "opacity-70" : "opacity-100")}
           onMouseEnter={e => {
             if (waiting) return;
             e.currentTarget.style.borderColor = "var(--brand-forest)";
@@ -337,27 +305,17 @@ export default function SignInModal({ open, onClose, errorCode, variant = "signi
             type="button"
             data-testid="signin-cancel"
             onClick={cancelSignIn}
-            style={{
-              marginTop: 10,
-              width: "100%",
-              padding: "6px 0",
-              background: "none",
-              border: "none",
-              color: "#6b7280",
-              fontSize: 12.5,
-              cursor: "pointer",
-              fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif",
-            }}
+            className="mt-2.5 w-full py-1.5 px-0 [background:none] border-0 text-[#6b7280] text-[12.5px] cursor-pointer font-sans"
           >
             Cancel
           </button>
         )}
 
-        <p style={{ margin: "16px 0 0", fontSize: 11.5, color: "#6b7280", textAlign: "center", lineHeight: 1.5 }}>
+        <p className="mt-4 mx-0 mb-0 text-[11.5px] text-[#6b7280] text-center leading-[1.5]">
           By signing in, you agree to the{" "}
-          <a href="/terms" style={{ color: "var(--brand-forest)", textDecoration: "underline" }}>terms</a>
+          <a href="/terms" className="text-brand-forest underline">terms</a>
           {" "}and{" "}
-          <a href="/privacy" style={{ color: "var(--brand-forest)", textDecoration: "underline" }}>privacy policy</a>.
+          <a href="/privacy" className="text-brand-forest underline">privacy policy</a>.
         </p>
       </HeroCard>
     </div>

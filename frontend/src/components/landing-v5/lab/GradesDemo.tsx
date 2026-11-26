@@ -12,8 +12,8 @@
  */
 
 import { useState } from 'react';
-import { LABEL } from './LabShell';
 import { GB_CATS, GB_ROWS, LETTERS } from './labData';
+import { cn } from "@/lib/cn";
 
 export function GradesDemo() {
   const [earned, setEarned] = useState<string[]>(GB_ROWS.map((r) => String(r.earned)));
@@ -41,36 +41,36 @@ export function GradesDemo() {
   const letter = (LETTERS.find(([min]) => grade >= min) ?? LETTERS[LETTERS.length - 1])[1];
 
   return (
-    <div style={{ padding: '20px 26px', display: 'flex', flexDirection: 'column', gap: 14, minHeight: '100%', boxSizing: 'border-box' }}>
-      <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between' }}>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 12 }}>
-          <span style={{ fontFamily: "var(--font-aleo), 'Aleo', Georgia, serif", fontSize: 46, fontWeight: 600, lineHeight: 1, transition: 'color 300ms' }}>
+    <div className="py-5 px-6.5 flex flex-col gap-3.5 min-h-full box-border">
+      <div className="flex items-end justify-between">
+        <div className="flex items-baseline gap-3">
+          <span className="font-serif text-[46px] font-semibold leading-none [transition:color_300ms]">
             {grade.toFixed(1)}
           </span>
-          <span style={{ padding: '5px 12px', borderRadius: 8, background: '#EAF1E4', border: '1px solid #68951F', ...LABEL, fontSize: 13, letterSpacing: '0.01em', color: '#445D22' }}>
+          <span className="py-[5px] px-3 rounded-[8px] bg-leaf-50 border border-leaf-500 font-sans text-md tracking-[0.01em] text-brand-forest">
             {letter}
           </span>
         </div>
-        <span style={{ ...LABEL, fontSize: 11.5, letterSpacing: '0.01em', color: '#91978B' }}>MA 242 · Spring 2026</span>
+        <span className="font-sans text-[11.5px] tracking-[0.01em] text-moss-400">MA 242 · Spring 2026</span>
       </div>
 
-      <span style={{ fontSize: 12, color: '#91978B' }}>
+      <span className="text-sm text-moss-400">
         Type a score to see the grade move — weights came from your syllabus.
       </span>
 
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 8, overflow: 'auto' }}>
+      <div className="flex-1 flex flex-col gap-2 overflow-auto">
         {GB_ROWS.map((r, i) => {
           const raw = parseFloat(earned[i]);
           const pct = isNaN(raw) ? null : Math.round((raw / r.possible) * 100);
           const pctColor = pct === null ? '#C7CBC2' : pct >= 90 ? '#445D22' : pct >= 80 ? '#c89b5e' : '#b25855';
           return (
-            <div key={r.title} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '11px 14px', borderRadius: 11, border: '1px solid #E8E5DA', background: '#FDFCF9' }}>
-              <span style={{ width: 9, height: 9, borderRadius: 3, flex: '0 0 auto', background: r.cat === 'Psets' ? '#68951F' : '#c89b5e' }} />
-              <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-                <span style={{ fontSize: 13, fontWeight: 600, color: '#191F13', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.title}</span>
-                <span style={{ ...LABEL, fontSize: 11, letterSpacing: '0.01em', color: '#91978B' }}>{r.cat}</span>
+            <div key={r.title} className="flex items-center gap-3 py-[11px] px-3.5 rounded-[11px] border border-paper-200 bg-bg-panel">
+              <span className={cn("w-[9px] h-[9px] rounded-[3px] flex-[0_0_auto]", r.cat === 'Psets' ? "bg-leaf-500" : "bg-state-progress")} />
+              <div className="flex flex-col min-w-0">
+                <span className="text-md font-semibold text-moss-900 whitespace-nowrap overflow-hidden text-ellipsis">{r.title}</span>
+                <span className="font-sans text-xs tracking-[0.01em] text-moss-400">{r.cat}</span>
               </div>
-              <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
+              <div className="ml-auto flex items-center gap-1.5">
                 <input
                   value={earned[i]}
                   onChange={(e) => {
@@ -79,10 +79,10 @@ export function GradesDemo() {
                   }}
                   inputMode="decimal"
                   aria-label={`Points earned, ${r.title}`}
-                  style={{ width: 56, padding: '7px 8px', borderRadius: 8, border: '1px solid #E0E6DA', background: '#F6F8F4', ...LABEL, fontSize: 12.5, textAlign: 'right', color: '#191F13', outline: 'none' }}
+                  className="w-14 py-[7px] px-2 rounded-[8px] border border-moss-100 bg-moss-25 font-sans text-[12.5px] text-right text-moss-900 outline-none"
                 />
-                <span style={{ ...LABEL, fontSize: 12, color: '#9FA49A' }}>/ {r.possible}</span>
-                <span style={{ width: 44, textAlign: 'right', ...LABEL, fontSize: 12, color: pctColor }}>
+                <span className="font-sans text-sm text-moss-300">/ {r.possible}</span>
+                <span className="w-11 text-right font-sans text-sm" style={{ color: pctColor }}>
                   {pct === null ? '—' : `${pct}%`}
                 </span>
               </div>
@@ -91,15 +91,15 @@ export function GradesDemo() {
         })}
       </div>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 7, borderTop: '1px solid #ECE9DE', paddingTop: 12 }}>
+      <div className="flex flex-col gap-[7px] border-t border-t-paper-100 pt-3">
         {cats.map((c) => (
-          <div key={c.name} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <span style={{ width: 74, fontSize: 12, color: '#3B4233' }}>{c.name}</span>
-            <span style={{ ...LABEL, fontSize: 10, color: '#9FA49A', width: 30 }}>{c.weight}</span>
-            <span style={{ flex: 1, height: 7, borderRadius: 99, background: '#E6EAE2', overflow: 'hidden' }}>
-              <span style={{ display: 'block', height: '100%', background: '#68951F', transition: 'width 400ms cubic-bezier(0.22,1,0.36,1)', width: `${c.pct === null ? 0 : Math.max(0, Math.min(100, c.pct))}%` }} />
+          <div key={c.name} className="flex items-center gap-2.5">
+            <span className="w-18.5 text-sm text-moss-700">{c.name}</span>
+            <span className="font-sans text-2xs text-moss-300 w-7.5">{c.weight}</span>
+            <span className="flex-1 h-[7px] rounded-[99px] bg-moss-75 overflow-hidden">
+              <span className="block h-full bg-leaf-500 [transition:width_400ms_cubic-bezier(0.22,1,0.36,1)]" style={{ width: `${c.pct === null ? 0 : Math.max(0, Math.min(100, c.pct))}%` }} />
             </span>
-            <span style={{ width: 52, textAlign: 'right', ...LABEL, fontSize: 11, color: '#445D22' }}>
+            <span className="w-13 text-right font-sans text-xs text-brand-forest">
               {c.pct === null ? 'not yet' : `${c.pct.toFixed(1)}%`}
             </span>
           </div>
