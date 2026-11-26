@@ -274,10 +274,12 @@ def test_activation_hint_writes_no_mastery_and_no_prose(seams):
         assert _activate(hinted) == "qh-best"
     graph.assert_not_called()
     assert _activate(plain, on=False) == "qh-plain"
-    assert hinted["steps"].pop("qh-best") == {
-        **plain["steps"].pop("qh-plain"), "check_item_id": BEST.id,
-    }
+    hinted_step = hinted["steps"].pop("qh-best")
+    plain_step = plain["steps"].pop("qh-plain")
+    assert hinted_step == {**plain_step, "check_item_id": BEST.id}
     assert hinted["steps"] == {"qh-prior": before}
-    assert hinted.pop("current") == "qh-best" and plain.pop("current") == "qh-plain"
+    hinted_current = hinted.pop("current")
+    plain_current = plain.pop("current")
+    assert hinted_current == "qh-best" and plain_current == "qh-plain"
     assert hinted == plain
     assert REASON not in json.dumps(hinted)

@@ -113,8 +113,10 @@ def test_empty_or_full_is_refused(db):
 def test_delete_takes_only_your_own_item(db):
     mine = _save().json()["item"]["id"]
     db.rows["tutor_saved_items"].append({"id": "theirs", "user_id": OTHER, "session_id": "ses-theirs"})
-    assert client.delete("/api/learn/saved/theirs", params={"user_id": ME}).status_code == 404
-    assert client.delete(f"/api/learn/saved/{mine}", params={"user_id": ME}).json() == {"deleted": True}
+    theirs = client.delete("/api/learn/saved/theirs", params={"user_id": ME})
+    assert theirs.status_code == 404
+    gone = client.delete(f"/api/learn/saved/{mine}", params={"user_id": ME})
+    assert gone.json() == {"deleted": True}
     assert [r["id"] for r in db.rows["tutor_saved_items"]] == ["theirs"]
 
 
@@ -122,7 +124,8 @@ def test_every_route_checks_the_caller_is_the_user(db):
     with patch("routes.saved_items.require_self", side_effect=HTTPException(403, "Forbidden")):
         assert client.get(f"/api/learn/saved/{ME}").status_code == 403
         assert _save().status_code == 403
-        assert client.delete("/api/learn/saved/x", params={"user_id": ME}).status_code == 403
+        deleted = client.delete("/api/learn/saved/x", params={"user_id": ME})
+        assert deleted.status_code == 403
     assert db.rows["tutor_saved_items"] == []
 
 
