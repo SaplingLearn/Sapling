@@ -400,6 +400,20 @@ REGISTRY: dict[str, FlagDef] = _registry(
             "Saved: a student saves a tutor reply from a session and finds it "
             "again in the session panel's Saved tab and on its milestone's page. "
             "Off: no Save, no Saved tab, and /api/learn/saved is a 404.", True),
+    # Tutor redesign (course setup, owner decision 2026-11-26): from the
+    # Tutor's course page, upload the syllabus, fix its dates and untick the
+    # concepts that aren't part of the course (services/course_setup.py, table
+    # course_concept_exclusions). /api/learn/setup 404s while it is off, and
+    # apply_graph_update then applies no exclusion. Not a loop flag: a removed
+    # concept stays out of the student's uploads whatever the loop's gate says
+    # (apply_graph_update runs outside any route that carries it).
+    FlagDef("course_setup", ("off", "on"),
+            "Course setup: from the Tutor's course page, upload the syllabus, "
+            "review the exams and assignments it found (fix, remove or add "
+            "dates) and untick the concepts that aren't part of the course; a "
+            "removed concept stays out of later uploads. Off: no setup, "
+            "/api/learn/setup is a 404, and later uploads may bring removed "
+            "concepts back.", True),
     FlagDef("skill_ladder", ("off", "on"),
             "One skill measure on the graph: each concept's score, tier and words "
             "come from the learner model's decayed skill (Not started / Getting "

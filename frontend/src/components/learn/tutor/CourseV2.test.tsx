@@ -100,7 +100,7 @@ describe("parity with the design board", () => {
     fireEvent.click(screen.getByRole("button", { name: "Learn Stacks" }));
     expect(onLearn).toHaveBeenCalledWith({ id: "st", name: "Stacks" });
     await waitFor(() => expect(screen.getByTestId("tutor-course-due-a1")).toBeTruthy());
-    const coming = screen.getByRole("heading", { name: COURSE_COPY.comingUp }).parentElement!;
+    const coming = screen.getByRole("heading", { name: COURSE_COPY.comingUp }).closest("section")!;
     expect(within(coming).getAllByRole("listitem").map((li) => li.getAttribute("data-testid"))).toEqual(["tutor-course-due-a1", "tutor-course-due-a2"]);
     expect(screen.getByTestId("tutor-course-review").textContent).toContain("7 reviews due");
   });

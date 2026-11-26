@@ -37,6 +37,7 @@ log_privacy.install()
 from routes import graph, learn, learn_loop, quiz, calendar, social, extract, auth, documents, flashcards, study_guide, feedback, careers, onboarding, gradebook, gradescope, notes, academics, gamification
 from routes.profile import router as profile_router
 from routes.saved_items import router as saved_items_router
+from routes.course_setup import router as course_setup_router
 from routes.auth_handoff import router as auth_handoff_router
 from routes.admin_flags import router as admin_flags_router
 from routes.flags import router as flags_router
@@ -581,6 +582,8 @@ app.include_router(graph.router,       prefix="/api/graph")
 app.include_router(topic_checklist_router, prefix="/api/topic-checklist")
 # Before /api/learn: its `/saved/...` paths are this router's (the Tutor's Saved tab).
 app.include_router(saved_items_router, prefix="/api/learn/saved")
+# Before /api/learn too: its `/setup/...` paths are this router's (the Tutor's course setup).
+app.include_router(course_setup_router, prefix="/api/learn/setup")
 app.include_router(learn.router,       prefix="/api/learn")
 # Learning loop: 404 unless the loop is on for the student (the LEARNING_LOOP_ENABLED kill switch, then their learning_loop flag). Service
 # role under db_user_scope (#115): the loop's tables are service-only (bucket E,

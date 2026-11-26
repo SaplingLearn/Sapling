@@ -1460,6 +1460,24 @@ def _existing_nodes_by_name(existing_rows: list[dict]) -> dict[str, dict]:
     return by_name
 
 
+def _without_excluded(user_id: str, course_id: str | None, new_nodes: list[NewNode]) -> list[NewNode]:
+    """The batch less the concepts the student removed from that course in the
+    Tutor's course setup (services/course_setup.py), so an upload never brings
+    one back. Flag `course_setup` off for the student (or their loop): the
+    batch as it came, and no exclusion read.
+    An edge naming a dropped concept then has no endpoint and is skipped."""
+    if not new_nodes:
+        return new_nodes
+    from services import course_setup
+
+    if not course_setup.course_setup_on(user_id):
+        return new_nodes
+    excluded = course_setup.excluded_keys(user_id, (course_id or n.course_id for n in new_nodes))
+    if not excluded:
+        return new_nodes
+    return [n for n in new_nodes if ((course_id or n.course_id), _normalize_concept(n.concept_name)) not in excluded]
+
+
 def _upsert_new_nodes(
     user_id: str,
     new_nodes: list[NewNode],
@@ -1697,7 +1715,7 @@ def apply_graph_update(
     existing_rows = _existing_node_rows(user_id, course_id)
     by_name = _existing_nodes_by_name(existing_rows)
     inserted_in_batch = _upsert_new_nodes(
-        user_id, update.new_nodes, course_id, by_name, touched_courses,
+        user_id, _without_excluded(user_id, course_id, update.new_nodes), course_id, by_name, touched_courses,
     )
 
     def _lookup(name: str) -> dict | None:

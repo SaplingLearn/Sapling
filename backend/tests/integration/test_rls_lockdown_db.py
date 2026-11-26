@@ -96,6 +96,7 @@ AUTHENTICATED_TABLE_GRANTS: dict[str, frozenset[str]] = {
         "oauth_tokens", "gradescope_credentials", "enrollments", "notes", "flashcards",
         "flashcard_sets",  # 20261112060028_flashcard_sets.sql
         "tutor_saved_items",  # 20261126055016_tutor_saved_items.sql
+        "course_concept_exclusions",  # 20261126060659_course_concept_exclusions.sql
         "sessions", "quiz_attempts", "quiz_context", "study_guides", "graph_nodes",
         "graph_edges", "friend_requests",
     )},

@@ -36,7 +36,7 @@ Several flags change a prompt or an output schema, so their eval datasets must b
 
 ## Recommended order
 
-1. **Read-only, no eval needed:** `quiz_concept_plan`, `quiz_results_routing`, `item_reports`, `skill_ladder`, `hint_ladder`, `verdict_v2`, `wrapup_v2`, `plan_v2`, `new_session_v2`, `session_v2`, `course_page_v2`, `review_v2`, `milestones`, `just_ask`, `saved_items`.
+1. **Read-only, no eval needed:** `quiz_concept_plan`, `quiz_results_routing`, `item_reports`, `skill_ladder`, `hint_ladder`, `verdict_v2`, `wrapup_v2`, `plan_v2`, `new_session_v2`, `session_v2`, `course_page_v2`, `review_v2`, `milestones`, `just_ask`, `saved_items`, `course_setup`.
 2. **Safety, after copy review:** `crisis_support`.
 3. **Prompt changes, after their evals:** `loop_tutor_v2`, `segment_prequestion`, `self_explanation_prompts`, `quiz_planned_questions`, `quiz_item_gates`, then `quiz_misconceptions`.
 4. **Drafting changes, after their evals:** `varied_isomorphs`, `multi_concept_items`, `upload_prereq_edges`.
@@ -126,6 +126,12 @@ Several flags change a prompt or an output schema, so their eval datasets must b
 - **Before:** the migration is applied.
 - **Watch:** saves per session; items removed.
 - **Roll back:** off hides Save and the tab and 404s the routes; the saved rows stay.
+
+### course_setup (Tutor redesign) — client-visible
+- **Changes:** with `course_page_v2`, the course page's Coming up offers "Set up from syllabus": a four-step setup (Course, Syllabus, Review, Done). The student uploads the syllabus (the same upload the gradebook's syllabus flow uses, which already writes its dated work to the calendar) or skips to review what is there; Review lists the course's exams and assignments, each a milestone with its date (fix it, remove it, add one) and the course's concepts, each ticked. Confirm writes only the changes through the calendar's routes, then sends the unticked concepts to `POST /api/learn/setup/exclude-concepts` (`services/course_setup.py`): each one the student has not started (no evidence) is recorded in the new `course_concept_exclusions` table (migration 20261126060659; plaintext normalized names; RLS bucket A; wiped and bundled with the account) and its graph node deleted; `apply_graph_update` then never re-creates a recorded concept for that student and course, so a later upload does not bring it back. A started concept cannot be unticked (and the route keeps it).
+- **Before:** the migration is applied; `course_page_v2` is on (the setup opens from its Coming up).
+- **Watch:** setups finished; concepts removed per setup; uploads whose concepts were dropped as excluded.
+- **Roll back:** off hides the setup and 404s the route; recorded exclusions stay but stop being applied, so a later upload may bring a removed concept back.
 
 ### item_reports (A113, A123) — client-visible
 - **Changes:** students can report a check question. Two reports hold it from the whole course until staff approve or retire it in the admin check-items queue.

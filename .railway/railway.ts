@@ -186,6 +186,9 @@ const FLAG_KILL_SWITCHES = [
   "milestones",
   "just_ask",
   "saved_items",
+  // the Tutor's course setup: apply_graph_update reads it on the worker's
+  // document.process too (a removed concept stays out of the upload)
+  "course_setup",
   "quiz_planned_questions",
   "quiz_item_gates",
   "quiz_misconceptions",

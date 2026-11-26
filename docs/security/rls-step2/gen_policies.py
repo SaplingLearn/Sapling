@@ -37,6 +37,9 @@ History:
     prints them; the applied step-2b/2c migrations are not regenerated.
   * 2026-11-26 tutor_saved_items (the Tutor's Saved tab) joins bucket A the
     same way: its policies and grant ship in 20261126055016_tutor_saved_items.sql.
+  * 2026-11-26 course_concept_exclusions (concepts a student removed in the
+    Tutor's course setup) joins bucket A the same way: its policies and grant
+    ship in 20261126060659_course_concept_exclusions.sql.
 """
 import json
 import sys
@@ -84,7 +87,7 @@ BUCKETS = {
         "quiz_context", "study_guides", "graph_nodes", "graph_edges", "feedback",
         "issue_reports", "user_achievements", "user_cosmetics", "user_roles", "xp_events",
         "friend_requests", "friendships",
-        "flashcard_sets", "tutor_saved_items",
+        "flashcard_sets", "tutor_saved_items", "course_concept_exclusions",
     ],
     "B_via_parent": [
         "messages", "node_mastery_events", "note_concepts", "quiz_responses",
@@ -136,6 +139,7 @@ for t in ("oauth_tokens", "gradescope_credentials", "enrollments", "notes",
 # own migration (20261112060028_flashcard_sets.sql), not in those two.
 owner("flashcard_sets", own); grant("flashcard_sets", "SELECT, INSERT, UPDATE, DELETE")
 owner("tutor_saved_items", own); grant("tutor_saved_items", "SELECT, INSERT, UPDATE, DELETE")  # 20261126055016
+owner("course_concept_exclusions", own); grant("course_concept_exclusions", "SELECT, INSERT, UPDATE, DELETE")  # 20261126060659
 owner("documents", own)
 grant("documents", "SELECT, INSERT, DELETE")
 # Not the index_* lease columns (document_indexing owns them, svc), nor id /

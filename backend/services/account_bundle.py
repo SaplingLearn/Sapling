@@ -365,6 +365,10 @@ SPECS: tuple[_Spec, ...] = (
     # (_COURSE_TABLES); `exam_id` names an assignment and travels unchanged,
     # like study_guides.exam_id, because row ids are preserved.
     _Spec("flashcard_sets"),
+    # The Tutor's course setup: concepts the student removed from a course.
+    # No 🔒 column (concept_key is a plaintext normalized name, like
+    # graph_nodes.concept_name); `course_id` is remapped (_COURSE_TABLES).
+    _Spec("course_concept_exclusions"),
     _Spec("sessions"),
     _Spec("messages", key="session_id", parent="sessions"),
     # The Tutor's Saved tab: after the sessions it references (row ids are
@@ -397,6 +401,7 @@ _COURSE_TABLES = (
     "graph_nodes", "flashcard_sets", "document_folders", "learning_evidence_voids", "misconception_attempts",
     "posttest_poses", "posttest_skips", "learning_prequestions",
     "learning_self_explanations", "document_folders", "tutor_saved_items",
+    "course_concept_exclusions",
 )
 
 # Foreign keys between bundled tables that are not covered by a parent spec

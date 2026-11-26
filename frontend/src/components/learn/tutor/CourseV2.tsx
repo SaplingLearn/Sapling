@@ -28,6 +28,7 @@ import { carriesSkill, tierWord } from "@/lib/levels";
 import { Icon } from "../../Icon";
 import { useFlag } from "@/context/FlagsContext";
 import { LoadFailed, TutorCourse, masteryTone, meterTier } from "./TutorPages";
+import { CourseSetup, SETUP_COPY } from "./CourseSetup";
 import { MilestonePage } from "./MilestonePage";
 import { coveredConcepts, readinessOf, useMilestoneConcepts, useMilestones } from "./milestones";
 import { sessionTitle, shortWhen, type TutorSessionRow } from "./sessions";
@@ -142,9 +143,50 @@ export function useCourseLibrary(courseId: string, enabled: boolean) {
 
 type Material = { id: string; file_name: string; category?: string | null };
 
+/** Coming up: the course's next dated work; with `milestones` each row opens
+ *  its milestone, with `course_setup` the head opens the course setup. */
+function ComingUp({ courseId, readyFor, onMilestone, onSetup }: {
+  courseId: string;
+  readyFor?: ReadonlyMap<string, string | null> | null;
+  onMilestone?: (id: string) => void;
+  onSetup?: () => void;
+}) {
+  const upcoming = useCourseUpcoming(courseId);
+  return (
+    <section aria-labelledby="tutor-course-coming" className={styles.section}>
+      <div className={styles.head}>
+        <h2 id="tutor-course-coming" className={`h-serif ${styles.h2}`}>{COURSE_COPY.comingUp}</h2>
+        {onSetup && <button type="button" className={styles.rowLink} onClick={onSetup} data-testid="tutor-course-setup">{SETUP_COPY.entry}</button>}
+      </div>
+      {upcoming.failed ? <LoadFailed testId="tutor-course-upcoming-error" what="what's coming up" onRetry={upcoming.retry} />
+        : upcoming.items === null ? null : upcoming.items.length > 0 ? (
+          <ul className={styles.box}>
+            {upcoming.items.map((a) => {
+              const ready = readyFor?.get(a.id) ?? null;
+              const body = (
+                <>
+                  <span className={styles.name}>{a.title}</span>
+                  {ready && <span className={styles.dim} data-testid={`tutor-course-due-ready-${a.id}`}>{ready}</span>}
+                  <span className={styles.dim}>{dueWhen(a.due_date)}</span>
+                </>
+              );
+              return onMilestone ? (
+                <li key={a.id} data-testid={`tutor-course-due-${a.id}`}>
+                  <button type="button" className={styles.sessionRow} onClick={() => onMilestone(a.id)}>{body}</button>
+                </li>
+              ) : (
+                <li key={a.id} className={styles.dueRow} data-testid={`tutor-course-due-${a.id}`}>{body}</li>
+              );
+            })}
+          </ul>
+        ) : <p className={styles.sub}>{COURSE_COPY.nothingUp}</p>}
+    </section>
+  );
+}
+
 export function CourseV2({
   course, sessions, concepts, edges, materials, retentionDue, dueCount, dueHref, reviewInSidebar, libraryHref,
-  onRetrySessions, onRetryMaterials, onRetryConcepts, onOpen, onAll, onLearn, onMilestone, readyFor,
+  onRetrySessions, onRetryMaterials, onRetryConcepts, onOpen, onAll, onLearn, onMilestone, readyFor, onSetup,
 }: {
   course: EnrolledCourse;
   sessions: TutorSessionRow[];
@@ -169,6 +211,8 @@ export function CourseV2({
   onMilestone?: (id: string) => void;
   /** `milestones`: "3 of 8 ready" per milestone with concepts linked to it. */
   readyFor?: ReadonlyMap<string, string | null> | null;
+  /** `course_setup`: open the course setup (Coming up's head). */
+  onSetup?: () => void;
 }) {
   // spec §13 A135: the page replaces what was on screen, so its first heading takes focus.
   const heading = useRef<HTMLHeadingElement>(null);
@@ -178,7 +222,6 @@ export function CourseV2({
   }, []);
   const ladder = concepts.some(carriesSkill);
   const ready = readyConcepts(concepts, edges);
-  const upcoming = useCourseUpcoming(course.course_id);
   const studyShown = useFlag("hide_study") !== "on";
   const library = useCourseLibrary(course.course_id, studyShown);
   const recent = sessions.slice(0, 4);
@@ -247,31 +290,7 @@ export function CourseV2({
             </section>
           </div>
           <div className={styles.stack}>
-            <section aria-labelledby="tutor-course-coming" className={styles.section}>
-              <h2 id="tutor-course-coming" className={`h-serif ${styles.h2}`}>{COURSE_COPY.comingUp}</h2>
-              {upcoming.failed ? <LoadFailed testId="tutor-course-upcoming-error" what="what's coming up" onRetry={upcoming.retry} />
-                : upcoming.items === null ? null : upcoming.items.length > 0 ? (
-                  <ul className={styles.box}>
-                    {upcoming.items.map((a) => {
-                      const ready = readyFor?.get(a.id) ?? null;
-                      const body = (
-                        <>
-                          <span className={styles.name}>{a.title}</span>
-                          {ready && <span className={styles.dim} data-testid={`tutor-course-due-ready-${a.id}`}>{ready}</span>}
-                          <span className={styles.dim}>{dueWhen(a.due_date)}</span>
-                        </>
-                      );
-                      return onMilestone ? (
-                        <li key={a.id} data-testid={`tutor-course-due-${a.id}`}>
-                          <button type="button" className={styles.sessionRow} onClick={() => onMilestone(a.id)}>{body}</button>
-                        </li>
-                      ) : (
-                        <li key={a.id} className={styles.dueRow} data-testid={`tutor-course-due-${a.id}`}>{body}</li>
-                      );
-                    })}
-                  </ul>
-                ) : <p className={styles.sub}>{COURSE_COPY.nothingUp}</p>}
-            </section>
+            <ComingUp courseId={course.course_id} readyFor={readyFor} onMilestone={onMilestone} onSetup={onSetup} />
             <section aria-labelledby="tutor-course-materials" className={styles.section}>
               <div className={styles.head}>
                 <h2 id="tutor-course-materials" className={`h-serif ${styles.h2}`}>{COURSE_COPY.materials}</h2>
@@ -316,17 +335,27 @@ export function CourseV2({
 
 /** The course view: the rebuilt page with `course_page_v2` on, else the page
  *  as before (the flag reads live here, out of LoopLearn). */
-export function CourseSlot({ milestoneId = null, onMilestone, onStartGoal, ...props }: React.ComponentProps<typeof CourseV2> & {
+export function CourseSlot({ milestoneId = null, onMilestone, onStartGoal, onStartCourse, onConceptsChanged, ...props }: React.ComponentProps<typeof CourseV2> & {
   /** `milestones`: the milestone on screen, else the course page. */
   milestoneId?: string | null;
   onMilestone?: (id: string | null) => void;
   onStartGoal?: (topic: string, goal: LoopGoal) => void;
+  /** `course_setup`: the Done step's Start learning (a course session). */
+  onStartCourse?: () => void;
+  /** `course_setup`: re-read the graph after the setup changed the course's concepts. */
+  onConceptsChanged?: () => Promise<void> | void;
 }) {
   const v2 = useFlag("course_page_v2") === "on";
+  const setupOn = useFlag("course_setup") === "on" && v2 && !!onStartCourse && !!onConceptsChanged;
+  const [setupFor, setSetupFor] = useState<string | null>(null);
   const reviewInSidebar = useFlag("session_v2") === "on";
   const milestonesOn = useFlag("milestones") === "on";
   const ms = useMilestones(milestonesOn);
   const conceptsBy = useMilestoneConcepts(props.course.course_id, ms.items, milestonesOn);
+  if (setupOn && setupFor === props.course.course_id) {
+    return <CourseSetup course={props.course} concepts={props.concepts} hasMaterials={!!props.materials?.length}
+      onClose={() => setSetupFor(null)} onStart={() => { setSetupFor(null); onStartCourse!(); }} onConceptsChanged={onConceptsChanged!} />;
+  }
   if (milestonesOn && milestoneId && onMilestone && onStartGoal) {
     const current = ms.items?.find((m) => m.id === milestoneId && m.courseId === props.course.course_id);
     if (current) {
@@ -342,8 +371,9 @@ export function CourseSlot({ milestoneId = null, onMilestone, onStartGoal, ...pr
   })) : null;
   if (v2) {
     return <CourseV2 {...props} reviewInSidebar={reviewInSidebar} readyFor={readyFor}
-      onMilestone={milestonesOn && onMilestone ? (id) => onMilestone(id) : undefined} />;
+      onMilestone={milestonesOn && onMilestone ? (id) => onMilestone(id) : undefined}
+      onSetup={setupOn ? () => setSetupFor(props.course.course_id) : undefined} />;
   }
-  const { edges: _e, retentionDue: _r, dueCount: _d, reviewInSidebar: _s, onLearn: _l, readyFor: _f, ...old } = props;
+  const { edges: _e, retentionDue: _r, dueCount: _d, reviewInSidebar: _s, onLearn: _l, readyFor: _f, onSetup: _u, ...old } = props;
   return <TutorCourse {...old} />;
 }

@@ -71,6 +71,7 @@ on:
       - 'backend/services/chunker.py'
       - 'backend/services/concept_prereqs.py'
       - 'backend/services/course_context_service.py'
+      - 'backend/services/course_setup.py'
       - 'backend/services/email_shape.py'
       - 'backend/services/email_variables.py'
       - 'backend/services/encryption.py'

@@ -20,7 +20,7 @@ U, OTHER = "user_wipe", "user_keep"
 
 WIPED = (
     "enrollments", "documents", "document_folders", "notes", "flashcards", "flashcard_sets",
-    "tutor_saved_items", "sessions", "study_guides", "quiz_attempts", "quiz_context", "graph_nodes", "xp_events",
+    "course_concept_exclusions", "tutor_saved_items", "sessions", "study_guides", "quiz_attempts", "quiz_context", "graph_nodes", "xp_events",
     "user_achievements", "document_uploads", "tutor_pending_sessions",
     # the learning loop (owner decision: erase)
     "learner_state", "misconceptions", "posttest_poses", "posttest_skips",
@@ -191,6 +191,7 @@ def _seed_user(db, uid, *, n=1):
         db.add("notes", id=f"{p}-note{i}", user_id=uid)
         db.add("flashcards", id=f"{p}-fc{i}", user_id=uid)
         db.add("flashcard_sets", id=f"{p}-fs{i}", user_id=uid, exam_id=f"{p}-asg{i}")
+        db.add("course_concept_exclusions", id=f"{p}-cx{i}", user_id=uid)
         db.add("sessions", id=f"{p}-ses{i}", user_id=uid)
         db.add("messages", id=f"{p}-msg{i}", session_id=f"{p}-ses{i}")
         db.add("tutor_saved_items", id=f"{p}-saved{i}", user_id=uid, session_id=f"{p}-ses{i}")
@@ -265,7 +266,7 @@ def test_wipes_the_scope_and_keeps_everything_else(db):
     assert counts == {
         "enrollments": 2, "documents": 2, "document_folders": 2, "course_chunks": 2,
         "course_chunk_contributors": 0, "notes": 2, "flashcards": 2, "flashcard_sets": 2,
-        "tutor_saved_items": 2, "sessions": 2,
+        "course_concept_exclusions": 2, "tutor_saved_items": 2, "sessions": 2,
         "study_guides": 2, "quiz_attempts": 2, "quiz_context": 2, "graph_nodes": 2,
         "xp_events": 2, "user_achievements": 2, "document_uploads": 2,
         "tutor_pending_sessions": 2,

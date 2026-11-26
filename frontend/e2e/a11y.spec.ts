@@ -760,6 +760,67 @@ test("learning loop: saving a tutor reply and the Saved tab (saved_items, sessio
   }
 });
 
+// Course setup (`course_setup`, from the rebuilt course page): Skip the upload
+// (the upload's pipeline is the gradebook flow's, covered elsewhere), review
+// the course's dates and concepts, add and remove a date row, untick a
+// concept nobody has started, Confirm. The concept is a throwaway node, so
+// the seeded graph the other journeys read is untouched; the backend records
+// it as excluded and deletes it.
+test("learning loop: course setup, reviewing dates and unticking a concept (course_setup, course_page_v2 on)", async ({ browser }) => {
+  test.skip(loopOffLane, "loop path: default lane only");
+  test.setTimeout(LOOP_TIMEOUT_MS);
+  for (const flag of ["course_setup", "course_page_v2"]) await setUserFlag(flag, USER_LOOP, "on");
+  const [{ course_id: courseId }] = (await queryRaw(
+    `SELECT course_id FROM graph_nodes WHERE user_id = $1 AND course_id IS NOT NULL ORDER BY id LIMIT 1`,
+    [USER_LOOP],
+  )) as { course_id: string }[];
+  const nodeId = "a11y-setup-node";
+  await queryRaw(`DELETE FROM course_concept_exclusions WHERE user_id = $1 AND concept_key = 'setup probe concept'`, [USER_LOOP]);
+  await queryRaw(
+    `INSERT INTO graph_nodes (id, user_id, course_id, concept_name, mastery_score) VALUES ($1, $2, $3, 'Setup probe concept', 0)
+     ON CONFLICT DO NOTHING`,
+    [nodeId, USER_LOOP, courseId],
+  );
+  const { context, page } = await signIn(browser, USER_LOOP, "Lou Loop");
+  try {
+    await page.goto("/learn");
+    await page.getByTestId(`tutor-course-${courseId}`).click();
+    await page.getByTestId("tutor-course-setup").click();
+    const setup = page.getByTestId("tutor-setup");
+    await expect(setup).toHaveAttribute("data-step", "syllabus");
+    await expect(page.getByRole("heading", { level: 2, name: /^Upload your .* syllabus$/ })).toBeFocused();
+    await expectAccessible(page, "course setup: the syllabus step");
+    await page.getByTestId("tutor-setup-skip").click();
+    await expect(setup).toHaveAttribute("data-step", "review");
+    await expect(page.getByRole("heading", { level: 2, name: /^Review / })).toBeFocused();
+    await page.getByTestId("tutor-setup-add-date").click();
+    await expect(page.getByRole("textbox", { name: "Name", exact: true })).toBeFocused();
+    await page.keyboard.type("Quiz 9");
+    const chip = page.getByTestId(`tutor-setup-concept-${nodeId}`);
+    await expect(chip.getByRole("checkbox")).toBeChecked();
+    await expectAccessible(page, "course setup: the review");
+    // Remove the new row again (nothing to clean up on the calendar); focus moves to Add a date.
+    await page.getByRole("button", { name: "Remove Quiz 9" }).click();
+    await expect(page.getByTestId("tutor-setup-add-date")).toBeFocused();
+    await chip.getByRole("checkbox").uncheck();
+    await page.getByTestId("tutor-setup-confirm").click();
+    await expect(setup).toHaveAttribute("data-step", "done");
+    await expect(page.getByRole("heading", { level: 2, name: / is set up$/ })).toBeFocused();
+    await expectAccessible(page, "course setup: done");
+    expect(await queryRaw(`SELECT id FROM graph_nodes WHERE id = $1`, [nodeId])).toHaveLength(0);
+    const excluded = (await queryRaw(
+      `SELECT course_id, concept_key FROM course_concept_exclusions WHERE user_id = $1`, [USER_LOOP],
+    )) as { course_id: string; concept_key: string }[];
+    expect(excluded).toContainEqual({ course_id: courseId, concept_key: "setup probe concept" });
+    await page.getByTestId("tutor-setup-start").click();
+    await expect(page.getByTestId("loop-phase")).toBeVisible();
+  } finally {
+    await context.close();
+    await queryRaw(`DELETE FROM course_concept_exclusions WHERE user_id = $1 AND concept_key = 'setup probe concept'`, [USER_LOOP]);
+    await queryRaw(`DELETE FROM graph_nodes WHERE id = $1`, [nodeId]);
+  }
+});
+
 test("learning loop: a segment's ungraded guess and a self-explanation prompt (A138, A139 on)", async ({ browser }) => {
   test.skip(loopOffLane, "loop path: default lane only");
   test.setTimeout(LOOP_TIMEOUT_MS);

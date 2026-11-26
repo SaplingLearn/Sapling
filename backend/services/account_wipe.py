@@ -87,6 +87,10 @@ _USER_TABLES: tuple[tuple[str, str], ...] = (
     # Library folders. documents.folder_id is ON DELETE SET NULL, so these can
     # go before or after documents; they go here with the other owned labels.
     ("document_folders", "id"),
+    # Concepts the student took out of a course in the Tutor's course setup
+    # (plaintext normalized names): account data, wiped here AND copied by
+    # the bundle.
+    ("course_concept_exclusions", "id"),
     # What a student saved from a session (the Tutor's Saved tab): account
     # data, wiped here AND copied by the bundle; before the sessions it
     # references (which would cascade it anyway).

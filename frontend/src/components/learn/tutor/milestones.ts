@@ -70,11 +70,24 @@ function readAssignments(userId: string, fresh = false): Promise<Assignment[]> {
 /** Test seam. */
 export function __resetMilestonesForTests() { cache = null; }
 
+const listeners = new Set<() => void>();
+/** The dates changed (course setup saved them): drop the shared read and
+ *  have every mounted reader read again. */
+export function invalidateMilestones() {
+  cache = null;
+  listeners.forEach((l) => l());
+}
+
 /** The student's upcoming milestones, every course; null while loading. */
 export function useMilestones(enabled: boolean) {
   const { userId } = useUser();
   const [state, setState] = useState<{ items: Milestone[] | null; failed: boolean }>({ items: null, failed: false });
   const [attempt, setAttempt] = useState(0);
+  useEffect(() => {
+    const again = () => setAttempt((n) => n + 1);
+    listeners.add(again);
+    return () => { listeners.delete(again); };
+  }, []);
   useEffect(() => {
     if (!enabled || !userId) return;
     let live = true;

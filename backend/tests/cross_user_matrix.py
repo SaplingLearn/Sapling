@@ -232,6 +232,9 @@ ID_SOURCES: dict[str, IdSource] = {
     # through the caller's own review session).
     "quiz_attempt_id": _owned(_ATTEMPT),
     "concept_ids": _owned(_NODE, many=True),
+    # /api/learn/setup/exclude-concepts (the Tutor's course setup): the
+    # concepts the student unticked are their own graph nodes.
+    "node_ids": _owned(_NODE, many=True),
     "prompt_id": _owned(
         "SELECT id::text FROM learning_self_explanations WHERE user_id = %(a)s "
         "ORDER BY id LIMIT 1"
@@ -372,6 +375,10 @@ RESOURCE_EXPECT: dict[tuple[str, str], tuple[tuple[int, ...], str]] = {
     ("POST", "/api/learn/loop/posttest/shown"):
         ((200,), "{'served': false}: the stamp looks for B's own open pose (user_id = B) and "
                  "B has none on A's node, the same answer as an unknown node id"),
+    ("POST", "/api/learn/setup/exclude-concepts"):
+        ((200, 404), "404 while course_setup is off for B; on, {'removed': [], 'kept': []}: the "
+                     "nodes are re-read by user_id = B and course_id, so A's ids name nothing "
+                     "B can remove and nothing is written"),
     ("POST", "/api/learn/loop/review/answer"):
         ((409,), "the stale-day 409: a review session id is derived from (B, course, UTC day) "
                  "(learning/review.py::review_session_id), so any other id, A's or unknown, "

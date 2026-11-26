@@ -2351,9 +2351,9 @@ export function LoopLearn() {
         dueHref={dueHref}
         libraryHref={libraryVisible ? "/library" : null}
         onRetrySessions={lists.retryRecent}
-        onRetryMaterials={lists.retryMaterials} onRetryConcepts={graphError ? () => void refreshGraph() : null}
+        onRetryMaterials={lists.retryMaterials} onRetryConcepts={graphError ? () => void refreshGraph() : null} onConceptsChanged={refreshGraph}
         onOpen={openRow}
-        onAll={showAll} onLearn={(k) => void startGuided({ topic: k.name, goal: conceptGoal(k.id) })}
+        onAll={showAll} onLearn={(k) => void startGuided({ topic: k.name, goal: conceptGoal(k.id) })} onStartCourse={() => void startGuided()}
         milestoneId={milestoneId} onMilestone={(m) => showCourse(c.course_id, m)} onStartGoal={(topic, goal) => void startGuided({ topic, goal })}
       />
     </div>
