@@ -140,6 +140,20 @@ export function Notes({ documentId }: { documentId: string }) {
     documentId, userId, ready: userReady && !!userId, read: readNotes, write: writeNotes,
   });
 
+  // The page opened but the opening draft could not be written (the model was
+  // unavailable). Said once, because an empty editor otherwise reads as notes
+  // that went missing rather than a draft that never arrived.
+  const draftFailed = notes.draftFailed;
+  const toldDraftFailed = React.useRef(false);
+  React.useEffect(() => {
+    if (!draftFailed || toldDraftFailed.current) return;
+    toldDraftFailed.current = true;
+    toast.flash(
+      "Couldn't write the opening notes just now — this page is yours to "
+      + "write in, or press Regenerate to try again.",
+    );
+  }, [draftFailed, toast]);
+
   // The title is contentEditable too, so it is written rather than bound.
   React.useEffect(() => {
     const el = titleRef.current;

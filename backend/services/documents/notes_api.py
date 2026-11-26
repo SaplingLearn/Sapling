@@ -40,8 +40,16 @@ async def run_agent(agent, prompt: str, deps: SaplingDeps, *, action: str) -> st
     deterministic (retrying the same document fails identically) and answers
     413, while unexpected model behavior is a real bug and answers 500 with a
     traceback in the log.
+
+    A `ModelHTTPError` is neither. The provider refused the call — a key that
+    is wrong or expired, a rate limit, an outage — and that is not an internal
+    error of ours, so it answers 503 and says the model is unavailable rather
+    than "something went wrong". A misconfigured key used to surface as a bare
+    500, which sent the reader looking in the wrong place entirely.
     """
-    from pydantic_ai.exceptions import UnexpectedModelBehavior, UsageLimitExceeded
+    from pydantic_ai.exceptions import (
+        ModelHTTPError, UnexpectedModelBehavior, UsageLimitExceeded,
+    )
 
     try:
         result = await agent.run(prompt, deps=deps, usage_limits=WORKER_LIMITS)
@@ -53,6 +61,14 @@ async def run_agent(agent, prompt: str, deps: SaplingDeps, *, action: str) -> st
                 f"This document is too long to {action} automatically. "
                 "Try a shorter document."
             ),
+        ) from e
+    except ModelHTTPError as e:
+        logger.error(
+            "document notes %s: the model refused the call (%s)", action, e.status_code,
+        )
+        raise HTTPException(
+            status_code=503,
+            detail="The writing model is unavailable right now. Try again shortly.",
         ) from e
     except UnexpectedModelBehavior as e:
         logger.exception("document notes %s returned unexpected model behavior", action)
@@ -118,17 +134,35 @@ async def read(document_id: str, user_id: str, request_id: str) -> dict:
     Generation happens once: the generated body is stored straight away, so a
     reload — or a second tab — gets the same document rather than a second
     draft, and every edit after that is the student's.
+
+    A generation that fails does NOT fail the read. The draft is a convenience,
+    not a precondition: a student whose model call died still gets the editor,
+    titled, and can write the notes themselves — where raising here took the
+    whole page down with it and left them nothing. Nothing is stored in that
+    case, so the next open tries the draft again.
     """
     stored = await doc_notes.get_notes(document_id, user_id)
     if stored and (stored.get("content") or "").strip():
         return stored
 
     doc = await load_document(document_id, user_id)
-    content = await generate(doc, user_id, request_id)
+    title = (stored or {}).get("title") or doc.get("file_name") or "Notes"
+    try:
+        content = await generate(doc, user_id, request_id)
+    except HTTPException as e:
+        if e.status_code < 500 and e.status_code != 413:
+            raise
+        logger.warning(
+            "document notes draft unavailable for %s (%s); opening an empty editor",
+            document_id, e.status_code,
+        )
+        return (stored or {}) | {
+            "document_id": document_id, "user_id": user_id,
+            "title": title, "content": "", "final": False,
+            "draft_failed": True,
+        }
     return await doc_notes.save_notes(
-        document_id, user_id,
-        title=(stored or {}).get("title") or doc.get("file_name") or "Notes",
-        content=content,
+        document_id, user_id, title=title, content=content,
     )
 
 

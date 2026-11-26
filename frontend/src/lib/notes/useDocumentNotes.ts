@@ -32,6 +32,12 @@ export interface DocumentNotesState {
   /** The load failed; the page says so rather than showing an empty editor. */
   error: string | null;
   retry: () => void;
+  /**
+   * The notes loaded, but with no opening draft — the model was unavailable,
+   * so the editor opened empty rather than the page failing. The page says so
+   * once: an empty editor otherwise reads as notes that went missing.
+   */
+  draftFailed: boolean;
 
   title: string;
   setTitle: (t: string) => void;
@@ -66,6 +72,7 @@ export function useDocumentNotes(input: DocumentNotesInput): DocumentNotesState 
   const [notes, setNotes] = React.useState<DocumentNotes | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
+  const [draftFailed, setDraftFailed] = React.useState(false);
   const [attempt, setAttempt] = React.useState(0);
   const [title, setTitleState] = React.useState("");
   const [final, setFinalState] = React.useState(false);
@@ -125,6 +132,7 @@ export function useDocumentNotes(input: DocumentNotesInput): DocumentNotesState 
         setFinalState(!!n.final);
         setEditedAt(Date.parse(n.updated_at) || null);
         writeRef.current(n.content || "");
+        setDraftFailed(!!n.draft_failed);
         setLoading(false);
       })
       .catch(err => {
@@ -181,7 +189,7 @@ export function useDocumentNotes(input: DocumentNotesInput): DocumentNotesState 
   const retry = React.useCallback(() => setAttempt(n => n + 1), []);
 
   return {
-    notes, loading, error, retry,
+    notes, loading, error, retry, draftFailed,
     title, setTitle, final, setFinal, saveState, editedAt,
     touch, flush, regenerate, regenerating,
   };

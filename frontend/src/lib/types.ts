@@ -195,6 +195,12 @@ export interface DocumentNotes {
   content: string;
   /** Finalized notes are read-only until the student presses Edit. */
   final: boolean;
+  /**
+   * The opening draft could not be written — the model was unavailable — so
+   * the editor opened empty rather than the page failing. Nothing was stored,
+   * so Regenerate will try again. Absent on a normal read.
+   */
+  draft_failed?: boolean;
   created_at: string;
   updated_at: string;
 }
