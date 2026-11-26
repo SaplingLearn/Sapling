@@ -1,54 +1,25 @@
 "use client";
 import { CtaLink } from "@/components/ui/HandoffLink";
 import { LEARNING_COPY } from "@/lib/learningCopy";
-import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
+import React, { useLayoutEffect, useRef } from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { useMotionPresets } from "@/lib/motion";
 import type { LoopCloseBaseline, LoopCloseConcept, LoopCloseResponse } from "@/lib/api";
-import { useUser } from "@/context/UserContext";
 import { useFlag } from "@/context/FlagsContext";
 import {
   closeHandoffCtas,
   type HandoffVisibility,
 } from "@/lib/learningHandoffs";
-import { getStudyNext } from "@/lib/studyApi";
 import { retentionHref } from "@/context/RetentionDueContext";
 import { CenteredCard } from "./CenteredCard";
 import { modalOpen } from "./modalOpen";
 import { WrapUpRating } from "./WrapUpRating";
+import { usePracticeDueIds } from "./wrapup/practiceDue";
+import { WrapUpV2 } from "./wrapup/WrapUpV2";
 import tutorStyles from "./tutor/tutor.module.css";
 import styles from "./ClosePanel.module.css";
 
-/**
- * W3.3b: learner-next due ids for Practice what's due on wrap-up. Empty while
- * flags off / unread / failed — closeHandoffCtas then uses course+start.
- */
-function usePracticeDueIds(courseId: string | null, enabled: boolean): readonly string[] {
-  const { userId } = useUser();
-  const loopOn = useFlag("learning_loop") === "on";
-  const planOn = useFlag("quiz_concept_plan") === "on";
-  const [ids, setIds] = useState<readonly string[]>([]);
-  // Switched off (or nothing to read for): drop the last answer during render
-  // rather than in the effect, so it never shows for a render.
-  const active = enabled && !!courseId && !!userId && loopOn && planOn;
-  if (!active && ids.length > 0) setIds([]);
-  useEffect(() => {
-    if (!enabled || !courseId || !userId || !loopOn || !planOn) return;
-    let live = true;
-    getStudyNext(userId, courseId)
-      .then((r) => {
-        if (live) setIds(r.due.map((c) => c.node_id));
-      })
-      .catch(() => {
-        if (live) setIds([]);
-      });
-    return () => {
-      live = false;
-    };
-  }, [enabled, courseId, userId, loopOn, planOn]);
-  return ids;
-}
 
 /** Spec §13 A117: how one concept reads on the wrap-up. A concept first measured
  *  this session (`check_in` / `teaching`) starts at that measurement — it is a
@@ -156,7 +127,7 @@ function CloseHandoffLinks({
  * session?" is asked here (`rating`), never after the student has left.
  */
 export function ClosePanel({
-  close, note, names, courseId, onNew, visibility, rating,
+  close, note, names, courseId, onNew, visibility, rating, planned = [], dueCount = null,
 }: {
   /** Wireframe T10: back to the Tutor home to start the next session. */
   onNew?: () => void;
@@ -169,7 +140,12 @@ export function ClosePanel({
   visibility: HandoffVisibility;
   /** The session the wrap-up asks to rate (`claimWrapUpAsk`), else null. */
   rating: { sessionId: string; topic?: string } | null;
+  /** `wrapup_v2`: the approved plan's concept ids ("Not reached today"). */
+  planned?: readonly string[];
+  /** `wrapup_v2`: reviews due on the course, to choose the one next step. */
+  dueCount?: number | null;
 }) {
+  const v2 = useFlag("wrapup_v2") === "on"; // Tutor redesign phase 4
   // spec §13 A135: the wrap-up replaces the lesson (and the End session button
   // that asked for it), so once it is there its heading — or the note that the
   // session was closed elsewhere — takes focus and is read out.
@@ -192,6 +168,10 @@ export function ClosePanel({
         </div>
       </CenteredCard>
     );
+  }
+  if (v2) {
+    return <WrapUpV2 close={close} names={names} courseId={courseId} onNew={onNew} visibility={visibility}
+      rating={rating} planned={planned} dueCount={dueCount} headingRef={setFocusTarget} />;
   }
   const rec = close.close;
   const quizConceptId = closeQuizConceptId(rec.concepts);

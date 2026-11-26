@@ -1243,6 +1243,7 @@ inside `loop-messages` is `ChatPanel`, whose own `tutor-*` ids
 | `loop-close-rating-send` | sends the rating, chips and note as ONE session feedback row |
 | `loop-close-rating-sent` | the thanks line once the feedback is sent |
 | `loop-close-done` | the closed state (the wrap-up's next-step links); also a session found closed elsewhere (a 409 `this session is closed`) whose stored close could not be read |
+| `loop-wrapup-v2` / `loop-close-headline` | `wrapup_v2` on (`learn/wrapup/WrapUpV2.tsx`): the rebuilt wrap-up and its headline, built from what moved ("Hash tables moved up to Developing", "2 concepts measured for the first time", "Nothing measured yet"), which takes focus. Its rows are `loop-close-concept-{id}` in the ladder's words, with `data-reached="false"` for the plan's concepts the session did not reach ("Not reached today"); `loop-close-done` holds ONE primary step (the Review link when reviews are due, else `loop-close-new-session`); the other hand-offs sit under "More practice"; no retention link |
 | `loop-close-study-link` | W3.4 "Review" inside `loop-close-done` (`/study?course=` when known); omitted while `hide_study` |
 | `loop-close-practice-link` | W3.3c "Practice what's due" → Quiz `scope=due` + learner_next due[] queue (or course+`start=1`); omitted while `hide_quiz` or `hide_study` |
 | `loop-close-quiz-link` | W3.4 "Quiz this concept" on a wrap-up concept that went down (else the first); omitted while `hide_quiz` or with no concept id |

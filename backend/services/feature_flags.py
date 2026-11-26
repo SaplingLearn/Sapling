@@ -317,6 +317,16 @@ REGISTRY: dict[str, FlagDef] = _registry(
             "quite), one credit line, the concept's skill change shown once "
             "(Getting started → Developing), and Continue naming the next step "
             "with the hold as its countdown. Off: the verdict banner as before.", True),
+    # Tutor redesign phase 4 (the wrap-up): one headline built from what moved,
+    # one list of the session's concepts on the skill ladder (the plan's
+    # concepts not reached included), one primary next step chosen by state,
+    # the rest under "More practice". Frontend only. A loop flag.
+    FlagDef("wrapup_v2", ("off", "on"),
+            "The rebuilt wrap-up: a headline from what moved, one list of the "
+            "session's concepts in the ladder's words (Not reached today "
+            "included), Next time, one next step chosen by state (Review when "
+            "reviews are due, else New session) and More practice. Off: the "
+            "wrap-up as before.", True),
     FlagDef("skill_ladder", ("off", "on"),
             "One skill measure on the graph: each concept's score, tier and words "
             "come from the learner model's decayed skill (Not started / Getting "

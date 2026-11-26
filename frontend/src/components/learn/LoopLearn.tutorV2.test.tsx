@@ -590,6 +590,23 @@ describe("U8 — the wrap-up has no caption under its list (subtract pass)", () 
   });
 });
 
+describe("Tutor redesign phase 4 — the rebuilt wrap-up (wrapup_v2 on)", () => {
+  it("leads with what moved, lists it once, and offers one next step", async () => {
+    flags.wrapup_v2 = "on";
+    api.closeLoopSession.mockResolvedValue({
+      close: { ...closeRecord, concepts: [{ node_id: "n1", p_before: 0.2, p_after: 0.45 }] }, model_written: false, close_phase: "teach",
+    });
+    await resumedTeach();
+    fireEvent.click(screen.getByTestId("loop-close-button"));
+    const headline = await screen.findByTestId("loop-close-headline");
+    expect(headline.textContent).toBe("A concept moved up to Developing");
+    await waitFor(() => expect(headline).toHaveFocus()); // it replaces the lesson (A135)
+    expect(screen.getByTestId("loop-close-concept-n1").textContent).toContain("Getting started to Developing");
+    expect(screen.getByTestId("loop-close-new-session").className).toContain("btn--primary"); // nothing due
+    expect(screen.queryByTestId("loop-close-retention-link")).toBeNull();
+  });
+});
+
 describe("U9 — How was that session? is asked on the wrap-up, with its ends labelled", () => {
   it("asks once per session (paced), never after the student has left", async () => {
     api.closeLoopSession.mockResolvedValue({ close: closeRecord, model_written: false, close_phase: "teach" });

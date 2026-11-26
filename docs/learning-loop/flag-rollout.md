@@ -36,7 +36,7 @@ Several flags change a prompt or an output schema, so their eval datasets must b
 
 ## Recommended order
 
-1. **Read-only, no eval needed:** `quiz_concept_plan`, `quiz_results_routing`, `item_reports`, `skill_ladder`, `hint_ladder`, `verdict_v2`.
+1. **Read-only, no eval needed:** `quiz_concept_plan`, `quiz_results_routing`, `item_reports`, `skill_ladder`, `hint_ladder`, `verdict_v2`, `wrapup_v2`.
 2. **Safety, after copy review:** `crisis_support`.
 3. **Prompt changes, after their evals:** `loop_tutor_v2`, `segment_prequestion`, `self_explanation_prompts`, `quiz_planned_questions`, `quiz_item_gates`, then `quiz_misconceptions`.
 4. **Drafting changes, after their evals:** `varied_isomorphs`, `multi_concept_items`, `upload_prereq_edges`.
@@ -72,6 +72,12 @@ Several flags change a prompt or an output schema, so their eval datasets must b
 - **Before:** nothing; it reads the graded turn's `verdict`, `credit`, `credit_reasons`, `learner_state` and `feedback_dwell_ms`.
 - **Watch:** time from verdict to Continue; Continue clicks during a hold (there should be none).
 - **Roll back:** off restores the verdict banner and the dwell note.
+
+### wrapup_v2 (Tutor redesign phase 4) — client-visible
+- **Changes:** the wrap-up leads with a headline built from what moved, lists the session's concepts once in the ladder's words (the plan's concepts it did not reach marked "Not reached today"), then the summary, "Next time", ONE primary next step (Review when reviews are due, else New session) and "More practice". The retention CTA and the "n of m stronger" card are gone. Frontend only.
+- **Before:** nothing; it reads the close record, the approved plan and the review count the session panel already shows.
+- **Watch:** clicks on the primary step against the secondary ones; sessions started from the wrap-up.
+- **Roll back:** off restores the wrap-up as before.
 
 ### item_reports (A113, A123) — client-visible
 - **Changes:** students can report a check question. Two reports hold it from the whole course until staff approve or retire it in the admin check-items queue.

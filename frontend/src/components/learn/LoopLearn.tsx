@@ -2271,7 +2271,7 @@ export function LoopLearn() {
       );
     } else if (state.phase === "close") {
       return <ClosePanel close={close} note={closeNote} names={conceptNames} courseId={courseId} onNew={showHome}
-        visibility={handoffVisibility} rating={wrapUpAsk?.sessionId === sessionId ? wrapUpAsk : null} />;
+        visibility={handoffVisibility} rating={wrapUpAsk?.sessionId === sessionId ? wrapUpAsk : null} planned={approvedPlan?.concepts.map((c) => c.node_id)} dueCount={lists.dueReviews} />;
     }
     return renderTeach();
   };

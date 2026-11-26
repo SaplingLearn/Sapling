@@ -1,0 +1,124 @@
+/* The rebuilt wrap-up (WrapUpV2.tsx), after the Claude Design board: one
+   column, the headline first, then what changed, the summary, Next time, the
+   one next step and More practice. */
+
+.root {
+  height: 100%;
+  overflow-y: auto;
+  padding: var(--sp-16) var(--sp-11);
+}
+
+.col {
+  max-width: 720px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-12);
+}
+
+.headline {
+  margin: 0;
+  font-size: var(--fs-4xl);
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.rows {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-radius: var(--r-lg);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+}
+
+.row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--sp-6);
+  align-items: center;
+  padding: var(--sp-6) var(--sp-8);
+  border-bottom: 1px solid var(--border);
+  font-size: var(--fs-base);
+  overflow-wrap: anywhere;
+}
+
+.row:last-child {
+  border-bottom: 0;
+}
+
+.lead {
+  font-weight: 600;
+}
+
+.change {
+  font-size: var(--fs-md);
+  color: var(--text-dim);
+  text-align: right;
+}
+
+.summary {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--fs-lg);
+  line-height: 1.65;
+}
+
+.nextTime {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+.h3 {
+  margin: 0;
+  font-size: var(--fs-xl);
+  font-weight: 600;
+}
+
+.plain {
+  margin: 0;
+  font-size: var(--fs-base);
+  line-height: 1.6;
+}
+
+.next {
+  display: flex;
+  gap: var(--sp-4);
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.more {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+.moreTitle {
+  margin: 0;
+  font-size: var(--fs-md);
+  font-weight: 600;
+  color: var(--text-dim);
+}
+
+.moreLinks {
+  display: flex;
+  gap: var(--sp-4) var(--sp-8);
+  flex-wrap: wrap;
+}
+
+@media (max-width: 640px) {
+  .root {
+    padding: var(--sp-10) var(--sp-6);
+  }
+
+  .row {
+    grid-template-columns: 1fr;
+    gap: var(--sp-1);
+  }
+
+  .change {
+    text-align: left;
+  }
+}

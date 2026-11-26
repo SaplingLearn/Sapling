@@ -177,6 +177,7 @@ const FLAG_KILL_SWITCHES = [
   "skill_ladder",
   "hint_ladder",
   "verdict_v2",
+  "wrapup_v2",
   "quiz_planned_questions",
   "quiz_item_gates",
   "quiz_misconceptions",

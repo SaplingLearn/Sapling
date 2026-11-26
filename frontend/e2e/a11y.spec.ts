@@ -577,11 +577,12 @@ test("learning loop: check-in, plan, teaching, a check with hints, feedback, a m
 
 // Tutor redesign phase 4: the rebuilt surfaces are student surfaces too (spec
 // §13 A135), scanned in their own states with their flags on for this student.
-test("learning loop: the hint ladder and the rebuilt verdict (hint_ladder, verdict_v2 on)", async ({ browser }) => {
+test("learning loop: the hint ladder, the rebuilt verdict and wrap-up (hint_ladder, verdict_v2, wrapup_v2 on)", async ({ browser }) => {
   test.skip(loopOffLane, "loop path: default lane only");
   test.setTimeout(LOOP_TIMEOUT_MS);
   await setUserFlag("hint_ladder", USER_LOOP, "on");
   await setUserFlag("verdict_v2", USER_LOOP, "on");
+  await setUserFlag("wrapup_v2", USER_LOOP, "on");
   const P = await learningParams(["PROBE_SESSION_CAP"]);
   const { context, page } = await signIn(browser, USER_LOOP, "Lou Loop");
   try {
@@ -610,6 +611,12 @@ test("learning loop: the hint ladder and the rebuilt verdict (hint_ladder, verdi
     await expect(verdict).toBeVisible();
     await expect(verdict).not.toContainText("Not yet"); // the rebuilt card's words
     await expectAccessible(page, "learn loop: the rebuilt verdict");
+
+    await page.getByTestId("loop-close-button").click();
+    await expect(phase).toHaveAttribute("data-phase", "close");
+    await expect(page.getByTestId("loop-wrapup-v2")).toBeVisible();
+    await expect(page.getByTestId("loop-close-headline")).toBeFocused();
+    await expectAccessible(page, "learn loop: the rebuilt wrap-up");
   } finally {
     await context.close();
   }
