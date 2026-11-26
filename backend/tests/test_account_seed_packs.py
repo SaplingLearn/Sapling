@@ -2,8 +2,8 @@
 
 `MajorPack` validation runs at import, so a malformed pack would already fail
 here — these tests pin the product-level promises on top of the schema: the
-six majors the admin UI offers, four distinct catalog courses each, and no
-placeholder text reaching a tester's screen on prod.
+majors the admin UI offers, their distinct catalog courses, and no placeholder
+text reaching a tester's screen on prod.
 """
 from __future__ import annotations
 
@@ -13,23 +13,32 @@ import pytest
 
 from services.account_seed.packs import PACKS
 
-EXPECTED_MAJORS = ["cs", "business", "biology", "psychology", "health", "mech_eng"]
+EXPECTED_MAJORS = [
+    "cs", "business", "biology", "psychology", "health", "mech_eng", "computer_engineering",
+]
+
+#: How many courses each major seeds. Four is the house semester;
+#: computer_engineering seeds five because two of its courses are 2-credit
+#: ones (ENG EK 131, COM CO 540) that a real schedule stacks on top of a
+#: four-credit load.
+EXPECTED_COURSE_COUNT = {key: 4 for key in EXPECTED_MAJORS} | {"computer_engineering": 5}
 
 # BU catalog format: SCHOOL DEPT NUMBER, e.g. "CAS CS 111".
 _CODE_RE = re.compile(r"^[A-Z]{2,4} [A-Z]{2} \d{3}$")
 _PLACEHOLDER_RE = re.compile(r"lorem ipsum|\bTODO\b|\bTBD\b|concept \d+\b|placeholder", re.I)
 
 
-def test_registry_lists_the_six_majors_in_ui_order():
+def test_registry_lists_every_major_in_ui_order():
     assert list(PACKS) == EXPECTED_MAJORS
 
 
 @pytest.mark.parametrize("key", EXPECTED_MAJORS)
-def test_pack_has_four_distinct_catalog_courses(key):
+def test_pack_has_distinct_catalog_courses(key):
     pack = PACKS[key]
     assert pack.key == key
+    expected = EXPECTED_COURSE_COUNT[key]
     codes = [c.code for c in pack.courses]
-    assert len(codes) == 4 and len(set(codes)) == 4
+    assert len(codes) == expected and len(set(codes)) == expected
     for code in codes:
         assert _CODE_RE.match(code), code
 
@@ -54,5 +63,6 @@ def test_pack_has_graded_history_and_upcoming_work(key):
 
 def test_course_nicknames_and_colors_distinct_within_a_major():
     for key, pack in PACKS.items():
-        assert len({c.nickname for c in pack.courses}) == 4, key
-        assert len({c.color.lower() for c in pack.courses}) == 4, key
+        count = len(pack.courses)
+        assert len({c.nickname for c in pack.courses}) == count, key
+        assert len({c.color.lower() for c in pack.courses}) == count, key
