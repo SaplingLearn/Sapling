@@ -19,21 +19,13 @@ import { MENU_IN, MENU_OUT, MENU_SURFACE } from "../library/primitives";
 
 export type ToolbarMenu = "style" | "insert" | "align" | null;
 
-/** Where the bar sits once it has dropped out of the header row. */
-const STACK_TOP = 66;
-
 export interface NotesToolbarProps {
   formats: Formats;
   clovOpen: boolean;
-  /** Where the toolbar's left and right edges sit, measured by the page. */
-  left: number;
-  right: number;
-  /**
-   * The corridor between the breadcrumb and the header actions was too narrow
-   * to hold the bar, so it has dropped to its own row under the header and
-   * spans the editor column instead.
-   */
-  stacked: boolean;
+
+
+  /** The row is tight: wear the narrow metrics so it still fits on one line. */
+  compact: boolean;
   /**
    * The bar itself. The page measures its `scrollWidth` — the width it WANTS,
    * which it still reports while clamped — to decide whether the header row
@@ -112,31 +104,43 @@ function renderTools(tools: ToolOrSeparator[], metrics: typeof METRICS.wide) {
 
 export function NotesToolbar(props: NotesToolbarProps) {
   const {
-    formats, clovOpen, left, right, stacked, barRef, menu, onMenu, menuClosing,
+    formats, clovOpen, compact, barRef, menu, onMenu, menuClosing,
     exec, insertHTML,
     insertCode, insertLink, insertEquation, insertBlock, insertGraph, setBlockStyle,
   } = props;
 
-  const m = clovOpen ? METRICS.narrow : METRICS.wide;
+  // Either reason to be narrow produces the same bar: Clov's panel taking
+  // the width, or the header row being too tight to hold the wide one.
+  // Either reason to be narrow produces the same bar, and it has to reach
+  // every width the bar spends: the METRICS alone move ~13px, while the
+  // LABELS (the style name, "Insert") are most of the difference.
+  const tight = clovOpen || compact;
+  const m = tight ? METRICS.narrow : METRICS.wide;
   const anim = menuClosing ? MENU_OUT : MENU_IN;
   const style = currentStyle(formats);
   const align = currentAlignment(formats);
 
   return (
+    // The bar is the header row's middle cell, between the breadcrumb and the
+    // actions. It used to be absolutely positioned into the gap between them,
+    // with the page measuring that gap and dropping the bar to its own row
+    // when it looked too small — which is how it ended up on a second line in
+    // a row that had the space for it. Two measurements made that unreliable:
+    // they ran while Clov's 380ms slide was still moving the things being
+    // measured, and the answer changed the widths the next pass would read.
+    //
+    // A flex cell needs neither. `flex: 1 1 0` takes whatever the breadcrumb
+    // and the actions leave, independent of what the bar itself contains, so
+    // the row is one line because the layout says so rather than because a
+    // calculation agreed.
     <div style={{
       animation: "sapFadeIn 220ms cubic-bezier(0.2, 0.7, 0.2, 1) 900ms both",
-      position: "absolute",
-      // Stacked, the bar sits below the header actions rather than beside
-      // them; `STACK_TOP` clears Finalize's 56px bottom edge with room to
-      // spare, and the editor's own content does not begin until 112px.
-      top: stacked ? STACK_TOP : m.top,
-      left,
-      right,
+      flex: "1 1 0",
+      minWidth: 0,
       display: "flex",
       justifyContent: "center",
       zIndex: 11,
       pointerEvents: "none",
-      transition: `top ${SQUEEZE}, left ${SQUEEZE}, right ${SQUEEZE}`,
     }}>
       <div
         ref={barRef}
@@ -190,7 +194,7 @@ export function NotesToolbar(props: NotesToolbarProps) {
               color: "#1A1814", font: "inherit", fontSize: 15, fontWeight: 500, cursor: "pointer",
             }}
           >
-            <span style={{ whiteSpace: "nowrap" }}>{styleLabel(style, clovOpen)}</span>
+            <span style={{ whiteSpace: "nowrap" }}>{styleLabel(style, tight)}</span>
             <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
               <path
                 d="M3 4.5L6 7.5 9 4.5" fill="none" stroke="#6F6857" strokeWidth="1.5"
@@ -235,7 +239,7 @@ export function NotesToolbar(props: NotesToolbarProps) {
 
         <Separator margin={m.separator} />
         {renderTools(
-          mainTools({ formats, exec, insertHTML, insertCode, insertLink, clovOpen }), m,
+          mainTools({ formats, exec, insertHTML, insertCode, insertLink, clovOpen: tight }), m,
         )}
 
         {clovOpen && (
@@ -338,7 +342,7 @@ export function NotesToolbar(props: NotesToolbarProps) {
             <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
               <path d="M7 2v10M2 7h10" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
             </svg>
-            {!clovOpen && <span>Insert</span>}
+            {!tight && <span>Insert</span>}
           </button>
 
           {menu === "insert" && (

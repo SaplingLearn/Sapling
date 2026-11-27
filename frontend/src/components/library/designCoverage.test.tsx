@@ -102,6 +102,17 @@ const NOTES_DESIGN = read("../notes/__fixtures__/notes.design.html");
  * the faithful offset at 40px is 46 — the rebuild writes `CONTROL_H + 6` so
  * the menu keeps following the button. It is the only `top: 54px` there.
  *
+ * The toolbar's travel: the prototype positions the formatting bar absolutely
+ * into the gap between the breadcrumb and the header actions, and animates
+ * `top` / `left` / `right` on the 380ms curve as that gap moves. Owner's call
+ * 2026-11-27 — the bar had been landing on a second row in a header that had
+ * the width for it — makes the bar the row's middle flex cell instead, so it
+ * has no `top`/`left`/`right` of its own to travel. The movement is still
+ * there and still on this curve: the header's right edge slides when Clov
+ * opens and the cell follows it, which `designParity` pins. This single
+ * declaration is the whole deviation; the bar's own 380ms padding squeeze and
+ * every other transition in the prototype are unchanged.
+ *
  * The search field's clear button: the handoff draws it 32x32 on a #F4F1EA
  * fill, immediately beside the 24x24 `/` keyboard hint it replaces. Owner's
  * call 2026-11-26 — typing one character swapped a quiet key-cap for a filled
@@ -130,6 +141,7 @@ const EXPECTED_DEVIATIONS = [
   /^grid-template-rows: auto minmax\(0, 1fr\)$/,
   /^height: 48px$/, /^top: 54px$/,
   /^align-items: baseline$/,
+  /^transition: top 380ms cubic-bezier\(0\.3, 0\.7, 0\.2, 1\), left .*right .*$/,
   /^width: 32px$/, /^height: 32px$/,
   /^background: #F4F1EA$/, /^color: #3F3B31$/,
 ];

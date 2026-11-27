@@ -252,57 +252,83 @@ export function Notes({ documentId }: { documentId: string }) {
     },
   });
 
-  // ── where the toolbar's edges sit ───────────────────────────────────────
-  // Narrowest corridor the toolbar will still centre itself in. Below this it
-  // takes a row of its own: the wide metrics measure ~656px and the narrow
-  // ones are not much smaller, so anything tighter than this either overlaps
-  // the header actions or squeezes the bar down to a sliver.
-  const [bounds, setBounds] = React.useState(
-    { left: 380, right: 600, stacked: false });
+  // ── is there room for the wide toolbar? ─────────────────────────────────
+  // The bar is the header row's middle cell now, so nothing here decides
+  // WHERE it goes — flexbox does, and the row is one line by construction.
+  // The only question left is which METRICS it wears, and that is answered by
+  // the cell's own width against the width the bar would like.
+  //
+  // This cannot feed back on itself the way the old corridor measurement did:
+  // the cell is `flex: 1 1 0`, so its width comes from what the breadcrumb and
+  // the actions leave, never from what the bar contains.
+  const [compact, setCompact] = React.useState(false);
+  // The bar's width with its labels showing, remembered from a pass that had
+  // them. Asking "would the wide bar fit?" while looking at the narrow one
+  // would answer a different question every time it changed its mind.
+  const wideBarW = React.useRef(0);
+  const wideActionsW = React.useRef(0);
   React.useEffect(() => {
+    const bar = barRef.current;
+    const cell = bar?.parentElement;
+    const header = bar?.closest("header");
+    if (!bar || !cell || !header) return;
     const measure = () => {
-      const l = leftRef.current;
-      const r = rightRef.current;
-      if (!l || !r) return;
-      const left = l.offsetLeft + l.offsetWidth + 16;
-      const right = (clovOpen ? CLOV_WIDTH : 0) + 28 + r.offsetWidth + 16;
-      // What is actually left between the breadcrumb and the header actions.
-      // Clov's panel is a fixed width, so this corridor closes fast as the
-      // window narrows — and the toolbar's own width does not follow it.
-      // Below `TOOLBAR_MIN_CORRIDOR` the bar drops to its own row, where the
-      // editor column gives it the room the header row no longer has.
-      //
-      // Measured from the two header elements' own rects, in viewport
-      // coordinates. Deriving it from `left`/`right` and a container width
-      // does not work: those are offsets inside the positioned box whose
-      // width THIS decision sets, so the measurement feeds back on itself and
-      // the bar latches into whichever state it reached first. The gap
-      // between the breadcrumb and the actions does not move when the bar
-      // does, which is what makes it a safe thing to measure.
-      const gapLeft = l.getBoundingClientRect().right;
-      const gapRight = r.getBoundingClientRect().left;
-      const corridor = gapRight - gapLeft - 32;
-      // How wide the bar wants to be. `scrollWidth` reports the full content
-      // width even while `maxWidth` is clamping the box, so this is the bar's
-      // natural size and not a consequence of the decision being made here.
-      //
-      // It has to be measured rather than named by a constant: the bar's
-      // width comes from `METRICS`, which switches on `clovOpen` — ~656px
-      // with the panel open, ~937px with it closed — so any single threshold
-      // is right for one of those two states and wrong for the other.
-      // `TOOLBAR_MIN_CORRIDOR` stands in only for the first pass, before the
-      // bar has rendered.
-      const wanted = barRef.current?.scrollWidth || TOOLBAR_MIN_CORRIDOR;
-      setBounds(corridor >= wanted + 16
-        ? { left, right, stacked: false }
-        : { left: 28, right: (clovOpen ? CLOV_WIDTH : 0) + 28, stacked: true });
+      const left = leftRef.current, right = rightRef.current;
+      if (!left || !right) return;
+      // `scrollWidth` is the width the bar WANTS, reported even while
+      // `max-width` is clamping the box. Both of these are recorded only
+      // from a pass where the row actually IS wide: with Clov open the bar
+      // wears the narrow metrics for its own reason, and while collapsed the
+      // actions are not their full size.
+      if (!compact && !clovOpen) {
+        wideBarW.current = bar.scrollWidth;
+        wideActionsW.current = right.offsetWidth;
+      }
+      const wideBar = wideBarW.current || bar.scrollWidth;
+      const wideActions = wideActionsW.current || right.offsetWidth;
+
+      // Everything in this sum is independent of the answer. Measuring the
+      // CELL instead would not be: collapsing the actions widens the cell,
+      // which says there is room, which un-collapses them — the row would
+      // flip between the two readings and settle on whichever ran last.
+      const cs = getComputedStyle(header);
+      const pad = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight);
+      const gaps = parseFloat(cs.gap || "0") * 3;
+      const back = (header.firstElementChild as HTMLElement | null)?.offsetWidth ?? 0;
+      // Nothing to measure: a server render, jsdom, or a hidden container.
+      // Default to the WIDE row — the one the handoff draws — rather than
+      // reading zero widths as "no space" and collapsing a row that may have
+      // plenty.
+      if (!header.clientWidth) { setCompact(false); return; }
+      const room = header.clientWidth - pad - gaps - back
+        - left.offsetWidth - wideActions;
+
+      // With Clov open the bar is already narrow; there is nothing left for
+      // `compact` to take off, so it stays out of the way.
+      // A margin rather than a hair's breadth: at exactly `wideBar` the row
+      // fits with nothing to spare, and a title a few characters longer then
+      // clips the bar instead of collapsing the labels.
+      setCompact(!clovOpen && room < wideBar + 40);
     };
     measure();
-    // The header's own widths settle after the fonts land, so measure again.
-    const t = setTimeout(measure, 1200);
+    // The header is what actually changes with the window; the cell is a
+    // consequence of this decision and observing it would re-enter the loop.
+    // ResizeObserver is absent in jsdom and on a server render, so the window
+    // listener is the floor rather than an optimisation.
     window.addEventListener("resize", measure);
-    return () => { clearTimeout(t); window.removeEventListener("resize", measure); };
-  }, [clovOpen, notes.title, notes.final, notes.saveState]);
+    const ro = typeof ResizeObserver === "undefined"
+      ? null
+      : new ResizeObserver(measure);
+    ro?.observe(header);
+    if (ro && leftRef.current) ro.observe(leftRef.current);
+    // The row settles after Clov's 380ms slide and after the fonts land.
+    const timers = [450, 1200].map(ms => setTimeout(measure, ms));
+    return () => {
+      window.removeEventListener("resize", measure);
+      ro?.disconnect();
+      timers.forEach(clearTimeout);
+    };
+  }, [compact, clovOpen, notes.title, notes.final, notes.saveState]);
 
   // ── header actions ──────────────────────────────────────────────────────
   const docTitle = notes.title || (doc ? titleOf(doc) : "Notes");
@@ -396,6 +422,7 @@ export function Notes({ documentId }: { documentId: string }) {
           docTitle={docTitle}
           saveState={notes.saveState}
           clovOpen={clovOpen}
+          compact={compact}
           final={notes.final}
           onBack={back}
           onShare={share}
@@ -406,6 +433,37 @@ export function Notes({ documentId }: { documentId: string }) {
           onMenu={openHeaderMenu}
           menuClosing={menuClosing}
           downloads={downloads}
+          center={editable ? (
+    <NotesToolbar
+              formats={editor.formats}
+              clovOpen={clovOpen}
+              compact={compact}
+              barRef={barRef}
+              menu={toolbarMenu}
+              onMenu={openToolbarMenu}
+              menuClosing={menuClosing}
+              exec={editor.exec}
+              insertHTML={editor.insertHTML}
+              insertCode={editor.insertCode}
+              insertLink={editor.insertLink}
+              insertEquation={() => {
+                editor.restore();
+                document.execCommand(
+                  "insertHTML", false,
+                  '<span class="imath" contenteditable="false" data-tex="" data-new="1"></span>&#8203;',
+                );
+                const el = editorRef.current?.querySelector<HTMLElement>('.imath[data-new="1"]');
+                if (el) {
+                  el.removeAttribute("data-new");
+                  math.open(el);
+                }
+                notes.touch();
+              }}
+              insertBlock={editor.insertHTML}
+              insertGraph={kind => editor.insertHTML(graphs.html(kind))}
+              setBlockStyle={block => editor.exec("formatBlock", block)}
+            />
+          ) : undefined}
           leftRef={leftRef}
           rightRef={rightRef}
         />
@@ -423,39 +481,7 @@ export function Notes({ documentId }: { documentId: string }) {
           </div>
         )}
 
-        {editable && (
-          <NotesToolbar
-            formats={editor.formats}
-            clovOpen={clovOpen}
-            left={bounds.left}
-            right={bounds.right}
-            stacked={bounds.stacked}
-            barRef={barRef}
-            menu={toolbarMenu}
-            onMenu={openToolbarMenu}
-            menuClosing={menuClosing}
-            exec={editor.exec}
-            insertHTML={editor.insertHTML}
-            insertCode={editor.insertCode}
-            insertLink={editor.insertLink}
-            insertEquation={() => {
-              editor.restore();
-              document.execCommand(
-                "insertHTML", false,
-                '<span class="imath" contenteditable="false" data-tex="" data-new="1"></span>&#8203;',
-              );
-              const el = editorRef.current?.querySelector<HTMLElement>('.imath[data-new="1"]');
-              if (el) {
-                el.removeAttribute("data-new");
-                math.open(el);
-              }
-              notes.touch();
-            }}
-            insertBlock={editor.insertHTML}
-            insertGraph={kind => editor.insertHTML(graphs.html(kind))}
-            setBlockStyle={block => editor.exec("formatBlock", block)}
-          />
-        )}
+        
 
         <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
           <section

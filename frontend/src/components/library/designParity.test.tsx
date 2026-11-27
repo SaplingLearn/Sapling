@@ -477,8 +477,15 @@ describe("the animations are the design's", () => {
     await renderNotes();
     const curve = "380ms cubic-bezier(0.3, 0.7, 0.2, 1)";
     expect(screen.getByTestId("notes-clov").style.transition).toContain(curve);
-    expect(screen.getByTestId("notes-toolbar").parentElement!.style.transition)
-      .toContain(curve);
+    // The curve used to sit on the toolbar's wrapper, which was absolutely
+    // positioned into the gap between the breadcrumb and the actions and so
+    // animated its own `top`/`left`/`right`. The bar is the header row's
+    // middle flex cell now (2026-11-27), so the movement it used to own is the
+    // header's: the row's right edge slides on this curve when Clov opens,
+    // and the cell follows it. The bar's own squeeze is on its padding.
+    const header = screen.getByTestId("notes-toolbar").closest("header")!;
+    expect((header as HTMLElement).style.transition).toContain(curve);
+    expect(screen.getByTestId("notes-toolbar").style.transition).toContain(curve);
   });
 
   it("the skeleton fades out at 720ms, under content that enters later", async () => {

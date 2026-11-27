@@ -20,6 +20,13 @@ export interface NotesHeaderProps {
   /** "Saved" / "Saving…" / "Not saved". */
   saveState: string;
   clovOpen: boolean;
+  /**
+   * The row cannot hold the toolbar with the action labels showing, so the
+   * actions wear their icon-only form — the same `METRICS.narrow` treatment
+   * Clov's panel already triggers. Keeps everything on one line, which is
+   * what the handoff draws.
+   */
+  compact: boolean;
   final: boolean;
   onBack: () => void;
   onShare: () => void;
@@ -30,6 +37,8 @@ export interface NotesHeaderProps {
   onMenu: (m: HeaderMenu) => void;
   menuClosing: boolean;
   downloads: { label: string; ext: string; run: () => void }[];
+  /** The formatting toolbar, rendered as the row's middle cell. */
+  center?: React.ReactNode;
   /** Measured by the page so the toolbar can sit between the two groups. */
   leftRef: React.RefObject<HTMLDivElement | null>;
   rightRef: React.RefObject<HTMLDivElement | null>;
@@ -37,12 +46,20 @@ export interface NotesHeaderProps {
 
 export function NotesHeader(props: NotesHeaderProps) {
   const {
-    courseLabel, courseColor, docTitle, saveState, clovOpen, final, onBack, onShare,
+    courseLabel, courseColor, docTitle, saveState, clovOpen, compact, final, onBack, onShare,
     onToggleFinal, onRegenerate, regenerating, menu, onMenu, menuClosing, downloads,
-    leftRef, rightRef,
+    leftRef, rightRef, center,
   } = props;
 
-  const m = clovOpen ? METRICS.narrow : METRICS.wide;
+  // Either reason to be narrow produces the same row — for the BUTTONS.
+  const tight = clovOpen || compact;
+  const m = tight ? METRICS.narrow : METRICS.wide;
+  // But not for the header's own right edge. `headerRight` exists to keep the
+  // row clear of Clov's panel, so it answers to the panel and nothing else.
+  // Letting `compact` move it made the two feed each other: collapsing the
+  // actions pulled the header in by 440px, which shrank the row that had
+  // asked them to collapse, and the labels could never come back.
+  const edge = (clovOpen ? METRICS.narrow : METRICS.wide).headerRight;
   // The breadcrumb and the save line sit over the document, so they carry a
   // paper-coloured glow rather than a panel behind them.
   const glow = "0 0 2px #FAF8F3, 0 0 8px #FAF8F3, 0 0 14px #FAF8F3, 0 0 22px #FAF8F3";
@@ -59,7 +76,7 @@ export function NotesHeader(props: NotesHeaderProps) {
   return (
     <header style={{
       animation: "sapFadeIn 260ms cubic-bezier(0.2, 0.7, 0.2, 1) 820ms both",
-      position: "absolute", top: 0, left: 0, right: m.headerRight, zIndex: 10,
+      position: "absolute", top: 0, left: 0, right: edge, zIndex: 10,
       transition: `right ${SQUEEZE}`,
       height: 76, flexShrink: 0, display: "flex", alignItems: "center", gap: 14,
       padding: "0 28px 0 32px", background: "transparent",
@@ -124,7 +141,8 @@ export function NotesHeader(props: NotesHeaderProps) {
         </span>
       </div>
 
-      <div style={{ flex: 1 }} />
+      {/* The toolbar sits here, so the row cannot put it anywhere else. */}
+      {center ?? <div style={{ flex: 1 }} />}
 
       <div ref={rightRef} style={{
         flexShrink: 0, display: "flex", alignItems: "center", gap: 6, marginLeft: 4,
@@ -146,7 +164,14 @@ export function NotesHeader(props: NotesHeaderProps) {
               <path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9" />
               <path d="M13.5 2.5V5H11" />
             </svg>
-            {!clovOpen && <span>{regenerating ? "Rebuilding…" : "Regenerate"}</span>}
+            {/*
+              * Icon-only at every width. The handoff draws three actions
+              * here — Share, Download, Finalize — and this is a fourth the
+              * prototype does not have. Labelling it is what pushed the row
+              * onto two lines at 1920 (measured 2026-11-27: it took ~89px of
+              * a corridor that was 20px short). Its tooltip and aria-label
+              * still name it, and `regenerating` shows in the glyph's spin.
+              */}
           </button>
         )}
 
@@ -164,7 +189,7 @@ export function NotesHeader(props: NotesHeaderProps) {
           >
             <path d="M8 10V2.5M5 5.5l3-3 3 3M3 9v3.5h10V9" />
           </svg>
-          {!clovOpen && <span>Share</span>}
+          {!tight && <span>Share</span>}
         </button>
 
         <div style={{ position: "relative" }}>
@@ -183,7 +208,7 @@ export function NotesHeader(props: NotesHeaderProps) {
             >
               <path d="M8 2.5V10M5 7l3 3 3-3M3 13.5h10" />
             </svg>
-            {!clovOpen && <span>Download</span>}
+            {!tight && <span>Download</span>}
           </button>
           {menu === "download" && (
             <div role="menu" style={{
