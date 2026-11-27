@@ -82,7 +82,7 @@ import { useStudyNavShown } from "../useRetentionNav";
 import { forgetEndedSession, noteLearningSession, useFeedbackHold } from "@/lib/feedbackPacing";
 import { type DwellArm, dwellArm, useHypercorrectionDwell } from "@/lib/hypercorrectionDwell";
 import { checkIsOpen, hintTurnEvents, initialLoopState, isGradedTurn, reduceLoopEvent } from "./loopState";
-import { hasDeepLink, readDeepLink } from "./deepLink";
+import { hasDeepLink, readDeepLink, useMilestoneLink } from "./deepLink";
 import styles from "./LoopLearn.module.css";
 import { GoalEditor, GoalProgressNote, ScopeSummary } from "./LearningScope";
 import { CrisisSupportCard, useCrisisSupport } from "../safety/CrisisSupportCard";
@@ -1063,6 +1063,7 @@ export function LoopLearn() {
   const showHome = () => { setView("home"); closeDrawer(); };
   /** A course's page, or (`milestones`) one of its milestones' pages. */
   const showCourse = (id: string, milestone: string | null = null) => { switchCourse(id); setCourseView(id); setMilestoneId(milestone); setView("course"); closeDrawer(); };
+  useMilestoneLink(deepLink, courses, showCourse);
   const showAll = () => { setView("all"); closeDrawer(); };
   /** A listed session: an open one resumes; a wrapped-up one opens read-only (T14). */
   const openRow = (row: TutorSessionRow) => {
@@ -1497,9 +1498,7 @@ export function LoopLearn() {
   const rate = (rating: LoopRating) => {
     const sid = askRating;
     setAskRating(null); // one click answers it
-    if (sid) {
-      submitLoopRating(sid, rating).catch((err) => reportError(err, "Couldn't save your rating."));
-    }
+    if (sid) submitLoopRating(sid, rating).catch((err) => reportError(err, "Couldn't save your rating."));
   };
 
   const submitAttempt = async (idk: boolean) => {

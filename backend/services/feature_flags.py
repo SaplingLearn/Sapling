@@ -414,6 +414,17 @@ REGISTRY: dict[str, FlagDef] = _registry(
             "removed concept stays out of later uploads. Off: no setup, "
             "/api/learn/setup is a 404, and later uploads may bring removed "
             "concepts back.", True),
+    # The calendar redesign (owner decision 2026-11-26; the Claude Design
+    # boards in frontend/src/components/calendar/v2/__fixtures__): Agenda
+    # first, a refined Month, Week, a Semester timeline, an item opened in a
+    # side panel. Frontend only, over the calendar's own routes. Not a loop
+    # flag: an exam's readiness and Prepare show only where `milestones` is on.
+    FlagDef("calendar_v2", ("off", "on"),
+            "The redesigned calendar: Agenda (what is due, soonest first, with "
+            "countdowns and, for an exam, how many of its concepts are ready), "
+            "a refined Month, Week, and a Semester timeline with the busiest "
+            "week marked; each item opens in a side panel to edit, delete, send "
+            "to Google or prepare. Off: the calendar as before.", True),
     FlagDef("skill_ladder", ("off", "on"),
             "One skill measure on the graph: each concept's score, tier and words "
             "come from the learner model's decayed skill (Not started / Getting "

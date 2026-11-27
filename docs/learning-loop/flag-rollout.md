@@ -133,6 +133,12 @@ Several flags change a prompt or an output schema, so their eval datasets must b
 - **Watch:** setups finished; concepts removed per setup; uploads whose concepts were dropped as excluded.
 - **Roll back:** off hides the setup and 404s the route; recorded exclusions stay but stop being applied, so a later upload may bring a removed concept back.
 
+### calendar_v2 (calendar redesign) — client-visible, not a loop flag
+- **Changes:** the Calendar becomes the redesign on the Claude Design boards (`frontend/src/components/calendar/v2/__fixtures__`): Agenda by default (what is due this week, next week and later, soonest first, each with its course, its kind and a countdown; a small month with a dot per due date; the busiest week ahead; Google Calendar), a refined Month (arrows that point the right way, today marked, exams and quizzes set apart from homework, "+N more"), Week, and Semester (each course on its own line across eight weeks, a bar of how much is due per week, the busiest week marked). A course filter shows or hides each course. Any item opens a side panel: its details, Edit (the same form adds a date), Add to Google Calendar when connected, Delete (click twice). Export, Google sync, events and disconnect move into a More menu. With `milestones` on, an upcoming exam also shows how many of its concepts are ready, and Prepare opens its milestone page in the Tutor (`/learn?course=…&milestone=…`); the panel lists each concept's level and offers Make a study guide (unless `hide_study`). Frontend only: the calendar's own routes.
+- **Before:** nothing.
+- **Watch:** which view students use; items edited or added from the panel.
+- **Roll back:** off is the calendar as before.
+
 ### item_reports (A113, A123) — client-visible
 - **Changes:** students can report a check question. Two reports hold it from the whole course until staff approve or retire it in the admin check-items queue.
 - **Before:** someone on staff owns the review queue (`/api/admin/check-items`) and checks it daily.

@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Calendar: agenda first</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Aleo:wght@400;600;700&amp;family=SUSE:wght@400;500;600;700&amp;display=swap">
+<style>
+body{margin:0}
+a{color:#445D22;text-decoration:none}a:hover{color:#2f4115}
+</style>
+</helmet>
+<div style="width: 1440px; height: 980px; display: flex; background: #faf8f3; color: #1a1814; font-family: 'SUSE', system-ui, sans-serif; overflow: hidden;">
+  <dc-import name="AppNav" active="Calendar" hint-size="240px,980px"></dc-import>
+  <main style="flex: 1; min-width: 0; padding: 36px 48px; box-sizing: border-box; display: flex; flex-direction: column; gap: 22px;">
+
+    <header style="display: flex; align-items: flex-end; gap: 20px; flex-wrap: wrap;">
+      <h1 style="flex: 1; min-width: 0; margin: 0; font-family: 'Aleo', Georgia, serif; font-size: 34px; font-weight: 600;">Calendar</h1>
+      <div role="group" aria-label="View" style="display: flex; padding: 4px; gap: 2px; border-radius: 12px; background: #efebe1;">
+        <sc-for list="{{views}}" as="v" hint-placeholder-count="4">
+          <button type="button" aria-pressed="{{v.on}}" style="{{v.style}}">{{v.label}}</button>
+        </sc-for>
+      </div>
+      <button type="button" aria-expanded="false" style="height: 40px; padding: 0 12px 0 14px; border-radius: 10px; border: 1px solid rgba(42,39,31,0.18); background: #fdfcf9; font: inherit; font-size: 14px; font-weight: 600; color: #1a1814; display: inline-flex; align-items: center; gap: 8px;">All courses<svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#1a1814" stroke-width="1.8" stroke-linecap="round"><path d="M3.5 6 8 10.5 12.5 6"/></svg></button>
+      <button type="button" style="height: 44px; padding: 0 18px; border-radius: 10px; border: 0; background: #445D22; color: #ffffff; font: inherit; font-size: 15px; font-weight: 600; display: inline-flex; align-items: center; gap: 8px;">
+        <svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 11V3M4.5 6.5 8 3l3.5 3.5M3 13h10"/></svg>
+        Import syllabus
+      </button>
+    </header>
+
+    <div style="flex: 1; min-height: 0; display: flex; gap: 32px;">
+      <section aria-label="Agenda" style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 18px; overflow: hidden;">
+        <a href="#" style="font-size: 14px; font-weight: 600;">Show 1 earlier date (Midterm Exam, Mar 2)</a>
+        <sc-for list="{{groups}}" as="g" hint-placeholder-count="3">
+          <div style="display: flex; flex-direction: column; gap: 8px;">
+            <div style="display: flex; align-items: baseline; gap: 10px;">
+              <h2 style="margin: 0; font-family: 'Aleo', Georgia, serif; font-size: 20px; font-weight: 600;">{{g.name}}</h2>
+              <span style="font-size: 14px; color: #4a4538;">{{g.range}}</span>
+            </div>
+            <ul style="margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 8px;">
+              <sc-for list="{{g.items}}" as="it" hint-placeholder-count="3">
+                <li style="{{it.rowStyle}}">
+                  <div style="width: 52px; display: flex; flex-direction: column; align-items: center; line-height: 1.1;">
+                    <span style="font-size: 12px; font-weight: 600; color: #4a4538; letter-spacing: 0.04em;">{{it.dow}}</span>
+                    <span style="font-family: 'Aleo', Georgia, serif; font-size: 24px; font-weight: 600;">{{it.day}}</span>
+                  </div>
+                  <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px;">
+                    <a href="#" style="font-size: 16px; font-weight: 600; color: #1a1814;">{{it.title}}</a>
+                    <div style="display: flex; align-items: center; gap: 10px; font-size: 13px; color: #4a4538; flex-wrap: wrap;">
+                      <span style="display: inline-flex; align-items: center; gap: 6px; font-weight: 600; color: #1a1814;"><span aria-hidden="true" style="{{it.swatch}}"></span>{{it.course}}</span>
+                      <span style="{{it.typeStyle}}">{{it.type}}</span>
+                      <sc-if value="{{it.exam}}" hint-placeholder-val="{{ false }}">
+                        <span style="display: inline-flex; align-items: center; gap: 8px;">
+                          <span role="meter" aria-label="Concepts ready" aria-valuemin="0" aria-valuemax="{{it.total}}" aria-valuenow="{{it.ready}}" style="width: 72px; height: 6px; border-radius: 999px; background: #e6e1d4; overflow: hidden; display: inline-block;"><span style="{{it.fill}}"></span></span>
+                          {{it.readyText}}
+                        </span>
+                      </sc-if>
+                    </div>
+                  </div>
+                  <div style="display: flex; align-items: center; gap: 14px;">
+                    <span style="{{it.whenStyle}}">{{it.when}}</span>
+                    <sc-if value="{{it.exam}}" hint-placeholder-val="{{ false }}">
+                      <a href="#" style="height: 36px; padding: 0 14px; border-radius: 9px; border: 1px solid #c5d7b2; background: #f2f6ee; display: inline-flex; align-items: center; font-size: 14px; font-weight: 600;">Prepare</a>
+                    </sc-if>
+                  </div>
+                </li>
+              </sc-for>
+            </ul>
+          </div>
+        </sc-for>
+      </section>
+
+      <aside aria-label="March at a glance" style="width: 320px; flex-shrink: 0; display: flex; flex-direction: column; gap: 18px;">
+        <section aria-labelledby="mini-h" style="padding: 18px; border-radius: 16px; background: #fdfcf9; border: 1px solid rgba(42,39,31,0.10); display: flex; flex-direction: column; gap: 12px;">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <h2 id="mini-h" style="margin: 0; flex: 1; font-family: 'Aleo', Georgia, serif; font-size: 18px; font-weight: 600;">March 2026</h2>
+            <button type="button" aria-label="Previous month" style="width: 32px; height: 32px; border-radius: 8px; border: 1px solid rgba(42,39,31,0.18); background: #fdfcf9; display: inline-flex; align-items: center; justify-content: center;"><svg aria-hidden="true" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="#1a1814" stroke-width="1.8" stroke-linecap="round"><path d="M8.5 3 4.5 7l4 4"/></svg></button>
+            <button type="button" aria-label="Next month" style="width: 32px; height: 32px; border-radius: 8px; border: 1px solid rgba(42,39,31,0.18); background: #fdfcf9; display: inline-flex; align-items: center; justify-content: center;"><svg aria-hidden="true" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="#1a1814" stroke-width="1.8" stroke-linecap="round"><path d="M5.5 3 9.5 7l-4 4"/></svg></button>
+          </div>
+          <div style="display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 2px; text-align: center;">
+            <sc-for list="{{dows}}" as="d" hint-placeholder-count="7">
+              <span style="font-size: 12px; font-weight: 600; color: #4a4538; padding-bottom: 4px;">{{d}}</span>
+            </sc-for>
+            <sc-for list="{{mini}}" as="m" hint-placeholder-count="42">
+              <span style="{{m.cell}}">
+                <span style="{{m.num}}">{{m.n}}</span>
+                <span style="display: flex; gap: 2px; height: 5px;">
+                  <sc-for list="{{m.dots}}" as="dot" hint-placeholder-count="1"><span aria-hidden="true" style="{{dot}}"></span></sc-for>
+                </span>
+              </span>
+            </sc-for>
+          </div>
+        </section>
+
+        <section aria-labelledby="busy-h" style="padding: 18px; border-radius: 16px; background: #fbf3e9; border: 1px solid #ecd6bd; display: flex; flex-direction: column; gap: 8px;">
+          <h2 id="busy-h" style="margin: 0; font-family: 'Aleo', Georgia, serif; font-size: 18px; font-weight: 600;">Busiest week: Mar 30 – Apr 5</h2>
+          <p style="margin: 0; font-size: 14px; line-height: 1.5; color: #4a4538;">3 due, 2 of them exams.</p>
+          <a href="#" style="font-size: 14px; font-weight: 600;">Prepare for MA 123 Midterm</a>
+        </section>
+
+        <section aria-labelledby="g-h" style="padding: 18px; border-radius: 16px; border: 1px dashed rgba(42,39,31,0.22); display: flex; flex-direction: column; gap: 8px;">
+          <h2 id="g-h" style="margin: 0; font-size: 15px; font-weight: 600;">Google Calendar</h2>
+          <p style="margin: 0; font-size: 14px; line-height: 1.5; color: #4a4538;">See your classes beside these dates.</p>
+          <button type="button" style="align-self: flex-start; height: 36px; padding: 0 14px; border-radius: 9px; border: 1px solid rgba(42,39,31,0.18); background: #fdfcf9; font: inherit; font-size: 14px; font-weight: 600; color: #1a1814;">Connect</button>
+        </section>
+      </aside>
+    </div>
+  </main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":980}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const COURSES = { 'CS 112': '#3a6ea5', 'MA 123': '#b5602a', 'BI 108': '#2e7a6f', 'WR 120': '#7b4f93' };
+    const sw = (code, size) => `width: ${size}px; height: ${size}px; border-radius: 3px; background: ${COURSES[code]}; display: inline-block;`;
+    const segBase = 'height: 36px; padding: 0 16px; border-radius: 9px; border: 0; font: inherit; font-size: 14px; font-weight: 600;';
+    const views = ['Agenda', 'Month', 'Week', 'Semester'].map((label, i) => ({
+      label, on: i === 0 ? 'true' : 'false',
+      style: segBase + (i === 0 ? ' background: #ffffff; color: #1a1814; box-shadow: 0 1px 2px rgba(42,39,31,0.18);' : ' background: transparent; color: #4a4538;'),
+    }));
+    const TYPE = {
+      Exam: 'display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; border-radius: 6px; background: #f7e6d8; color: #7a4220; font-weight: 600;',
+      Quiz: 'display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; border-radius: 6px; background: #dfe9ef; color: #3a6984; font-weight: 600;',
+      Homework: 'display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; border-radius: 6px; background: #efebe1; color: #1a1814; font-weight: 600;',
+    };
+    const item = (dow, day, title, course, type, when, soon, ready, total) => {
+      const exam = type === 'Exam';
+      return {
+        dow, day, title, course, type, when,
+        swatch: sw(course, 10), typeStyle: TYPE[type],
+        exam, ready, total,
+        readyText: exam ? `${ready} of ${total} concepts ready` : '',
+        fill: exam ? `display: block; height: 100%; width: ${Math.round((ready / total) * 100)}%; background: #445D22;` : '',
+        whenStyle: 'font-size: 14px; font-weight: 600; min-width: 84px; text-align: right;' + (soon ? ' color: #8a3b12;' : ' color: #4a4538;'),
+        rowStyle: 'display: flex; align-items: center; gap: 18px; padding: 12px 16px; border-radius: 14px; border: 1px solid ' + 'rgba(42,39,31,0.10); background: #fdfcf9;',
+      };
+    };
+    const groups = [
+      { name: 'This week', range: 'Mar 9 – 15', items: [
+        item('THU', '12', 'HW 7: Hash tables', 'CS 112', 'Homework', 'Tomorrow', true),
+        item('FRI', '13', 'Quiz 4', 'MA 123', 'Quiz', 'In 2 days', true),
+      ] },
+      { name: 'Next week', range: 'Mar 16 – 22', items: [
+        item('MON', '16', 'Lab report 3', 'BI 108', 'Homework', 'In 5 days'),
+        item('WED', '18', 'Essay draft', 'WR 120', 'Homework', 'In 7 days'),
+        item('FRI', '20', 'Midterm 2', 'CS 112', 'Exam', 'In 9 days', false, 5, 8),
+      ] },
+      { name: 'Later', range: 'Mar 23 – Apr 5', items: [
+        item('TUE', '24', 'HW 8: Trees', 'CS 112', 'Homework', 'In 13 days'),
+        item('MON', '30', 'Midterm', 'MA 123', 'Exam', 'In 19 days', false, 2, 6),
+      ] },
+    ];
+    // Mini month, Monday first: Feb 23 .. Apr 5
+    const due = { 2: ['CS 112'], 12: ['CS 112'], 13: ['MA 123'], 16: ['BI 108'], 18: ['WR 120'], 20: ['CS 112'], 24: ['CS 112'], 26: ['MA 123'], 30: ['MA 123'], 31: ['CS 112'] };
+    const mini = [];
+    for (let i = 0; i < 42; i++) {
+      let n, inMonth = true;
+      if (i < 6) { n = 23 + i; inMonth = false; } else if (i - 5 <= 31) { n = i - 5; } else { n = i - 36; inMonth = false; }
+      const today = inMonth && n === 11;
+      const dots = (inMonth && due[n] ? due[n] : (!inMonth && i >= 37 && n === 1 ? ['BI 108'] : [])).map((c) => `width: 5px; height: 5px; border-radius: 999px; background: ${COURSES[c]};`);
+      mini.push({
+        n,
+        dots,
+        cell: 'height: 36px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;',
+        num: 'width: 24px; height: 24px; border-radius: 999px; display: inline-flex; align-items: center; justify-content: center; font-size: 13px;' +
+          (today ? ' background: #445D22; color: #ffffff; font-weight: 700;' : inMonth ? ' color: #1a1814;' : ' color: #6e675a;'),
+      });
+    }
+    return { views, groups, mini, dows: ['M', 'T', 'W', 'T', 'F', 'S', 'S'] };
+  }
+}
+</script>
+</body>
+</html>

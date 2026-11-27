@@ -564,6 +564,13 @@ distinguishable from a genuinely empty calendar).
 | `calendar-load-error` | the load-failure banner (`role="alert"`) rendered instead of the calendar views when the initial assignments/courses fetch fails |
 | `calendar-load-retry` | the banner's "Try again" button — re-runs the load through the skeleton state |
 | `calendar-import-syllabus` | the header's "Import syllabus" button, which opens the upload modal (`upload-modal`) |
+| `calendar-v2` (`data-view` = `agenda` / `month` / `week` / `semester`) | `calendar_v2` on (`calendar/v2/CalendarV2.tsx`): the redesigned calendar's page; `calendar-view-{agenda,month,week,semester}` its view switch, `calendar-more` / `calendar-more-menu` / `calendar-add-date` the More menu, `calendar-courses` the course filter's dropdown button (`aria-expanded`) and `calendar-courses-menu` its list: `calendar-course-all` (`aria-pressed`) and `calendar-course-{courseId}` (a checkbox, checked = shown), `calendar-period` / `calendar-prev` / `calendar-today` / `calendar-next` a period's title, then its arrows and Today |
+| `calendar-agenda` / `calendar-group-calendar-{this,next,later,earlier}-h` / `calendar-item-{id}` (`data-kind`) / `calendar-prepare-{id}` / `calendar-earlier` | `calendar_v2`, Agenda: the list, each week's group, each item's row (its title button opens the panel), an upcoming exam's Prepare (with `milestones`), and the button that shows past dates |
+| `calendar-mini` / `calendar-busiest` / `calendar-google-card` | `calendar_v2`, Agenda's side column: the small month (a day opens its week), the busiest week ahead, Google Calendar |
+| `calendar-month` / `calendar-week` / `calendar-day-{YYYY-MM-DD}` (`aria-current="date"` today) / `calendar-pill-{id}` | `calendar_v2`, Month and Week: the grid, each day, each item's pill (opens the panel) |
+| `calendar-semester` / `calendar-week-load` / `calendar-mark-{id}` | `calendar_v2`, Semester: the timeline, each week's load, each item's mark (opens the panel) |
+| `calendar-panel` / `calendar-panel-close` / `calendar-panel-readiness` / `calendar-panel-prepare` / `calendar-panel-study-guide` / `calendar-panel-edit` / `calendar-panel-form` / `calendar-field-{title,date,type,course}` / `calendar-panel-save` / `calendar-panel-google` / `calendar-panel-delete` | `calendar_v2`: an item opened (or a new date): its readiness and ways to prepare (an exam, with `milestones`), Edit and its form, Save, Add to Google Calendar (connected), Delete (click twice) |
+| `calendar-empty` / `calendar-empty-import` / `calendar-empty-add` | `calendar_v2`, nothing on the calendar: the empty state and its Import a syllabus and Add a date yourself |
 
 ### `gradebook`
 

@@ -247,7 +247,7 @@
   },
   "src/components/screens/Calendar.tsx": {
     "no-restricted-syntax": {
-      "count": 19
+      "count": 18
     }
   },
   "src/components/screens/Dashboard.tsx": {

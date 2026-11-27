@@ -8,7 +8,6 @@ import { useMotionPresets, type MotionPreset } from "@/lib/motion";
 import styles from "./Calendar.module.css";
 import { TopBar } from "../TopBar";
 import { Icon } from "../Icon";
-import { useOverlayBehaviour } from "@/components/Dialog";
 import { Toggle } from "@/components/ui";
 import { CustomSelect } from "../CustomSelect";
 import { DocumentUploadModal } from "../DocumentUploadModal";
@@ -34,6 +33,9 @@ import {
 import { now } from "@/lib/testMode";
 import { humanizeError } from "@/lib/errorMessage";
 import { CALENDAR_ERROR_PARAM, calendarConnectError } from "@/lib/calendarConnect";
+import { useFlag } from "@/context/FlagsContext";
+import { CalendarV2 } from "../calendar/v2/CalendarV2";
+import { GOOGLE_EVENTS_DAYS, GoogleEventsModal } from "../calendar/GoogleEventsModal";
 
 // lib/motion types a preset's `initial` as TargetAndTransition, which
 // motion.div's `initial` prop does not accept as written; the values are the
@@ -51,12 +53,8 @@ const TYPE_COLOR: Record<string, string> = {
   other: "var(--text-muted)",
 };
 
-/** How far ahead "View Google events" looks, in days (the modal's copy says it too). */
-const GOOGLE_EVENTS_DAYS = 60;
 /** A syllabus's assignments land after the upload returns; reload once more after this. */
 const SYLLABUS_RELOAD_DELAY_MS = 1500;
-/** A Google event's description is cut to this many characters in the modal. */
-const DESCRIPTION_PREVIEW_CHARS = 140;
 /** Assignments a month cell lists before "+N more". */
 const MONTH_ITEMS_SHOWN = 3;
 /** Six weeks of seven days: every month fits. */
@@ -95,6 +93,7 @@ export function Calendar() {
   const { userId, userReady } = useUser();
   // The view-swap fade/rise; already opacity-only under reduced motion.
   const m = useMotionPresets();
+  const v2 = useFlag("calendar_v2") === "on";
 
   const [assignments, setAssignments] = React.useState<Assignment[]>([]);
   const [courses, setCourses] = React.useState<EnrolledCourse[]>([]);
@@ -309,10 +308,16 @@ export function Calendar() {
 
   return (
     <div className={styles.screen}>
+      {v2 && !loading && !loadError ? (
+        <CalendarV2 assignments={assignments} courses={courses} now={new Date(now())} googleConnected={googleConnected}
+          importingGoogle={importingGoogle} disconnectArmed={disconnectConfirm.armed} onImportSyllabus={() => setUploadOpen(true)}
+          onConnectGoogle={connect} onSyncGoogle={doSync} onViewGoogleEvents={doImport} onDisconnectGoogle={disconnectConfirm.trigger}
+          onExportCsv={exportCsv} onReload={() => void load()} />
+      ) : (<>
       <TopBar
         title="Calendar"
         subtitle={`${rangeLabel} · ${assignments.length} assignment${assignments.length === 1 ? "" : "s"}`}
-        actions={topActions}
+        actions={v2 ? undefined : topActions}
       />
 
       {/* Rise the body in when the view, range or load state changes (not on
@@ -346,6 +351,7 @@ export function Calendar() {
           )}
         </motion.div>
       </AnimatePresence>
+      </>)}
 
       <DocumentUploadModal
         open={uploadOpen}
@@ -395,79 +401,6 @@ function LoadErrorBanner({ message, onRetry }: { message: string; onRetry: () =>
         </button>
       </div>
     </div>
-  );
-}
-
-function GoogleEventsModal({
-  events, onClose,
-}: {
-  events: GoogleEvent[];
-  onClose: () => void;
-}) {
-  // Dialog's modal engine (scroll lock, focus, Escape, Tab trap), own chrome.
-  const { panelRef, onKeyDown } = useOverlayBehaviour({ open: true, onClose });
-
-  const m = useMotionPresets();
-  return (
-    <motion.div
-      onClick={onClose}
-      onKeyDown={onKeyDown}
-      className={styles.scrim}
-      {...asProps(m.fade)}
-    >
-      <motion.div
-        ref={panelRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="google-events-title"
-        onClick={e => e.stopPropagation()}
-        className={styles.modal}
-        {...asProps(m.scaleIn)}
-      >
-        <div className={styles.modalHead}>
-          <div id="google-events-title" className="label-micro">Upcoming Google Calendar events</div>
-          <button className="btn btn--sm btn--ghost" onClick={onClose} aria-label="Close">
-            <Icon name="x" size={12} /> Close
-          </button>
-        </div>
-        <div className={styles.modalBody}>
-          {events.length === 0 ? (
-            <div className={styles.modalEmpty}>No upcoming events in the next {GOOGLE_EVENTS_DAYS} days.</div>
-          ) : (
-            <motion.div
-              className={styles.eventList}
-              variants={m.list.container}
-              initial="hidden"
-              animate="shown"
-            >
-              {events.map(e => (
-                <motion.div key={e.google_event_id} className={`card ${styles.event}`} variants={m.list.item}>
-                  <div className={styles.eventHead}>
-                    <div className={styles.eventTitle}>{e.title}</div>
-                    <span className={`chip ${styles.eventTime}`}>
-                      {e.all_day ? "All day" : e.start_datetime?.slice(11, 16) || ""}
-                    </span>
-                  </div>
-                  <div className={styles.eventWhen}>
-                    {e.start_date} {e.end_date && e.end_date !== e.start_date ? `→ ${e.end_date}` : ""}
-                    {e.location ? ` · ${e.location}` : ""}
-                  </div>
-                  {e.description && (
-                    <div className={styles.eventDesc}>
-                      {e.description.length > DESCRIPTION_PREVIEW_CHARS
-                        ? e.description.slice(0, DESCRIPTION_PREVIEW_CHARS) + "…"
-                        : e.description}
-                    </div>
-                  )}
-                  {e.html_link && (
-                    <a href={e.html_link} target="_blank" rel="noreferrer" className={styles.eventLink}>
-                      Open in Google Calendar →
-                    </a>
-                  )}
-                </motion.div>
-              ))}
-            </motion.div>
-          )}
-        </div>
-      </motion.div>
-    </motion.div>
   );
 }
 
