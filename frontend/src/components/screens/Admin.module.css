@@ -1,0 +1,465 @@
+@layer components {
+/* The Admin console (Admin.tsx): its tab strip and the Users, Roles,
+   Cosmetics, Analytics, Audit and Feedback tabs. The other tabs
+   (Allowlist, Email, Flags, Achievements) style themselves. */
+
+.root {
+  /* Layout widths and boxes with no design token: the lead line's measure,
+     the search box, a filter field, a cell's clip width, the payload cell,
+     and the sizes of a few fixed marks. */
+  --admin-lead-measure: 680px;
+  --admin-search-w: 300px;
+  --admin-filter-w: 220px;
+  --admin-clip-w: 240px;
+  --admin-payload-w: 360px;
+  --admin-thumb: 28px;
+  --admin-asset-preview-h: 56px;
+  --admin-color-input-h: 36px;
+  --admin-dot: 10px;
+  --admin-spark-h: 80px;
+  /* A form field's vertical inset: 7px, between --sp-3 and --sp-4; kept so
+     fields line up with the shared admin fields (adminStyles.ts). */
+  --admin-field-pad-y: 7px;
+  /* The "draft" tag on the preview badge: smaller than --fs-2xs on purpose,
+     it sits on the badge's corner. */
+  --admin-draft-tag-fs: var(--fs-2xs);
+}
+
+/* ── Shell ─────────────────────────────────────────────────────────── */
+
+.denied {
+  padding: calc(var(--sp-28) + var(--sp-2));
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.tabs {
+  display: flex;
+  gap: var(--sp-2);
+  padding: var(--sp-6) var(--sp-16);
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+}
+
+.tab {
+  padding: var(--sp-4) var(--sp-8);
+  font-size: var(--fs-md);
+  font-weight: 400;
+  color: var(--text-dim);
+  border-bottom: 2px solid transparent;
+  text-transform: capitalize;
+  white-space: nowrap;
+  transition:
+    color var(--dur-fast) var(--ease),
+    border-color var(--dur) var(--ease-out);
+}
+.tab:hover { color: var(--text); }
+.tabActive {
+  font-weight: 600;
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+
+.body { padding: var(--sp-12) var(--sp-16); }
+
+/* ── Shared pieces ─────────────────────────────────────────────────── */
+
+.lead {
+  font-size: var(--fs-base);
+  margin-bottom: var(--sp-11);
+  color: var(--text-dim);
+  max-width: var(--admin-lead-measure);
+}
+.strong { color: var(--text); }
+.muted { color: var(--text-muted); }
+.dim { color: var(--text-dim); }
+.italicMuted { font-style: italic; color: var(--text-muted); }
+
+.flush { padding: 0; }
+.padded { padding: var(--pad-lg); }
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-6);
+  padding: var(--sp-6) var(--sp-8);
+  border-bottom: 1px solid var(--border);
+}
+
+.field {
+  width: 100%;
+  padding: var(--admin-field-pad-y) var(--sp-5);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  font-size: var(--fs-md);
+  background: var(--bg-input);
+  font-family: inherit;
+  transition: border-color var(--dur-fast) var(--ease);
+}
+.field:hover { border-color: var(--border-strong); }
+.filterField { max-width: var(--admin-filter-w); }
+.colorField {
+  height: var(--admin-color-input-h);
+  padding: var(--sp-1);
+}
+.grow { flex: 1; min-width: 0; }
+
+.search {
+  position: relative;
+  flex: 1;
+  max-width: var(--admin-search-w);
+}
+.searchIcon {
+  position: absolute;
+  left: var(--sp-5);
+  top: var(--sp-4);
+  color: var(--text-muted);
+}
+.searchField { padding-left: var(--sp-16); }
+
+.scrollX { overflow-x: auto; }
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--fs-md);
+}
+.theadRow { background: var(--bg-subtle); }
+.th {
+  text-align: left;
+  padding: var(--sp-5) var(--sp-8);
+  font-weight: 500;
+  font-size: var(--fs-md);
+  color: var(--text-muted);
+}
+.row {
+  border-top: 1px solid var(--border);
+  transition: background-color var(--dur-fast) var(--ease);
+}
+.row:hover { background: var(--bg-subtle); }
+.td { padding: var(--sp-5) var(--sp-8); }
+.nowrap { white-space: nowrap; }
+.actionsCell { text-align: right; white-space: nowrap; }
+.mono { font-family: var(--font-code); }
+.monoSm { font-family: var(--font-code); font-size: var(--fs-sm); }
+.payload {
+  font-family: var(--font-code);
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+  max-width: var(--admin-payload-w);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.targetId { margin-left: var(--sp-3); }
+
+.pager {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--sp-5) var(--sp-8);
+  border-top: 1px solid var(--border);
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+.pagerButtons { display: flex; gap: var(--sp-3); }
+
+.cardHead {
+  padding: var(--sp-6) var(--sp-8);
+  border-bottom: 1px solid var(--border);
+}
+.cardHeadBold { font-weight: 600; }
+.empty {
+  padding: var(--sp-14);
+  text-align: center;
+  color: var(--text-muted);
+  font-size: var(--fs-md);
+}
+.note { font-size: var(--fs-sm); color: var(--text-muted); }
+
+.labelGap { margin-bottom: var(--sp-5); }
+.labelGapTop { margin-top: var(--sp-9); margin-bottom: var(--sp-5); }
+
+/* ── Users ─────────────────────────────────────────────────────────── */
+
+.userCell {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-5);
+}
+/* One-line, ellipsized cell text: a long name or email (or an unreadable
+   ciphertext blob) must not stretch its column and push the actions off-card. */
+.clip {
+  display: block;
+  min-width: 0;
+  max-width: var(--admin-clip-w);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.name { font-weight: 500; }
+
+.roleList {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+}
+.roleItem {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+}
+.revoke {
+  color: var(--text-muted);
+  padding: var(--sp-1) var(--sp-2);
+  border-radius: var(--r-xs);
+  transition: color var(--dur-fast) var(--ease), background-color var(--dur-fast) var(--ease);
+}
+.revoke:hover { color: var(--err); background: var(--err-soft); }
+.assign {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+/* Over .btn--sm's size: an element+class selector outranks the global class. */
+button.addRole { font-size: var(--fs-xs); }
+
+.dialogBody {
+  margin: 0 0 var(--sp-12);
+  color: var(--text-dim);
+  font-size: var(--fs-base);
+  line-height: 1.55;
+}
+.dialogActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--sp-5);
+}
+
+/* ── Roles ─────────────────────────────────────────────────────────── */
+
+.hint {
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+  margin-top: var(--sp-2);
+}
+.checks {
+  display: flex;
+  gap: var(--sp-6);
+  margin-top: var(--sp-3);
+}
+.checkLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-3);
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+}
+.submit {
+  margin-top: var(--sp-7);
+  width: 100%;
+}
+
+.preview {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-6);
+  padding: var(--sp-7);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--bg-subtle);
+}
+.badges {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--sp-2) var(--sp-3);
+}
+.previewName { font-weight: 600; font-size: var(--fs-base); }
+.handle {
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+  margin-top: var(--sp-1);
+}
+.draftWrap { position: relative; display: inline-flex; }
+.draftTag {
+  position: absolute;
+  top: calc(-1 * var(--sp-3));
+  right: calc(-1 * var(--sp-3));
+  font-size: var(--admin-draft-tag-fs);
+  font-weight: 600;
+  padding: var(--sp-1) var(--sp-2);
+  border-radius: var(--r-xs);
+  background: var(--accent);
+  color: var(--text-on-fill);
+}
+
+.labeled { margin-bottom: var(--sp-5); }
+.labeledLabel { margin-bottom: var(--sp-2); }
+
+/* ── Cosmetics ─────────────────────────────────────────────────────── */
+
+.assetRow { display: flex; gap: var(--sp-3); }
+.hiddenInput { display: none; }
+.assetPreview {
+  max-height: var(--admin-asset-preview-h);
+  margin-top: var(--sp-3);
+  border-radius: var(--r-sm);
+  border: 1px solid var(--border);
+}
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-7);
+}
+.groupHead {
+  display: flex;
+  justify-content: space-between;
+  padding: var(--sp-5) var(--sp-8);
+  border-bottom: 1px solid var(--border);
+}
+/* Labels are sentence case now (#928): kept only until the TSX stops naming it. */
+.uppercase { }
+.count { font-size: var(--fs-xs); color: var(--text-muted); }
+.emptySmall {
+  padding: var(--sp-8);
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+  text-align: center;
+}
+.thumb {
+  width: var(--admin-thumb);
+  height: var(--admin-thumb);
+  border-radius: var(--r-sm);
+  object-fit: cover;
+  border: 1px solid var(--border);
+}
+/* A name colour's sample: its own CSS value (a colour or a gradient) as the
+   fill, set per row through --sample-fill. */
+.sample {
+  padding: var(--sp-1) var(--sp-3);
+  font-size: var(--fs-2xs);
+  border-radius: var(--r-sm);
+  background: var(--sample-fill);
+  color: var(--text-on-fill);
+  border: 1px solid var(--border);
+}
+.glyph { font-size: var(--fs-lg); }
+.nameLine {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+}
+.bold { font-weight: 600; }
+.nameLine .rarity { font-size: var(--fs-sm); }
+.linkLabel { margin-bottom: var(--sp-3); }
+.chipRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-3);
+}
+.linkChip {
+  cursor: pointer;
+  transition:
+    background-color var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
+}
+.chipRow .linkChipOff { border: 1px dashed var(--border); }
+.chipRow .linkChipOff:hover { border-color: var(--border-strong); }
+
+/* ── Catalog rows (roles, cosmetics) ───────────────────────────────── */
+
+.catRow {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-6);
+  padding: var(--sp-5) var(--sp-8);
+  border-top: 1px solid var(--border);
+}
+.shrink0 { flex-shrink: 0; }
+.catMiddle { font-size: var(--fs-md); }
+.catSub {
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+  margin-top: var(--sp-1);
+}
+/* Armed for a second click: holds over .btn:hover and .btn--danger. */
+.deleteBtn.armed,
+.deleteBtn.armed:hover {
+  background: var(--err-soft);
+  color: var(--err);
+}
+.deleteBtn {
+  transition: background-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+.expanded {
+  padding: var(--sp-5) var(--sp-8) var(--sp-7) var(--sp-28);
+  border-top: 1px dashed var(--border);
+  background: var(--bg-subtle);
+}
+
+/* ── Analytics ─────────────────────────────────────────────────────── */
+
+.analytics {
+  display: grid;
+  gap: var(--sp-7);
+}
+.metricValue {
+  font-size: var(--fs-5xl);
+  margin-top: var(--sp-2);
+  color: var(--text);
+  transition: color var(--dur) var(--ease);
+}
+.metricAccent { color: var(--accent); }
+.metricWarn { color: var(--warn); }
+
+.spark {
+  display: block;
+  width: 100%;
+  height: var(--admin-spark-h);
+}
+
+.roleCountRow {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-6);
+  padding: var(--sp-5) var(--sp-8);
+  border-top: 1px solid var(--border);
+  font-size: var(--fs-md);
+}
+/* The role's own colour (data), set per row through --dot-fill. */
+.dot {
+  display: inline-block;
+  width: var(--admin-dot);
+  height: var(--admin-dot);
+  border-radius: var(--r-xs);
+  background: var(--dot-fill);
+  border: 1px solid var(--border);
+}
+.roleCountName { flex: 1; font-weight: 500; }
+.roleCount { font-family: var(--font-sans); font-variant-numeric: tabular-nums; color: var(--text-dim); }
+
+/* ── Feedback ──────────────────────────────────────────────────────── */
+
+.feedbackCard { margin-bottom: var(--sp-11); }
+.emptyDim { padding: var(--sp-8); color: var(--text-dim); }
+.fbRow {
+  padding: var(--sp-6) var(--sp-8);
+  border-bottom: 1px solid var(--border);
+}
+.fbMeta {
+  display: flex;
+  gap: var(--sp-6);
+  color: var(--text-dim);
+  font-size: var(--fs-md);
+}
+.fbText { margin-top: var(--sp-3); }
+.fbOptions {
+  margin-top: var(--sp-2);
+  font-size: var(--fs-md);
+  color: var(--text-dim);
+}
+
+}

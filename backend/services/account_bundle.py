@@ -22,6 +22,18 @@ differ in exactly the ways that make a row-for-row copy wrong:
 - **No chunks.** `course_chunks` never moves: documents import as
   `index_status='pending'` so the target re-indexes them under its own key and
   its own visibility rules (`shareability` travels, so the decision does too).
+- **No check items.** The learning loop's course assets (`check_items` and
+  their review/audit/draft records) are the course's, generated per
+  environment, and never move. The student's own loop rows do (learner state,
+  misconceptions and their attempts, evidence voids, post-tests, the help
+  ledger, teach-prompt records); a `check_item_id` they carry is the
+  source's id, as on `node_mastery_events`, and items are matched by
+  `(course_id, question_hash)` wherever the loop needs one. Their abstract
+  `course_id` is remapped like `graph_nodes.course_id`.
+- **Ciphertext inside JSON.** `sessions.loop_state` holds two encrypted values
+  inside its JSON (a goal's `text_encrypted`, a pending `grade_checkpoint`);
+  they are decrypted and re-encrypted like a 🔒 column (`NESTED_ENCRYPTED`),
+  and the sweep below looks inside every JSON value, not only at the top.
 
 Rows are exported with `select=*` rather than a column allowlist, so a new
 plaintext column travels without a code change. The risk of that is a NEW 🔒
@@ -41,11 +53,21 @@ preserved — the target's copies of them were just wiped.
 Never copied: OAuth tokens, roles, social (rooms/friendships), telemetry
 (events/llm_usage), feedback/issue reports, gradescope links (credentials do not
 move), cosmetics (`equipped_*`/`featured_*` ids), `avatar_url` (storage buckets
-differ), `course_chunks`, in-flight staging (`document_uploads`, `gradescope_syncs`,
-`tutor_pending_sessions`: wiped, never bundled), `legal_acceptances` (kept by the
-wipe and never bundled: a consent record belongs to the account in the
-environment where it was given, never to another environment's account), and
-every privacy/consent/notification choice in
+differ), `course_chunks`, `check_items`, in-flight staging (`document_uploads`,
+`gradescope_syncs`, `tutor_pending_sessions`: wiped, never bundled),
+`legal_acceptances` (kept by the wipe and never bundled: a consent record
+belongs to the account in the environment where it was given, never to another
+environment's account), the loop's per-environment bookkeeping
+(`learning_evidence_operations`, wiped, never bundled: idempotency receipts of
+evidence commits whose fingerprints bind the source's course id, so they could
+never replay on the target — the evidence itself travels in
+`node_mastery_events` and `learner_state`), `check_item_reports` (wiped,
+never bundled: a report is feedback on a course item of THIS environment —
+items are matched by `(course_id, question_hash)` and never move — and a
+quarantine it helped reach is recorded on the item, not in the report),
+`ai_tutor_daily_calls` (wiped, never bundled: a per-day count the daily cap
+of THIS environment reads), the checklist budget ledger (kept by the wipe,
+never bundled: spend records), and every privacy/consent/notification choice in
 `user_settings` (see `_SETTINGS_COPIED`): consent is the person's, given on
 each environment, and is never carried from one to the other — the Terms and
 Privacy Policy accepted on one environment included. The imported
@@ -76,7 +98,9 @@ from services.xp_service import idempotency_key as xp_idempotency_key
 
 logger = logging.getLogger(__name__)
 
-BUNDLE_VERSION = 1
+#: 2: the learning loop's tables. A version-1 bundle carries none of them, and
+#: importing it would wipe the target's loop rows without replacing them.
+BUNDLE_VERSION = 2
 
 
 class BundleError(ValueError):
@@ -111,6 +135,7 @@ JSON = "json"
 _ENCRYPTED_TABLES = (
     "user_profiles", "assignments", "topic_checklists", "documents", "notes", "flashcards",
     "sessions", "messages", "study_guides", "quiz_attempts", "quiz_responses", "quiz_context",
+    "misconceptions", "learning_prequestions", "learning_self_explanations", "tutor_saved_items",
 )
 
 ENCRYPTED: dict[str, dict[str, str]] = {
@@ -119,6 +144,21 @@ ENCRYPTED: dict[str, dict[str, str]] = {
         for spec in encryption.ENCRYPTED_COLUMNS if spec.table == name
     }
     for name in _ENCRYPTED_TABLES
+}
+
+#: Encrypted values INSIDE a JSON column: table -> column -> object key -> the
+#: path its binding names (`encryption.NESTED_CIPHERTEXTS`). Each is a TEXT
+#: ciphertext wherever the key sits in the document. `sessions.loop_state`: a
+#: goal's prose (learning/goals.py), a pending grade checkpoint
+#: (learning/grade_checkpoint.py, its JSON sealed whole), and a free/teachback
+#: reason-before-submit (learning/check_reason.py; never evidence), all bound
+#: to the session; session ids are preserved, so source and target bind alike.
+NESTED_ENCRYPTED: dict[str, dict[str, dict[str, str]]] = {
+    "sessions": {"loop_state": {
+        "text_encrypted": "goal.text_encrypted",
+        "grade_checkpoint": "grade_checkpoint",
+        "reasoning_encrypted": "reasoning_encrypted",
+    }},
 }
 
 # base64(nonce || ciphertext || tag): 12-byte nonce + 16-byte GCM tag at least.
@@ -212,29 +252,68 @@ def _encrypt(kind: str, value: Any, binding: encryption.Binding) -> Any:
     return encryption.encrypt_if_present(value, bind=binding)
 
 
+def _strings(value: Any, path: str, skip_keys: Iterable[str]) -> Iterator[tuple[str, str]]:
+    """(path, string) for every string in a JSON value, except under `skip_keys`."""
+    if isinstance(value, str):
+        yield path, value
+    elif isinstance(value, dict):
+        for key, item in value.items():
+            if key not in skip_keys:
+                yield from _strings(item, f"{path}.{key}", skip_keys)
+    elif isinstance(value, list):
+        for i, item in enumerate(value):
+            yield from _strings(item, f"{path}[{i}]", skip_keys)
+
+
 def _assert_no_unlisted_ciphertext(table_name: str, row: dict, listed: Iterable[str]) -> None:
-    """Refuse a string that decrypts under our key in a column not in ENCRYPTED.
+    """Refuse our ciphertext anywhere ENCRYPTED and NESTED_ENCRYPTED do not
+    name — a top-level column, or a value inside a JSON column.
 
     AES-GCM authenticates, so a successful decrypt is proof the value is our
     ciphertext — this has no false positives. It is what keeps `select=*` safe
-    when a new 🔒 column lands without an `ENCRYPTED` entry. A v2 value
-    (`enc2:` envelope) is ciphertext by its prefix alone: opening it would need
-    the binding of a column nobody listed, so it is not attempted.
+    when a new 🔒 column (or a new encrypted field inside a JSON document)
+    lands without an entry. A v2 value (`enc2:` envelope) is ciphertext by its
+    prefix alone: opening it would need the binding of a cell nobody listed,
+    so it is not attempted.
     """
     skip = set(listed)
+    nested = NESTED_ENCRYPTED.get(table_name, {})
     for column, value in row.items():
-        if column in skip or not isinstance(value, str) or not _looks_like_ciphertext(value):
+        if column in skip:
             continue
-        if not encryption.is_v2(value):
-            try:
-                # The legacy v1 shape: unbound, so the v1 path (no AAD).
-                encryption.decrypt(value)
-            except Exception:
+        for path, text in _strings(value, column, nested.get(column, {})):
+            if not _looks_like_ciphertext(text):
                 continue
-        raise BundleError(
-            f"{table_name}.{column} holds ciphertext but is not in account_bundle.ENCRYPTED; "
-            "add it there before copying accounts"
-        )
+            if not encryption.is_v2(text):
+                try:
+                    # The legacy v1 shape: unbound, so the v1 path (no AAD).
+                    encryption.decrypt(text)
+                except Exception:
+                    continue
+            raise BundleError(
+                f"{table_name}.{path} holds ciphertext but is not in account_bundle.ENCRYPTED "
+                "or NESTED_ENCRYPTED; add it there before copying accounts"
+            )
+
+
+def _map_nested(value: Any, keys: Iterable[str], fn) -> Any:
+    """`value` with `fn(key, v)` applied to every non-null value under `keys`."""
+    if isinstance(value, dict):
+        return {
+            k: (fn(k, v) if k in keys and v is not None else _map_nested(v, keys, fn))
+            for k, v in value.items()
+        }
+    if isinstance(value, list):
+        return [_map_nested(v, keys, fn) for v in value]
+    return value
+
+
+def _nested_binding(table_name: str, column: str, path: str, row: dict,
+                    where: str) -> encryption.Binding:
+    try:
+        return encryption.nested_bind(table_name, column, path, row.get("id"))
+    except (encryption.UnknownColumn, encryption.MissingRowKey) as exc:
+        raise BundleError(f"{where}: {exc}") from exc
 
 
 # ── What moves ───────────────────────────────────────────────────────────────
@@ -259,6 +338,14 @@ SPECS: tuple[_Spec, ...] = (
     _Spec("graph_nodes"),
     _Spec("graph_edges"),
     _Spec("node_mastery_events", key="node_id", parent="graph_nodes"),
+    # The learning loop's per-node rows: after the nodes and the evidence
+    # journal they reference (learning_evidence_voids.event_id is a FK to
+    # node_mastery_events).
+    _Spec("learner_state", order="node_id"),
+    _Spec("misconceptions"),
+    _Spec("misconception_attempts", key="misconception_id", parent="misconceptions"),
+    _Spec("learning_evidence_voids", key="event_id", parent="node_mastery_events",
+          order="event_id"),
     # Before documents: documents.folder_id references document_folders.
     # No 🔒 column (`name` is a plaintext label, like flashcard_sets.name);
     # `course_id` is remapped (_COURSE_TABLES).
@@ -278,8 +365,15 @@ SPECS: tuple[_Spec, ...] = (
     # (_COURSE_TABLES); `exam_id` names an assignment and travels unchanged,
     # like study_guides.exam_id, because row ids are preserved.
     _Spec("flashcard_sets"),
+    # The Tutor's course setup: concepts the student removed from a course.
+    # No 🔒 column (concept_key is a plaintext normalized name, like
+    # graph_nodes.concept_name); `course_id` is remapped (_COURSE_TABLES).
+    _Spec("course_concept_exclusions"),
     _Spec("sessions"),
     _Spec("messages", key="session_id", parent="sessions"),
+    # The Tutor's Saved tab: after the sessions it references (row ids are
+    # preserved); 🔒 title/content re-sealed per row; `course_id` remapped.
+    _Spec("tutor_saved_items"),
     # `exam_id` (an assignment), `material_ids` (documents) and the
     # `document:<id>` source ids inside the content travel unchanged, because
     # row ids are preserved.
@@ -289,13 +383,39 @@ SPECS: tuple[_Spec, ...] = (
     _Spec("quiz_context"),
     _Spec("xp_events"),
     _Spec("user_achievements", order="achievement_id"),
+    # The rest of the learning loop: post-tests, the help ledger, quiz
+    # evidence claims, item reports and the teach-prompt records.
+    _Spec("posttest_poses", order="node_id,window_days"),
+    _Spec("posttest_skips", order="node_id,window_days"),
+    _Spec("quiz_evidence_claims", order="question_hash"),
+    _Spec("learning_reveals"),
+    _Spec("learning_prequestions"),
+    _Spec("learning_self_explanations"),
 )
 
 # Tables whose rows carry an `offering_id` to remap.
 _OFFERING_TABLES = ("documents", "enrollments", "notes", "flashcards", "sessions", "study_guides")
 
 # Tables whose rows carry an abstract `course_id` to remap (by course_code).
-_COURSE_TABLES = ("graph_nodes", "flashcard_sets", "document_folders")
+_COURSE_TABLES = (
+    "graph_nodes", "flashcard_sets", "document_folders", "learning_evidence_voids", "misconception_attempts",
+    "posttest_poses", "posttest_skips", "learning_prequestions",
+    "learning_self_explanations", "document_folders", "tutor_saved_items",
+    "course_concept_exclusions",
+)
+
+# Foreign keys between bundled tables that are not covered by a parent spec
+# (child, column, parent, parent column). Import checks them BEFORE the wipe: a
+# row naming a parent the bundle does not carry would fail its insert after it.
+_BUNDLE_FKS = (
+    ("learner_state", "node_id", "graph_nodes", "id"),
+    ("misconceptions", "node_id", "graph_nodes", "id"),
+    ("learning_evidence_voids", "event_id", "node_mastery_events", "id"),
+)
+
+# Columns the database generates and refuses on insert (GENERATED ALWAYS AS
+# IDENTITY): dropped on import, the target numbers the rows itself.
+_GENERATED_ON_INSERT = {"misconception_attempts": ("id",)}
 
 USER_COUNTERS = (
     "total_xp", "level", "streak_count", "longest_streak", "onboarding_completed",
@@ -338,6 +458,7 @@ _GUIDE_CLAIM_RESET = {"generating_at": None}
 
 _IN_CHUNK = 50  # ids per `in.(…)` filter — keeps the query string bounded
 _INSERT_CHUNK = 200
+_DANGLING_SHOWN = 5  # dangling FK values quoted in a BundleError message
 
 
 def _chunks(items: list, size: int) -> Iterator[list]:
@@ -399,7 +520,8 @@ def _is_achievement_xp(row: Any) -> bool:
 
 
 def _plain(table_name: str, row: dict) -> dict:
-    """`row` with every 🔒 column strictly decrypted (and swept for strays)."""
+    """`row` with every 🔒 column, and every encrypted value inside a JSON
+    column, strictly decrypted (and swept for strays)."""
     cols = ENCRYPTED.get(table_name, {})
     _assert_no_unlisted_ciphertext(table_name, row, cols)
     out = dict(row)
@@ -410,6 +532,13 @@ def _plain(table_name: str, row: dict) -> dict:
             binding = _binding(table_name, column, row, where)
             out[column] = (_decrypt_json if kind == JSON else _decrypt_text)(
                 out[column], where, binding)
+    for column, paths in NESTED_ENCRYPTED.get(table_name, {}).items():
+        if out.get(column) is not None:
+            def _open(key, v, column=column, paths=paths):
+                where = f"{table_name}.{column}…{key} (row {rid})"
+                return _decrypt_text(
+                    v, where, _nested_binding(table_name, column, paths[key], row, where))
+            out[column] = _map_nested(out[column], paths, _open)
     return out
 
 
@@ -686,6 +815,26 @@ def _resolve_offerings(catalog: dict, course_map: dict[str, str]) -> dict[str, s
     return out
 
 
+def _grade_checkpoint_for_target(text: Any, course_map: dict) -> Any:
+    """A pending grade checkpoint (decrypted JSON text) bound to the target's
+    course: `open_checkpoint` refuses one whose course_id is not the session's,
+    and the session's course is the target's after the remap. Written exactly
+    as `grade_checkpoint.seal` writes it."""
+    if not isinstance(text, str):
+        return text
+    try:
+        checkpoint = json.loads(text)
+    except ValueError as exc:
+        raise BundleError("sessions.loop_state: a grade checkpoint is not JSON") from exc
+    if not isinstance(checkpoint, dict) or checkpoint.get("course_id") is None:
+        return text
+    src = checkpoint["course_id"]
+    if src not in course_map:
+        raise BundleError(f"sessions.loop_state: course {src} is not in the bundle's catalog")
+    checkpoint["course_id"] = course_map[src]
+    return json.dumps(checkpoint, sort_keys=True, separators=(",", ":"), allow_nan=False)
+
+
 def _target_row(name: str, row: dict, user_id: str, offering_map: dict, course_map: dict) -> dict:
     """One bundle row → the row to insert here: remapped and re-encrypted."""
     if not isinstance(row, dict):
@@ -693,6 +842,8 @@ def _target_row(name: str, row: dict, user_id: str, offering_map: dict, course_m
     out = dict(row)
     if "user_id" in out:
         out["user_id"] = user_id
+    for column in _GENERATED_ON_INSERT.get(name, ()):
+        out.pop(column, None)
     if name in _OFFERING_TABLES and out.get("offering_id") is not None:
         src = out["offering_id"]
         if src not in offering_map:
@@ -715,6 +866,13 @@ def _target_row(name: str, row: dict, user_id: str, offering_map: dict, course_m
             # Sealed AFTER the remaps: the binding names the target cell.
             where = f"{name}.{column} (row {out.get('id') or '?'})"
             out[column] = _encrypt(kind, out[column], _binding(name, column, out, where))
+    for column, paths in NESTED_ENCRYPTED.get(name, {}).items():
+        if out.get(column) is not None:
+            def _seal(key, v, column=column, paths=paths):
+                where = f"{name}.{column}…{key} (row {out.get('id') or '?'})"
+                text = _grade_checkpoint_for_target(v, course_map) if key == "grade_checkpoint" else v
+                return _encrypt(TEXT, text, _nested_binding(name, column, paths[key], out, where))
+            out[column] = _map_nested(out[column], paths, _seal)
     return out
 
 
@@ -798,6 +956,155 @@ def _wipe(user_id: str) -> dict[str, int]:
     return wipe_account_data(user_id)
 
 
+def _achievements_by_slug(ach_rows: list, ach_slug_of: dict) -> dict[str, str]:
+    """Target achievement id by slug, for every slug the bundle names (badges
+    and the achievement XP rows' source ids)."""
+    slugs = sorted(
+        ({r.get("achievement_slug") for r in ach_rows if isinstance(r, dict)}
+         | {v for v in ach_slug_of.values() if isinstance(v, str)}) - {None}
+    )
+    ach_by_slug: dict[str, str] = {}
+    for chunk in _chunks(slugs, _IN_CHUNK):
+        for a in table("achievements").select("id,slug", filters={"slug": _in(chunk)}) or []:
+            ach_by_slug[a["slug"]] = a["id"]
+    return ach_by_slug
+
+
+def _target_user_achievements(
+    rows: list, user_id: str, ach_by_slug: dict[str, str],
+) -> tuple[list[dict], int]:
+    """(badge rows for the target, rows dropped because the target lacks the slug)."""
+    out = []
+    skipped = 0
+    for r in rows:
+        aid = ach_by_slug.get(r.get("achievement_slug")) if isinstance(r, dict) else None
+        if not aid:
+            skipped += 1
+            continue
+        out.append({"user_id": user_id, "achievement_id": aid,
+                    "earned_at": r.get("earned_at"), "is_featured": r.get("is_featured")})
+    return out, skipped
+
+
+def _prepare_tables(
+    tables: dict[str, list], user_id: str, offering_map: dict, course_map: dict,
+    ach_slug_of: dict, ach_by_slug: dict[str, str],
+) -> tuple[dict[str, list[dict]], int, int]:
+    """(every SPECS table's rows remapped + re-encrypted for the target,
+    badges dropped, achievement XP rows dropped)."""
+    achievements_skipped = 0
+    prepared: dict[str, list[dict]] = {}
+    for spec in SPECS:
+        rows = tables.get(spec.name, [])
+        if spec.name == "user_achievements":
+            prepared[spec.name], achievements_skipped = _target_user_achievements(
+                rows, user_id, ach_by_slug,
+            )
+        else:
+            prepared[spec.name] = [
+                _target_row(spec.name, r, user_id, offering_map, course_map) for r in rows
+            ]
+    prepared["xp_events"], xp_skipped = _remap_achievement_xp(
+        user_id, prepared["xp_events"], ach_slug_of, ach_by_slug,
+    )
+    return prepared, achievements_skipped, xp_skipped
+
+
+def _check_bundle_fks(prepared: dict[str, list[dict]]) -> None:
+    """Every in-bundle FK names a parent row the bundle carries."""
+    for child, column, parent, parent_column in _BUNDLE_FKS:
+        have = {r.get(parent_column) for r in prepared[parent]}
+        dangling = sorted({str(r.get(column)) for r in prepared[child]} - {str(h) for h in have})
+        if dangling:
+            raise BundleError(
+                f"{child}.{column} names {parent} rows the bundle does not carry: {dangling[:_DANGLING_SHOWN]}"
+            )
+
+
+def _target_user_update(bundle: dict, prepared: dict[str, list[dict]]) -> dict:
+    """The `users` counters to write: the copied ones plus the derived XP cache."""
+    user_update = {
+        k: v for k, v in (bundle.get("user") or {}).items()
+        if k in USER_COUNTERS and k not in _DERIVED_COUNTERS
+    }
+    # users.total_xp/level are a cache of the ledger (xp_service._ledger_total):
+    # derive them from the rows actually imported, so dropped achievement XP
+    # is not still counted and the cache agrees with /activity on day one.
+    total_xp = sum(int(r.get("amount") or 0) for r in prepared["xp_events"])
+    user_update.update(total_xp=total_xp, level=level_for_xp(total_xp))
+    return user_update
+
+
+def _target_profile(bundle: dict, user_id: str) -> dict | None:
+    """The `user_profiles` row to upsert (re-encrypted), or None."""
+    if not bundle.get("profile"):
+        return None
+    profile = {k: v for k, v in bundle["profile"].items() if k not in _PROFILE_DROP}
+    username = profile.get("username")
+    if username:
+        # UNIQUE(username): keep the target's own username rather than
+        # fail the copy over someone else already holding it here.
+        taken = table("user_profiles").select(
+            "user_id",
+            filters={"username": f"eq.{username}", "user_id": f"neq.{user_id}"},
+            limit=1,
+        ) or []
+        if taken:
+            profile.pop("username")
+    # user_id first: the profile's 🔒 columns bind to it.
+    return _target_row("user_profiles", {"user_id": user_id, **profile}, user_id, {}, {})
+
+
+def _target_settings(bundle: dict, user_id: str) -> dict | None:
+    """The `user_settings` row to upsert (allowlisted columns only), or None."""
+    copied = {k: v for k, v in (bundle.get("settings") or {}).items() if k in _SETTINGS_COPIED}
+    if not copied:
+        return None
+    # Allowlist on the TARGET side too: whatever the peer sends, the
+    # target's consent/privacy/notification columns are never written.
+    return {"user_id": user_id, **copied}
+
+
+def _probe_target_schema(
+    prepared: dict[str, list[dict]], profile: dict | None, settings: dict | None,
+    user_update: dict,
+) -> None:
+    """Schema probe: every column about to be written must exist here."""
+    for name, rows in prepared.items():
+        if rows:
+            _probe_columns(name, {c for r in rows for c in r})
+    if profile:
+        _probe_columns("user_profiles", profile)
+    if settings:
+        _probe_columns("user_settings", settings)
+    if user_update:
+        _probe_columns("users", user_update)
+
+
+def _write_account(
+    user_id: str, prepared: dict[str, list[dict]], user_update: dict,
+    profile: dict | None, settings: dict | None,
+) -> dict[str, int]:
+    """The post-wipe writes, in FK order. Returns per-table row counts."""
+    counts: dict[str, int] = {}
+    if user_update:
+        table("users").update(user_update, filters={"id": f"eq.{user_id}"})
+    counts["users"] = 1
+    if profile:
+        table("user_profiles").upsert(profile, on_conflict="user_id")
+        counts["user_profiles"] = 1
+    if settings:
+        table("user_settings").upsert(settings, on_conflict="user_id")
+        counts["user_settings"] = 1
+
+    for spec in SPECS:
+        rows = prepared[spec.name]
+        for chunk in _chunks(rows, _INSERT_CHUNK):
+            table(spec.name).insert(chunk)
+        counts[spec.name] = len(rows)
+    return counts
+
+
 def import_account(user_id: str, bundle: dict) -> dict[str, int]:
     """Overwrite this environment's copy of the account with `bundle`.
 
@@ -820,102 +1127,23 @@ def import_account(user_id: str, bundle: dict) -> dict[str, int]:
 
     # Achievements by slug; one this environment does not have is dropped
     # (counted), not fatal — the rest of the account still moves.
-    ach_rows = tables.get("user_achievements", [])
     ach_slug_of: dict = catalog.get("achievements") or {}  # source achievement id → slug
-    slugs = sorted(
-        ({r.get("achievement_slug") for r in ach_rows if isinstance(r, dict)}
-         | {v for v in ach_slug_of.values() if isinstance(v, str)}) - {None}
+    ach_by_slug = _achievements_by_slug(tables.get("user_achievements", []), ach_slug_of)
+
+    prepared, achievements_skipped, xp_skipped = _prepare_tables(
+        tables, user_id, offering_map, course_map, ach_slug_of, ach_by_slug,
     )
-    ach_by_slug: dict[str, str] = {}
-    for chunk in _chunks(slugs, _IN_CHUNK):
-        for a in table("achievements").select("id,slug", filters={"slug": _in(chunk)}) or []:
-            ach_by_slug[a["slug"]] = a["id"]
-    achievements_skipped = 0
+    _check_bundle_fks(prepared)
 
-    prepared: dict[str, list[dict]] = {}
-    for spec in SPECS:
-        rows = tables.get(spec.name, [])
-        if spec.name == "user_achievements":
-            out = []
-            for r in rows:
-                aid = ach_by_slug.get(r.get("achievement_slug")) if isinstance(r, dict) else None
-                if not aid:
-                    achievements_skipped += 1
-                    continue
-                out.append({"user_id": user_id, "achievement_id": aid,
-                            "earned_at": r.get("earned_at"), "is_featured": r.get("is_featured")})
-            prepared[spec.name] = out
-        else:
-            prepared[spec.name] = [
-                _target_row(spec.name, r, user_id, offering_map, course_map) for r in rows
-            ]
-    prepared["xp_events"], xp_skipped = _remap_achievement_xp(
-        user_id, prepared["xp_events"], ach_slug_of, ach_by_slug,
-    )
-
-    user_update = {
-        k: v for k, v in (bundle.get("user") or {}).items()
-        if k in USER_COUNTERS and k not in _DERIVED_COUNTERS
-    }
-    # users.total_xp/level are a cache of the ledger (xp_service._ledger_total):
-    # derive them from the rows actually imported, so dropped achievement XP
-    # is not still counted and the cache agrees with /activity on day one.
-    total_xp = sum(int(r.get("amount") or 0) for r in prepared["xp_events"])
-    user_update.update(total_xp=total_xp, level=level_for_xp(total_xp))
-
-    profile = None
-    if bundle.get("profile"):
-        profile = {k: v for k, v in bundle["profile"].items() if k not in _PROFILE_DROP}
-        username = profile.get("username")
-        if username:
-            # UNIQUE(username): keep the target's own username rather than
-            # fail the copy over someone else already holding it here.
-            taken = table("user_profiles").select(
-                "user_id",
-                filters={"username": f"eq.{username}", "user_id": f"neq.{user_id}"},
-                limit=1,
-            ) or []
-            if taken:
-                profile.pop("username")
-        # user_id first: the profile's 🔒 columns bind to it.
-        profile = _target_row("user_profiles", {"user_id": user_id, **profile}, user_id, {}, {})
-    settings = None
-    copied = {k: v for k, v in (bundle.get("settings") or {}).items() if k in _SETTINGS_COPIED}
-    if copied:
-        # Allowlist on the TARGET side too: whatever the peer sends, the
-        # target's consent/privacy/notification columns are never written.
-        settings = {"user_id": user_id, **copied}
-
-    # Schema probe: every column about to be written must exist here.
-    for name, rows in prepared.items():
-        if rows:
-            _probe_columns(name, {c for r in rows for c in r})
-    if profile:
-        _probe_columns("user_profiles", profile)
-    if settings:
-        _probe_columns("user_settings", settings)
-    if user_update:
-        _probe_columns("users", user_update)
+    user_update = _target_user_update(bundle, prepared)
+    profile = _target_profile(bundle, user_id)
+    settings = _target_settings(bundle, user_id)
+    _probe_target_schema(prepared, profile, settings, user_update)
 
     # ── Point of no return ──
     _wipe(user_id)
 
-    counts: dict[str, int] = {}
-    if user_update:
-        table("users").update(user_update, filters={"id": f"eq.{user_id}"})
-    counts["users"] = 1
-    if profile:
-        table("user_profiles").upsert(profile, on_conflict="user_id")
-        counts["user_profiles"] = 1
-    if settings:
-        table("user_settings").upsert(settings, on_conflict="user_id")
-        counts["user_settings"] = 1
-
-    for spec in SPECS:
-        rows = prepared[spec.name]
-        for chunk in _chunks(rows, _INSERT_CHUNK):
-            table(spec.name).insert(chunk)
-        counts[spec.name] = len(rows)
+    counts = _write_account(user_id, prepared, user_update, profile, settings)
     if achievements_skipped:
         counts["user_achievements_skipped"] = achievements_skipped
     if xp_skipped:

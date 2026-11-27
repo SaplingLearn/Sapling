@@ -32,6 +32,7 @@ def run() -> None:
     # OnboardingBody requires: user_id, first_name, last_name, year (one of the
     # onboarding choices, lowercase), and the accepted Terms / Privacy versions
     # (the current ones, or 422 legal_outdated); course_ids may be empty.
+    # (PKG-14b: no learning_style — the step is gone and the field is ignored.)
     # The fixture user is created onboarded and onboarding is one-way (#757:
     # a replay is a 409), so reopen it for this check; the POST closes it again.
     table("users").update({"onboarding_completed": False}, filters={"id": f"eq.{USER_ID}"})
@@ -45,7 +46,6 @@ def run() -> None:
             "majors": ["CS"],
             "minors": [],
             "course_ids": [COURSE_ID],
-            "learning_style": "visual",
             "accepted_terms_version": TERMS_VERSION,
             "accepted_privacy_version": PRIVACY_VERSION,
         },

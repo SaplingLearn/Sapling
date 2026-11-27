@@ -1,0 +1,337 @@
+@layer components {
+/* The Dashboard (Dashboard.tsx): the hero greeting, the knowledge-map card
+   and its two layouts (the sidebar layout's two columns, the top-nav layout's
+   legacy three), the suggest/retention nudges, the fullscreen map and the
+   "My courses" rows. Every value is a token; the layout dimensions that are
+   not tokens are named here once. */
+
+.root {
+  /* The hero greeting's type (no --fs-* step this large: the arrival page's
+     display line). */
+  --hero-font: 42px;
+  --hero-font-mobile: 34px;
+  --hero-line-height: 1.15;
+  /* The hero's line box: the header actions centre on it. */
+  --hero-pad-top: var(--sp-3);
+  --hero-pad-bottom: var(--sp-9);
+  --quote-max-w: 640px;
+  /* The knowledge map opens at least this tall (the pre-measurement guess). */
+  --graph-min-h: 420px;
+  /* "Your knowledge map" title: between --fs-xl (18) and --fs-2xl (22). */
+  --map-title-fs: 20px;
+  --course-dot: 10px;
+  --bar-h: 8px;
+  /* The sidebar layout's right column, and the legacy layout's side columns. */
+  --right-col: minmax(280px, 360px);
+  --legacy-left-col: minmax(240px, 280px);
+  --legacy-right-col: minmax(240px, 300px);
+  --nudge-text-min-w: 180px;
+  --legacy-actions-min-h: 28px;
+
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── Typewriter ─────────────────────────────────────────────────────────── */
+
+.cursor {
+  margin-left: var(--sp-1);
+  color: var(--accent);
+  font-weight: 200;
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease);
+}
+.cursor[data-on="true"] { opacity: 1; }
+
+/* ── Error state ────────────────────────────────────────────────────────── */
+
+.error { padding: var(--sp-16); font-size: var(--fs-md); }
+.errorText { color: var(--err); margin-bottom: var(--sp-5); }
+
+/* ── Layouts ────────────────────────────────────────────────────────────── */
+
+.mainColumn {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-7);
+  min-width: 0;
+  min-height: 0;
+  align-self: stretch;
+}
+
+.mobileStack {
+  padding: var(--sp-4) var(--sp-10) var(--sp-8);
+  display: grid;
+  gap: var(--sp-8);
+  grid-template-columns: 1fr;
+  align-items: start;
+}
+
+.desktop {
+  padding: var(--sp-9) var(--sp-16) var(--sp-12);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-7);
+  flex: 1;
+  min-height: 0;
+}
+
+.desktopHeader {
+  display: flex;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: var(--sp-8);
+}
+
+.minW0 { min-width: 0; }
+
+/* Bottom-aligned with the quote: both sides of the header end on one line. */
+.headerActions {
+  padding-bottom: var(--hero-pad-bottom);
+  display: flex;
+  align-items: flex-end;
+  flex-shrink: 0;
+}
+
+/* The graph and the Today column; the gap is TodayColumn's PANEL_GAP (16). */
+.desktopGrid {
+  display: grid;
+  gap: var(--sp-8);
+  grid-template-columns: minmax(0, 1fr) var(--right-col);
+  align-items: stretch;
+  flex: 1;
+  min-height: 0;
+}
+
+.legacyGrid {
+  padding: var(--sp-9) var(--sp-16) var(--sp-12);
+  display: grid;
+  gap: var(--sp-8);
+  grid-template-columns: var(--legacy-left-col) minmax(0, 1fr) var(--legacy-right-col);
+  align-items: stretch;
+  flex: 1;
+  min-height: 0;
+}
+.legacyGrid[data-mobile="true"] {
+  padding: var(--sp-4) var(--sp-10) var(--sp-8);
+  grid-template-columns: 1fr;
+  align-items: start;
+  flex: 0 0 auto;
+}
+
+.panelColumn { display: flex; flex-direction: column; gap: var(--sp-8); min-width: 0; }
+
+/* ── The knowledge-map card ─────────────────────────────────────────────── */
+
+.graphPanel { display: flex; flex-direction: column; gap: var(--sp-8); min-width: 0; flex: 1; min-height: 0; }
+
+.graphCard {
+  padding: 0;
+  overflow: hidden;
+  position: relative;
+  min-height: var(--graph-min-h);
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}
+
+.graphCardHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--sp-8) var(--sp-11);
+  border-bottom: 1px solid var(--border);
+}
+
+.graphTitle { font-size: var(--map-title-fs); margin-top: var(--sp-1); }
+
+.chips { display: flex; gap: var(--sp-5); flex-wrap: wrap; align-items: center; }
+
+.chip {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  font-weight: 400;
+  background: transparent;
+  border: 0;
+  padding: var(--sp-1) var(--sp-2);
+  cursor: pointer;
+  font-family: inherit;
+  transition: color var(--dur-fast) var(--ease);
+}
+.chip[data-lit="true"] { color: var(--text); font-weight: 600; }
+
+.dot {
+  width: var(--course-dot);
+  height: var(--course-dot);
+  border-radius: 50%;
+  background: var(--dot-color, var(--accent));
+  flex-shrink: 0;
+}
+
+.graphArea { position: relative; flex: 1; min-height: var(--graph-min-h); }
+
+/* ── Hero ───────────────────────────────────────────────────────────────── */
+
+.hero {
+  text-align: left;
+  padding: var(--hero-pad-top) 0 var(--hero-pad-bottom);
+}
+.hero[data-centered="true"] { text-align: center; }
+.hero[data-mobile="true"] { padding: var(--sp-7) var(--sp-2); }
+
+.heroTitle {
+  margin: 0;
+  font-size: var(--hero-font);
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: -0.02em;
+  line-height: var(--hero-line-height);
+}
+.hero[data-mobile="true"] .heroTitle { font-size: var(--hero-font-mobile); }
+
+/* The quote settles in once the greeting has finished typing. */
+.quote {
+  margin: var(--sp-4) 0 0;
+  max-width: var(--quote-max-w);
+  font-size: var(--fs-base);
+  font-style: italic;
+  color: var(--text-dim);
+  line-height: 1.55;
+  opacity: 0;
+  transform: translateY(calc(-1 * var(--sp-3)));
+  transition:
+    opacity var(--dur-slower) var(--ease) var(--dur-fast),
+    transform var(--dur-slower) var(--ease) var(--dur-fast);
+}
+.hero[data-centered="true"] .quote { margin: var(--sp-4) auto 0; }
+.quote[data-shown="true"] { opacity: 1; transform: translateY(0); }
+
+/* ── Small pieces ───────────────────────────────────────────────────────── */
+
+.metaRow { display: flex; flex-direction: column; gap: var(--sp-4); }
+.metaActions { display: flex; align-items: center; justify-content: flex-end; gap: var(--sp-4); flex-wrap: wrap; }
+
+.startBtn { padding: var(--sp-3) var(--sp-7); font-size: var(--fs-sm); }
+
+.nudge {
+  padding: var(--sp-7) var(--sp-9);
+  display: flex;
+  gap: var(--sp-7);
+  align-items: center;
+  border-color: var(--accent-border);
+  background: var(--accent-soft);
+}
+.nudgeWrap { flex-wrap: wrap; }
+.nudgeText { flex: 1; font-size: var(--fs-md); }
+.nudgeTextMin { min-width: var(--nudge-text-min-w); }
+.dim { color: var(--text-dim); }
+
+.mobileTabs { display: flex; gap: var(--sp-3); padding: var(--sp-7) var(--sp-10) 0; }
+
+.mobileTab {
+  flex: 1;
+  padding: var(--sp-4) var(--sp-6);
+  border-radius: var(--r-sm);
+  background: var(--bg-panel);
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  text-transform: capitalize;
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+.mobileTab[data-active="true"] { background: var(--accent-soft); color: var(--accent); }
+
+/* ── Legacy (top-nav) panels ────────────────────────────────────────────── */
+
+.legacyCard { padding: var(--pad-lg); }
+.legacyCardHead { display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--sp-6); }
+.empty { font-size: var(--fs-sm); color: var(--text-muted); }
+
+.assignment {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-6);
+  padding: var(--sp-4) 0;
+  border-bottom: 1px solid var(--border);
+}
+.assignmentBody { flex: 1; min-width: 0; }
+.assignmentTitle { font-size: var(--fs-md); font-weight: 500; }
+.assignmentMeta { font-size: var(--fs-xs); color: var(--text-muted); }
+
+.legacyActions {
+  padding: 0 var(--sp-1);
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--sp-4);
+  min-height: var(--legacy-actions-min-h);
+}
+
+.weekLabel { margin-bottom: var(--sp-4); }
+.weekLine { font-size: var(--fs-lg); margin-bottom: var(--sp-7); color: var(--text); }
+.streakDays { color: var(--warn); font-weight: 600; }
+.weekGrid { display: grid; grid-template-columns: repeat(7, 1fr); gap: var(--sp-3); }
+.weekDay { text-align: center; }
+.weekDayLabel { font-size: var(--fs-xs); }
+.weekMark { margin-top: var(--sp-3); display: grid; place-items: center; }
+
+.statsCard { padding: 0; display: grid; grid-template-columns: 1fr 1fr; }
+
+/* ── Fullscreen ─────────────────────────────────────────────────────────── */
+
+.fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-overlay);
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+}
+
+.fullscreenHead {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--sp-7) var(--sp-10);
+  border-bottom: 1px solid var(--border);
+}
+.fullscreenTitle { font-size: var(--fs-xl); }
+.fullscreenGraph { flex: 1; position: relative; }
+
+/* ── A "My courses" row ─────────────────────────────────────────────────── */
+
+.courseRow[data-spaced="true"] { margin-bottom: var(--sp-6); }
+
+.courseHead {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: var(--fs-sm);
+  margin-bottom: var(--sp-2);
+}
+.courseName { display: inline-flex; align-items: center; gap: var(--sp-4); min-width: 0; }
+.ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.coursePct { color: var(--text-dim); font-size: var(--fs-xs); flex-shrink: 0; margin-left: var(--sp-4); }
+
+.bar {
+  display: flex;
+  height: var(--bar-h);
+  background: var(--bg-soft);
+  border-radius: var(--r-full);
+  overflow: hidden;
+}
+
+/* One mastery segment; its share, colour and strength come from the row.
+   A change in the course's mix slides the boundaries rather than jumping. */
+.segment {
+  width: var(--seg-w);
+  background: var(--seg-color);
+  opacity: var(--seg-opacity, 1);
+  transition: width var(--dur-slow) var(--ease-out);
+}
+
+}

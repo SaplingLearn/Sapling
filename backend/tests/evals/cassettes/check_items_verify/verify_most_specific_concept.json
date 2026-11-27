@@ -1,0 +1,25 @@
+{
+  "output": {
+    "concepts": [
+      {
+        "asks": "Which bucket linear probing tries after a collision at bucket 7",
+        "concept": "Linear Probing",
+        "item": "ITEM 1"
+      }
+    ],
+    "criteria": [
+      {
+        "asked": true,
+        "criterion": "c1",
+        "item": "ITEM 1",
+        "why": "Question asks which bucket is tried next; wrap to bucket 0 answers it"
+      }
+    ]
+  },
+  "recorded_under": {
+    "input_sha256": "4d68580ecd8efca0f7d6f2cb72b0de2df827d46833a9db7036ebed0104a44529",
+    "model": "claude-haiku-5-5",
+    "prompt_hash": "d9233c2230b2",
+    "schema_hash": "647aab01084a"
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "judge_model": "claude-opus-5-5",
+  "judge_prompt_hash": "56120063861e7227b4690754af5b01d7ff13e039c9510237736a770622e40921",
+  "output": {
+    "evidence": "The verdict on your answer is correct.",
+    "reveals_final_answer": false,
+    "rung": 0
+  },
+  "served_sha256": "4225cf949aa3636b40daf385c894261e46b0c707156d8342382383925a18da8a"
+}

@@ -1,0 +1,19 @@
+{
+  "attempts": [
+    "{\"key_idea\": \"A recursive function solves a problem by handling one case it can answer directly (the base case) and otherwise reducing to a smaller copy of the same problem.\", \"body\": \"Worked example on a different problem, sum_to(n) = 1+2+...+n: the base case is sum_to(0) = 0, because there is nothing left to add and no smaller problem is needed. For any bigger n, the smaller copy is sum_to(n-1), so the rule is sum_to(n) = n + sum_to(n-1). Together this reads: if n == 0 return 0, else return n + sum_to(n-1), and each call shrinks n until it hits the base case.\", \"question\": \"Using the same two-part pattern, what would you pick as the base case for a function that multiplies 1*2*...*n, and why does it stop the calls?\"}"
+  ],
+  "input_sha256": "161c99ec17d62debd2e7bdfc2c4f31b05a57eeb572dff1207024b5923849eb21",
+  "model": "claude-sonnet-5-5",
+  "output": {
+    "body": "Worked example on a different problem, sum_to(n) = 1+2+...+n: the base case is sum_to(0) = 0, because there is nothing left to add and no smaller problem is needed. For any bigger n, the smaller copy is sum_to(n-1), so the rule is sum_to(n) = n + sum_to(n-1). Together this reads: if n == 0 return 0, else return n + sum_to(n-1), and each call shrinks n until it hits the base case.",
+    "key_idea": "A recursive function solves a problem by handling one case it can answer directly (the base case) and otherwise reducing to a smaller copy of the same problem.",
+    "question": "Using the same two-part pattern, what would you pick as the base case for a function that multiplies 1*2*...*n, and why does it stop the calls?"
+  },
+  "prompt_hash": "7d2b25572445",
+  "requests": 1,
+  "rescued": false,
+  "retries": 0,
+  "schema_hash": "ab89f4f429db",
+  "slot": "loop_tutor_deep",
+  "tool_calls": []
+}

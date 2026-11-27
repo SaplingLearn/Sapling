@@ -1,0 +1,63 @@
+{
+  "context_checks": [
+    {
+      "withdrawn": [
+        "86701:no",
+        "32600:no"
+      ]
+    }
+  ],
+  "context_keys": [
+    {
+      "input_sha256": "77586614ad8ff443a9c6fe56c9f4b7267bbc7d2e7892d0ebb494d5e47b869f12",
+      "model": "claude-sonnet-5-5",
+      "prompt_hash": "d215edc372d3",
+      "schema_hash": "c322bdba6718"
+    }
+  ],
+  "run_keys": [
+    {
+      "input_sha256": "6d128fce93b3dcd7a4158d34295e3b5fb1da74193a63e832de181a1ffd07f6ec",
+      "model": "claude-haiku-5-5",
+      "prompt_hash": "d215edc372d3",
+      "schema_hash": "e42cc97704ca"
+    }
+  ],
+  "runs": [
+    {
+      "addresses_grader": false,
+      "confidence": 0.93,
+      "contradicts_reference": false,
+      "feedback_hint": "Think about what happens to each call when there is no point at which the calls stop, and what that does to memory. Check whether your explanation says what role the base case plays in ending the sequence of calls.",
+      "item_results": [
+        "86701:yes",
+        "32600:yes"
+      ],
+      "matched_wrong_key": "",
+      "support": [
+        "86701: the base case is what stops the calls",
+        "32600: Without it you would keep calling yourself forever until the stack overflows."
+      ]
+    }
+  ],
+  "span_checks": [
+    {
+      "asserted": [
+        "86701:yes",
+        "32600:yes"
+      ],
+      "item_results": [
+        "86701:yes",
+        "32600:yes"
+      ]
+    }
+  ],
+  "span_keys": [
+    {
+      "input_sha256": "640f2edd3ed3457505401662a244e3e600a8dd426d121572e12ef39e66c01125",
+      "model": "claude-sonnet-5-5",
+      "prompt_hash": "d215edc372d3",
+      "schema_hash": "f72e918aa5ce"
+    }
+  ]
+}

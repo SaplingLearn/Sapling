@@ -54,6 +54,24 @@ T = TypeVar("T")
 
 #: Total HTTP attempts per model request (first try + retries).
 RETRY_ATTEMPTS = 3
+#: A run-level model setting: this request makes exactly ONE attempt and no
+#: cross-provider fallback (#866 review of b1-budget). For a caller that holds
+#: and receipts every request it dispatches (the topic checklist's spend hold):
+#: a retry or a fallback hidden inside one dispatch could bill unheld. Stripped
+#: before the provider sees the settings.
+SINGLE_ATTEMPT_SETTING = "sapling_single_attempt"
+
+
+def single_attempt(model_settings: Any) -> bool:
+    """Whether `model_settings` asks for one attempt and no fallback."""
+    return bool(model_settings) and bool(model_settings.get(SINGLE_ATTEMPT_SETTING))
+
+
+def without_single_attempt(model_settings: Any) -> Any:
+    """`model_settings` with the single-attempt key removed (never sent on)."""
+    if not model_settings or SINGLE_ATTEMPT_SETTING not in model_settings:
+        return model_settings
+    return {k: v for k, v in model_settings.items() if k != SINGLE_ATTEMPT_SETTING}
 #: Full-jitter backoff: sleep ~ U(0, min(BACKOFF_CAP_S, BACKOFF_BASE_S * 2**n))
 #: before retry n (n = 0, 1, ...): ≤0.5 s, then ≤1 s.
 BACKOFF_BASE_S = 0.5
@@ -407,11 +425,23 @@ def reset_for_tests() -> None:
 
 @dataclass(frozen=True)
 class CallSite:
-    """Who is calling, for the breaker and the logs (never prompt content)."""
+    """Who is calling, for the breaker and the logs (never prompt content).
+
+    `tier` names a provider service tier whose throttling says nothing about
+    the provider's standard tier (Gemini Flex, A23: a 429/503 there is
+    expected under load). Such a call keeps its own breaker
+    (`<provider>:<tier>`), so background Flex drafting that is throttled
+    never opens the breaker every interactive call on the provider shares.
+    The outage drill still keys on `provider`."""
 
     provider: str
     model_name: str
     task: str | None
+    tier: str | None = None
+
+    @property
+    def breaker_key(self) -> str:
+        return f"{self.provider}:{self.tier}" if self.tier else self.provider
 
 
 async def call_with_retries(
@@ -419,18 +449,20 @@ async def call_with_retries(
     attempt: Callable[[], Awaitable[T]],
     *,
     deadline_s: float | None,
+    attempts: int = RETRY_ATTEMPTS,
 ) -> T:
     """Run `attempt` under the provider's breaker, retrying retryable
-    failures up to `RETRY_ATTEMPTS` total. `deadline_s` bounds EACH attempt
+    failures up to `attempts` total (`RETRY_ATTEMPTS` by default; 1 for a
+    single-attempt request). `deadline_s` bounds EACH attempt
     (None: no outer deadline — the HTTP client's own timeouts still apply).
 
     Raises the last attempt's error, or :class:`CircuitOpenError` when the
     breaker refuses an attempt (including a retry: a breaker that opened
     mid-call stops it there)."""
-    breaker = breaker_for(site.provider)
+    breaker = breaker_for(site.breaker_key)
     drilled = site.provider in await forced_outage()
     last_exc: Exception | None = None
-    for index in range(RETRY_ATTEMPTS):
+    for index in range(attempts):
         if not breaker.allow():
             raise CircuitOpenError(site.provider, site.model_name) from last_exc
         try:
@@ -455,20 +487,20 @@ async def call_with_retries(
                 raise
             breaker.record_failure()
             last_exc = exc
-            last = index == RETRY_ATTEMPTS - 1
+            last = index == attempts - 1
             delay = None if last else retry_delay(exc, index)
             if delay is None:
                 logger.warning(
                     "llm request failed, not retrying (task=%s provider=%s model=%s "
                     "attempt=%d/%d error=%s)",
-                    site.task, site.provider, site.model_name, index + 1, RETRY_ATTEMPTS,
+                    site.task, site.provider, site.model_name, index + 1, attempts,
                     describe(exc),
                 )
                 raise
             logger.warning(
                 "llm request failed, retrying in %.2fs (task=%s provider=%s model=%s "
                 "attempt=%d/%d error=%s)",
-                delay, site.task, site.provider, site.model_name, index + 1, RETRY_ATTEMPTS,
+                delay, site.task, site.provider, site.model_name, index + 1, attempts,
                 describe(exc),
             )
             await _sleep(delay)

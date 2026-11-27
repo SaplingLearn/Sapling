@@ -17,11 +17,17 @@
  * the card beside them (`crisis_support_alongside`): the card shows once per
  * run and the run carries on. A topic the screen blocked (the card INSTEAD of
  * cards) ends the run.
+ *
+ * Learning-loop spec §13 A125: a generation can hold back cards that would
+ * give away an open learning check's answer (`withheld`). The run adds them up
+ * and says so once, as the import dialog's tabs do; a whole generation held
+ * back is a 409 whose detail the failure toast shows (humanizeError).
  */
 import React from "react";
 import { generateFlashcards } from "@/lib/api";
 import { useCrisisSupport } from "../../safety/CrisisSupportCard";
 import { humanizeError, statusOf } from "@/lib/errorMessage";
+import { withheldNotice } from "@/lib/integrityNotice";
 import { useLatestRequest, type RequestToken } from "@/lib/useLatestRequest";
 import { useToast } from "../../ToastProvider";
 import {
@@ -112,6 +118,8 @@ export function useStart(input: StartInput) {
     const none: string[] = [];
     /** The card beside a concept's cards has been shown in this run. */
     let shownBeside = false;
+    /** Cards held back across the run (spec §13 A125). */
+    let withheld = 0;
     for (let i = 0; i < names.length && run.isCurrent(); i++) {
       setProgress({ name: names[i], at: i + 1, of: names.length });
       try {
@@ -121,8 +129,11 @@ export function useStart(input: StartInput) {
         } else if (run.isCurrent() && intercept(r)) {
           return { made, crisis: true };
         }
+        const held = r.withheld ?? 0;
+        withheld += held;
         const cards = r.flashcards || [];
-        if (!cards.length) none.push(names[i]);
+        // Cards held back are not "the material does not cover it".
+        if (!cards.length && !held) none.push(names[i]);
         made.push(...cards);
       } catch (err) {
         if (!run.isCurrent()) break;
@@ -132,6 +143,7 @@ export function useStart(input: StartInput) {
       }
     }
     if (none.length && run.isCurrent()) toast.warn(noCardsMessage(none));
+    if (withheld && run.isCurrent()) toast.warn(withheldNotice(withheld, "card"));
     return { made, crisis: false };
   }, [toast, intercept]);
 

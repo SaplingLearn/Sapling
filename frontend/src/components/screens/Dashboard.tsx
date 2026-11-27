@@ -10,7 +10,10 @@ import { useGraphSize } from "../graph/useGraphSize";
 import { CoursesKey, courseProgressFor, type CourseProgressEntry } from "../graph/CoursesKey";
 import { ManageCoursesModal } from "../ManageCoursesModal";
 import { DashboardSkeleton } from "../Skeleton";
+import { useFlag } from "@/context/FlagsContext";
 import { useUser } from "@/context/UserContext";
+import { retentionHref } from "@/context/RetentionDueContext";
+import { useRetentionNavDue } from "../useRetentionNav";
 import { useIsMobile } from "@/lib/useIsMobile";
 import { useLayoutPref } from "@/lib/useLayoutPref";
 import { useActiveSemester, courseInTerm } from "@/lib/useActiveSemester";
@@ -20,30 +23,41 @@ import {
   getCourses,
   getUpcomingAssignments,
   getSessions,
-  getRecommendations,
   fetchActivity,
   fetchGamificationMe,
   type EnrolledCourse,
   type Session,
   type Assignment,
 } from "@/lib/api";
+import { LEARNING_LOOP_FLAG } from "@/lib/learningLoopFlag";
 import type { GraphNode as ApiNode, GraphEdge as ApiEdge } from "@/lib/types";
 import { apiToGraphNode, learnHrefForNode, type GraphNode, type GraphEdge } from "@/lib/data";
 import { IS_TEST_MODE, now } from "@/lib/testMode";
 import { buildQuizHref } from "@/lib/quiz/source";
 import { DashboardActions, TodayColumn } from "../dashboard/TodayColumn";
+import { LearnNextCard, type Recommendation } from "../dashboard/LearnNextCard";
+import { fetchLearnNext, type LearnNext } from "../dashboard/learnNext";
 import {
   activeDaysFrom,
   assignmentUrgency,
-  statsFromGraph,
+  statsFromGraph, tierWord,
   streakMarkState,
   type DashboardStats,
 } from "../dashboard/dashboardModel";
-import { cn } from "@/lib/cn";
+import { StreakMark, getWeekDays } from "../dashboard/StreakMark";
+import { AnimatedNumber } from "./AnimatedNumber";
+import styles from "./Dashboard.module.css";
 
 /** An assignment known to have a due date (gradebook/Gradescope items may not). */
 type DatedAssignment = Assignment & { due_date: string };
 const hasDueDate = (a: Assignment): a is DatedAssignment => !!a.due_date;
+
+// The typewriter greeting's rhythm (the pre-revamp hero's, below). Its own
+// clock, not a transition: one character per tick, a blinking caret, and a
+// short settle before the caret goes and the quote fades in.
+const TYPE_TICK_MS = 55;
+const CARET_BLINK_MS = 530;
+const TYPE_SETTLE_MS = 300;
 
 const QUOTES = [
   "Learning is the only thing the mind never exhausts, never fears, and never regrets. — da Vinci",
@@ -79,7 +93,7 @@ function getGreetingPrefix(d: Date) {
 //    the greeting settles.
 function Typewriter({
   text,
-  speed = 55,
+  speed = TYPE_TICK_MS,
   onDone,
 }: {
   text: string;
@@ -109,7 +123,7 @@ function Typewriter({
         settleTimer = setTimeout(() => {
           setDone(true);
           onDoneRef.current?.();
-        }, 300);
+        }, TYPE_SETTLE_MS);
       }
     }, speed);
     return () => {
@@ -120,96 +134,23 @@ function Typewriter({
 
   React.useEffect(() => {
     if (done) { setCursorOn(false); return; }
-    const blink = setInterval(() => setCursorOn((v) => !v), 530);
+    const blink = setInterval(() => setCursorOn((v) => !v), CARET_BLINK_MS);
     return () => clearInterval(blink);
   }, [done]);
 
   return (
     <span>
       {shown}
-      <span
-        aria-hidden
-        className="ml-px text-accent font-extralight [transition:opacity_0.1s]" style={{ opacity: done ? 0 : cursorOn ? 1 : 0 }}
-      >
+      <span aria-hidden className={styles.cursor} data-on={!done && cursorOn}>
         |
       </span>
     </span>
   );
 }
 
-const STREAK_SHIELD_PATH =
-  "M8 2.5 L23.5 3.8 Q28.8 4.3 28.3 9.6 L27 24.2 Q26.4 29.2 21.2 28.5 L8.2 27.4 Q3 26.9 3.6 21.7 L4.9 7.6 Q5.5 2.5 10.4 2.7 Z";
-
-function StreakMark({ state, day }: { state: "done" | "today" | "missed" | "future"; day: number }) {
-  if (state === "done") {
-    return (
-      <svg viewBox="0 0 32 32" width="30" height="30" aria-label="completed">
-        <path d={STREAK_SHIELD_PATH} fill="var(--alert-warn)" />
-        <path
-          d="M10.5 16.5 L14.2 20.2 L22 12.4"
-          stroke="#fff"
-          strokeWidth="3"
-          fill="none"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-      </svg>
-    );
-  }
-  if (state === "today") {
-    return (
-      <svg viewBox="0 0 32 32" width="30" height="30" aria-label="today">
-        <circle cx="16" cy="16" r="13" fill="var(--alert-err)" />
-        <path
-          d="M16 10 V22 M10 16 H22"
-          stroke="#fff"
-          strokeWidth="3"
-          fill="none"
-          strokeLinecap="round"
-        />
-      </svg>
-    );
-  }
-  return (
-    <svg viewBox="0 0 32 32" width="30" height="30" aria-label={state === "missed" ? "missed" : "upcoming"}>
-      <path
-        d={STREAK_SHIELD_PATH}
-        fill="none"
-        stroke="var(--border)"
-        strokeWidth="1.5"
-      />
-      <text
-        x="16"
-        y="20"
-        textAnchor="middle"
-        fontSize="11"
-        fontWeight="500"
-        fill="var(--text-muted)"
-        opacity={state === "future" ? 0.5 : 1}
-      >
-        {day}
-      </text>
-    </svg>
-  );
-}
-
-function getWeekDays(today: Date) {
-  // Monday-first ISO week.
-  const start = new Date(today);
-  start.setHours(0, 0, 0, 0);
-  const dow = (start.getDay() + 6) % 7; // 0=Mon
-  start.setDate(start.getDate() - dow);
-  return Array.from({ length: 7 }, (_, i) => {
-    const d = new Date(start);
-    d.setDate(start.getDate() + i);
-    return d;
-  });
-}
-
 type Navigate = (href: string) => void;
-type Recommendation = { concept_name: string; reason?: string };
 
-function fetchDashboard(userId: string, activeSemester: string) {
+function fetchDashboard(userId: string, activeSemester: string, useLearnerNext: boolean) {
   // Empty `activeSemester` means "All semesters" — the DEFAULT — so the
   // fetch goes out unscoped. Scoping is opt-in: it only applies once the
   // user picks a term in the Courses & Semesters hub (nothing auto-resolves
@@ -220,7 +161,7 @@ function fetchDashboard(userId: string, activeSemester: string) {
     getCourses(userId),
     getUpcomingAssignments(userId),
     getSessions(userId, 10),
-    getRecommendations(userId, activeSemester || undefined).catch(() => ({ recommendations: [] })),
+    fetchLearnNext(userId, activeSemester, useLearnerNext),
   ]);
 }
 
@@ -233,13 +174,13 @@ type DashboardSetters = {
   setStats: (v: DashboardStats) => void;
   setAssignments: (v: DatedAssignment[]) => void;
   setSessions: (v: Session[]) => void;
-  setRecommendations: (v: Recommendation[]) => void;
+  setLearnNext: (v: LearnNext) => void;
   setActiveDays: (v: Set<string>) => void;
 };
 
 /** Writes one load's replies into state, in the order load() always has. */
 function applyDashboardResult(
-  [graphRes, coursesRes, assignsRes, sessionsRes, recsRes]: DashboardFetch,
+  [graphRes, coursesRes, assignsRes, sessionsRes, learnNext]: DashboardFetch,
   set: DashboardSetters,
 ) {
   const cs = coursesRes.courses || [];
@@ -253,7 +194,7 @@ function applyDashboardResult(
   // so the urgency chips can never compute from new Date(null) (1970).
   set.setAssignments((assignsRes.assignments || []).filter(hasDueDate));
   set.setSessions(sessionsRes.sessions || []);
-  set.setRecommendations(recsRes.recommendations || []);
+  set.setLearnNext(learnNext);
   set.setActiveDays(activeDaysFrom(gNodes));
 }
 
@@ -267,6 +208,12 @@ function useDashboardData({
   activeSemester: string;
   semesterHydrated: boolean;
 }) {
+  // Same sibling gate as Study Hub Focus / GET /api/study/{id}/next (W8.3).
+  // Both hooks run on every render: the flags load async, so a
+  // short-circuited second call would change the hook order once they land.
+  const loopFlag = useFlag(LEARNING_LOOP_FLAG);
+  const planFlag = useFlag("quiz_concept_plan");
+  const useLearnerNext = loopFlag === "on" && planFlag === "on";
   const [nodes, setNodes] = React.useState<GraphNode[]>([]);
   const [edges, setEdges] = React.useState<GraphEdge[]>([]);
   const [stats, setStats] = React.useState<DashboardStats>({
@@ -275,7 +222,8 @@ function useDashboardData({
   const [courses, setCourses] = React.useState<EnrolledCourse[]>([]);
   const [sessions, setSessions] = React.useState<Session[]>([]);
   const [assignments, setAssignments] = React.useState<DatedAssignment[]>([]);
-  const [recommendations, setRecommendations] = React.useState<Recommendation[]>([]);
+  // Learn-next and the Today plan's quiz item read this one answer (W8.6).
+  const [learnNext, setLearnNext] = React.useState<LearnNext>({ recommendations: [], next: null });
   const [loading, setLoading] = React.useState(true);
   const [loadError, setLoadError] = React.useState<string | null>(null);
   const [activeDays, setActiveDays] = React.useState<Set<string>>(new Set());
@@ -300,10 +248,10 @@ function useDashboardData({
     setLoading(true);
     setLoadError(null);
     try {
-      const res = await fetchDashboard(userId, activeSemester);
+      const res = await fetchDashboard(userId, activeSemester, useLearnerNext);
       if (!run.isCurrent()) return;
       applyDashboardResult(res, {
-        setCourses, setNodes, setEdges, setStats, setAssignments, setSessions, setRecommendations, setActiveDays,
+        setCourses, setNodes, setEdges, setStats, setAssignments, setSessions, setLearnNext, setActiveDays,
       });
     } catch (err) {
       if (!run.isCurrent()) return;
@@ -312,7 +260,7 @@ function useDashboardData({
     } finally {
       if (run.isCurrent()) setLoading(false);
     }
-  }, [userId, activeSemester, loadReq]);
+  }, [userId, activeSemester, loadReq, useLearnerNext]);
 
   React.useEffect(() => {
     if (!userReady || !userId) return;
@@ -340,7 +288,8 @@ function useDashboardData({
   }, [userReady, userId, semesterHydrated, load]);
 
   return {
-    nodes, edges, stats, courses, sessions, assignments, recommendations,
+    nodes, edges, stats, courses, sessions, assignments,
+    recommendations: learnNext.recommendations, learnerNext: learnNext.next,
     loading, loadError, activeDays, xpDays, bestStreak, load,
   };
 }
@@ -385,6 +334,9 @@ export function Dashboard() {
   const router = useRouter();
   const search = useSearchParams();
   const { userId, userName, userReady } = useUser();
+  // Spec §13 A126: a delayed retention check is open (the shell's one read);
+  // never while hide_study hides Study, the page the card sends the student to
+  const { due: retentionDue, courseIds: retentionCourseIds } = useRetentionNavDue();
   const [activeSemester, , semesterHydrated] = useActiveSemester();
   const isMobile = useIsMobile();
   const [layoutPref] = useLayoutPref();
@@ -425,7 +377,7 @@ export function Dashboard() {
   const weekDays = React.useMemo(() => getWeekDays(today), [today]);
 
   const {
-    nodes, edges, stats, courses, sessions, assignments, recommendations,
+    nodes, edges, stats, courses, sessions, assignments, recommendations, learnerNext,
     loading, loadError, activeDays, xpDays, bestStreak, load,
   } = useDashboardData({ userId, userReady, activeSemester, semesterHydrated });
 
@@ -470,7 +422,7 @@ export function Dashboard() {
 
   if (loading && !courses.length) {
     return (
-      <div className="min-h-full flex flex-col">
+      <div className={styles.root}>
         <DashboardSkeleton />
       </div>
     );
@@ -480,8 +432,8 @@ export function Dashboard() {
     return (
       <div>
         <TopBar title="Couldn't load dashboard" />
-        <div className="p-8 text-md">
-          <div className="text-err mb-2.5">{loadError}</div>
+        <div className={styles.error}>
+          <div className={styles.errorText}>{loadError}</div>
           <button className="btn btn--primary" onClick={load}>Retry</button>
         </div>
       </div>
@@ -492,7 +444,7 @@ export function Dashboard() {
   const highlightId = suggestNode?.id;
 
   const graphPanel = (
-    <div className="flex flex-col gap-4 min-w-0 flex-1 min-h-0">
+    <div className={styles.graphPanel}>
       {renderGraphCard({
         stats,
         nodes,
@@ -506,7 +458,7 @@ export function Dashboard() {
           // The card grows with its content, so the graph's own height counts:
           // at least 420, as it has always opened (the pre-measurement guess
           // used to hold the card at that height).
-          <div ref={gRefCb} className="relative flex-1 min-h-105">
+          <div ref={gRefCb} className={styles.graphArea}>
             {size && renderGraphLayers({
               nodes,
               edges,
@@ -547,6 +499,7 @@ export function Dashboard() {
     <TodayColumn
       sessions={sessions}
       nodes={nodes}
+      learnerNext={learnerNext}
       assignments={assignments}
       hasCourses={courses.length > 0}
       stats={stats}
@@ -561,7 +514,7 @@ export function Dashboard() {
       openCourses={() => setCoursesOpen(true)}
       courseRows={
         courseProgress.length > 0
-          ? courseProgress.map((entry) => <CourseProgressRow key={entry.course.course_id} entry={entry} spacing={0} />)
+          ? courseProgress.map((entry) => <CourseProgressRow key={entry.course.course_id} entry={entry} spaced={false} />)
           : undefined
       }
     />
@@ -581,20 +534,20 @@ export function Dashboard() {
   });
 
   const suggestBlock = suggestDismissed ? null : renderSuggestCard({ node: suggestNode, navigate, onDismiss: dismissSuggest });
+  const retentionBlock = renderRetentionCard({ due: retentionDue, courseIds: retentionCourseIds, navigate });
 
   const mainColumn = (
-    <div
-      className="flex flex-col gap-3.5 min-w-0 min-h-0 self-stretch"
-    >
+    <div className={styles.mainColumn}>
       {heroBlock}
       {renderMobileMetaRow({ isMobile, navigate })}
+      {retentionBlock}
       {suggestBlock}
       {graphPanel}
     </div>
   );
 
   return (
-    <div className="min-h-full flex flex-col">
+    <div className={styles.root}>
       {isMobile && useLegacyPanels && renderMobileTabs({ mobileTab, setMobileTab })}
 
       {useLegacyPanels ? (
@@ -620,7 +573,7 @@ export function Dashboard() {
           }),
         })
       ) : isMobile ? (
-        <div className="pt-2 px-5 pb-4 grid gap-4 grid-cols-[1fr] [align-items:start]">
+        <div className={styles.mobileStack}>
           {mainColumn}
           {rightPanel}
         </div>
@@ -628,26 +581,24 @@ export function Dashboard() {
         // Desktop sidebar layout: the greeting and the actions share one header
         // row, so the graph and the right column start on the same line and
         // stretch to the same bottom edge.
-        <div className="pt-4.5 px-8 pb-6 flex flex-col gap-3.5 flex-1 min-h-0">
-          <div className="flex items-stretch justify-between gap-4">
-            <div className="min-w-0">{heroBlock}</div>
+        <div className={styles.desktop}>
+          <div className={styles.desktopHeader}>
+            <div className={styles.minW0}>{heroBlock}</div>
             {/* Bottom-aligned with the quote: both sides of the header end on
                 one line, the same distance above the cards. */}
-            <div
-              className="pb-4.5 flex items-end shrink-0"
-            >
+            <div className={styles.headerActions}>
               <DashboardActions navigate={navigate} />
             </div>
           </div>
+          {retentionBlock}
           {suggestBlock}
-          <div
-            className="grid gap-4 grid-cols-[minmax(0,_1fr)_minmax(280px,_360px)] items-stretch flex-1 min-h-0"
-          >
+          <div className={styles.desktopGrid}>
             {graphPanel}
             {rightPanel}
           </div>
         </div>
       )}
+
 
       {fullscreen && renderFullscreenOverlay({
         nodes,
@@ -684,21 +635,20 @@ function renderGraphCard({
   graphArea: React.ReactNode;
 }) {
   const { keyHoverCourse, setKeyHoverCourse, graphHoverCourse, zoomedCourse, zoomToCourse } = focus;
+  const conceptCount = stats.total || nodes.filter((n) => !n.is_subject_root).length;
   return (
     // Flex-column so the inner gRef can flex: 1 and fill whatever
     // height the grid row decides (courses + upcoming stacked on the
     // left determines the row height via align-items: stretch).
-    <div
-      className="card p-0 overflow-hidden relative min-h-105 flex flex-col flex-1"
-    >
-      <div className="flex items-center justify-between py-4 px-5.5 border-b border-b-border">
+    <div className={`card ${styles.graphCard}`}>
+      <div className={styles.graphCardHead}>
         <div>
-          <div className="label-micro">Your knowledge graph</div>
-          <div className="h-serif text-[20px] mt-0.5">
-            {stats.total || nodes.filter((n) => !n.is_subject_root).length} concepts across {scopedCourses.length} courses
+          <div className="label-micro">Your knowledge map</div>
+          <div className={`h-serif ${styles.graphTitle}`}>
+            {`${conceptCount} ${conceptCount === 1 ? "concept" : "concepts"} across ${scopedCourses.length} ${scopedCourses.length === 1 ? "course" : "courses"}`}
           </div>
         </div>
-        <div className="flex gap-2.5 flex-wrap items-center">
+        <div className={styles.chips}>
           {useLegacyPanels && scopedCourses.slice(0, 5).map((c) => {
             const lit = (keyHoverCourse ?? graphHoverCourse ?? zoomedCourse) === c.course_id;
             return (
@@ -714,9 +664,10 @@ function renderGraphCard({
                 onFocus={() => setKeyHoverCourse(c.course_id)}
                 onBlur={() => setKeyHoverCourse(null)}
                 onClick={() => zoomToCourse(c.course_id)}
-                className={cn("flex items-center gap-1.5 text-xs bg-transparent border-0 py-0.5 px-1 cursor-pointer [font-family:inherit]", lit ? "text-text" : "text-text-dim", lit ? "font-semibold" : "font-normal")}
+                className={styles.chip}
+                data-lit={lit}
               >
-                <span className="w-2.5 h-2.5 rounded-[50%]" style={{ background: c.color || "var(--accent)" }} />
+                <span className={styles.dot} style={dotColor(c.color)} />
                 {c.course_code || c.course_name}
               </button>
             );
@@ -793,18 +744,15 @@ function renderHeroBlock({
   quote: string;
 }) {
   return (
-    <div
-      className={cn(centered ? "text-center" : "text-left", isMobile ? "py-3.5 px-1" : "pt-1.5 px-0 pb-4.5")}
-    >
-      <h1
-        className={cn("h-serif", "m-0 font-semibold text-text tracking-[-0.02em] leading-[1.15]", isMobile ? "text-[34px]" : "text-[42px]")}
-      >
+    <div className={styles.hero} data-centered={centered} data-mobile={isMobile}>
+      <h1 className={`h-serif ${styles.heroTitle}`}>
         <Typewriter text={greetingText} onDone={onGreetingDone} />
       </h1>
       {quote && (
         <p
           aria-hidden={!greetingDone}
-          className={cn("body-serif", "max-w-160 text-base italic text-text-dim leading-[1.55] [transition:opacity_0.55s_var(--ease)_0.15s,_transform_0.55s_var(--ease)_0.15s]", centered ? "mt-2 mx-auto mb-0" : "mt-2 mx-0 mb-0", greetingDone ? "opacity-100" : "opacity-0", greetingDone ? "[transform:translateY(0)]" : "[transform:translateY(-6px)]")}
+          className={`body-serif ${styles.quote}`}
+          data-shown={greetingDone}
         >
           "{quote}"
         </p>
@@ -816,12 +764,10 @@ function renderHeroBlock({
 function renderMobileMetaRow({ isMobile, navigate }: { isMobile: boolean; navigate: Navigate }) {
   if (!isMobile) return null;
   return (
-    <div className="flex flex-col gap-2">
-      <div
-        className="flex items-center justify-end gap-2 flex-wrap"
-      >
+    <div className={styles.metaRow}>
+      <div className={styles.metaActions}>
         <button
-          className="btn btn--sm btn--primary py-[7px] px-3.5 text-sm"
+          className={`btn btn--sm btn--primary ${styles.startBtn}`}
           onClick={() => navigate("/learn")}
         >
           <Icon name="sparkle" size={13} /> Start learning
@@ -840,11 +786,11 @@ function renderSuggestCard({
 }) {
   if (!node) return null;
   return (
-    <div className="card fade-in py-3.5 px-4.5 flex gap-3.5 items-center border-accent-border [background:var(--accent-soft)]">
+    <div className={`card fade-in ${styles.nudge}`}>
       <Icon name="sparkle" size={16} />
-      <div className="flex-1 text-md">
+      <div className={styles.nudgeText}>
         <strong>Try this next:</strong> {node.name}
-        {node.subject && <span className="text-text-dim"> · {node.subject}</span>}
+        {node.subject && <span className={styles.dim}> · {node.subject}</span>}
       </div>
       <button
         className="btn btn--sm btn--primary"
@@ -862,6 +808,31 @@ function renderSuggestCard({
   );
 }
 
+/** Spec §13 A126: a nudge, never the check itself — opening one commits its
+ *  pose, so only the student's click on Study does that. */
+function renderRetentionCard({ due, courseIds, navigate }: { due: boolean; courseIds: string[]; navigate: Navigate }) {
+  if (!due) return null;
+  return (
+    <div
+      data-testid="dashboard-retention-due"
+      role="status"
+      className={`card fade-in ${styles.nudge} ${styles.nudgeWrap}`}
+    >
+      <Icon name="bell" size={16} />
+      <div className={`${styles.nudgeText} ${styles.nudgeTextMin}`}>
+        <strong>A retention check is due.</strong> A few questions on what you studied a while ago, with no hints.
+      </div>
+      <button
+        className="btn btn--sm btn--primary"
+        data-testid="dashboard-retention-open"
+        onClick={() => navigate(retentionHref(courseIds))}
+      >
+        Check what you remember
+      </button>
+    </div>
+  );
+}
+
 function renderMobileTabs({
   mobileTab, setMobileTab,
 }: {
@@ -869,12 +840,13 @@ function renderMobileTabs({
   setMobileTab: (t: "courses" | "stats") => void;
 }) {
   return (
-    <div className="flex gap-1.5 pt-3.5 px-5 pb-0">
+    <div className={styles.mobileTabs}>
       {(["courses", "stats"] as const).map(t => (
         <button
           key={t}
           onClick={() => setMobileTab(t)}
-          className={cn("flex-1 py-2 px-3 rounded-sm border border-border text-sm font-semibold capitalize", mobileTab === t ? "bg-accent-soft" : "bg-bg-panel", mobileTab === t ? "text-accent" : "text-text-dim")}
+          className={styles.mobileTab}
+          data-active={mobileTab === t}
         >
           {t === "courses" ? "My Courses" : "Stats & More"}
         </button>
@@ -897,9 +869,7 @@ function renderLegacyGrid({
   rightPanel: React.ReactNode;
 }) {
   return (
-    <div
-      className={cn("grid gap-4 min-h-0", isMobile ? "pt-2 px-5 pb-4" : "pt-4.5 px-8 pb-6", isMobile ? "grid-cols-[1fr]" : "grid-cols-[minmax(240px,_280px)_minmax(0,_1fr)_minmax(240px,_300px)]", isMobile ? "[align-items:start]" : "items-stretch", isMobile ? "flex-[0_0_auto]" : "flex-1")}
-    >
+    <div className={styles.legacyGrid} data-mobile={isMobile}>
       {isMobile ? (
         mobileTab === "courses" ? (
           <>
@@ -933,18 +903,18 @@ function renderLegacyCoursesPanel({
   navigate: Navigate;
 }) {
   return (
-    <div className="flex flex-col gap-4 min-w-0">
-      <div className="card p-(--pad-lg)">
-        <div className="flex justify-between items-center mb-3">
+    <div className={styles.panelColumn}>
+      <div className={`card ${styles.legacyCard}`}>
+        <div className={styles.legacyCardHead}>
           <div className="label-micro">My courses</div>
           <button className="btn btn--ghost btn--sm" onClick={onOpenCourses}>
             <Icon name="cog" size={12} /> Courses & Semesters
           </button>
         </div>
         {!hasCourses ? (
-          <div className="text-sm text-text-muted">No enrolled courses yet.</div>
+          <div className={styles.empty}>No enrolled courses yet.</div>
         ) : courseProgress.length === 0 ? (
-          <div className="text-sm text-text-muted">
+          <div className={styles.empty}>
             Nothing enrolled this semester.
           </div>
         ) : null}
@@ -953,21 +923,21 @@ function renderLegacyCoursesPanel({
         ))}
       </div>
 
-      <div className="card p-(--pad-lg)">
-        <div className="flex justify-between items-center mb-3">
+      <div className={`card ${styles.legacyCard}`}>
+        <div className={styles.legacyCardHead}>
           <div className="label-micro">Upcoming</div>
           <button className="btn btn--ghost btn--sm" onClick={() => navigate("/calendar")}>Calendar →</button>
         </div>
         {assignments.length === 0 && (
-          <div className="text-sm text-text-muted">No upcoming assignments.</div>
+          <div className={styles.empty}>No upcoming assignments.</div>
         )}
         {assignments.slice(0, 4).map((a) => {
           const { chipClass, label } = assignmentUrgency(a.due_date, now());
           return (
-            <div key={a.id} className="flex items-center gap-3 py-2 px-0 border-b border-b-border">
-              <div className="flex-1 min-w-0">
-                <div className="text-md font-medium">{a.title}</div>
-                <div className="text-xs text-text-muted">
+            <div key={a.id} className={styles.assignment}>
+              <div className={styles.assignmentBody}>
+                <div className={styles.assignmentTitle}>{a.title}</div>
+                <div className={styles.assignmentMeta}>
                   {a.course_name || "—"} · {a.assignment_type || "task"}
                 </div>
               </div>
@@ -992,35 +962,35 @@ function renderLegacyRightPanel({
   navigate: Navigate;
 }) {
   return (
-    <div className="flex flex-col gap-4 min-w-0">
+    <div className={styles.panelColumn}>
       {!isMobile && (
-        <div className="py-0 px-0.5 flex justify-end gap-2 min-h-7">
+        <div className={styles.legacyActions}>
           <button
-            className="btn btn--sm btn--primary py-[7px] px-3.5 text-sm"
+            className={`btn btn--sm btn--primary ${styles.startBtn}`}
             onClick={() => navigate("/learn")}
           >
             <Icon name="sparkle" size={13} /> Start learning
           </button>
         </div>
       )}
-      <div className="card p-(--pad-lg)">
-        <div className="label-micro mb-2">This week</div>
-        <div className="body-serif text-lg mb-3.5 text-text">
+      <div className={`card ${styles.legacyCard}`}>
+        <div className={`label-micro ${styles.weekLabel}`}>This week</div>
+        <div className={`body-serif ${styles.weekLine}`}>
           {stats.streak > 0 ? (
-            <>You&apos;re on a <span className="h-serif text-warn font-semibold">{stats.streak}-day</span> streak.</>
+            <>You&apos;re on a <span className={`h-serif ${styles.streakDays}`}>{stats.streak}-day</span> streak.</>
           ) : (
             <>Ready when you are. Open any session to begin a streak.</>
           )}
         </div>
-        <div className="grid grid-cols-[repeat(7,_1fr)] gap-1.5">
+        <div className={styles.weekGrid}>
           {weekDays.map(d => {
             const key = d.toISOString().slice(0, 10);
             return (
-              <div key={key} className="text-center">
-                <div className="label-micro text-xs">
+              <div key={key} className={styles.weekDay}>
+                <div className={`label-micro ${styles.weekDayLabel}`}>
                   {d.toLocaleDateString("en-US", { weekday: "short" }).slice(0, 2)}
                 </div>
-                <div className="mt-1.5 grid place-items-center">
+                <div className={styles.weekMark}>
                   <StreakMark state={streakMarkState(d, today, activeDays)} day={d.getDate()} />
                 </div>
               </div>
@@ -1029,47 +999,20 @@ function renderLegacyRightPanel({
         </div>
       </div>
 
-      <div className="card p-0 grid grid-cols-[1fr_1fr]">
+      <div className={`card ${styles.statsCard}`}>
         <MiniStat
-          label="Mastered"
-          value={stats.mastered}
+          label={tierWord("mastered", !!stats.skill)}
+          value={<AnimatedNumber value={stats.mastered} />}
           sub={stats.total ? `of ${stats.total} concepts` : undefined}
         />
         <MiniStat
-          label="Learning"
-          value={stats.learning + stats.struggling}
-          sub={`${stats.unexplored} unexplored`}
+          label={stats.skill ? "In progress" : "Learning"}
+          value={<AnimatedNumber value={stats.learning + stats.struggling} />}
+          sub={`${stats.unexplored} ${tierWord("unexplored", !!stats.skill).toLowerCase()}`}
         />
       </div>
 
-      <div className="card p-(--pad-lg)">
-        <div className="flex justify-between items-center mb-3">
-          <div className="label-micro">Learn next</div>
-          <button className="btn btn--ghost btn--sm" onClick={() => navigate("/tree")}>Tree →</button>
-        </div>
-        {recommendations.length === 0 && (
-          <div className="text-sm text-text-muted">Nothing suggested yet — start a session.</div>
-        )}
-        {recommendations.slice(0, 3).map((r, i) => (
-          <button
-            key={`${r.concept_name}-${i}`}
-            onClick={() => navigate(`/learn?topic=${encodeURIComponent(r.concept_name)}&mode=socratic`)}
-            className="flex items-start gap-2.5 w-full py-2.5 px-3 rounded-md bg-bg-subtle mb-1.5 text-left"
-          >
-            <Icon name="sparkle" size={14} />
-            <div className="flex-1 min-w-0">
-              <div className="text-md font-semibold">{r.concept_name}</div>
-              {r.reason && <div className="text-xs text-text-muted">{r.reason}</div>}
-            </div>
-            <Icon name="chev" size={12} />
-          </button>
-        ))}
-        <div className="flex gap-1.5 mt-2.5">
-          <button className="btn btn--sm flex-1" onClick={() => navigate("/social")}>
-            <Icon name="users" size={12} /> Study room
-          </button>
-        </div>
-      </div>
+      <LearnNextCard recommendations={recommendations} navigate={navigate} />
     </div>
   );
 }
@@ -1084,13 +1027,11 @@ function renderFullscreenOverlay({
   onNodeClick: (n: GraphNode) => void;
 }) {
   return (
-    <div
-      className="fixed inset-0 z-150 bg-bg flex flex-col"
-    >
-      <div className="flex justify-between items-center py-3.5 px-5 border-b border-b-border">
+    <div className={`fade-in ${styles.fullscreen}`}>
+      <div className={styles.fullscreenHead}>
         <div>
-          <div className="label-micro">Knowledge graph — fullscreen</div>
-          <div className="h-serif text-xl">Press Esc to exit</div>
+          <div className="label-micro">Knowledge map — fullscreen</div>
+          <div className={`h-serif ${styles.fullscreenTitle}`}>Press Esc to exit</div>
         </div>
         <button className="btn btn--ghost btn--sm" onClick={onClose}>
           <Icon name="x" size={14} />
@@ -1115,7 +1056,7 @@ function FullscreenGraph({
 }) {
   const [ref, size] = useGraphSize<HTMLDivElement>({ w: 1200, h: 700 });
   return (
-    <div ref={ref} className="flex-1 relative">
+    <div ref={ref} className={styles.fullscreenGraph}>
       {size && (
         <KnowledgeGraph
           legible
@@ -1131,57 +1072,67 @@ function FullscreenGraph({
   );
 }
 
+
+/** A course's colour as the dot's custom property (the dot falls back to
+ *  --accent when the course has none). */
+function dotColor(color: string | null | undefined): React.CSSProperties | undefined {
+  return color ? ({ "--dot-color": color } as React.CSSProperties) : undefined;
+}
+
 // One "My courses" line: colour dot, course code, mastery percentage and the
-// four-segment mastery bar.
+// four-segment mastery bar. The percentage counts and the segments slide when
+// a reload moves the course's mix.
 function CourseProgressRow({
   entry,
-  spacing = 12,
+  spaced = true,
 }: {
   entry: CourseProgressEntry;
-  /** Space below the row. 0 when the parent spaces its rows itself. */
-  spacing?: number;
+  /** Space below the row. false when the parent spaces its rows itself. */
+  spaced?: boolean;
 }) {
-  const { course, mastered, learning, struggling, unexplored, total, progress } = entry;
+  const { course, mastered, learning, struggling, unexplored, total, progress, skill } = entry;
   const pct = Math.round(progress * 100);
   const baseColor = course.color || "var(--accent)";
   const segments = [
-    { key: "mastered",   count: mastered,   color: baseColor, opacity: 1,    label: "Mastered" },
-    { key: "learning",   count: learning,   color: baseColor, opacity: 0.78, label: "Learning" },
-    { key: "struggling", count: struggling, color: baseColor, opacity: 0.55, label: "Struggling" },
-    { key: "unexplored", count: unexplored, color: "var(--bg-soft)", opacity: 1, label: "Unexplored" },
+    { key: "mastered",   count: mastered,   color: baseColor, opacity: 1,    label: tierWord("mastered", skill) },
+    { key: "learning",   count: learning,   color: baseColor, opacity: 0.78, label: tierWord("learning", skill) },
+    { key: "struggling", count: struggling, color: baseColor, opacity: 0.55, label: tierWord("struggling", skill) },
+    { key: "unexplored", count: unexplored, color: "var(--bg-soft)", opacity: 1, label: tierWord("unexplored", skill) },
   ];
 
-  const body = (
-    <>
-      <div className="flex justify-between items-center text-sm mb-1">
-        <span className="inline-flex items-center gap-2 min-w-0">
-          <span className="w-2.5 h-2.5 rounded-[50%] shrink-0" style={{ background: baseColor }} />
-          <strong className="overflow-hidden text-ellipsis whitespace-nowrap">
+  return (
+    <div className={styles.courseRow} data-spaced={spaced}>
+      <div className={styles.courseHead}>
+        <span className={styles.courseName}>
+          <span className={styles.dot} style={dotColor(course.color)} />
+          <strong className={styles.ellipsis}>
             {course.course_code || course.course_name}
           </strong>
         </span>
-        <span className="mono text-text-dim text-xs shrink-0 ml-2">
-          {pct}%
-        </span>
+        <AnimatedNumber className={`mono ${styles.coursePct}`} value={pct} format={formatPct} />
       </div>
       {total > 0 ? (
         <div
-          className="flex h-2 bg-bg-soft rounded-[var(--r-full)] overflow-hidden"
+          className={styles.bar}
           title={segments.filter(s => s.count > 0).map(s => `${s.label}: ${s.count}`).join(" · ")}
         >
           {segments.map((s) => s.count > 0 && (
             <div
               key={s.key}
-              className="[transition:width_var(--dur)_var(--ease)]" style={{ width: `${(s.count / total) * 100}%`, background: s.color, opacity: s.opacity }}
+              className={styles.segment}
+              style={{
+                "--seg-w": `${(s.count / total) * 100}%`,
+                "--seg-color": s.color,
+                "--seg-opacity": s.opacity,
+              } as React.CSSProperties}
             />
           ))}
         </div>
       ) : (
-        <div className="h-2 bg-bg-soft rounded-[var(--r-full)]" />
+        <div className={styles.bar} />
       )}
-    </>
+    </div>
   );
-
-  return <div style={{ marginBottom: spacing }}>{body}</div>;
 }
 
+const formatPct = (v: number) => `${Math.round(v)}%`;

@@ -133,6 +133,12 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
     return await quiz_service.generate_quiz(body, request)
 
 
+@router.get("/plan")
+@same_doc(quiz_service.quiz_plan)
+def quiz_plan(request: Request, user_id: str, course_id: str | None = None):
+    return quiz_service.quiz_plan(request, user_id, course_id)
+
+
 @router.get("/attempts")
 @same_doc(quiz_service.list_attempts)
 async def list_attempts(

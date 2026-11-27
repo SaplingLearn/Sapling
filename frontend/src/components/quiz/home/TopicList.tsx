@@ -10,8 +10,11 @@
  * than one: with a single course it would label the whole column with the
  * obvious.
  *
- * Within a course the order is weakest first, the same order the proposal is
- * ranked by, so the top of the list is what the student most likely wants.
+ * Within a course the order is weakest first by the measure each row shows
+ * (`shownMastery`: the plan's skill meter when `quiz_concept_plan` proposes
+ * the concept, else the graph's mastery) — browse by how far along, while the
+ * proposal card and Start/Adjust queues follow the plan's due → misconception
+ * → ready ranking.
  *
  * Each row is a real `<button>`, and picking it makes that concept the card
  * beside the list rather than starting a quiz:
@@ -23,7 +26,7 @@ import React from "react";
 import { ConceptNode } from "@/components/graph/ConceptNode";
 import type { EnrolledCourse } from "@/lib/api";
 import type { GraphNode } from "@/lib/types";
-import { colorFor, metaLine } from "@/lib/quiz/proposals";
+import { colorFor, metaLine, shownMastery, type CandidatePlan } from "@/lib/quiz/proposals";
 
 /** Diameters from the design; the tokens live in `home.css`. */
 const ROW_DOT = 14;
@@ -39,11 +42,18 @@ export interface TopicListProps {
   onIntent?: (nodeId: string) => void;
   /** The row a concept just returned to; it is tinted once (`home.css`). */
   returnedId?: string | null;
+  /** Spec §13 A143: the learner model's plan for the concepts it proposes. A
+   *  row reads the same measure the card does (`metaLine`), and is ranked by it. */
+  planOf?: ReadonlyMap<string, CandidatePlan>;
 }
 
-function weakestFirst(a: GraphNode, b: GraphNode): number {
-  if (a.mastery_score !== b.mastery_score) return a.mastery_score - b.mastery_score;
-  return a.concept_name.localeCompare(b.concept_name);
+function weakestFirst(planOf: TopicListProps["planOf"]) {
+  return (a: GraphNode, b: GraphNode): number => {
+    const ma = shownMastery(a, planOf?.get(a.id));
+    const mb = shownMastery(b, planOf?.get(b.id));
+    if (ma !== mb) return ma - mb;
+    return a.concept_name.localeCompare(b.concept_name);
+  };
 }
 
 export function TopicList({
@@ -51,8 +61,10 @@ export function TopicList({
   onPick,
   onIntent,
   returnedId = null,
+  planOf,
 }: TopicListProps) {
   const headed = groups.length > 1;
+  const order = weakestFirst(planOf);
   // One dwell per input: the pointer leaving a row must not cancel the one
   // keyboard focus armed on another (and vice versa).
   const dwell = React.useRef<Record<"pointer" | "focus", number | null>>({ pointer: null, focus: null });
@@ -86,7 +98,7 @@ export function TopicList({
 
             {nodes
               .slice()
-              .sort(weakestFirst)
+              .sort(order)
               .map(node => (
                 <button
                   key={node.id}
@@ -112,7 +124,7 @@ export function TopicList({
                   </span>
                   <span className="quiz-home__row-name">{node.concept_name}</span>
                   <span className="quiz-home__row-spacer" />
-                  <span className="quiz-home__row-meta">{metaLine(node)}</span>
+                  <span className="quiz-home__row-meta">{metaLine(node, undefined, planOf?.get(node.id))}</span>
                 </button>
               ))}
           </section>

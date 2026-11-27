@@ -8,7 +8,7 @@ Visual system: warm paper neutrals, botanical forest-green accent, serif (Spectr
 
 ```bash
 cd frontend
-npm install          # Node >= 20.9, npm >= 10.9 <11 — enforced, see below
+npm install          # Node >= 22.13, npm >= 10.9 <11 — enforced, see below
 npm run dev          # http://localhost:3000
 ```
 
@@ -44,6 +44,12 @@ approval gate, the upload modal, the tutor composer, the quiz answer flow, the
 graph container) carry `data-testid` attributes. Naming rules, the current
 inventory, and the ESLint rule that keeps new controls from drifting are in
 `docs/frontend-testids.md`.
+
+Design tokens: colours, spacing, type, radii, shadows, layers and motion come
+from tokens in `src/app/globals.css` (numbers for code in
+`src/lib/designTokens.ts`, framer-motion presets in `src/lib/motion.ts`).
+`npm run hardcode` is the ratchet that stops new hand-written values; see
+`docs/frontend-design-tokens.md`.
 
 Deployed to Cloudflare Workers via OpenNext:
 

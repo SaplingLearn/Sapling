@@ -17,13 +17,21 @@ vi.mock("@/context/UserContext", () => ({
   useUser: () => ({ userId: "u1", userReady: true }),
 }));
 
+vi.mock("next/link", () => ({
+  default: ({ children, href, ...rest }: { children: React.ReactNode; href: string }) => (
+    <a href={href} {...rest}>{children}</a>
+  ),
+}));
+
 vi.mock("@/lib/api", () => ({
   rateFlashcard: vi.fn(),
   deleteFlashcard: vi.fn(),
 }));
 
 import { rateFlashcard, deleteFlashcard } from "@/lib/api";
+import { LEARNING_COPY } from "@/lib/learningCopy";
 import { ToastProvider } from "../../ToastProvider";
+import { REVIEW_DONE_NOTE } from "../flashcardsCopy";
 import type { Card } from "../home/flashcardsModel";
 import { Review } from "./Review";
 
@@ -36,7 +44,13 @@ const DECK = [card("a"), card("b"), card("c", "Sorting")];
 const onAllSets = vi.fn();
 
 /** The page's part: it owns the deck, and drops a deleted card from it. */
-function Harness({ deck: initial, fromHome = true }: { deck: Card[]; fromHome?: boolean }) {
+function Harness({
+  deck: initial, fromHome = true, studyHref = "/study?course=c1",
+}: {
+  deck: Card[];
+  fromHome?: boolean;
+  studyHref?: string | null;
+}) {
   const [deck, setDeck] = React.useState(initial);
   return (
     <ToastProvider>
@@ -47,6 +61,7 @@ function Harness({ deck: initial, fromHome = true }: { deck: Card[]; fromHome?: 
         onRated={() => {}}
         onDeleted={id => setDeck(d => d.filter(c => c.id !== id))}
         onAllSets={onAllSets}
+        studyHref={studyHref}
       />
     </ToastProvider>
   );
@@ -179,10 +194,21 @@ describe("Review: deck complete", () => {
     const summary = within(await finish(["3", "2", "1"]));
 
     expect(summary.getByText("Deck complete")).toBeTruthy();
+    // W8.4: ratings schedule cards; concept mastery is not claimed here.
+    expect(summary.getByTestId("flashcards-review-note").textContent).toBe(REVIEW_DONE_NOTE);
+    expect(summary.getByTestId("flashcards-review-study").textContent).toBe(LEARNING_COPY.review);
+    expect(summary.getByTestId("flashcards-review-study").getAttribute("href")).toBe("/study?course=c1");
     expect(counts()).toEqual([1, 1, 1]);
     expect(summary.getByRole("img", { name: "This session: 1 easy, 1 hard, 1 forgot" })).toBeTruthy();
     expect(["easy", "hard", "forgot"].map(kind => summary.getByTestId(`flashcards-stack-${kind}`).style.flexGrow)).toEqual(["1", "1", "1"]);
     expect(screen.queryByText(/Card \d of/)).toBeNull();
+  });
+
+  it("omits the Study handoff when that surface is hidden", async () => {
+    render(<Harness deck={DECK.slice(0, 1)} studyHref={null} />);
+    await finish(["3"]);
+    expect(screen.getByTestId("flashcards-review-note").textContent).toBe(REVIEW_DONE_NOTE);
+    expect(screen.queryByTestId("flashcards-review-study")).toBeNull();
   });
 
   it("the stacked bar has no part for a rating nobody gave", async () => {

@@ -26,6 +26,13 @@ vi.mock("@/context/UserContext", () => ({
   useUser: () => ({ userId: "u1", userReady: true, userName: "Ada Lovelace" }),
 }));
 
+// W8.7: Learn-next source flips when learning_loop + quiz_concept_plan are on.
+const flagState = vi.hoisted(() => ({ flags: {} as Record<string, string> }));
+vi.mock("@/context/FlagsContext", async (original) => ({
+  ...await original<typeof import("@/context/FlagsContext")>(),
+  useFlag: (key: string) => flagState.flags[key] ?? "off",
+}));
+
 vi.mock("@/lib/useIsMobile", () => ({ useIsMobile: vi.fn(() => false) }));
 const layoutState = vi.hoisted(() => ({ pref: "topnav" }));
 vi.mock("@/lib/useLayoutPref", () => ({ useLayoutPref: () => [layoutState.pref, vi.fn()] }));
@@ -48,8 +55,9 @@ vi.mock("../ManageCoursesModal", () => ({
 }));
 vi.mock("../Skeleton", () => ({ DashboardSkeleton: () => <div data-testid="stub-skeleton" /> }));
 vi.mock("../MiniStat", () => ({
-  MiniStat: ({ label, value, sub }: { label: string; value: number; sub?: string }) => (
-    <div data-testid={`stub-ministat-${label}`}>{`${value}|${sub ?? ""}`}</div>
+  // The value is a node (an AnimatedNumber) since #866.
+  MiniStat: ({ label, value, sub }: { label: string; value: React.ReactNode; sub?: string }) => (
+    <div data-testid={`stub-ministat-${label}`}>{value}{`|${sub ?? ""}`}</div>
   ),
 }));
 vi.mock("../Icon", () => ({ Icon: () => null }));
@@ -63,6 +71,15 @@ vi.mock("@/lib/api", () => ({
   fetchActivity: vi.fn(),
   fetchGamificationMe: vi.fn(),
 }));
+vi.mock("@/lib/studyApi", () => ({
+  getStudyNext: vi.fn(),
+  getStudyDaily: vi.fn(),
+  setStudyDailyGoal: vi.fn(),
+}));
+// LearnNextCard probes loop status when a row names node_id + course_id (#866 K05).
+vi.mock("@/components/learn/useLoopStatus", () => ({
+  useLoopStatus: () => ({ status: true, retry: () => {} }),
+}));
 
 import { Dashboard } from "./Dashboard";
 import {
@@ -74,6 +91,7 @@ import {
   getSessions,
   getUpcomingAssignments,
 } from "@/lib/api";
+import { getStudyNext } from "@/lib/studyApi";
 import { useIsMobile } from "@/lib/useIsMobile";
 
 // Wed 4 Mar 2026, 12:00 local.
@@ -122,6 +140,7 @@ const fullscreenGraph = () => [...kg.renders].reverse().find((p) => !("onHoverCo
 
 beforeEach(() => {
   layoutState.pref = "topnav";
+  flagState.flags = {};
   searchParams = new URLSearchParams();
   kg.renders = [];
   modal.last = null;
@@ -140,6 +159,7 @@ beforeEach(() => {
   vi.mocked(getUpcomingAssignments).mockResolvedValue({ assignments: [] });
   vi.mocked(getSessions).mockResolvedValue({ sessions: [] });
   vi.mocked(getRecommendations).mockResolvedValue({ recommendations: [] });
+  vi.mocked(getStudyNext).mockResolvedValue({ due: [], misconceptions: [], ready: [] });
   vi.mocked(fetchActivity).mockResolvedValue({ week: [] } as never);
   vi.mocked(fetchGamificationMe).mockResolvedValue(null as never);
 });
@@ -176,7 +196,7 @@ describe("Dashboard load → screen", () => {
 
   it("maps nodes with the enrolled courses and strips edges to the graph's fields", async () => {
     render(<Dashboard />);
-    await screen.findByText(/concepts across/);
+    await screen.findByText(/concepts? across/);
     const g = mainGraph();
     const nodes = g.nodes as { id: string; color: string; course_id: string }[];
     expect(nodes.map((n) => n.id)).toEqual(["n1", "n2", "root"]);
@@ -194,7 +214,7 @@ describe("Dashboard load → screen", () => {
       ],
     }) as never);
     render(<Dashboard />);
-    await screen.findByText(/concepts across/);
+    await screen.findByText(/concepts? across/);
     const week = screen.getByText("This week").closest(".card") as HTMLElement;
     const marks = within(week).getAllByLabelText(/completed|today|missed|upcoming/).map((el) => el.getAttribute("aria-label"));
     expect(marks).toEqual(["completed", "missed", "today", "upcoming", "upcoming", "upcoming", "upcoming"]);
@@ -261,6 +281,52 @@ describe("Dashboard load → screen", () => {
     render(<Dashboard />);
     expect(await screen.findByText("Nothing suggested yet — start a session.")).toBeInTheDocument();
     expect(screen.queryByText("Couldn't load dashboard")).toBeNull();
+  });
+
+  it("with learning_loop + quiz_concept_plan, Learn next follows learner-next due/ready", async () => {
+    flagState.flags = { learning_loop: "on", quiz_concept_plan: "on" };
+    const planned = (node_id: string, concept_name: string, reason: "due" | "ready") => ({
+      node_id, concept_name, course_id: "c-CS-101", reason, p_known: 0.4, band: "develop" as const,
+      due_at: reason === "due" ? "2026-03-01T00:00:00Z" : null, open_misconceptions: 0,
+    });
+    vi.mocked(getStudyNext).mockResolvedValue({
+      due: [planned("n-due", "Arrays", "due")],
+      misconceptions: [],
+      ready: [planned("n-ready", "Graphs", "ready"), planned("n2", "Heaps", "ready")],
+    });
+    render(<Dashboard />);
+    expect(await screen.findByText("Arrays")).toBeInTheDocument();
+    expect(screen.getByText(/due for review/i)).toBeInTheDocument();
+    expect(screen.getByText("Graphs")).toBeInTheDocument();
+    expect(screen.getByText("Heaps")).toBeInTheDocument();
+    await waitFor(() => expect(getStudyNext).toHaveBeenCalledWith("u1"));
+    expect(getRecommendations).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByText("Arrays"));
+    const href = push.mock.calls[0][0] as string;
+    expect(href).toContain("concept=n-due");
+    expect(href).toContain("course=c-CS-101");
+  });
+
+  it("with the flags on but study next failing, Learn next falls back to the graph recommendations", async () => {
+    flagState.flags = { learning_loop: "on", quiz_concept_plan: "on" };
+    vi.mocked(getStudyNext).mockRejectedValue(new Error("503"));
+    vi.mocked(getRecommendations).mockResolvedValue({
+      recommendations: [{ concept_name: "Legacy Rec" }],
+    });
+    render(<Dashboard />);
+    expect(await screen.findByText("Legacy Rec")).toBeInTheDocument();
+    expect(getStudyNext).toHaveBeenCalledWith("u1");
+  });
+
+  it("never asks study next while learning_loop or quiz_concept_plan is off", async () => {
+    flagState.flags = { learning_loop: "on" }; // plan sibling still off
+    vi.mocked(getRecommendations).mockResolvedValue({
+      recommendations: [{ concept_name: "Legacy Rec" }],
+    });
+    render(<Dashboard />);
+    expect(await screen.findByText("Legacy Rec")).toBeInTheDocument();
+    expect(getStudyNext).not.toHaveBeenCalled();
+    expect(getRecommendations).toHaveBeenCalled();
   });
 });
 
@@ -350,7 +416,7 @@ describe("Dashboard legacy (topnav) wiring", () => {
 
     fireEvent.pointerEnter(chips[2]);
     expect(mainGraph().focusCourseId).toBe("c-C");
-    expect(chips[2]).toHaveTwStyle({ fontWeight: "600" });
+    expect(chips[2]).toHaveAttribute("data-lit", "true");
     fireEvent.pointerLeave(chips[2]);
     expect(mainGraph().focusCourseId).toBe("c-B");
 
@@ -380,7 +446,7 @@ describe("Dashboard legacy (topnav) wiring", () => {
 
   it("node clicks open the tutor on the node", async () => {
     render(<Dashboard />);
-    await screen.findByText(/concepts across/);
+    await screen.findByText(/concepts? across/);
     act(() => mainGraph().onNodeClick!(((mainGraph().nodes as unknown[])[0])));
     expect(push).toHaveBeenCalledTimes(1);
     expect(push.mock.calls[0][0]).toMatch(/^\/learn/);
@@ -457,6 +523,35 @@ describe("Dashboard sidebar layout", () => {
     expect(screen.queryByText("My courses")).toBeNull();
   });
 
+  it("Today's plan quizzes the graph's weakest concept with the learner-next flags off", async () => {
+    layoutState.pref = "sidebar";
+    render(<Dashboard />);
+    expect(await screen.findByTestId("dashboard-plan-quiz")).toHaveTextContent("Quiz: Recursion");
+    expect(getStudyNext).not.toHaveBeenCalled();
+  });
+
+  it("Today's plan quizzes learner-next's first concept with learning_loop + quiz_concept_plan on", async () => {
+    layoutState.pref = "sidebar";
+    flagState.flags = { learning_loop: "on", quiz_concept_plan: "on" };
+    vi.mocked(getStudyNext).mockResolvedValue({
+      due: [],
+      misconceptions: [],
+      ready: [{
+        node_id: "n2", concept_name: "Loops", course_id: "c-CS-101", reason: "ready",
+        p_known: 0.4, band: "develop", due_at: null, open_misconceptions: 0,
+      }],
+    });
+    render(<Dashboard />);
+    const quiz = await screen.findByTestId("dashboard-plan-quiz");
+    await waitFor(() => expect(quiz).toHaveTextContent("Quiz: Loops"));
+    expect(quiz).toHaveTextContent("ready to learn");
+    // One read feeds Learn-next and the plan; the graph ranking is never asked.
+    expect(getStudyNext).toHaveBeenCalledTimes(1);
+    expect(getRecommendations).not.toHaveBeenCalled();
+    fireEvent.click(quiz);
+    expect(push).toHaveBeenCalledWith(expect.stringContaining("concept=n2"));
+  });
+
   it("mobile: Start learning button in the main column, no greeting-row actions", async () => {
     layoutState.pref = "sidebar";
     vi.mocked(useIsMobile).mockReturnValue(true);
@@ -472,7 +567,7 @@ describe("Dashboard sidebar layout", () => {
 describe("Dashboard fullscreen graph", () => {
   it("opens, closes on Escape and on the close button, and routes a node click", async () => {
     render(<Dashboard />);
-    await screen.findByText(/concepts across/);
+    await screen.findByText(/concepts? across/);
     fireEvent.click(screen.getByRole("button", { name: "Fullscreen graph" }));
     expect(screen.getByText("Press Esc to exit")).toBeInTheDocument();
     expect(fullscreenGraph().width).toBe(1200);
@@ -515,7 +610,7 @@ describe("Dashboard suggest card", () => {
   it("an unknown suggestion renders no card", async () => {
     searchParams = new URLSearchParams("suggest=Nope");
     render(<Dashboard />);
-    await screen.findByText(/concepts across/);
+    await screen.findByText(/concepts? across/);
     expect(screen.queryByText("Try this next:")).toBeNull();
     expect(mainGraph().highlightId).toBeUndefined();
   });

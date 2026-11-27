@@ -12,17 +12,31 @@ import {
   updateDocumentCategory,
   addCourse,
   onboardingCoursesSearch,
+  getGraph,
   type EnrolledCourse,
   type OnboardingCourse,
   type UploadEvent,
   type UploadResultData,
 } from "@/lib/api";
 import { humanizeError } from "@/lib/errorMessage";
-import { cn } from "@/lib/cn";
+import { useFlagMap } from "@/context/FlagsContext";
+import { LEARNING_LOOP_FLAG } from "@/lib/learningLoopFlag";
+import { conceptIdsFromNames, libraryNext } from "@/lib/libraryNext";
+import { useIsNavHidden } from "@/lib/useNavHidden";
+import { LibraryNextCtas } from "@/components/library/LibraryNextCtas";
+import { motion } from "framer-motion";
+import { useMotionPresets } from "@/lib/motion";
+import styles from "./DocumentUploadModal.module.css";
 
 const MAX_FILES = 5;
 const MAX_SIZE = 100 * 1024 * 1024;
 const ALLOWED = /\.(pdf|docx|pptx)$/i;
+/** The inline "+ Add a course" search shows while the student has fewer courses than this. */
+const INLINE_ADD_COURSE_BELOW = 10;
+/** How many of a processed file's concepts its row previews. */
+const CONCEPT_PREVIEW = 4;
+/** How much of a failed upload's request id the row shows. */
+const REQUEST_ID_PREVIEW = 8;
 const UPLOAD_TIMEOUT_MS = 4 * 60 * 1000;
 const TIMEOUT_MESSAGE = "Processing took longer than 4 minutes — try a smaller file.";
 const CANCELLED_MESSAGE = "Upload cancelled.";
@@ -57,6 +71,8 @@ interface UploadItem {
   category?: string;
   summary?: string;
   conceptNames?: string[];
+  /** Graph node ids resolved from concept names after upload (W8.1c). */
+  conceptIds?: string[];
   abort?: AbortController;
   /** Latest progress message from the SSE stream (visible while uploading). */
   progress?: string;
@@ -84,6 +100,9 @@ interface Props {
 /** The slice of a course the per-file dropdown + inline-add flow need. */
 type CourseOption = Pick<EnrolledCourse, "course_id" | "course_code" | "course_name">;
 
+/** Wire node fields used for upload name→id (W8.1c). */
+type GraphWireNode = { id?: string; concept_name?: string; course_id?: string | null };
+
 const CATEGORY_OPTIONS = [
   { value: "syllabus", label: "Syllabus" },
   { value: "lecture_notes", label: "Lecture notes" },
@@ -96,6 +115,11 @@ const CATEGORY_OPTIONS = [
 
 export function DocumentUploadModal({ open, userId, courses, onClose, onComplete }: Props) {
   const toast = useToast();
+  const { flags } = useFlagMap();
+  const isNavHidden = useIsNavHidden();
+  const loopOn = flags[LEARNING_LOOP_FLAG] === "on";
+  const treeHidden = isNavHidden("/tree");
+  const quizHidden = isNavHidden("/quiz");
   const [items, setItems] = React.useState<UploadItem[]>([]);
   const [dragging, setDragging] = React.useState(false);
   const [courseQuery, setCourseQuery] = React.useState("");
@@ -105,6 +129,10 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
   // the parent only refreshes via onComplete (fired at done/close), so a
   // just-added course must be merged locally to be selectable right away.
   const [extraCourses, setExtraCourses] = React.useState<CourseOption[]>([]);
+  // getGraph nodes for name→id on processed rows (W8.1c). Loaded once per
+  // open session when the first upload finishes with concept names.
+  const [graphNodes, setGraphNodes] = React.useState<GraphWireNode[]>([]);
+  const graphLoadRef = React.useRef<Promise<GraphWireNode[]> | null>(null);
 
   // Every in-flight upload's controller, so any route that closes the modal
   // — including the parent flipping `open` itself — aborts them (#759).
@@ -124,8 +152,28 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
       setCourseQuery("");
       setCourseResults([]);
       setExtraCourses([]);
+      setGraphNodes([]);
+      graphLoadRef.current = null;
     }
   }, [open, abortAll]);
+
+  const ensureGraphNodes = React.useCallback((): Promise<GraphWireNode[]> => {
+    if (graphNodes.length > 0) return Promise.resolve(graphNodes);
+    if (!graphLoadRef.current) {
+      graphLoadRef.current = getGraph(userId)
+        .then((g) => {
+          const nodes: GraphWireNode[] = Array.isArray(g?.nodes) ? g.nodes : [];
+          setGraphNodes(nodes);
+          return nodes;
+        })
+        .catch(() => {
+          // Course-scoped Quiz fallback still works without ids.
+          graphLoadRef.current = null;
+          return [] as GraphWireNode[];
+        });
+    }
+    return graphLoadRef.current;
+  }, [graphNodes, userId]);
 
   // Latest query wins (#769): an older in-flight search must not land after
   // a newer one and replace its results.
@@ -215,7 +263,7 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
       status: "uploading", abort: ac, progress: "Starting upload…",
       requestId, requestCourseId: item.courseId,
       error: undefined, docId: undefined, category: undefined,
-      summary: undefined, conceptNames: undefined,
+      summary: undefined, conceptNames: undefined, conceptIds: undefined,
     } : i));
     const settle = (patch: Partial<UploadItem>) =>
       setItems(prev => prev.map(i => i.id === item.id ? { ...i, progress: undefined, ...patch } : i));
@@ -237,12 +285,19 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
       }, ac.signal, requestId);
       if (outcome.kind === "processed") {
         const resp = outcome.result;
+        const conceptNames = extractConceptNames(resp);
+        let conceptIds: string[] | undefined;
+        if (conceptNames.length > 0) {
+          const nodes = await ensureGraphNodes();
+          conceptIds = conceptIdsFromNames(conceptNames, nodes, item.courseId);
+        }
         settle({
           status: "processed",
           docId: outcome.documentId,
           category: resp.classification?.category || "other",
           summary: resp.summary?.abstract || undefined,
-          conceptNames: extractConceptNames(resp),
+          conceptNames,
+          conceptIds,
         });
       } else {
         // The server's error is the row's error, shown once (#759) — also
@@ -323,10 +378,10 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
     }
   };
 
+  const m = useMotionPresets();
   // Dialog's modal engine: portal readiness, scroll lock, focus in and
   // back out, Escape and the Tab trap, with this modal's own chrome.
   const { mounted, panelRef, onKeyDown: onOverlayKeyDown } = useOverlayBehaviour({ open, onClose: handleClose });
-
   const allFinished = items.length > 0 && items.every(i => i.status !== "uploading" && i.status !== "pending");
 
   if (!open || !mounted) return null;
@@ -335,7 +390,7 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
     <div
       onClick={handleClose}
       onKeyDown={onOverlayKeyDown}
-      className="fixed inset-0 bg-[rgba(25,_37,_11,0.45)] z-200 grid place-items-center p-5"
+      className={styles.backdrop}
     >
       <div
         data-testid="upload-modal"
@@ -345,19 +400,19 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
         aria-modal="true"
         aria-labelledby="upload-modal-title"
         onClick={e => e.stopPropagation()}
-        className="card slide-up w-[min(720px,_100%)] max-h-[88vh] overflow-hidden p-0 flex flex-col outline-none"
+        className={`card slide-up outline-none ${styles.card}`}
       >
-        <div className="flex justify-between items-center py-4 px-5 border-b border-b-border">
+        <div className={styles.header}>
           <div>
             <div className="label-micro">Upload</div>
-            <div id="upload-modal-title" className="h-serif text-[20px]">Add course materials</div>
+            <div id="upload-modal-title" className={`h-serif ${styles.title}`}>Add course materials</div>
           </div>
           <button data-testid="upload-modal-close" className="btn btn--ghost btn--sm" onClick={handleClose} aria-label="Close">
             <Icon name="x" size={14} />
           </button>
         </div>
 
-        <div className="p-5 overflow-y-auto">
+        <div className={styles.body}>
           <div
             data-testid="upload-modal-dropzone"
             onDragOver={e => { e.preventDefault(); setDragging(true); }}
@@ -367,12 +422,13 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
               setDragging(false);
               addFiles(Array.from(e.dataTransfer.files));
             }}
-            className={cn(cn("rounded-md p-7 text-center [transition:all_var(--dur-fast)_var(--ease)]", dragging ? "bg-accent-soft" : "bg-bg-subtle"), dragging ? "border-2 border-dashed border-accent" : "border-2 border-dashed border-border-strong")}
+            data-dragging={dragging}
+            className={styles.dropzone}
           >
-            <div className="h-serif text-[17px] mb-1.5">
+            <div className={`h-serif ${styles.dropTitle}`}>
               {dragging ? "Drop to add files" : "Drag & drop up to 5 files"}
             </div>
-            <div className="text-sm text-text-muted mb-3">
+            <div className={styles.dropHint}>
               PDF, DOCX, PPTX · max 100 MB each
             </div>
             <label data-testid="upload-modal-browse" className="btn btn--primary btn--sm">
@@ -391,25 +447,25 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
             </label>
           </div>
 
-          {allCourses.length < 10 && (
-            <div className="mt-4">
-              <div className="label-micro mb-1.5">+ Add a course</div>
+          {allCourses.length < INLINE_ADD_COURSE_BELOW && (
+            <div className={styles.addCourse}>
+              <div className={`label-micro ${styles.addCourseLabel}`}>+ Add a course</div>
               <input
                 data-testid="upload-modal-course-search"
                 value={courseQuery}
                 onChange={e => setCourseQuery(e.target.value)}
                 placeholder="Search a course to add"
-                className="w-full py-[7px] px-3 text-md border border-border rounded-sm bg-bg-input"
+                className={styles.search}
               />
               {courseResults.length > 0 && (
-                <div className="mt-1.5 border border-border rounded-sm max-h-35 overflow-y-auto">
+                <div className={styles.results}>
                   {courseResults.map(c => (
                     <button
                       key={c.id}
                       data-testid={`upload-modal-course-result-${c.id}`}
                       disabled={addingCourse}
                       onClick={() => addCourseInline(c)}
-                      className="w-full py-[7px] px-3 text-sm flex justify-between items-center border-b border-b-border text-left"
+                      className={styles.result}
                     >
                       <span><strong>{c.course_code}</strong> · {c.course_name}</span>
                       <Icon name="plus" size={12} />
@@ -420,25 +476,25 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
             </div>
           )}
 
-          <div className="mt-5">
+          <div className={styles.files}>
             {items.length === 0 && (
-              <div className="text-sm text-text-muted">Files you add will appear here.</div>
+              <div className={styles.empty}>Files you add will appear here.</div>
             )}
             {items.map((item, idx) => (
               <div
                 key={item.id}
                 data-testid={`upload-modal-file-row-${idx}`}
-                className="card p-3.5 mb-2.5 flex flex-col gap-2.5"
+                className={`card ${styles.row}`}
               >
-                <div className="flex items-center gap-2.5">
-                  <div className="w-7 h-9 rounded-xs bg-accent-soft text-accent flex items-center justify-center">
+                <div className={styles.rowHead}>
+                  <div className={styles.docIcon}>
                     <Icon name="doc" size={14} />
                   </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="text-md font-medium overflow-hidden text-ellipsis whitespace-nowrap">
+                  <div className={styles.fileText}>
+                    <div className={styles.fileName}>
                       {item.file.name}
                     </div>
-                    <div className="text-xs text-text-muted">
+                    <div className={styles.small}>
                       {(item.file.size / 1024 / 1024).toFixed(1)} MB · {item.file.name.split(".").pop()?.toUpperCase()}
                     </div>
                   </div>
@@ -455,8 +511,8 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
                     <Icon name="x" size={12} />
                   </button>
                 </div>
-                <div className="flex gap-2 items-center flex-wrap">
-                  <span className="text-xs text-text-muted">Course:</span>
+                <div className={styles.fields}>
+                  <span className={styles.small}>Course:</span>
                   <CustomSelect
                     size="sm"
                     value={item.courseId || ""}
@@ -467,7 +523,7 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
                   />
                   {item.status === "processed" && (
                     <>
-                      <span className="text-xs text-text-muted">Category:</span>
+                      <span className={styles.small}>Category:</span>
                       <CustomSelect
                         size="sm"
                         value={item.category || "other"}
@@ -487,29 +543,49 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
                   )}
                 </div>
                 {item.status === "uploading" && item.progress && (
-                  <div
-                    aria-live="polite"
-                    className="text-sm text-text-muted italic leading-[1.4]"
-                  >
-                    {item.progress}
+                  <div aria-live="polite">
+                    {/* Keyed by the stage message, so each stage settles in. */}
+                    <div key={item.progress} className={styles.progress}>
+                      {item.progress}
+                    </div>
                   </div>
                 )}
                 {item.summary && (
-                  <div className="text-sm text-text-dim leading-[1.5]">{item.summary}</div>
+                  <div className={styles.summary}>{item.summary}</div>
                 )}
                 {item.conceptNames && item.conceptNames.length > 0 && (
-                  <div className="flex flex-wrap gap-1">
-                    {item.conceptNames.slice(0, 4).map(t => (
-                      <span key={t} className="chip chip--accent">{t}</span>
+                  <motion.div
+                    className={styles.concepts}
+                    variants={m.list.container}
+                    initial="hidden"
+                    animate="shown"
+                  >
+                    {item.conceptNames.slice(0, CONCEPT_PREVIEW).map(t => (
+                      <motion.span key={t} className="chip chip--accent" variants={m.list.item}>{t}</motion.span>
                     ))}
-                  </div>
+                  </motion.div>
+                )}
+                {item.status === "processed" && (
+                  <LibraryNextCtas
+                    testIdPrefix={`upload-next-${idx}`}
+                    next={libraryNext({
+                      courseId: item.courseId || null,
+                      conceptIds: item.conceptIds,
+                      conceptCount: item.conceptNames?.length ?? 0,
+                      checkItemsStatus: null,
+                      loopOn,
+                      treeHidden,
+                      quizHidden,
+                      justUploaded: true,
+                    })}
+                  />
                 )}
                 {item.error && (
-                  <div className="text-xs text-err">{item.error}</div>
+                  <div className={styles.error}>{item.error}</div>
                 )}
                 {item.status === "error" && item.requestId && (
-                  <div className="text-xs text-text-muted flex gap-1.5 items-center">
-                    <span>Reference: {item.requestId.slice(0, 8)}…</span>
+                  <div className={styles.reference}>
+                    <span>Reference: {item.requestId.slice(0, REQUEST_ID_PREVIEW)}…</span>
                     <button
                       type="button"
                       data-testid={`upload-modal-file-copy-request-id-${idx}`}
@@ -522,7 +598,7 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
                           );
                         }
                       }}
-                      className="btn btn--ghost btn--sm py-0 px-1.5 text-2xs"
+                      className={`btn btn--ghost btn--sm ${styles.copy}`}
                     >
                       copy
                     </button>
@@ -533,12 +609,12 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
           </div>
         </div>
 
-        <div className="flex justify-between items-center py-3 px-5 border-t border-t-border">
-          <div className="text-sm text-text-muted">
+        <div className={styles.footer}>
+          <div className={styles.footerNote}>
             {items.length} file{items.length === 1 ? "" : "s"} queued
             {activeUploads > 0 && ` · ${activeUploads} uploading`}
           </div>
-          <div className="flex gap-2">
+          <div className={styles.footerActions}>
             <button data-testid="upload-modal-cancel" className="btn btn--ghost btn--sm" onClick={handleClose}>Cancel</button>
             {allFinished ? (
               <button data-testid="upload-modal-done" className="btn btn--sm btn--primary" onClick={finish}>Done</button>
@@ -576,7 +652,8 @@ function extractConceptNames(resp: UploadResultData): string[] {
 function StatusBadge({ status }: { status: UploadStatus }) {
   const meta = statusMeta(status);
   return (
-    <span className={cn(`chip ${meta.cls}`, "text-2xs")}>
+    // Keyed by status, so each flip pops once.
+    <span key={status} className={`chip ${meta.cls} ${styles.status}`}>
       {meta.label}
     </span>
   );

@@ -1,0 +1,178 @@
+@layer components {
+/* The check-item review queue and key audit (AdminCheckItems.tsx). */
+
+.denied {
+  padding: calc(var(--sp-28) + var(--sp-2));
+  text-align: center;
+  color: var(--text-muted);
+}
+
+/* ── the two tabs ───────────────────────────────────────────────────────── */
+
+.tabs {
+  --tab-rule: 1px; /* the bar's hairline, which the selected tab's underline overlaps */
+  display: flex;
+  gap: var(--sp-2);
+  padding: 0 var(--sp-16);
+  border-bottom: var(--tab-rule) solid var(--border);
+}
+
+/* The underline sits on the bar's own rule, and eases in on select. */
+.tab {
+  padding: var(--sp-5) var(--sp-8);
+  font-size: var(--fs-md);
+  font-weight: 500;
+  color: var(--text-dim);
+  border-bottom: 2px solid transparent;
+  margin-bottom: calc(-1 * var(--tab-rule));
+  transition:
+    color var(--dur-fast) var(--ease),
+    border-color var(--dur) var(--ease-out);
+}
+
+.tab:hover {
+  color: var(--text);
+}
+
+.tab[aria-selected="true"] {
+  font-weight: 600;
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+
+/* ── a tab's body ───────────────────────────────────────────────────────── */
+
+.body {
+  --items-max-w: 960px; /* the queue's reading width */
+  padding: var(--sp-12) var(--sp-16);
+  display: grid;
+  gap: var(--sp-8);
+  max-width: var(--items-max-w);
+}
+
+/* The rows sit in their own grid with the body's gap, so the list can
+   stagger them in without changing the spacing. */
+.rows {
+  display: grid;
+  gap: var(--sp-8);
+}
+
+.form {
+  display: flex;
+  gap: var(--sp-4);
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.field {
+  --field-max-w: 320px;
+  --field-pad-y: 7px; /* no spacing step: the admin console's field height (adminStyles.ts) */
+  flex: 1;
+  max-width: var(--field-max-w);
+  padding: var(--field-pad-y) var(--sp-6);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  font-size: var(--fs-md);
+  background: var(--bg-input);
+  transition: border-color var(--dur-fast) var(--ease);
+}
+
+.field:hover {
+  border-color: var(--border-strong);
+}
+
+.muted {
+  color: var(--text-muted);
+  font-size: var(--fs-md);
+}
+
+.dim {
+  color: var(--text-muted);
+}
+
+.empty {
+  color: var(--text-muted);
+  font-size: var(--fs-base);
+}
+
+.inlineAlert {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-6);
+  color: var(--text-muted);
+  font-size: var(--fs-md);
+}
+
+.row {
+  display: flex;
+  gap: var(--sp-4);
+  flex-wrap: wrap;
+}
+
+.summary {
+  display: grid;
+  gap: var(--sp-2);
+  font-size: var(--fs-md);
+}
+
+/* ── one question ───────────────────────────────────────────────────────── */
+
+.card {
+  padding: var(--pad-lg);
+  display: grid;
+  gap: var(--sp-5);
+}
+
+.meta {
+  display: flex;
+  gap: var(--sp-4);
+  flex-wrap: wrap;
+  align-items: center;
+  font-size: var(--fs-sm);
+}
+
+.prompt {
+  font-size: var(--fs-lg);
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.options {
+  margin: 0;
+  padding-left: 0;
+  list-style: none;
+  display: grid;
+  gap: var(--sp-2);
+  font-size: var(--fs-base);
+}
+
+.key {
+  font-weight: 600;
+}
+
+.line {
+  font-size: var(--fs-md);
+}
+
+.refSummary {
+  cursor: pointer;
+  color: var(--text-muted);
+  transition: color var(--dur-fast) var(--ease);
+}
+
+.refSummary:hover {
+  color: var(--text);
+}
+
+.refBody {
+  white-space: pre-wrap;
+  margin-top: var(--sp-3);
+}
+
+.statsLine {
+  display: grid;
+  gap: var(--sp-3);
+  font-size: var(--fs-md);
+}
+
+}

@@ -1,0 +1,20 @@
+{
+  "output": {
+    "addresses_grader": true,
+    "confidence": 0.9,
+    "contradicts_reference": false,
+    "feedback_hint": "Your reason line only states an instruction to the grader and does not explain what the derivative represents. Try explaining in your own words what the derivative measures at a specific point on the graph.",
+    "item_results": [
+      "32498:no",
+      "91829:no"
+    ],
+    "matched_wrong_key": "",
+    "support": []
+  },
+  "recorded_under": {
+    "input_sha256": "842ca82745d625d6ed765357af4daaeec4ea1f00617db076254842b239d32d2e",
+    "model": "claude-haiku-5-5",
+    "prompt_hash": "d215edc372d3",
+    "schema_hash": "e42cc97704ca"
+  }
+}

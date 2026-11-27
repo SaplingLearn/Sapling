@@ -24,14 +24,21 @@ import {
 } from "@/lib/graph/nodeStyle";
 import { nodeBlobPath, wobbleFor } from "@/lib/graph/blobShape";
 import { IS_TEST_MODE } from "@/lib/testMode";
+import { GraphZoomControls } from "./GraphZoomControls";
+import styles from "./graph.module.css";
+import { FOLLOW_GAP, followForce, followersOf, restFloor, type FreeNodes, type Tether } from "./graphFollow";
+// The follow physics' pure parts are tested where they always were imported from.
+export { followForce, followersOf } from "./graphFollow";
 import {
   ANCHOR_WIDTH,
   ARROW_REF_X,
   ARROW_SIZE,
+  captionBox,
   conceptLabelOpacity,
   conceptLabelSize,
   conceptLabelWeight,
   courseLabelSize,
+  frameReach,
   hoverFocusId,
   hoverMastery,
   isDragPinned,
@@ -49,7 +56,6 @@ import {
   relatedDash,
 } from "./knowledgeGraph2DPaint";
 import {
-  ROOT_ROOM,
   clearOfKept,
   courseLinks,
   forceOrbit,
@@ -92,6 +98,12 @@ type Props = {
   height?: number;
   variant?: GraphVariant;
   highlightId?: string;
+  /**
+   * Concepts practiced this session (W3.2 dual encoding): solid outline ring
+   * by node id. Orthogonal to mastery fill and to `highlightId` (current step)
+   * / `comparison` (partner rings). SessionMap feeds measured learner_state keys.
+   */
+  practicedIds?: ReadonlySet<string> | readonly string[];
   onNodeClick?: (n: GraphNode) => void;
   /** Pause simulation when graph is off-screen (default: true). */
   pauseWhenOffscreen?: boolean;
@@ -108,11 +120,27 @@ type Props = {
    * simulation's spacing, which the full tree depends on.
    */
   initialZoom?: number;
+  /**
+   * Keep every node and its whole caption in the window: the view frames the
+   * nodes where they come to rest (as an `initialZoom` caller's does), with
+   * room for each caption as drawn, never past full size, and follows them
+   * until the student pans or zooms. Off (default): the planned opening view.
+   * The Tutor's session panel, a small overview, turns it on.
+   */
+  fit?: boolean;
   /** `course` (default): course colours, tier as opacity. `mastery`: one
    *  colour per mastery tier, hubs brown, edges blend between their ends. */
   colorMode?: GraphColorMode;
   /** Top offset of the zoom stack (default 12, flush with the corner). */
   zoomControlsTop?: number;
+  /** Draw the zoom stack (default). A small overview that links to the full
+   *  map leaves it off, so nothing is drawn over its nodes; a double-click on
+   *  it then does what the stack's reset does (re-frame, hand the view back). */
+  zoomControls?: boolean;
+  /** `always` (default): the wheel zooms. `pinch`: only a pinch (a wheel with
+   *  ctrl/⌘, which is how a trackpad pinch arrives) zooms; a plain wheel
+   *  scrolls whatever holds the graph — a map inside a scrolling panel. */
+  wheelZoom?: "always" | "pinch";
   /**
    * Obsidian-style legibility (preview only for now): hovering a concept
    * fades everything but it and its neighbours, concept labels fade in with
@@ -196,124 +224,6 @@ const restLength = (a: { x?: number; y?: number } | undefined, b: { x?: number; 
   a?.x != null && a.y != null && b?.x != null && b.y != null
     ? Math.max(LINK_REST, Math.hypot(a.x - b.x, a.y - b.y))
     : LINK_REST;
-
-/** A link may always stretch to at least this before it pulls (px). */
-const FOLLOW_GAP = 70;
-/** Share of the extra stretch closed per tick (before velocity decay). */
-const FOLLOW_PULL = 0.1;
-
-/**
- * Everything a dragged concept is connected to, through concept links and
- * course spokes alike, each mapped to the node it was reached through (its
- * leader, so the tree of who pulls whom). The dragged concept maps to null.
- */
-export function followersOf(
-  dragId: string,
-  links: ReadonlyArray<{ source: string | { id: string }; target: string | { id: string } }>,
-  hops = Infinity,
-): Map<string, string | null> {
-  const idOf = (end: string | { id: string }) => (typeof end === "string" ? end : end.id);
-  const adjacent = new Map<string, string[]>();
-  for (const l of links) {
-    const s = idOf(l.source);
-    const t = idOf(l.target);
-    if (!adjacent.has(s)) adjacent.set(s, []);
-    if (!adjacent.has(t)) adjacent.set(t, []);
-    adjacent.get(s)!.push(t);
-    adjacent.get(t)!.push(s);
-  }
-  const leader = new Map<string, string | null>([[dragId, null]]);
-  let frontier = [dragId];
-  for (let hop = 0; hop < hops && frontier.length; hop++) {
-    const next: string[] = [];
-    for (const id of frontier) {
-      for (const m of adjacent.get(id) ?? []) {
-        if (leader.has(m)) continue;
-        leader.set(m, id);
-        next.push(m);
-      }
-    }
-    frontier = next;
-  }
-  return leader;
-}
-
-/**
- * A freed node's rope to the node that leads it (null for the dragged one)
- * and its length: as long as their link was when the drag began.
- */
-type Tether = { leader: string | null; gap: number };
-/** Freed nodes while a drag plays out, and the node being dragged (if any). */
-type FreeNodes = { leader: Map<string, Tether>; dragging: string | null };
-type FollowNode = Pick<SimulationNodeDatum, "x" | "y" | "vx" | "vy" | "fx">;
-type OrbitSlot = { rootId: string | null; angle: number; radius: number };
-
-/**
- * The nearest a concept may come to rest to what it sits round: clear of
- * its course root's mark and course code (`ROOT_ROOM`, as it was planned),
- * however a drag pushed the two together; with no root, just off the middle.
- */
-const restFloor = (rootId: string | null) => (rootId ? ROOT_ROOM : 40);
-
-/**
- * A rope stretched past its length pulls the follower `n` after its leader
- * `l` — or, when the follower is pinned (a classic-layout course root), pulls
- * the leader back instead. `n` is positioned (the caller checked).
- */
-function pullAlongRope(n: FollowNode, l: FollowNode | undefined, gap: number): void {
-  if (!l || l.x == null || l.y == null) return;
-  const dx = l.x - n.x!;
-  const dy = l.y - n.y!;
-  const len = Math.hypot(dx, dy) || 1e-6;
-  const slack = len - gap;
-  // Not `slack <= 0`: a NaN slack must not pull, as before.
-  if (!(slack > 0)) return;
-  const px = (dx / len) * slack * FOLLOW_PULL;
-  const py = (dy / len) * slack * FOLLOW_PULL;
-  if (n.fx == null) {
-    n.vx = (n.vx ?? 0) + px;
-    n.vy = (n.vy ?? 0) + py;
-  } else if (l.fx == null) {
-    l.vx = (l.vx ?? 0) - px;
-    l.vy = (l.vy ?? 0) - py;
-  }
-}
-
-/**
- * The "follow" force, one simulation tick. Freed nodes (`free`): each rope
- * stretched past its length pulls (see `pullAlongRope`). Each freed concept's
- * orbit target tracks it so the orbit force (next) doesn't hold it on its old
- * ring. Once everything has slowed down, wherever it all came to rest becomes
- * the layout (`settle`). Runs every tick: allocates nothing beyond `centerOf`.
- * Exported for tests.
- */
-export function followForce(
-  alpha: number,
-  free: FreeNodes,
-  nodeById: ReadonlyMap<string, FollowNode>,
-  orbit: ReadonlyMap<string, OrbitSlot>,
-  centerOf: (rootId: string | null) => { x: number; y: number },
-  settle: () => void,
-): void {
-  if (!free.leader.size) return;
-  let moving = free.dragging != null;
-  for (const [id, { leader: leaderId, gap }] of free.leader) {
-    const n = nodeById.get(id);
-    if (!n || n.x == null || n.y == null) continue;
-    pullAlongRope(n, leaderId ? nodeById.get(leaderId) : undefined, gap);
-    const o = orbit.get(id);
-    if (o && id !== free.dragging) {
-      const c = centerOf(o.rootId);
-      o.angle = Math.atan2(n.y - c.y, n.x - c.x);
-      // Never nearer its course root than it was planned to be: a course
-      // dragged into its own concepts parts them, and the orbit force (next)
-      // moves any it ran into back out to this distance.
-      o.radius = Math.max(restFloor(o.rootId), Math.hypot(n.x - c.x, n.y - c.y));
-    }
-    if (Math.hypot(n.vx ?? 0, n.vy ?? 0) >= 0.1) moving = true;
-  }
-  if (!moving || (free.dragging == null && alpha < 0.02)) settle();
-}
 
 /** The most ticks, and the most time, spent settling a graph before it is drawn. */
 const QUIET_TICKS = 300;
@@ -428,6 +338,9 @@ const THIN_ARROW = { markerWidth: 5, markerHeight: 5, refX: 9 } as const;
 const ARROW_GAP = 2;
 const MAX_ZOOM = 3;
 
+/** How far the hover card sits below and right of the pointer, in px. */
+const TOOLTIP_OFFSET = 14;
+
 /**
  * The hover tooltip: name, course, mastery bar, tier and last studied. Its
  * position is seeded from `pos` when it mounts; pointer moves then write it
@@ -443,32 +356,36 @@ function renderTooltip(
   return (
     <div
       ref={ref}
-      className="fixed bg-bg-panel border border-border-strong rounded-md py-2.5 px-3 shadow-md pointer-events-none z-50 text-sm min-w-50" style={{ left: pos.x + 14, top: pos.y + 14 }}
+      className={styles.tooltip}
+      // Seeded here, then moved by direct writes on pointer-move; the mark
+      // colour and mastery feed the module's dot and bar.
+      style={
+        {
+          left: pos.x + TOOLTIP_OFFSET,
+          top: pos.y + TOOLTIP_OFFSET,
+          "--tip-color": color,
+          "--tip-mastery": mastery,
+        } as React.CSSProperties
+      }
     >
-      <div className="font-display text-base mb-1">{hovered.name}</div>
-      <div className="flex items-center gap-1.5 text-text-dim">
-        <span className="w-2 h-2 rounded-[50%]" style={{ background: color }} />
+      <div className={styles.tipName}>{hovered.name}</div>
+      <div className={styles.tipCourse}>
+        <span className={styles.tipDot} />
         {hovered.is_subject_root ? "Course" : hovered.subject}
       </div>
-      <div className="mt-2">
-        <div
-          className="flex justify-between text-xs text-text-muted mb-1"
-        >
+      <div className={styles.tipMastery}>
+        <div className={styles.tipMasteryHead}>
           <span>{hovered.is_subject_root ? "Avg. mastery" : "Mastery"}</span>
-          <span className="mono text-text">
+          <span className={`mono ${styles.tipValue}`}>
             {Math.round(mastery * 100)}%
           </span>
         </div>
-        <div
-          className="h-1 bg-bg-soft rounded-[var(--r-full)] overflow-hidden"
-        >
-          <div
-            className="w-full h-full [transform-origin:left] [transition:transform_var(--dur)_var(--ease)]" style={{ background: color, transform: `scaleX(${mastery})` }}
-          />
+        <div className={styles.tipTrack}>
+          <div className={styles.tipFill} />
         </div>
       </div>
       {!hovered.is_subject_root && (
-        <div className="mt-1.5 text-text-dim text-xs capitalize">
+        <div className={styles.tipTier}>
           {hovered.mastery_tier}
           {hovered.last_studied_at && <> · {hovered.last_studied_at}</>}
         </div>
@@ -484,14 +401,18 @@ function KnowledgeGraph2DImpl({
   height = 480,
   variant = "organism",
   highlightId,
+  practicedIds,
   onNodeClick,
   pauseWhenOffscreen = true,
   comparison = null,
-  comparisonColor = "#8a7bc4",
+  comparisonColor = "var(--series-compare)",
   comparisonLabel,
   initialZoom = 1,
+  fit,
   colorMode = "course",
   zoomControlsTop = 12,
+  zoomControls,
+  wheelZoom,
   legible = false,
   focusCourseId = null,
   onHoverCourse,
@@ -513,6 +434,9 @@ function KnowledgeGraph2DImpl({
   // labels never fade, or with an opening zoom of its own, opens as planned
   // at full size.
   const openZoom = legible && initialZoom === 1 ? LABEL_ZOOM.hidden : 1;
+  // Framed on where the nodes rest (`contentFrame`), not on the plan: a
+  // caller with an opening zoom of its own, or one that asks to `fit`.
+  const framed = !!fit || initialZoom !== 1;
   // The current zoom, for the per-tick writer (legible nodes keep a minimum
   // on-screen size, so arrow insets depend on it).
   const viewScaleRef = React.useRef(initialZoom);
@@ -549,6 +473,15 @@ function KnowledgeGraph2DImpl({
     }
     return map;
   }, [comparison]);
+  // W3.2 covered/practiced channel: Set lookup for solid outline rings.
+  const practicedIdSet = React.useMemo((): ReadonlySet<string> | null => {
+    if (!practicedIds) return null;
+    // Prop is `ReadonlySet | readonly string[]`; Array.isArray picks the list.
+    const set: ReadonlySet<string> = Array.isArray(practicedIds)
+      ? new Set(practicedIds as readonly string[])
+      : (practicedIds as ReadonlySet<string>);
+    return set.size > 0 ? set : null;
+  }, [practicedIds]);
   const svgRef = React.useRef<SVGSVGElement>(null);
   const simRef = React.useRef<Simulation<SimNode, SimLink> | null>(null);
   const simNodesRef = React.useRef<SimNode[]>([]);
@@ -794,7 +727,7 @@ function KnowledgeGraph2DImpl({
     // into frame again, easing there rather than staying where the student
     // left the old one. A resize alone keeps their view.
     const idsKey = nodes.map((n) => n.id).sort().join("|");
-    if (initialZoom !== 1 && framedIdsRef.current !== null && framedIdsRef.current !== idsKey) {
+    if (framed && framedIdsRef.current !== null && framedIdsRef.current !== idsKey) {
       viewTouchedRef.current = false;
     }
     framedIdsRef.current = idsKey;
@@ -1109,20 +1042,34 @@ function KnowledgeGraph2DImpl({
    * fragment off to one side with a neighbour cut off at the edge.
    */
   const contentFrame = (): { tx: number; ty: number; scale: number } | null => {
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    for (const n of simNodesRef.current) {
-      if (n.x == null || n.y == null) continue;
-      const r = nodeRadius(n) + 24;
-      minX = Math.min(minX, n.x - r);
-      maxX = Math.max(maxX, n.x + r);
-      minY = Math.min(minY, n.y - r);
-      maxY = Math.max(maxY, n.y + r + 10); // the caption sits under the node
+    // Where the nodes reach (`frameReach`) when drawn at `zoom`: with `fit`,
+    // each whole caption counts, and a course code's size depends on the zoom.
+    const reachAt = (zoom: number) => {
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (const n of simNodesRef.current) {
+        if (n.x == null || n.y == null) continue;
+        const r = nodeRadius(n);
+        const reach = frameReach(r, fit ? captionBox(n, r, zoom, legible, MIN_ZOOM) : null);
+        minX = Math.min(minX, n.x - reach.x);
+        maxX = Math.max(maxX, n.x + reach.x);
+        minY = Math.min(minY, n.y - reach.up);
+        maxY = Math.max(maxY, n.y + reach.down);
+      }
+      return Number.isFinite(minX) ? { minX, minY, maxX, maxY } : null;
+    };
+    const floor = fit ? FIT_MIN_ZOOM : MIN_ZOOM;
+    let scale = view.scale;
+    let box: ReturnType<typeof reachAt> = null;
+    // The zoom the box asks for changes the captions it holds: a few rounds settle it.
+    for (let round = 0; round < (fit ? 3 : 1); round++) {
+      box = reachAt(scale);
+      if (!box) return null;
+      scale = Math.max(floor, Math.min(initialZoom, width / (box.maxX - box.minX), height / (box.maxY - box.minY)));
     }
-    if (!Number.isFinite(minX)) return null;
-    const scale = Math.max(MIN_ZOOM, Math.min(initialZoom, width / (maxX - minX), height / (maxY - minY)));
+    if (!box) return null;
     return {
-      tx: width / 2 - ((minX + maxX) / 2) * scale,
-      ty: height / 2 - ((minY + maxY) / 2) * scale,
+      tx: width / 2 - ((box.minX + box.maxX) / 2) * scale,
+      ty: height / 2 - ((box.minY + box.maxY) / 2) * scale,
       scale,
     };
   };
@@ -1130,7 +1077,7 @@ function KnowledgeGraph2DImpl({
   // the layout settles — following the fragment into place rather than
   // jumping once it stops.
   frameContentRef.current = (snap = false) => {
-    if (initialZoom === 1 || viewTouchedRef.current || dragRef.current) return;
+    if (!framed || viewTouchedRef.current || dragRef.current) return;
     const target = contentFrame();
     if (!target) return;
     fittedViewRef.current = target;
@@ -1282,8 +1229,8 @@ function KnowledgeGraph2DImpl({
     // direct style write — no setState on a bare pointer-move.
     const tip = tooltipRef.current;
     if (tip) {
-      tip.style.left = `${e.clientX + 14}px`;
-      tip.style.top = `${e.clientY + 14}px`;
+      tip.style.left = `${e.clientX + TOOLTIP_OFFSET}px`;
+      tip.style.top = `${e.clientY + TOOLTIP_OFFSET}px`;
     }
     const drag = dragRef.current;
     if (!drag || e.pointerId !== drag.pointerId) return;
@@ -1390,6 +1337,7 @@ function KnowledgeGraph2DImpl({
 
   const onWheel = (e: React.WheelEvent) => {
     if (!svgRef.current) return;
+    if (wheelZoom === "pinch" && !e.ctrlKey && !e.metaKey) return; // the panel scrolls
     const rect = svgRef.current.getBoundingClientRect();
     const mx = e.clientX - rect.left;
     const my = e.clientY - rect.top;
@@ -1402,8 +1350,21 @@ function KnowledgeGraph2DImpl({
 
   const resetView = () => {
     viewTouchedRef.current = false;
-    easeView((initialZoom !== 1 ? contentFrame() : null) ?? fittedViewRef.current ?? initialView());
+    easeView((framed ? contentFrame() : null) ?? fittedViewRef.current ?? initialView());
   };
+  // With no zoom stack there is no reset button: a double-click is the reset.
+  const onDoubleClick = () => {
+    if (zoomControls === false) resetView();
+  };
+  // A pinch also asks the browser to zoom the page: React's wheel listener is
+  // passive, so the graph takes those events itself.
+  React.useEffect(() => {
+    const svg = svgRef.current;
+    if (!svg || wheelZoom !== "pinch") return;
+    const keep = (e: WheelEvent) => { if (e.ctrlKey || e.metaKey) e.preventDefault(); };
+    svg.addEventListener("wheel", keep, { passive: false });
+    return () => svg.removeEventListener("wheel", keep);
+  }, [wheelZoom]);
 
   const hoveredMastery = hoverMastery(hovered, subjectAverage);
 
@@ -1481,7 +1442,7 @@ function KnowledgeGraph2DImpl({
           stroke={linkStroke(mastery, gradId, incident, organic ? linkCourseColor(s) : undefined)}
           strokeOpacity={op}
           markerEnd={linkMarker(arrow, gradPrefix, incident)}
-          style={legible ? { transition: "stroke-opacity 150ms ease" } : undefined}
+          className={legible ? styles.legibleEdge : undefined}
           strokeWidth={width}
           // A hand-drawn bar meets each node's rim square-on; its dotted
           // "related" form needs round caps to make the dots.
@@ -1517,15 +1478,8 @@ function KnowledgeGraph2DImpl({
         data-testid="graph-node"
         data-node-id={n.id}
         transform={`translate(${n.x}, ${n.y})`}
-        style={
-          legible
-            ? {
-                cursor: "grab",
-                opacity: legibleNodeOpacity(n, focusId, focusSet, focusCourseId),
-                transition: "opacity 150ms ease",
-              }
-            : { cursor: "grab" }
-        }
+        className={legible ? `${styles.node} ${styles.legibleNode}` : styles.node}
+        style={legible ? { opacity: legibleNodeOpacity(n, focusId, focusSet, focusCourseId) } : undefined}
         onPointerDown={(ev) => onNodePointerDown(ev, n)}
         onPointerEnter={(ev) => {
           // Seed the tooltip position as it mounts so it opens
@@ -1588,6 +1542,31 @@ function KnowledgeGraph2DImpl({
                 repeatCount="indefinite"
               />
             </circle>
+          ))}
+        {practicedIdSet?.has(n.id) &&
+          !n.is_subject_root &&
+          (organic ? (
+            // Solid practiced ring (W3.2): covered this session, not mastery.
+            // Inside the highlight pulse (r+8); distinct from comparison dashes.
+            <path
+              data-testid={`tutor-map-practiced-${n.id}`}
+              d={nodeBlobPath(n.id, r + 5, wobble)}
+              fill="none"
+              stroke="var(--text)"
+              strokeWidth={2}
+              opacity={0.85}
+            />
+          ) : (
+            <circle
+              data-testid={`tutor-map-practiced-${n.id}`}
+              cx={0}
+              cy={0}
+              r={r + 5}
+              fill="none"
+              stroke="var(--text)"
+              strokeWidth={2}
+              opacity={0.85}
+            />
           ))}
         {(() => {
           const partner = !n.is_subject_root && comparisonByName.get((n.name || "").trim().toLowerCase());
@@ -1687,20 +1666,21 @@ function KnowledgeGraph2DImpl({
   const arrowBox = organic ? ORGANIC_ARROW : THIN_ARROW;
 
   return (
-    <div className="relative overflow-hidden bg-transparent" style={{ width, height }}>
+    <div className={styles.frame} style={{ width, height }}>
       <svg
         ref={svgRef}
         width={width}
         height={height}
         role="img"
-        aria-label="Knowledge graph"
+        aria-label="Knowledge map"
         data-color-mode={colorMode}
-        className="block cursor-grab touch-none"
+        className={styles.svg}
         onPointerDown={onSvgPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
         onWheel={onWheel}
+        onDoubleClick={onDoubleClick}
       >
         <defs>
           {legible && (
@@ -1728,45 +1708,20 @@ function KnowledgeGraph2DImpl({
         </g>
       </svg>
 
-      <div
-        data-testid="graph-zoom-controls"
-        className="absolute right-3 flex flex-col gap-1 bg-bg-panel border border-border rounded-sm p-1 shadow-sm" style={{ top: zoomControlsTop }}
-      >
-        <button
-          data-testid="graph-zoom-in"
-          className="btn btn--ghost btn--sm py-0.5 px-2 font-sans"
+      {zoomControls !== false && (
+        <GraphZoomControls
+          top={zoomControlsTop}
           // About the window's centre in every mode. The plain mode used to
           // scale about the content origin, so each press slid what you were
           // looking at toward a corner (quiz home's preview lost its focus
           // concept off the edge in three presses).
-          onClick={() => {
+          onZoom={(factor) => {
             viewTouchedRef.current = true;
-            zoomAbout(1.25, width / 2, height / 2);
+            zoomAbout(factor, width / 2, height / 2);
           }}
-          title="Zoom in"
-        >
-          +
-        </button>
-        <button
-          data-testid="graph-zoom-out"
-          className="btn btn--ghost btn--sm py-0.5 px-2 font-sans"
-          onClick={() => {
-            viewTouchedRef.current = true;
-            zoomAbout(1 / 1.25, width / 2, height / 2);
-          }}
-          title="Zoom out"
-        >
-          −
-        </button>
-        <button
-          data-testid="graph-zoom-reset"
-          className="btn btn--ghost btn--sm py-0.5 px-2 text-2xs"
-          onClick={resetView}
-          title="Reset view"
-        >
-          ⟲
-        </button>
-      </div>
+          onReset={resetView}
+        />
+      )}
 
       {hovered && !dragRef.current && renderTooltip(hovered, tooltipRef, tooltipPos, courseColor(hovered), hoveredMastery)}
       {/* The a11y node list doubles as the browser suite's data seam (#395):
@@ -1774,7 +1729,7 @@ function KnowledgeGraph2DImpl({
           id as `data-node-id` so tests assert by identity, never by label
           (concept names are only unique per course). Registered in
           docs/frontend-testids.md. */}
-      <ul className="absolute w-px h-px p-0 -m-px overflow-hidden [clip:rect(0,0,0,0)] whitespace-nowrap border-0" aria-label="Knowledge graph nodes" data-testid="graph-node-items">
+      <ul className={styles.srOnly} aria-label="Knowledge map nodes" data-testid="graph-node-items">
         {nodes.map((n) =>
           onNodeClick ? (
             <li key={n.id} data-testid="graph-node-item" data-node-id={n.id}>

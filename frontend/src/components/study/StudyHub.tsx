@@ -13,6 +13,7 @@
  *   flashcards ......... getFlashcards
  *   study guides ....... listGuides
  *   daily minutes/goal . getStudyDaily / setStudyDailyGoal (routes/study.py)
+ *   learner-next ....... getStudyNext (W8.3; learning_loop + quiz_concept_plan)
  *   roadmap categories . getTopicChecklist, and refreshTopicChecklist when the
  *                        course has no current outline (routes/topic_checklist.py)
  *   exam coverage ...... the same checklist (a topic's assessment_ids + node_id)
@@ -24,6 +25,7 @@ import React from "react";
 import { useFlagMap } from "@/context/FlagsContext";
 import { useUser } from "@/context/UserContext";
 import type { EnrolledCourse } from "@/lib/api";
+import type { StudyNext } from "@/lib/studyApi";
 import type { ChecklistTopic } from "@/lib/topicChecklistApi";
 import { StudyHubSkeleton } from "../Skeleton";
 import { DailyGoalCard } from "./DailyGoalCard";
@@ -32,6 +34,7 @@ import { ExamTabs } from "./ExamTabs";
 import { FocusCard, FocusEmpty } from "./FocusCard";
 import { HubHeader } from "./HubHeader";
 import { assessmentsForCourse, cardsFor, upcomingOf, type FlashcardRow } from "./hubModel";
+import { READINESS_ID } from "./hubUi";
 import { QuickReviews } from "./QuickReviews";
 import { ReadinessBand } from "./ReadinessBand";
 import { RecentActivity, RecentActivityModal } from "./RecentActivity";
@@ -42,9 +45,8 @@ import { useDatesEditor, useSelectAddedExam } from "./useDatesEditor";
 import { useFlip } from "./useFlip";
 import { COURSE_PICKED, examPicked, useHubState, type HubState, type SetHub } from "./useHubState";
 import { useHubView } from "./useHubView";
-import { useConceptGraph, useCourseOutline, useStudyRecords, type StudyGraph, type StudyRecords } from "./useStudyData";
+import { useConceptGraph, useCourseOutline, useStudyNext, useStudyRecords, type StudyGraph, type StudyRecords } from "./useStudyData";
 import { useToolNav } from "./useToolNav";
-import { cn } from "@/lib/cn";
 
 export interface StudyHubProps {
   courses: EnrolledCourse[];
@@ -58,13 +60,21 @@ export interface StudyHubProps {
   isMobile: boolean;
   /** Test seam: a fixed "now". */
   today?: Date;
+  /** The learning loop's review cards (Study.tsx's LoopReviews), drawn under
+   *  the page header across both columns, so they sit below the title and the
+   *  course picker rather than above them. */
+  reviews?: React.ReactNode;
+  /** `review_v2`: the same reviews as compact rows in the rail, under Quick
+   *  Reviews (each opens in a modal), so the hub keeps its layout. */
+  railReviews?: React.ReactNode;
 }
 
-export function StudyHub({ courses, coursesReady = true, semester, semesterReady, initialCourseId, isMobile, today: todayProp }: StudyHubProps) {
+export function StudyHub({ courses, coursesReady = true, semester, semesterReady, initialCourseId, isMobile, today: todayProp, reviews, railReviews }: StudyHubProps) {
   // hide_quiz (#620) hides Quiz everywhere it is offered:
   // shown only once the flags are in and it is not hidden.
   const { flags, ready: flagsReady } = useFlagMap();
   const quizShown = flagsReady && flags.hide_quiz !== "on";
+  const tutorShown = flagsReady && flags.hide_tutor !== "on";
   const { userId } = useUser();
   const today = React.useMemo(() => todayProp ?? new Date(), [todayProp]);
 
@@ -79,28 +89,34 @@ export function StudyHub({ courses, coursesReady = true, semester, semesterReady
     set(COURSE_PICKED);
   };
   const { outline, ready: outlineReady, reload: reloadOutline } = useCourseOutline(userId, course?.course_id || "", semester, semesterReady);
+  const learnerNext = useStudyNext(userId, course?.course_id || "");
 
   // The hub paints nothing real until it knows the student's courses AND has
   // their concepts: without this it rendered the "Add a course" empty state,
   // then the chrome, then the roadmap, in three visible steps.
   if (!coursesReady || !semesterReady) return <StudyHubSkeleton isMobile={isMobile} />;
-  if (!course) return <NoCourses />;
+  if (!course) return <NoCourses reviews={reviews ?? railReviews} />;
   if (!graph) return <StudyHubSkeleton isMobile={isMobile} />;
 
   return (
     <HubPage courses={courses} course={course} onPickCourse={pickCourse} userId={userId} today={today} isMobile={isMobile} quizShown={quizShown}
+      tutorShown={tutorShown}
       graph={graph} cards={cards} records={records} outline={outline} outlineReady={outlineReady} reloadOutline={reloadOutline}
-      st={st} set={set} closeTileMenu={closeTileMenu} />
+      learnerNext={learnerNext} st={st} set={set} closeTileMenu={closeTileMenu} reviews={reviews} railReviews={railReviews} />
   );
 }
 
-/** A student with no course this term: what the hub would show once they add one. */
-function NoCourses() {
+/** A student with no course this term: what the hub would show once they add
+ *  one. Reviews due in earlier terms' courses still show, above it. */
+function NoCourses({ reviews }: { reviews?: React.ReactNode }) {
   return (
-    <div className="h-full flex items-center justify-center bg-bg font-sans text-text p-8">
-      <div className="text-center max-w-105">
-        <h1 className="h-serif m-0 text-[42px] tracking-[-0.02em]">Study</h1>
-        <p className="text-base text-text-dim">Add a course to get a study roadmap, readiness for each exam, and quick reviews.</p>
+    <div className={s.empty}>
+      {reviews && <div className={s.emptyReviews}>{reviews}</div>}
+      <div className={s.emptyBody}>
+        <div className={s.emptyCopy}>
+          <h1 className={`h-serif ${s.emptyTitle}`}>Study</h1>
+          <p className={s.emptyLead}>Add a course to get a study roadmap, readiness for each exam, and quick reviews.</p>
+        </div>
       </div>
     </div>
   );
@@ -115,6 +131,7 @@ function HubPage(props: {
   today: Date;
   isMobile: boolean;
   quizShown: boolean;
+  tutorShown: boolean;
   graph: StudyGraph;
   cards: FlashcardRow[];
   records: StudyRecords;
@@ -123,13 +140,21 @@ function HubPage(props: {
   outlineReady: boolean;
   /** Re-reads a course's outline after its exams changed. */
   reloadOutline: (courseId: string) => void;
+  /** W8.3 learner-next; null while flags off or the read has not settled. */
+  learnerNext: StudyNext | null;
   st: HubState;
   set: SetHub;
   closeTileMenu: (conceptId: string) => void;
+  reviews?: React.ReactNode;
+  railReviews?: React.ReactNode;
 }) {
-  const { course, userId, today, isMobile, quizShown, records, st, set } = props;
+  const { course, userId, today, isMobile, quizShown, tutorShown, records, st, set } = props;
   const cid = course.course_id;
-  const view = useHubView({ course, graph: props.graph, cards: props.cards, records, outline: props.outline, outlineReady: props.outlineReady, st, today });
+  const view = useHubView({
+    course, graph: props.graph, cards: props.cards, records,
+    outline: props.outline, outlineReady: props.outlineReady, st, today,
+    learnerNext: props.learnerNext,
+  });
   const nav = useToolNav(cid);
   const editor = useDatesEditor({
     userId, courseId: cid, list: view.list, today,
@@ -151,7 +176,10 @@ function HubPage(props: {
   const pickConcept = (id: string) => {
     if (view.byId.has(id)) set({ topic: id, recentOpen: false });
   };
-  const startReviews = () => nav.leaveTo(nav.cardsHref(view.reviews.map(x => x.t.name)));
+  const reviewsHref = nav.cardsHref(view.reviews.map(x => x.t.name));
+  // W8.3b: Due Reviews offer Quiz beside Flashcards when learner-next is on
+  // and quiz is shown. Flag-off / hide_quiz keeps the single Flashcards CTA.
+  const dueQuizHref = view.reviewsQuizHref && quizShown ? view.reviewsQuizHref : null;
   const { focus } = view;
   // A change of exam moves the band and the Up Next block to their new state
   // (the roadmap below does the same, on the same clock: ./hubMotion.ts).
@@ -159,10 +187,11 @@ function HubPage(props: {
   useFlip(readiness, view.exam?.id ?? "");
 
   return (
-    <div className={cn(s.shell, "[background:var(--bg)]")}>
-      <div className={cn(nav.leaving ? `${s.hub} ${s.leaving}` : s.hub, "text-text font-sans text-md leading-[1.45] [-webkit-font-smoothing:antialiased]")}>
+    <div className={`${s.shell} ${s.page}`}>
+      <div className={nav.leaving ? `${s.hub} ${s.hubType} ${s.leaving}` : `${s.hub} ${s.hubType}`}>
         <HubHeader courses={props.courses} courseId={cid} onPickCourse={props.onPickCourse} upcomingIn={upcomingIn}
           isMobile={isMobile} quizShown={quizShown} onTool={tool => nav.leaveTo(nav.toolHome(tool))} />
+        {props.reviews && <div className={s.areaReviews}>{props.reviews}</div>}
 
         <ExamTabs courseId={cid} courseLabel={view.label} exams={view.exams} exam={view.exam} upcoming={view.upcoming} soon={view.soon} today={today}
           bellOpen={st.menu === "bell"} onBell={open => set({ menu: open ? "bell" : null })}
@@ -172,12 +201,12 @@ function HubPage(props: {
             entrance), a change of exam is tweened in place by useFlip. Positioned
             and packed to the top because useFlip measures against this box and
             tweens its height. */}
-        <section ref={readiness} aria-label="Readiness" key={cid} className={cn(`${s.areaReady} ${s.readyGrid} ${s.paneEnter}`, "relative [align-content:start] py-4 px-0 border-b border-b-border")}>
+        <section ref={readiness} id={READINESS_ID} aria-label="Readiness" key={cid} className={`${s.areaReady} ${s.readyGrid} ${s.paneEnter} ${s.readySection}`}>
           <ReadinessBand label={view.band.label} note={view.band.note} concepts={view.band.concepts} ready={view.ready}
             selectedId={view.sel?.id ?? null} level={st.lvl} onSelect={id => set({ topic: id })} onLevel={lvl => set({ lvl })} />
           {focus
             ? <FocusCard concept={focus} upNext={focus.id === view.rec?.id} masteredExam={view.masteredExam} prereqs={view.focusPrereqs}
-                cardCount={cardsFor(view.cardCount, focus.name)} quizShown={quizShown} nav={nav} />
+                cardCount={cardsFor(view.cardCount, focus.name)} quizShown={quizShown} tutorShown={tutorShown} nav={nav} />
             : <FocusEmpty hasConcepts={view.topics.length > 0} pending={view.scopePending} />}
         </section>
 
@@ -192,11 +221,13 @@ function HubPage(props: {
         {/* The 40px side bleed (padding + negative margin, in the stylesheet so
             the narrow layout can drop it) gives the Quick Reviews pop-up's drop
             shadow room to fade out; it sits in the 56px column gap. */}
-        <aside aria-label="Activity" className={cn(s.areaRail, "flex flex-col")}>
-          <section aria-label="Daily goal" className="flex flex-col gap-3 pb-6">
+        <aside aria-label="Activity" className={`${s.areaRail} ${s.rail}`}>
+          <section aria-label="Daily goal" className={s.dailyGoal}>
             <DailyGoalCard daily={records.daily} onSave={records.saveGoal} />
-            <QuickReviews reviews={view.reviews} courseLabel={view.label} onStart={startReviews} />
+            <QuickReviews reviews={view.reviews} courseLabel={view.label} fsrsDue={view.reviewsFsrsDue}
+              reviewHref={reviewsHref} quizHref={dueQuizHref} onNavigate={nav.leaveTo} />
           </section>
+          {props.railReviews}
           <RecentActivity rows={view.recent} onPickConcept={pickConcept} onShowAll={() => set({ recentOpen: true })} />
         </aside>
 

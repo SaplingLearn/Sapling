@@ -1,0 +1,28 @@
+@layer components {
+/* The budget pause banner (BudgetPausedBanner): a status line on the warn tint. */
+
+.banner {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-5);
+  padding: var(--sp-5) var(--sp-7);
+  border-radius: var(--r-md);
+  background: var(--warn-soft);
+  color: var(--text);
+  font-size: var(--fs-md);
+  line-height: 1.45;
+}
+
+/* The bell sits on the first line of text. */
+.icon {
+  color: var(--warn);
+  display: inline-flex;
+  padding-top: var(--sp-1);
+}
+
+.body {
+  flex: 1;
+  min-width: 0;
+}
+
+}

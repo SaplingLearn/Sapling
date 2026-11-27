@@ -19,9 +19,14 @@
 import React from "react";
 import { SegmentedControl } from "@/components/ui";
 import { Skeleton } from "@/components/Skeleton";
-import { FEEDBACK_LABELS, FEEDBACK_MODES } from "@/lib/quiz/prefs";
+import {
+  FEEDBACK_LABELS,
+  FEEDBACK_MODES,
+  SESSION_MODE_LABELS,
+  SESSION_MODES,
+} from "@/lib/quiz/prefs";
 import type { SessionConfig } from "@/lib/quiz/machine";
-import type { QuizConfig } from "@/lib/quiz/types";
+import type { QuizConfig, QuizSessionMode } from "@/lib/quiz/types";
 
 export interface QuizSettingsProps {
   /** `null` until `/api/quiz/config` resolves. */
@@ -56,9 +61,30 @@ function Row({
 
 export function QuizSettings({ config, value, onChange, flush = false }: QuizSettingsProps) {
   const pending = <Skeleton width={SKELETON_WIDTH} height={SKELETON_HEIGHT} />;
+  const sessionMode: QuizSessionMode = value.sessionMode ?? "practice";
+  const setMode = (next: QuizSessionMode) => {
+    // Exam Twin is tool-light / post-test-like: keep verdicts at the end.
+    onChange({
+      ...value,
+      sessionMode: next,
+      ...(next === "exam_twin" ? { feedback: "at-end" as const } : {}),
+    });
+  };
 
   return (
     <div className={`quiz-home-settings${flush ? " quiz-home-settings--flush" : ""}`}>
+      <Row label="Mode">
+        {labelId => (
+          <SegmentedControl
+            options={SESSION_MODES.map(m => ({ value: m, label: SESSION_MODE_LABELS[m] }))}
+            value={sessionMode}
+            onChange={setMode}
+            labelledBy={labelId}
+            testid="quiz-seg-session-mode"
+          />
+        )}
+      </Row>
+
       <Row label="Length">
         {labelId =>
           config ? (
@@ -97,7 +123,12 @@ export function QuizSettings({ config, value, onChange, flush = false }: QuizSet
       <Row label="Answers">
         {labelId => (
           <SegmentedControl
-            options={FEEDBACK_MODES.map(m => ({ value: m, label: FEEDBACK_LABELS[m] }))}
+            options={FEEDBACK_MODES.map(m => ({
+              value: m,
+              label: FEEDBACK_LABELS[m],
+              // Exam Twin keeps answers at the end (dress rehearsal).
+              disabled: sessionMode === "exam_twin" && m !== "at-end",
+            }))}
             value={value.feedback}
             onChange={feedback => onChange({ ...value, feedback })}
             labelledBy={labelId}
@@ -124,6 +155,11 @@ export function QuizSettings({ config, value, onChange, flush = false }: QuizSet
       {value.questionFormat === "mixed" && (
         <p className="quiz-home-settings__note" data-testid="quiz-format-mixed-note">
           A variety suited to your course: written answers and multiple choice, with math only when relevant.
+        </p>
+      )}
+      {sessionMode === "exam_twin" && (
+        <p className="quiz-home-settings__note" data-testid="quiz-exam-twin-note">
+          Exam Twin is a timed dress rehearsal: no Ask about this, and your score does not change mastery.
         </p>
       )}
     </div>

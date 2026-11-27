@@ -47,7 +47,7 @@ function written(id: number): WireQuestion {
   return { id, type: "short_answer", question: `W${id}?`, options: [], difficulty: "easy" };
 }
 
-function generated(questions: WireQuestion[]): GenerateResult {
+function generated(questions: WireQuestion[], over: Partial<GenerateResult> = {}): GenerateResult {
   return {
     quiz_id: "attempt-1",
     questions,
@@ -55,6 +55,7 @@ function generated(questions: WireQuestion[]): GenerateResult {
     resolved_difficulty: "medium",
     requested_count: questions.length,
     delivered_count: questions.length,
+    ...over,
   };
 }
 
@@ -510,6 +511,29 @@ describe("field-level transitions", () => {
     });
   });
 
+  it("GENERATED follows a W7.6 prereq redirect and keeps the banner", () => {
+    const generating = reduce(home(), {
+      type: "START",
+      start: start({ conceptId: "blocked" }),
+      config: home().config,
+    });
+    const banner = {
+      prereq_id: "foundation",
+      prereq_name: "Foundations",
+      dependent_id: "blocked",
+      dependent_name: "Matrices",
+      course_id: "c1",
+      redirected: true,
+    };
+    const s = reduce(generating, {
+      type: "GENERATED",
+      result: generated([mc(1)], { concept_node_id: "foundation", prereq: banner }),
+    });
+    expect(s.conceptId).toBe("foundation");
+    expect(s.prereq).toEqual(banner);
+    expect(s.phase).toBe("active");
+  });
+
   it("WRITE keeps the first 2000 characters, and only on an open written item", () => {
     const s = active([written(1), mc(2)]);
     const long = reduce(s, { type: "WRITE", text: "x".repeat(2100) });
@@ -618,6 +642,7 @@ describe("field-level transitions", () => {
       xp: null,
       deliveredShort: false,
       reserved: null,
+      prereq: null,
     });
   });
 
@@ -653,6 +678,7 @@ describe("field-level transitions", () => {
       deliveredShort: false,
       sourceAttemptId: null,
       reserved: null,
+      prereq: null,
     });
   });
 
@@ -663,7 +689,7 @@ describe("field-level transitions", () => {
       reserved: { reservedCount: 1, regeneratedCount: 0 },
     };
     expect(reduce(generating, { type: "CANCEL" })).toEqual({
-      ...generating, phase: "home", error: null, sourceAttemptId: null, reserved: null,
+      ...generating, phase: "home", error: null, sourceAttemptId: null, reserved: null, prereq: null,
     });
     const submitting = { ...active(), phase: "submitting" as const, error: NETWORK };
     expect(reduce(submitting, { type: "CANCEL" })).toEqual({ ...submitting, phase: "active", error: null });
@@ -714,9 +740,9 @@ describe("RESUME (resumeFrom)", () => {
       queueIndex: 0,
       attemptId: "attempt-1",
       items: [
-        { index: 0, question: mc(1), selectedIndex: 1, answerText: undefined, verdict: null, flagged: false },
-        { index: 1, question: mc(2), selectedIndex: null, answerText: undefined, verdict: null, flagged: false },
-        { index: 2, question: mc(3), selectedIndex: null, answerText: undefined, verdict: null, flagged: false },
+        { index: 0, question: mc(1), selectedIndex: 1, answerText: undefined, verdict: null, flagged: false, confidence: null },
+        { index: 1, question: mc(2), selectedIndex: null, answerText: undefined, verdict: null, flagged: false, confidence: null },
+        { index: 2, question: mc(3), selectedIndex: null, answerText: undefined, verdict: null, flagged: false, confidence: null },
       ],
       cursor: 1,
       phase: "active",
@@ -726,6 +752,7 @@ describe("RESUME (resumeFrom)", () => {
       deliveredShort: false,
       sourceAttemptId: null,
       reserved: null,
+      prereq: null,
     });
   });
 
@@ -781,10 +808,10 @@ describe("RESUME (resumeFrom)", () => {
     expect(s.sourceAttemptId).toBe("prev");
     expect(s.reserved).toEqual({ reservedCount: 2, regeneratedCount: 1 });
     expect(s.items).toEqual([
-      { index: 0, question: mc(1), selectedIndex: 1, answerText: undefined, verdict: stored.items[0].verdict, flagged: true },
-      { index: 1, question: written(2), selectedIndex: null, answerText: "draft", verdict: null, flagged: false },
+      { index: 0, question: mc(1), selectedIndex: 1, answerText: undefined, verdict: stored.items[0].verdict, flagged: true, confidence: null },
+      { index: 1, question: written(2), selectedIndex: null, answerText: "draft", verdict: null, flagged: false, confidence: null },
       // A stored verdict with no server response is dropped; the stored pick stays.
-      { index: 2, question: mc(3), selectedIndex: 0, answerText: undefined, verdict: null, flagged: false },
+      { index: 2, question: mc(3), selectedIndex: 0, answerText: undefined, verdict: null, flagged: false, confidence: null },
     ]);
     // Item 2 holds a pick, so it counts as answered: the cursor stops on item 1.
     expect(s.cursor).toBe(1);
@@ -804,7 +831,7 @@ describe("RESUME (resumeFrom)", () => {
     const s = resume(d, null);
     expect(s.items[0]).toEqual({
       index: 0, question: written(1), selectedIndex: null, answerText: "w",
-      verdict: { isCorrect: false, correctIndex: -1, explanation: "" }, flagged: false,
+      verdict: { isCorrect: false, correctIndex: -1, explanation: "" }, flagged: false, confidence: null,
     });
     expect(s.items[1].verdict).toBeNull();
     // Every item answered (a pick on the MC one), but the last has no verdict.

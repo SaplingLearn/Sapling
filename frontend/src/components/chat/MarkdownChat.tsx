@@ -19,10 +19,17 @@ import {
 } from "@/lib/markdownImages";
 import { MermaidBlock } from "./MermaidBlock";
 import { FunctionPlot } from "./FunctionPlot";
-import { cn } from "@/lib/cn";
+import { INERT_COMPONENTS, type MarkdownProfile } from "./inertMarkdown";
+import { GEOGEBRA_ORIGIN } from "@/lib/securityHeaders";
+import styles from "./MarkdownChat.module.css";
+
+/** A GeoGebra applet's frame size (the `::geogebra` directive), px. */
+const GEOGEBRA_FRAME = { width: 480, height: 360 } as const;
 
 // Castel-style shortcuts. Tutor can write `\R` instead of `\mathbb{R}`.
-const KATEX_MACROS: Record<string, string> = {
+// Frozen and never handed to KaTeX itself: KaTeX writes every \gdef / \global
+// definition into the macros object it is given (Z32).
+const KATEX_MACROS: Readonly<Record<string, string>> = Object.freeze({
   "\\R": "\\mathbb{R}",
   "\\Z": "\\mathbb{Z}",
   "\\N": "\\mathbb{N}",
@@ -44,7 +51,14 @@ const KATEX_MACROS: Record<string, string> = {
   "\\dx": "\\,dx",
   "\\dy": "\\,dy",
   "\\dt": "\\,dt",
-};
+});
+
+// The table every "rich" render shares, as on main: a definition one rich
+// message makes carries into the next (the loop-off app renders exactly as
+// before). An "inert" render — class material the learning loop serves
+// verbatim — gets its own copy of the pristine table instead, so its \gdef
+// stays in that message and no other message's reaches it (Z32).
+const SHARED_KATEX_MACROS: Record<string, string> = { ...KATEX_MACROS };
 
 const CALLOUT_NAMES = new Set([
   "theorem",
@@ -108,9 +122,10 @@ function remarkSaplingDirectives() {
         const data = n.data || (n.data = {});
         data.hName = "iframe";
         data.hProperties = {
-          src: `https://www.geogebra.org/material/iframe/id/${id}`,
-          width: 480,
-          height: 360,
+          // The CSP's frame-src names the same origin (lib/securityHeaders.ts).
+          src: `${GEOGEBRA_ORIGIN}/material/iframe/id/${id}`,
+          width: GEOGEBRA_FRAME.width,
+          height: GEOGEBRA_FRAME.height,
           frameBorder: 0,
           allowFullScreen: true,
           loading: "lazy",
@@ -162,25 +177,15 @@ function rehypeExtractDiagramBlocks() {
 }
 
 const COMPONENTS: Components = {
-  p: ({ children }) => <p className="mt-0 mx-0 mb-2">{children}</p>,
-  strong: ({ children }) => (
-    <strong className="text-text font-semibold">{children}</strong>
-  ),
-  em: ({ children }) => <em className="italic">{children}</em>,
-  del: ({ children }) => (
-    <del className="line-through text-text-dim">{children}</del>
-  ),
-  ul: ({ children }) => <ul className="mt-1 mr-0 mb-2.5 ml-4.5 p-0">{children}</ul>,
-  ol: ({ children }) => <ol className="mt-1 mr-0 mb-2.5 ml-5 p-0">{children}</ol>,
+  p: ({ children }) => <p className={styles.p}>{children}</p>,
+  strong: ({ children }) => <strong className={styles.strong}>{children}</strong>,
+  em: ({ children }) => <em className={styles.em}>{children}</em>,
+  del: ({ children }) => <del className={styles.del}>{children}</del>,
+  ul: ({ children }) => <ul className={styles.ul}>{children}</ul>,
+  ol: ({ children }) => <ol className={styles.ol}>{children}</ol>,
   li: ({ children, className }) => {
     const isTask = className?.includes("task-list-item");
-    return (
-      <li
-        className={cn("my-0.5 mx-0", isTask ? "list-none" : "", isTask ? "-ml-4.5" : "")}
-      >
-        {children}
-      </li>
-    );
+    return <li className={isTask ? `${styles.li} ${styles.taskItem}` : styles.li}>{children}</li>;
   },
   input: ({ type, checked, disabled }) => {
     if (type !== "checkbox") return null;
@@ -190,12 +195,12 @@ const COMPONENTS: Components = {
         checked={!!checked}
         disabled={disabled}
         readOnly
-        className="mr-1.5 align-middle"
+        className={styles.checkbox}
       />
     );
   },
   a: ({ children, href }) => (
-    <a href={href} target="_blank" rel="noreferrer" className="text-accent underline">
+    <a href={href} target="_blank" rel="noreferrer" className={styles.link}>
       {children}
     </a>
   ),
@@ -210,7 +215,7 @@ const COMPONENTS: Components = {
           src={url}
           alt={alt || ""}
           loading="lazy"
-          className="max-w-full h-auto rounded-sm border border-border my-1.5 mx-0 block"
+          className={styles.img}
         />
       );
     }
@@ -224,7 +229,7 @@ const COMPONENTS: Components = {
         target="_blank"
         rel="noopener noreferrer nofollow"
         referrerPolicy="no-referrer"
-        className="text-accent underline"
+        className={styles.link}
       >
         {label}
       </a>
@@ -234,9 +239,7 @@ const COMPONENTS: Components = {
     const inline = !className;
     if (inline) {
       return (
-        <code
-          className="mono py-px px-[5px] rounded-xs bg-bg-soft text-[length:0.9em]"
-        >
+        <code className={`mono ${styles.code}`}>
           {children}
         </code>
       );
@@ -244,46 +247,35 @@ const COMPONENTS: Components = {
     return <code className={className}>{children}</code>;
   },
   pre: ({ children }) => (
-    <pre
-      className="mono py-2.5 px-3 rounded-sm bg-bg-inset border border-border overflow-x-auto text-sm mt-1.5 mx-0 mb-2.5"
-    >
+    <pre className={`mono ${styles.pre}`}>
       {children}
     </pre>
   ),
   blockquote: ({ children }) => (
     // Italic body-serif instead of a side-tab accent border (which is the
     // #1 AI-dashboard tell). The brand's hierarchy should come from type.
-    <blockquote
-      className="body-serif mt-1.5 mx-0 mb-3 pt-0.5 pr-0 pb-0.5 pl-3 text-text-dim italic"
-    >
+    <blockquote className={`body-serif ${styles.blockquote}`}>
       {children}
     </blockquote>
   ),
-  h1: ({ children }) => <h1 className="h-serif text-xl mt-2 mx-0 mb-1.5">{children}</h1>,
-  h2: ({ children }) => <h2 className="h-serif text-lg mt-2 mx-0 mb-1.5">{children}</h2>,
-  h3: ({ children }) => <h3 className="h-serif text-base mt-1.5 mx-0 mb-1">{children}</h3>,
-  hr: () => <hr className="border-0 border-t border-t-border my-3 mx-0" />,
+  h1: ({ children }) => <h1 className={`h-serif ${styles.h1}`}>{children}</h1>,
+  h2: ({ children }) => <h2 className={`h-serif ${styles.h2}`}>{children}</h2>,
+  h3: ({ children }) => <h3 className={`h-serif ${styles.h3}`}>{children}</h3>,
+  hr: () => <hr className={styles.hr} />,
   table: ({ children }) => (
-    <div className="overflow-x-auto mt-2 mx-0 mb-3">
-      <table
-        className="border-collapse w-full text-md font-sans"
-      >
-        {children}
-      </table>
+    <div className={styles.tableWrap}>
+      <table className={styles.table}>{children}</table>
     </div>
   ),
-  thead: ({ children }) => <thead className="bg-bg-subtle">{children}</thead>,
+  thead: ({ children }) => <thead className={styles.thead}>{children}</thead>,
+  // `style`: a GFM column's alignment, from the markdown itself.
   th: ({ children, style }) => (
-    <th
-      className="text-left py-1.5 px-2.5 border-b border-b-border-strong font-semibold" style={{ ...style }}
-    >
+    <th className={styles.th} style={style}>
       {children}
     </th>
   ),
   td: ({ children, style }) => (
-    <td
-      className="py-1.5 px-2.5 border-b border-b-border align-top" style={{ ...style }}
-    >
+    <td className={styles.td} style={style}>
       {children}
     </td>
   ),
@@ -292,16 +284,11 @@ const COMPONENTS: Components = {
     if (classes.includes("sap-callout")) {
       const name = (rest as Record<string, unknown>)["data-callout"] as string | undefined;
       const label = (name && CALLOUT_LABEL[name]) || "";
-      const isWarn = name === "warning";
-      const isProof = name === "proof";
+      // `data-callout` picks the warning / proof treatment in the module.
       return (
-        <div
-          className="mt-2.5 mx-0 mb-3.5 py-2.5 px-3.5 rounded-sm" style={{ background: isWarn ? "var(--warn-soft)" : isProof ? "transparent" : "var(--bg-subtle)", border: `1px ${isProof ? "dashed" : "solid"} ${isWarn ? "var(--warn)" : "var(--border)"}` }}
-        >
+        <div className={styles.callout} data-callout={name}>
           {!classes.includes("sap-callout__rendered-title") && label ? (
-            <div
-              className={cn("font-sans text-md font-bold mb-1", isWarn ? "text-warn" : "text-accent")}
-            >
+            <div className={styles.calloutLabel}>
               {label}
             </div>
           ) : null}
@@ -311,9 +298,7 @@ const COMPONENTS: Components = {
     }
     if (classes.includes("sap-callout__title")) {
       return (
-        <div
-          className="font-sans text-sm font-semibold text-text mb-1 italic"
-        >
+        <div className={styles.calloutTitle}>
           {children}
         </div>
       );
@@ -330,7 +315,8 @@ const COMPONENTS: Components = {
         height={height}
         loading="lazy"
         allowFullScreen
-        className={cn("border border-border rounded-sm max-w-full block", isGeo ? "mt-2.5 mx-0 mb-3.5" : "")}
+        className={styles.iframe}
+        data-geogebra={isGeo}
       />
     );
   },
@@ -349,20 +335,35 @@ const COMPONENTS: Components = {
 export const MarkdownChat = React.memo(function MarkdownChat({
   children,
   components,
+  profile = "rich",
 }: {
   children: string;
   components?: Components;
+  /** "inert" (Z08, `inertMarkdown.tsx`): text that may repeat class material
+   *  verbatim — no directive syntax, links as text naming their host, no
+   *  image fetched, nothing embedded, no diagram drawn. */
+  profile?: MarkdownProfile;
 }) {
+  const inert = profile === "inert";
   return (
     <div className="leading-[1.55]">
       <ReactMarkdown
-        remarkPlugins={[remarkGfm, remarkMath, remarkDirective, remarkSaplingDirectives]}
+        remarkPlugins={
+          inert
+            ? [remarkGfm, remarkMath] // a "::geogebra{…}" line stays text
+            : [remarkGfm, remarkMath, remarkDirective, remarkSaplingDirectives]
+        }
         rehypePlugins={[
-          [rehypeKatex, { macros: KATEX_MACROS, strict: "ignore" }],
+          // Z32: inert, a fresh copy of the pristine table per render
+          [rehypeKatex, { macros: inert ? { ...KATEX_MACROS } : SHARED_KATEX_MACROS, strict: "ignore" }],
           rehypeExtractDiagramBlocks,
           [rehypeHighlight, { detect: true, ignoreMissing: true }],
         ]}
-        components={{ ...COMPONENTS, ...(components || {}) }}
+        components={
+          inert
+            ? { ...COMPONENTS, ...(components || {}), ...INERT_COMPONENTS }
+            : { ...COMPONENTS, ...(components || {}) }
+        }
       >
         {children}
       </ReactMarkdown>

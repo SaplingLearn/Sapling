@@ -18,6 +18,7 @@ import {
   configLineFor,
   connectedCount,
   courseFilterFor,
+  courseQueueFor,
   effectiveConfigFor,
   emptyTopicsCopy,
   entryKeyFor,
@@ -76,12 +77,47 @@ function arrival(over: Partial<Arrival> = {}): Arrival {
 
 const CFG = { count: 4, difficulty: "gentle", feedback: "at-end" as const };
 
+describe("courseQueueFor (a ?course= arrival's queue)", () => {
+  const planned = (n: GraphNode): Candidate => ({ ...candidate(n), plan: { reason: "ready", pKnown: 0.4, band: "develop" } });
+
+  it("is the tier ranking without the plan, and nothing without a course", () => {
+    const home = { planned: false, candidates: [], nodes: [REC, DET] };
+    expect(courseQueueFor(home, "c-cs")).toEqual(["rec"]);
+    expect(courseQueueFor(home, undefined)).toEqual([]);
+  });
+
+  it("is the course's own plan on a planned home", () => {
+    const own = node("own", "Own");
+    const home = { planned: true, candidates: [planned(REC)], nodes: [REC, own], courseCandidates: [planned(own)] };
+    expect(courseQueueFor(home, "c-cs")).toEqual(["own"]);
+  });
+
+  it("falls back to the tier ranking when the plan proposes none of the course's concepts", () => {
+    const home = { planned: true, candidates: [planned(REC)], nodes: [REC, DET], courseCandidates: null };
+    expect(courseQueueFor(home, "c-math")).toEqual(["det"]);
+  });
+
+  it("uses a course-scoped plan even when the all-courses plan failed (planned false)", () => {
+    const own = node("own", "Own");
+    const home = {
+      planned: false,
+      candidates: [],
+      nodes: [REC, own],
+      courseCandidates: [planned(own), planned(REC)],
+    };
+    expect(courseQueueFor(home, "c-cs")).toEqual(["own", "rec"]);
+  });
+});
+
 describe("entryKeyFor / pickedIdFor", () => {
-  it("keys an entry on its four arrival fields", () => {
-    expect(entryKeyFor({ source: { kind: "nav" } })).toBe("|||");
+  it("keys an entry on its arrival fields including an explicit due queue", () => {
+    expect(entryKeyFor({ source: { kind: "nav" } })).toBe("||||");
     expect(entryKeyFor({ concept: "a", topic: "b", course: "c", scope: "due", source: { kind: "nav" } })).toBe(
-      "a|b|c|due",
+      "a|b|c|due|",
     );
+    expect(
+      entryKeyFor({ scope: "due", queue: ["arr", "loop"], source: { kind: "link" } }),
+    ).toBe("|||due|arr,loop");
   });
 
   it("keeps a pick only for its own arrival and a concept that still exists", () => {
@@ -169,12 +205,18 @@ describe("the card's copy", () => {
 
   it("writes each shape's meta line", () => {
     const due = { count: 7, courseCount: 2 } as Parameters<typeof cardMeta>[2];
-    expect(cardMeta("course", 4, due, null)).toBe("4 concepts due");
-    expect(cardMeta("due", 0, due, null)).toBe("7 concepts across 2 courses · starting with the 5 weakest");
+    expect(cardMeta("course", 4, due, null)).toBe("4 concepts to practice");
+    expect(cardMeta("due", 0, due, null)).toBe("7 concepts across 2 courses, starting with the 5 weakest");
     expect(cardMeta("due", 0, { ...due, count: 2 }, null)).toBe(
-      "2 concepts across 2 courses · starting with the 2 weakest",
+      "2 concepts across 2 courses, starting with the 2 weakest",
     );
     expect(cardMeta("concept", 0, due, candidate(REC))).toBe("30% · struggling · not studied yet");
+    // a planned card states the plan's skill meter, once
+    const withPlan: Candidate = { ...candidate(REC), plan: { reason: "ready", pKnown: 0.354, band: "develop" } };
+    expect(cardMeta("concept", 0, due, withPlan, true)).toBe("35% · developing · not studied yet");
+    expect(cardMeta("concept", 0, due, withPlan, true, true)).toBe("developing · not studied yet");
+    // the plan line only drops the number when there is a plan to state it
+    expect(cardMeta("concept", 0, due, candidate(REC), true, true)).toBe("30% · struggling · not studied yet");
     expect(cardMeta("concept", 0, due, null)).toBe("");
   });
 
@@ -228,6 +270,11 @@ describe("the card's copy", () => {
       });
     });
 
+    it("builds a planned card's sentence with its band, never the graph's tier", () => {
+      const withPlan: Candidate = { ...card, plan: { reason: "ready", pKnown: 0.35, band: "develop" } };
+      expect(cardDefinition(false, withPlan, base).definition).toBe("CS101 · developing · 0 connected concepts");
+    });
+
     it("shows nothing at all on a queued card", () => {
       expect(cardDefinition(true, card, { ...base, cardDescriptionPending: true })).toEqual({
         definition: null,
@@ -261,13 +308,16 @@ describe("the card's copy", () => {
     expect(adjustSubtitle("Recursion", "")).toBe("Recursion");
   });
 
-  it("remembers the three settings, and a question format when set", () => {
-    expect(prefsFor(CFG)).toEqual(CFG);
-    expect(prefsFor({ ...CFG, questionFormat: "mcq" })).toEqual({ ...CFG, questionFormat: "mcq" });
+  it("remembers the settings (incl. mode), and a question format when set", () => {
+    expect(prefsFor(CFG)).toEqual({ ...CFG, sessionMode: "practice" });
+    expect(prefsFor({ ...CFG, questionFormat: "mcq" })).toEqual({
+      ...CFG, sessionMode: "practice", questionFormat: "mcq",
+    });
     expect(Object.keys(prefsFor({ ...CFG, questionFormat: "mcq" }))).toEqual([
       "count",
       "difficulty",
       "feedback",
+      "sessionMode",
       "questionFormat",
     ]);
   });

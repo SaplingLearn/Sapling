@@ -1,0 +1,10 @@
+{
+  "judge_model": "claude-opus-5-5",
+  "judge_prompt_hash": "cc1e83e5b7c838b2c60a65904ec8353cfb3a297465e097f7a140412831b1740d",
+  "output": {
+    "evidence": "Take x^2, where you can check the slope without any rule. Your belief predicts its derivative is 2x^2... Work out (1.01^2 - 1^2)/0.01",
+    "reveals_final_answer": false,
+    "rung": 4
+  },
+  "served_sha256": "fdfe02a0721bd13e9bd669f3b47c386dfda13d154b67fe0042a31457b9651f22"
+}

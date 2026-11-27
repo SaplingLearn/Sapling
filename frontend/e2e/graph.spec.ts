@@ -12,7 +12,7 @@
  *     links each course only to a few of its starting concepts
  *     (`startingConcepts`: at most six, the biggest strands first);
  *   - mastery classification — each node's DB `mastery_score` maps through
- *     the canonical thresholds (backend/config.py::get_mastery_tier) to the
+ *     the canonical thresholds (backend/learning/bkt.py::tier_for) to the
  *     class the UI renders: the 2D graph encodes the tier as the node
  *     circle's opacity, and the /tree tier filter partitions nodes by the
  *     same field.
@@ -58,10 +58,12 @@ type Tier = "mastered" | "learning" | "struggling" | "unexplored";
 
 const TIERS: Tier[] = ["mastered", "learning", "struggling", "unexplored"];
 
-/** Mirror of backend/config.py::get_mastery_tier — the one score→tier map. */
+/** Mirror of backend/learning/bkt.py::tier_for — the one score→tier map
+ *  (learning/params.py 0.95 / 0.30 / 0.10, PKG-14b; pinned by
+ *  backend/tests/test_mastery_tier_unification.py). */
 function tierFor(score: number): Tier {
-  if (score >= 0.75) return "mastered";
-  if (score >= 0.45) return "learning";
+  if (score >= 0.95) return "mastered";
+  if (score >= 0.3) return "learning";
   if (score >= 0.1) return "struggling";
   return "unexplored";
 }

@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 import logging
 
-from config import is_weak
+from learning.bkt import is_weak, stored_score
 from db.connection import table
 from services.academics import (
     course_offering_ids,
@@ -168,18 +168,19 @@ def _weak_concept_candidates(user_id: str, course_name: str, course_id: str | No
     account this branch is "every concept" — which is why a request that names
     its course must not come through here.
     """
-    nodes = table("graph_nodes")
+    # Direct reads, never a held handle (learning-loop inv_01: graph tables
+    # are written only by graph_service, and every other use is a plain read).
     if course_id:
-        return nodes.select(
+        return table("graph_nodes").select(
             _WEAK_CONCEPT_COLS,
             filters={"user_id": f"eq.{user_id}", "course_id": f"eq.{course_id}"},
         ) or []
-    rows = nodes.select(
+    rows = table("graph_nodes").select(
         _WEAK_CONCEPT_COLS,
         filters={"user_id": f"eq.{user_id}", "subject": f"eq.{course_name}"},
     )
     if not rows:
-        rows = nodes.select(_WEAK_CONCEPT_COLS, filters={"user_id": f"eq.{user_id}"})
+        rows = table("graph_nodes").select(_WEAK_CONCEPT_COLS, filters={"user_id": f"eq.{user_id}"})
     return rows or []
 
 
@@ -188,7 +189,7 @@ def _get_weak_concepts(
 ) -> list[str]:
     """
     Return concept names the student is weak on — below the "learning" floor
-    in `config.get_mastery_tier`, i.e. "struggling" or "unexplored" — for the
+    of `learning.bkt.tier_for` (PKG-14b), i.e. "struggling" or "unexplored" — for the
     prompt to prioritise. ``course_name`` is the request's topic; ``course_id``
     (when the client sent one) keeps the answer inside that course
     (:func:`_weak_concept_candidates`).
@@ -208,9 +209,12 @@ def _get_weak_concepts(
         topic = _normalized(course_name)
         if topic and any(_normalized(r.get("concept_name")) == topic for r in rows):
             return []
+        # One reading of the stored score for both the filter and the order: a
+        # drifted or NaN row (PostgREST sends float NaN as "NaN") classified by
+        # one and compared raw by the other would make the sort raise.
         weak = sorted(
-            (r for r in rows if is_weak(r.get("mastery_score") or 0)),
-            key=lambda r: r.get("mastery_score") or 0,
+            (r for r in rows if is_weak(stored_score(r.get("mastery_score")))),
+            key=lambda r: stored_score(r.get("mastery_score")),
         )
         # Weakest first, THEN cap. The cap used to truncate in PostgREST row
         # order, which was survivable while the floor was 0.4 and is not now

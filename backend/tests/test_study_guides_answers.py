@@ -1,17 +1,23 @@
 """Grading a check answer (services/study_guides/answers.py).
 
-The store, the mastery read and the graph write are replaced where the module
-looks them up. The stand-in for `store.arecord_answer` keeps the rule the real
-one enforces: a block's first answer is written, a later one is not.
+The store, the concept-node read and the graph write are replaced where the
+module looks them up. The stand-in for `store.arecord_answer` keeps the rule
+the real one enforces: a block's first answer is written, a later one is not.
+The graph stand-in takes graded evidence only (learning-loop PKG-14b: the real
+`apply_graph_update` refuses the legacy keys) and moves the score a fixed STEP,
+standing in for BKT.
 """
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
 
-from config import MASTERY_MASTERED_MIN
+import services.quiz.submission as quiz_submission
+from learning.evidence import Evidence
+from learning.params import BKT_PROFICIENT, RUNG_ASSISTED_MIN, RUNG_NO_CREDIT_MIN
 from models.study_guide import (
     CheckBlock,
     CheckOption,
@@ -21,15 +27,21 @@ from models.study_guide import (
     Section,
 )
 from services import events_service
-from services.quiz import config as quiz_config
+from services.quiz.identity import question_hash, wire_question_hash
 from services.study_guides import answers
+from services.study_guides.signals import concept_key
 from services.study_guides.errors import GuideInvalid, GuideNotFound
 from services.study_guides.store import GuideRow
+from tests.test_quiz_evidence_only import _Claims
 
 ME = "user_answers_me"
 OFFERING = "off-cs-f26"
 COURSE = "course-cs"
 MADE_AT = "2026-10-01T12:00:00+00:00"
+#: How far the graph stand-in moves a score per graded answer.
+STEP = 0.04
+#: The concept nodes of the student's tree.
+NODE_IDS = {"Loops": "node-loops", "Recursion": "node-recursion"}
 
 
 def _check(item_id: str, concept: str | None, **over) -> CheckBlock:
@@ -69,9 +81,21 @@ def _guide() -> GuideRow:
 @pytest.fixture
 def world(monkeypatch, sink):
     """One guide, a tree with "Loops" at 0.5, and a graph that applies the
-    delta it is given. `graph` holds every `apply_graph_update` call."""
+    evidence it is given. `graph` holds every `apply_graph_update` call. The
+    quiz's evidence rules run for real (#866 review A8) over an in-memory
+    `quiz_evidence_claims` (`claims`) and help ledger (`help`: hash → rung)."""
     box = {"answered": {}, "graph": [], "scores": {"Loops": 0.5, "Recursion": 0.1},
-           "graph_error": None, "events": sink}
+           "graph_error": None, "events": sink, "claims": _Claims(), "help": {}}
+
+    def quiz_table(name):
+        assert name == "quiz_evidence_claims", name
+        return box["claims"].handle()
+
+    monkeypatch.setattr(quiz_submission, "table", quiz_table)
+    monkeypatch.setattr(
+        quiz_submission, "max_help_many",
+        lambda user_id, hashes: {h: box["help"].get(h, 0) for h in hashes},
+    )
 
     async def aload_guide(user_id, guide_id):
         if (user_id, guide_id) != (ME, "g1"):
@@ -84,27 +108,34 @@ def world(monkeypatch, sink):
         box["answered"][block_id] = answer
         return True
 
-    async def amastery(user_id, course_id):
+    async def aconcept_node(user_id, course_id, concept):
         assert (user_id, course_id) == (ME, COURSE)
-        return box["scores"]
+        return next((
+            {"id": NODE_IDS[name], "concept_name": name, "mastery_score": score}
+            for name, score in box["scores"].items()
+            if concept_key(name) == concept_key(concept)
+        ), None)
 
     def apply_graph_update(user_id, graph_update, course_id=None, *, defer=None):
         if box["graph_error"]:
             raise box["graph_error"]
         box["graph"].append({"user_id": user_id, "update": graph_update,
                              "course_id": course_id, "defer": defer})
+        if "updated_nodes" in graph_update:
+            raise ValueError("updated_nodes is no longer accepted (PKG-14b): pass evidence")
+        names = {node_id: name for name, node_id in NODE_IDS.items()}
         changes = []
-        for node in graph_update["updated_nodes"]:
-            before = box["scores"].get(node["concept_name"])
-            if before is not None:
-                after = before + node["mastery_delta"]
-                box["scores"][node["concept_name"]] = after
-                changes.append({"concept": node["concept_name"], "before": before, "after": after})
+        for ev in graph_update["evidence"]:
+            name = names[ev["node_id"]]
+            before = box["scores"][name]
+            after = min(1.0, max(0.0, before + (STEP if ev["correct"] else -STEP)))
+            box["scores"][name] = after
+            changes.append({"concept": name, "before": before, "after": after})
         return changes
 
     monkeypatch.setattr(answers.store, "aload_guide", aload_guide)
     monkeypatch.setattr(answers.store, "arecord_answer", arecord_answer)
-    monkeypatch.setattr(answers.signals, "amastery", amastery)
+    monkeypatch.setattr(answers.signals, "aconcept_node", aconcept_node)
     monkeypatch.setattr(answers, "academics",
                         SimpleNamespace(offering_course_id=lambda offering_id: COURSE))
     monkeypatch.setattr(answers.graph_service, "apply_graph_update", apply_graph_update)
@@ -115,10 +146,11 @@ def _answer(block_id: str, option_id: str, *, user_id: str = ME, defer=None):
     return asyncio.run(answers.aanswer_check(user_id, "g1", block_id, option_id, defer=defer))
 
 
-def _node(world) -> dict:
+def _evidence(world) -> dict:
     (call,) = world["graph"]
-    (node,) = call["update"]["updated_nodes"]
-    return node
+    assert set(call["update"]) == {"evidence"}  # never a legacy flat delta
+    (ev,) = call["update"]["evidence"]
+    return ev
 
 
 def _events(world) -> list[dict]:
@@ -129,7 +161,7 @@ def _events(world) -> list[dict]:
 # ── The first answer ──────────────────────────────────────────────────────────
 
 
-def test_a_correct_first_answer_moves_mastery_once_by_the_quiz_rule(world):
+def test_a_correct_first_answer_writes_one_mc_evidence_as_a_quiz_question_does(world):
     def defer(task):
         return None
 
@@ -139,26 +171,38 @@ def test_a_correct_first_answer_moves_mastery_once_by_the_quiz_rule(world):
 
     (call,) = world["graph"]
     assert (call["user_id"], call["course_id"], call["defer"]) == (ME, COURSE, defer)
-    node = _node(world)
-    # The tree's own spelling, not the guide's.
-    assert node["concept_name"] == "Loops"
-    assert node["mastery_delta"] == pytest.approx(quiz_config.MASTERY_DELTA_PER_CORRECT)
-    assert (node["reason"], node["event_type"]) == ("Study guide check: correct", "guide_check_correct")
+    ev = _evidence(world)
+    # On the tree's own node ("Loops"), not the guide's spelling ("loops"),
+    # in the shape services/quiz/submission.py::_quiz_evidence writes.
+    assert ev == {
+        "node_id": "node-loops",
+        "channel": "mc",
+        "correct": True,
+        "question_hash": question_hash("How many passes?", ["3", "4", "5"]),
+        "check_item_id": None,
+        "session_id": None,
+    }
+    Evidence.model_validate(ev)  # what apply_graph_update parses it as
 
 
-def test_a_wrong_first_answer_moves_mastery_down_and_gives_the_nudge(world):
+def test_the_evidence_names_the_question_by_the_quizs_identity(world):
+    _answer("s1-i2", "b")
+    assert _evidence(world)["question_hash"] == wire_question_hash({
+        "question": "How many passes?", "options": ["3", "4", "5"],
+    })
+
+
+def test_a_wrong_first_answer_writes_incorrect_evidence_and_gives_the_nudge(world):
     out = _answer("s1-i2", "a")
     assert (out.correct, out.correct_id, out.counted) == (False, "b", True)
     assert out.explanation == "List the values, then count them."
-    node = _node(world)
-    assert node["mastery_delta"] == pytest.approx(-quiz_config.MASTERY_DELTA_PER_WRONG)
-    assert (node["reason"], node["event_type"]) == (
-        "Study guide check: incorrect", "guide_check_incorrect",
-    )
+    ev = _evidence(world)
+    assert (ev["node_id"], ev["channel"], ev["correct"]) == ("node-loops", "mc", False)
+    assert world["scores"]["Loops"] == pytest.approx(0.5 - STEP)
 
 
 def test_the_mastery_change_reports_tiers_before_and_after(world):
-    world["scores"]["Loops"] = MASTERY_MASTERED_MIN - 0.01  # one correct answer short
+    world["scores"]["Loops"] = BKT_PROFICIENT - STEP / 2  # one correct answer short
     out = _answer("s1-i2", "b")
     assert out.mastery.model_dump() == {"concept": "Loops", "before": "learning", "after": "mastered"}
 
@@ -168,10 +212,23 @@ def test_a_change_inside_one_tier_is_still_reported(world):
     assert out.mastery.model_dump() == {"concept": "Loops", "before": "learning", "after": "learning"}
 
 
-def test_the_delta_is_clamped_at_the_ends_of_the_scale(world):
-    world["scores"]["Loops"] = 0.99
-    _answer("s1-i2", "b")
-    assert _node(world)["mastery_delta"] == pytest.approx(0.01)
+def test_before_is_the_tier_the_student_was_shown_not_the_estimates_prior(world, monkeypatch):
+    """A node with no learner_state starts the update at the BKT prior, which
+    can sit in another tier than the stored mastery the map showed. The
+    reported move starts from what the student saw."""
+    world["scores"]["Loops"] = 0.25  # shown as struggling
+    monkeypatch.setattr(
+        answers.graph_service, "apply_graph_update",
+        lambda *a, **k: [{"concept": "Loops", "before": 0.35, "after": 0.2}],  # prior in "learning"
+    )
+    out = _answer("s1-i2", "a")
+    assert out.mastery.model_dump() == {"concept": "Loops", "before": "struggling", "after": "struggling"}
+
+
+def test_a_graph_that_moves_nothing_reports_no_change(world, monkeypatch):
+    monkeypatch.setattr(answers.graph_service, "apply_graph_update", lambda *a, **k: [])
+    out = _answer("s1-i2", "b")
+    assert (out.correct, out.counted, out.mastery) == (True, True, None)
 
 
 # ── A repeat answer ───────────────────────────────────────────────────────────
@@ -252,3 +309,60 @@ def test_each_answer_emits_ids_and_outcome_only(world):
     assert again["payload"] == {
         "guide_id": "g1", "block_id": "s1-i2", "correct": True, "counted": False,
     }
+
+
+# ── The quiz's evidence rules (#866 review A8) ────────────────────────────────
+
+QH = question_hash("How many passes?", ["3", "4", "5"])
+
+
+def test_a_regenerated_question_answered_again_within_24h_does_not_count(world):
+    """Regenerate clears a guide's stored answers, so its first answer is stored
+    again — but the question already counted in this rolling window (the
+    quiz's claim, A94/A100), so mastery does not move a second time."""
+    first = _answer("s1-i2", "b")
+    assert first.mastery is not None and len(world["graph"]) == 1
+    world["answered"].clear()  # a Regenerate: the answers go with the content
+    again = _answer("s1-i2", "b")
+    assert (again.correct, again.counted, again.mastery) == (True, True, None)
+    assert len(world["graph"]) == 1
+    assert world["claims"].rows.keys() == {QH}
+
+
+def test_a_question_counts_again_once_its_window_has_passed(world):
+    world["claims"].rows[QH] = datetime.now(timezone.utc) - timedelta(hours=25)
+    out = _answer("s1-i2", "b")
+    assert out.mastery is not None and len(world["graph"]) == 1
+
+
+def test_a_question_a_quiz_counted_today_does_not_count_in_a_guide(world):
+    """One namespace: the guide's question_hash is the quiz's, so a quiz
+    attempt's claim within the window holds the guide's answer too."""
+    world["claims"].rows[QH] = datetime.now(timezone.utc) - timedelta(hours=2)
+    out = _answer("s1-i2", "b")
+    assert (out.counted, out.mastery) == (True, None) and world["graph"] == []
+
+
+@pytest.mark.parametrize("floor", [RUNG_ASSISTED_MIN, RUNG_NO_CREDIT_MIN])
+def test_a_question_the_student_had_help_on_carries_the_help_floor(world, floor):
+    """A99: help on this question (a quiz-ask session, any loop help on the
+    hash) means no unassisted credit: the evidence carries that rung."""
+    world["help"][QH] = floor
+    _answer("s1-i2", "b")
+    ev = _evidence(world)
+    assert (ev["max_rung"], ev["assisted"]) == (floor, True)
+    assert Evidence.model_validate(ev).weight < 1.0
+
+
+def test_an_unclaimable_question_writes_nothing(world):
+    """A failed claim counts nothing (fail closed); the answer still stands."""
+    world["claims"] = _Claims(fail=True)
+    out = _answer("s1-i2", "b")
+    assert (out.correct, out.counted, out.mastery) == (True, True, None)
+    assert world["graph"] == [] and "s1-i2" in world["answered"]
+
+
+def test_the_guide_claims_its_question_in_the_quizs_table(world):
+    _answer("s1-i2", "b")
+    insert = world["claims"].calls[0]
+    assert insert[0] == "insert" and insert[2] == [QH]

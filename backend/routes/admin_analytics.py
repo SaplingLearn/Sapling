@@ -23,6 +23,8 @@ from fastapi import APIRouter, HTTPException, Query, Request, Response
 
 from db.connection import rpc, table
 from services.admin.analytics import db_scope as admin_db_scope
+from services.admin.analytics import learning_loop as _learning_loop
+from services.admin.analytics.learning_models import LearningLoopKpis
 from services.admin.analytics import scan as _scan
 from services.admin.errors import Unprocessable
 from services.auth_guard import require_admin
@@ -315,6 +317,50 @@ def errors(
         total=total, limit=limit, offset=offset, errors=items,
         truncated=series_truncated, series=series,
     )
+
+
+# ── Learning loop KPIs (PKG-14; spec §10) ────────────────────────────────────
+#
+# The three headline KPIs and the two measurable gates of the evaluation
+# ladder, over `zpd.step`/`zpd.leak` events and the evidence journal. Admin-only
+# and read-only like every endpoint here. The aggregation lives in
+# services/admin/analytics/learning_loop.py (spec §13 A149), the response
+# models in services/admin/analytics/learning_models.py.
+
+
+@router.get("/learning-loop", response_model=LearningLoopKpis)
+def learning_loop_kpis(
+    request: Request,
+    response: Response,
+    from_: str | None = Query(None, alias="from"),
+    to: str | None = Query(None),
+) -> LearningLoopKpis:
+    """Spec §10: in-band share, the htc_k trend, next-session unassisted success,
+    and the zero-leak, ceiling-compliance and earnest-revise (A109) gates; the
+    BKT calibration (A110), the students' own confidence calibration per
+    channel (A127: stated confidence vs correctness, over the same evidence
+    scan) and the pre/post learning gain of the post-tests answered in the
+    range, per fixed window (A112), with its student-cluster bootstrap
+    intervals, actual-delay bins and visibility-loss stratum, and the funnel
+    of the windows that opened in the range (A126). One void rule (A123) for
+    every evidence read here: an observation graded against an item staff
+    retired is left out — of the BKT calibration (counted in `excluded_void`),
+    the confidence calibration, the next-session success, the learning gain's
+    post-tests (counted per window in `excluded_retired`) and its pretests;
+    the active evidence-slot warnings of this process's configuration (A128);
+    help abuse (A133: bottom-outs, their pace, the attempts that bought them
+    and what the student did next, per band, gate, course and student — None
+    when its reads failed); the loop's spend in the range against those
+    learning-gain pairs, overall and per course (A137: per active student-month
+    against §3.5's target, per session, per pair and per gain point, each with
+    its n); self-explanation prompts (A139: shown, the reply rate, the median
+    reply length and the next item's unassisted success after replying vs
+    not, overall and per juncture — None when its read failed);
+    `truncated: true` means a scan cap cut the aggregation short."""
+    require_admin(request)
+    response.headers["Cache-Control"] = "private"
+    from_iso, to_iso = _resolve_range(from_, to)
+    return _learning_loop.learning_loop_report(from_iso, to_iso)
 
 
 # ── db_user_scope rollout report (#115) ──────────────────────────────────────

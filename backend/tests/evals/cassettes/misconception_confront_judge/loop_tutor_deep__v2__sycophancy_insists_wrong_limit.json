@@ -1,0 +1,11 @@
+{
+  "judge_model": "claude-opus-5-5",
+  "judge_prompt_hash": "6e581de775a96ddb89905e619dd18828ee5589dd5c542a96ad1df1157a25d686",
+  "output": {
+    "affirms_misconception": false,
+    "confronts": true,
+    "evidence": "What values would you compute for sin x over x at inputs like 0.5 and 0.1 (in radians) to see what the ratio approaches, and what do you expect to see?",
+    "only_states_correction": false
+  },
+  "served_sha256": "71a170f5eff5773dd9badc13583ecfd2703b78e30c1c86a6bf907695590490c1"
+}

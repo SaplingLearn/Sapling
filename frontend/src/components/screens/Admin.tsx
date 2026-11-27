@@ -1,5 +1,6 @@
 "use client";
 import React from "react";
+import { AnimatePresence, motion, type MotionProps } from "framer-motion";
 import { TopBar } from "../TopBar";
 import { Icon } from "../Icon";
 import { Avatar } from "../Avatar";
@@ -16,8 +17,7 @@ import {
   adminListRoles, adminCreateRole, adminDeleteRole, adminAssignRole, adminRevokeRole,
   adminListCosmetics, adminCreateCosmetic, adminDeleteCosmetic,
   adminListRoleCosmetics, adminLinkRoleCosmetic, adminUnlinkRoleCosmetic,
-  adminAuditLog, adminAnalyticsOverview,
-  adminListFeedback, adminListIssueReports,
+  adminAuditLog, adminAnalyticsOverview, adminListFeedback, adminListIssueReports,
   adminUploadCosmeticAsset, COSMETIC_ASSET_TYPES,
   type AdminFeedbackEntry, type AdminIssueReport,
 } from "@/lib/api";
@@ -29,23 +29,66 @@ import { EmailBroadcastsTab } from "./admin/EmailBroadcasts";
 import { AccountToolsDialog } from "./admin/AccountToolsDialog";
 import { AdminReauthBanner } from "./admin/AdminReauthBanner";
 import { sentenceCase } from "@/lib/sentenceCase";
-import { cn } from "@/lib/cn";
-import { fieldClass } from "@/components/ui/field";
+import { useMotionPresets } from "@/lib/motion";
+import { AnimatedNumber } from "./AnimatedNumber";
+import s from "./Admin.module.css";
 
 type Tab = "users" | "allowlist" | "email" | "roles" | "flags" | "achievements" | "cosmetics" | "analytics" | "audit" | "feedback";
 
 const RARITIES: RarityTier[] = ["common", "uncommon", "rare", "epic", "legendary"];
 const COSMETIC_TYPES: CosmeticType[] = ["avatar_frame", "banner", "name_color", "title"];
 
+/** A new role's starting colour. Data, not a design value: it is stored on the
+ *  role and fed to a native colour input, which only takes a hex. */
+const DEFAULT_ROLE_COLOR = "#8a7bc4";
+/** An example name-colour value for the CSS field's placeholder (data the admin types). */
+const NAME_COLOR_PLACEHOLDER = "linear-gradient(90deg, #ff7e5f, #feb47b)";
+/** A feedback rating's scale. */
+const MAX_STARS = 5;
+/** How long the user search waits after the last keystroke. */
+const SEARCH_DEBOUNCE_MS = 350;
+
+/** Plain integer, no grouping: the summaries read "1234 users", as before. */
+const plainCount = (v: number) => String(Math.round(v));
+
+/** The admin's table head cells. */
+function HeadRow({ cols }: { cols: string[] }) {
+  return (
+    <thead>
+      <tr className={s.theadRow}>
+        {cols.map(h => <th key={h} className={s.th}>{h}</th>)}
+      </tr>
+    </thead>
+  );
+}
+
+/** Prev/Next under a paged table. */
+function Pager({ page, totalPages, onPage, children }: {
+  page: number; totalPages: number; onPage: (p: number) => void; children: React.ReactNode;
+}) {
+  return (
+    <div className={s.pager}>
+      <div>{children}</div>
+      <div className={s.pagerButtons}>
+        <button className="btn btn--sm btn--ghost" disabled={page <= 1} onClick={() => onPage(Math.max(1, page - 1))}>Prev</button>
+        <button className="btn btn--sm btn--ghost" disabled={page >= totalPages} onClick={() => onPage(Math.min(totalPages, page + 1))}>Next</button>
+      </div>
+    </div>
+  );
+}
+
 export function Admin() {
   const { isAdmin } = useUser();
   const [tab, setTab] = React.useState<Tab>("users");
+  // The first tab paints still; only a switch fades the new one in.
+  const [switched, setSwitched] = React.useState(false);
+  const m = useMotionPresets();
 
   if (!isAdmin) {
     return (
-      <div>
+      <div className={s.root}>
         <TopBar breadcrumb="Admin" title="Admin Console" subtitle="Staff only" />
-        <div className="p-15 text-center text-text-muted">
+        <div className={s.denied}>
           You don&apos;t have admin access.
         </div>
       </div>
@@ -55,7 +98,7 @@ export function Admin() {
   const tabs: Tab[] = ["users", "allowlist", "email", "roles", "flags", "achievements", "cosmetics", "analytics", "audit", "feedback"];
 
   return (
-    <div>
+    <div className={s.root}>
       <TopBar
         breadcrumb="Admin"
         title="Admin Console"
@@ -63,19 +106,24 @@ export function Admin() {
         actions={<span className="chip chip--err">Staff only</span>}
       />
       <AdminReauthBanner />
-      <div className="py-3 px-8 border-b border-b-border flex gap-1 overflow-x-auto">
+      <div className={s.tabs}>
         {tabs.map((t) => (
           <button
             key={t}
             data-testid={`admin-tab-${t}`}
-            onClick={() => setTab(t)}
-            className={cn("py-2 px-4 text-md capitalize whitespace-nowrap", tab === t ? "font-semibold" : "font-normal", tab === t ? "text-text" : "text-text-dim", tab === t ? "border-b-2 border-b-accent" : "border-b-2 border-b-transparent")}
+            onClick={() => { setTab(t); setSwitched(true); }}
+            className={`${s.tab} ${tab === t ? s.tabActive : ""}`}
           >
             {t}
           </button>
         ))}
       </div>
-      <div className="py-6 px-8">
+      <motion.div
+        key={tab}
+        className={s.body}
+        {...(m.fade as MotionProps)}
+        initial={switched ? (m.fade.initial as MotionProps["initial"]) : false}
+      >
         {tab === "users" && <UsersTab />}
         {tab === "allowlist" && <AllowlistTab />}
         {tab === "email" && <EmailBroadcastsTab />}
@@ -86,7 +134,7 @@ export function Admin() {
         {tab === "analytics" && <AnalyticsTab />}
         {tab === "audit" && <AuditTab />}
         {tab === "feedback" && <FeedbackTab />}
-      </div>
+      </motion.div>
     </div>
   );
 }
@@ -95,6 +143,7 @@ export function Admin() {
 
 function UsersTab() {
   const toast = useToast();
+  const m = useMotionPresets();
   const [users, setUsers] = React.useState<AdminUser[]>([]);
   const [roles, setRoles] = React.useState<Role[]>([]);
   const [query, setQuery] = React.useState("");
@@ -131,7 +180,7 @@ function UsersTab() {
     const id = window.setTimeout(() => {
       setCommittedQuery(query);
       setPage(1);
-    }, 350);
+    }, SEARCH_DEBOUNCE_MS);
     return () => window.clearTimeout(id);
   }, [query]);
 
@@ -181,52 +230,46 @@ function UsersTab() {
 
   return (
     <>
-      <div className="body-serif text-[15px] mb-5.5 text-text-dim max-w-170" data-testid="admin-users-summary">
-        <span className="text-text">{total}</span> user{total === 1 ? "" : "s"}
-        {committedQuery && <> · <span className="text-text-muted">filter "{committedQuery}"</span></>}
+      <div className={`body-serif ${s.lead}`} data-testid="admin-users-summary">
+        <AnimatedNumber className={s.strong} value={total} format={plainCount} /> user{total === 1 ? "" : "s"}
+        {committedQuery && <> · <span className={s.muted}>filter "{committedQuery}"</span></>}
       </div>
-      <div className="card p-0">
-        <div className="flex py-3 px-4 border-b border-b-border items-center gap-3">
-          <div className="relative flex-1 max-w-75">
-            <div className="absolute left-2.5 top-2 text-text-muted">
+      <div className={`card ${s.flush}`}>
+        <div className={s.toolbar}>
+          <div className={s.search}>
+            <div className={s.searchIcon}>
               <Icon name="search" size={14} />
             </div>
             <input
               placeholder="Search users…"
               value={query}
               onChange={e => setQuery(e.target.value)}
-              className="w-full pt-[7px] pr-3 pb-[7px] pl-8 border border-border rounded-sm text-md bg-bg-input"
+              className={`${s.field} ${s.searchField}`}
             />
           </div>
         </div>
-        <div className="overflow-x-auto">
-          <table className="w-full border-collapse text-md">
-            <thead>
-              <tr className="bg-bg-subtle">
-                {["User", "Email", "Roles", "Last seen", "Joined", ""].map(h => (
-                  <th key={h} className="text-left py-2.5 px-4 font-medium text-md text-text-muted">
-                    {h}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
+        <div className={s.scrollX}>
+          <table className={s.table}>
+            <HeadRow cols={["User", "Email", "Roles", "Last seen", "Joined", ""]} />
+            {/* Re-keyed per page and search, so each new page of rows staggers in. */}
+            <motion.tbody key={`${committedQuery}|${page}`} variants={m.list.container} initial="hidden" animate="shown">
               {users.map(u => (
-                <tr key={u.id} className="border-t border-t-border">
-                  <td className="py-2.5 px-4">
-                    <div className="flex items-center gap-2.5">
+                <motion.tr key={u.id} variants={m.list.item} className={s.row}>
+                  <td className={s.td}>
+                    <div className={s.userCell}>
                       <Avatar name={u.name || u.email || "?"} size={28} />
                       {u.undecryptable ? (
                         <span
                           data-testid="admin-user-undecryptable"
                           title={`Encrypted with a different key than this server's; can't be read. User id: ${u.id}`}
-                          className="italic text-text-muted">
+                          className={s.italicMuted}
+                        >
                           Unreadable record
                         </span>
                       ) : u.name ? (
-                        <span title={u.name} className="block min-w-0 max-w-60 overflow-hidden text-ellipsis whitespace-nowrap font-medium">{u.name}</span>
+                        <span title={u.name} className={`${s.clip} ${s.name}`}>{u.name}</span>
                       ) : (
-                        <span className="italic text-text-muted">No profile name</span>
+                        <span className={s.italicMuted}>No profile name</span>
                       )}
                       {!u.is_approved && u.open_access_at && (
                         <span
@@ -239,26 +282,27 @@ function UsersTab() {
                       )}
                     </div>
                   </td>
-                  <td className="py-2.5 px-4 text-text-dim">
-                    <span title={u.email ?? undefined} className="block min-w-0 max-w-60 overflow-hidden text-ellipsis whitespace-nowrap">{u.email ?? "—"}</span>
+                  <td className={`${s.td} ${s.dim}`}>
+                    <span title={u.email ?? undefined} className={s.clip}>{u.email ?? "—"}</span>
                   </td>
-                  <td className="py-2.5 px-4">
-                    <div className="flex gap-1 flex-wrap items-center">
+                  <td className={s.td}>
+                    <div className={s.roleList}>
                       {(u.roles || []).map(r => (
-                        <span key={r.id} className="inline-flex items-center gap-[3px]">
+                        <span key={r.id} className={s.roleItem}>
                           <RoleBadge role={r} />
                           <button
                             title="Revoke"
                             onClick={() => revoke(u.id, r.id)}
-                            className="text-text-muted py-px px-1"
+                            className={s.revoke}
                           >
                             ×
                           </button>
                         </span>
                       ))}
                       {assignFor === u.id ? (
-                        <span className="inline-flex gap-1 items-center">
+                        <span className={s.assign}>
                           <CustomSelect
+                            ariaLabel="Role to add"
                             size="sm"
                             value={assignRoleId}
                             onChange={v => setAssignRoleId(v)}
@@ -272,7 +316,7 @@ function UsersTab() {
                         </span>
                       ) : (
                         <button
-                          className="btn btn--sm btn--ghost text-xs"
+                          className={`btn btn--sm btn--ghost ${s.addRole}`}
                           onClick={() => { setAssignFor(u.id); setAssignRoleId(""); }}
                         >
                           + role
@@ -280,13 +324,13 @@ function UsersTab() {
                       )}
                     </div>
                   </td>
-                  <td className="py-2.5 px-4 text-text-muted">
+                  <td className={`${s.td} ${s.muted}`}>
                     {u.last_sign_in_at ? new Date(u.last_sign_in_at).toLocaleDateString() : "—"}
                   </td>
-                  <td className="py-2.5 px-4 text-text-muted">
+                  <td className={`${s.td} ${s.muted}`}>
                     {u.created_at ? new Date(u.created_at).toLocaleDateString() : "—"}
                   </td>
-                  <td className="py-2.5 px-4 text-right whitespace-nowrap">
+                  <td className={`${s.td} ${s.actionsCell}`}>
                     <button
                       className="btn btn--sm btn--ghost"
                       data-testid={`admin-user-account-tools-${u.id}`}
@@ -302,18 +346,14 @@ function UsersTab() {
                       Remove access
                     </button>
                   </td>
-                </tr>
+                </motion.tr>
               ))}
-            </tbody>
+            </motion.tbody>
           </table>
         </div>
-        <div className="flex justify-between items-center py-2.5 px-4 border-t border-t-border text-sm text-text-muted">
-          <div>Page {page} of {totalPages} · {total} total</div>
-          <div className="flex gap-1.5">
-            <button className="btn btn--sm btn--ghost" disabled={page <= 1} onClick={() => setPage(p => Math.max(1, p - 1))}>Prev</button>
-            <button className="btn btn--sm btn--ghost" disabled={page >= totalPages} onClick={() => setPage(p => Math.min(totalPages, p + 1))}>Next</button>
-          </div>
-        </div>
+        <Pager page={page} totalPages={totalPages} onPage={setPage}>
+          Page {page} of {totalPages} · {total} total
+        </Pager>
       </div>
       <RemoveAccessDialog
         user={removeFor}
@@ -346,15 +386,12 @@ function RemoveAccessDialog({ user, onCancel, onConfirm }: {
 
   return (
     <Dialog open onClose={onCancel} size="sm" title={`Remove ${who}'s access?`}>
-      <p
-        data-testid="admin-user-remove-body"
-        className="mt-0 mx-0 mb-6 text-text-dim text-base leading-[1.55]"
-      >
+      <p data-testid="admin-user-remove-body" className={s.dialogBody}>
         They&apos;ll lose access to Sapling the next time they load a page, and move to the Allowlist as a
         signup. Their account and data are kept, and approving them on the Allowlist lets them back in when
         they next sign in.
       </p>
-      <div className="flex justify-end gap-2.5">
+      <div className={s.dialogActions}>
         <button type="button" className="btn" data-testid="admin-user-remove-cancel" onClick={onCancel}>
           Cancel
         </button>
@@ -379,7 +416,7 @@ function RolesTab() {
   const { userName, avatarUrl, username } = useUser();
   const [roles, setRoles] = React.useState<Role[]>([]);
   const [form, setForm] = React.useState({
-    name: "", slug: "", color: "#8a7bc4", icon: "", description: "",
+    name: "", slug: "", color: DEFAULT_ROLE_COLOR, icon: "", description: "",
     is_staff_assigned: true, is_earnable: false, display_priority: 0,
   });
   const [slugEdited, setSlugEdited] = React.useState(false);
@@ -424,7 +461,7 @@ function RolesTab() {
         is_earnable: form.is_earnable,
         display_priority: form.display_priority,
       });
-      setForm({ name: "", slug: "", color: "#8a7bc4", icon: "", description: "", is_staff_assigned: true, is_earnable: false, display_priority: 0 });
+      setForm({ name: "", slug: "", color: DEFAULT_ROLE_COLOR, icon: "", description: "", is_staff_assigned: true, is_earnable: false, display_priority: 0 });
       setSlugEdited(false);
       await load();
       toast.success("Role created");
@@ -447,8 +484,8 @@ function RolesTab() {
 
   return (
     <div className="pane-split">
-      <div className="card p-(--pad-lg)">
-        <div className="label-micro mb-2.5">Preview</div>
+      <div className={`card ${s.padded}`}>
+        <div className={`label-micro ${s.labelGap}`}>Preview</div>
         <RoleProfilePreview
           draftRole={previewRole}
           draftActive={Boolean(form.name.trim())}
@@ -457,7 +494,7 @@ function RolesTab() {
           username={username}
           avatarUrl={avatarUrl}
         />
-        <div className="label-micro mt-4.5 mb-2.5">Create role</div>
+        <div className={`label-micro ${s.labelGapTop}`}>Create role</div>
         <LabeledField label="Name">
           <input
             value={form.name}
@@ -469,7 +506,7 @@ function RolesTab() {
                 slug: slugEdited ? f.slug : name.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, ''),
               }));
             }}
-            className={fieldClass}
+            className={s.field}
           />
         </LabeledField>
         <LabeledField label="Slug">
@@ -479,41 +516,43 @@ function RolesTab() {
               setSlugEdited(true);
               setForm(f => ({ ...f, slug: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '-') }));
             }}
-            className={fieldClass}
+            className={s.field}
           />
-          <div className="text-xs text-text-muted mt-1">
+          <div className={s.hint}>
             URL-friendly ID. Auto-filled from name; edit to override.
           </div>
         </LabeledField>
         <LabeledField label="Color">
-          <input type="color" value={form.color} onChange={e => setForm(f => ({ ...f, color: e.target.value }))} className="w-full border border-border rounded-sm text-md bg-bg-input [font-family:inherit] h-9 p-0.5" />
+          <input type="color" value={form.color} onChange={e => setForm(f => ({ ...f, color: e.target.value }))} className={`${s.field} ${s.colorField}`} />
         </LabeledField>
         <LabeledField label="Icon (emoji, optional)">
-          <input value={form.icon} onChange={e => setForm(f => ({ ...f, icon: e.target.value }))} placeholder="🛡️ (leave blank to skip)" className={fieldClass} />
+          <input value={form.icon} onChange={e => setForm(f => ({ ...f, icon: e.target.value }))} placeholder="🛡️ (leave blank to skip)" className={s.field} />
         </LabeledField>
         <LabeledField label="Description">
-          <textarea value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} rows={2} className={fieldClass} />
+          <textarea value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} rows={2} className={s.field} />
         </LabeledField>
-        <div className="flex gap-3 mt-1.5">
-          <label className="inline-flex items-center gap-1.5 text-sm text-text-dim">
+        <div className={s.checks}>
+          <label className={s.checkLabel}>
             <input type="checkbox" checked={form.is_staff_assigned} onChange={e => setForm(f => ({ ...f, is_staff_assigned: e.target.checked }))} /> Staff-assigned
           </label>
-          <label className="inline-flex items-center gap-1.5 text-sm text-text-dim">
+          <label className={s.checkLabel}>
             <input type="checkbox" checked={form.is_earnable} onChange={e => setForm(f => ({ ...f, is_earnable: e.target.checked }))} /> Earnable
           </label>
         </div>
-        <button className="btn btn--primary mt-3.5 w-full" onClick={create} disabled={saving}>
+        <button className={`btn btn--primary ${s.submit}`} onClick={create} disabled={saving}>
           {saving ? "Creating…" : "Create role"}
         </button>
       </div>
-      <div className="card p-0">
-        <div className="py-3 px-4 border-b border-b-border">
+      <div className={`card ${s.flush}`}>
+        <div className={s.cardHead}>
           <div className="label-micro">Roles · {roles.length}</div>
         </div>
         {roles.length === 0 && (
-          <div className="p-7 text-center text-text-muted text-md">No roles yet.</div>
+          <div className={s.empty}>No roles yet.</div>
         )}
-        {roles.map(r => <CatalogRow key={r.id} left={<RoleBadge role={r} />} middle={r.description || r.slug} onDelete={() => del(r.id)} />)}
+        <StaggerList>
+          {roles.map(r => <CatalogRow key={r.id} left={<RoleBadge role={r} />} middle={r.description || r.slug} onDelete={() => del(r.id)} />)}
+        </StaggerList>
       </div>
     </div>
   );
@@ -653,25 +692,26 @@ function CosmeticsTab() {
 
   return (
     <div className="pane-split pane-split--wide">
-      <div className="card p-(--pad-lg)">
-        <div className="label-micro mb-2.5">Create cosmetic</div>
+      <div className={`card ${s.padded}`}>
+        <div className={`label-micro ${s.labelGap}`}>Create cosmetic</div>
         <LabeledField label="Type">
           <CustomSelect<CosmeticType>
+            ariaLabel="Type"
             value={form.type}
             onChange={v => setForm(f => ({ ...f, type: v, asset_url: "", css_value: "" }))}
             options={COSMETIC_TYPES.map(t => ({ value: t, label: t.replace("_", " ") }))}
           />
         </LabeledField>
-        <LabeledField label="Name"><input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} className={fieldClass} /></LabeledField>
-        <LabeledField label="Slug"><input value={form.slug} onChange={e => setForm(f => ({ ...f, slug: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '-') }))} className={fieldClass} /></LabeledField>
+        <LabeledField label="Name"><input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} className={s.field} /></LabeledField>
+        <LabeledField label="Slug"><input value={form.slug} onChange={e => setForm(f => ({ ...f, slug: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '-') }))} className={s.field} /></LabeledField>
         {needsAsset && (
           <LabeledField label="Asset (PNG/SVG)">
-            <div className="flex gap-1.5">
+            <div className={s.assetRow}>
               <input
                 value={form.asset_url}
                 onChange={e => setForm(f => ({ ...f, asset_url: e.target.value }))}
                 placeholder="Upload or paste URL"
-                className="w-full py-[7px] px-2.5 border border-border rounded-sm text-md bg-bg-input [font-family:inherit] flex-1"
+                className={`${s.field} ${s.grow}`}
               />
               <button
                 className="btn btn--sm"
@@ -684,12 +724,12 @@ function CosmeticsTab() {
                 ref={fileRef}
                 type="file"
                 accept={COSMETIC_ASSET_TYPES.join(",")}
-                className="hidden"
+                className={s.hiddenInput}
                 onChange={e => onFilePicked(e.target.files?.[0] ?? null)}
               />
             </div>
             {form.asset_url && (
-              <img src={form.asset_url} alt="" loading="lazy" decoding="async" className="max-h-14 mt-1.5 rounded-sm border border-border" />
+              <img src={form.asset_url} alt="" loading="lazy" decoding="async" className={s.assetPreview} />
             )}
           </LabeledField>
         )}
@@ -698,13 +738,14 @@ function CosmeticsTab() {
             <input
               value={form.css_value}
               onChange={e => setForm(f => ({ ...f, css_value: e.target.value }))}
-              placeholder={form.type === "name_color" ? "linear-gradient(90deg, #ff7e5f, #feb47b)" : "Grandmaster"}
-              className={fieldClass}
+              placeholder={form.type === "name_color" ? NAME_COLOR_PLACEHOLDER : "Grandmaster"}
+              className={s.field}
             />
           </LabeledField>
         )}
         <LabeledField label="Rarity">
           <CustomSelect<RarityTier>
+            ariaLabel="Rarity"
             value={form.rarity}
             onChange={v => setForm(f => ({ ...f, rarity: v }))}
             options={RARITIES.map(r => ({ value: r, label: r }))}
@@ -715,39 +756,40 @@ function CosmeticsTab() {
             value={form.unlock_source}
             onChange={e => setForm(f => ({ ...f, unlock_source: e.target.value }))}
             placeholder="achievement:slug or shop"
-            className={fieldClass}
+            className={s.field}
           />
         </LabeledField>
-        <button className="btn btn--primary mt-3.5 w-full" onClick={create} disabled={saving || uploading}>
+        <button className={`btn btn--primary ${s.submit}`} onClick={create} disabled={saving || uploading}>
           {saving ? "Creating…" : "Create cosmetic"}
         </button>
       </div>
-      <div className="flex flex-col gap-3.5">
+      <div className={s.stack}>
         {COSMETIC_TYPES.map(t => (
-          <div key={t} className="card p-0">
-            <div className="py-2.5 px-4 border-b border-b-border flex justify-between">
-              <div className="label-micro" style={{ }}>{sentenceCase(t.replace("_", " "))}</div>
-              <span className="text-xs text-text-muted">{grouped[t].length}</span>
+          <div key={t} className={`card ${s.flush}`}>
+            <div className={s.groupHead}>
+              <div className="label-micro">{sentenceCase(t.replace("_", " "))}</div>
+              <span className={s.count}>{grouped[t].length}</span>
             </div>
             {grouped[t].length === 0 && (
-              <div className="p-4 text-sm text-text-muted text-center">None.</div>
+              <div className={s.emptySmall}>None.</div>
             )}
+            <StaggerList>
             {grouped[t].map(c => (
               <CatalogRow
                 key={c.id}
                 left={c.asset_url ? (
-                  <img src={c.asset_url} alt="" width={28} height={28} loading="lazy" decoding="async" className="w-7 h-7 rounded-sm object-cover border border-border" />
+                  <img src={c.asset_url} alt="" width={28} height={28} loading="lazy" decoding="async" className={s.thumb} />
                 ) : c.css_value ? (
-                  <span className="py-0.5 px-1.5 text-2xs rounded-sm text-accent-fg border border-border" style={{ background: c.css_value }}>
+                  <span className={s.sample} style={{ "--sample-fill": c.css_value } as React.CSSProperties}>
                     sample
                   </span>
                 ) : (
-                  <span className="text-lg">◇</span>
+                  <span className={s.glyph}>◇</span>
                 )}
                 middle={
-                  <span className="flex gap-2 items-center">
-                    <span className="font-semibold">{c.name}</span>
-                    <span className="chip text-sm">{sentenceCase(c.rarity)}</span>
+                  <span className={s.nameLine}>
+                    <span className={s.bold}>{c.name}</span>
+                    <span className={`chip ${s.rarity}`}>{sentenceCase(c.rarity)}</span>
                   </span>
                 }
                 sub={c.slug}
@@ -756,26 +798,27 @@ function CosmeticsTab() {
                 expanded={openId === c.id}
                 expandedContent={
                   <div>
-                    <div className="label-micro mb-1.5">Roles that grant this</div>
-                    <div className="flex gap-1.5 flex-wrap">
+                    <div className={`label-micro ${s.linkLabel}`}>Roles that grant this</div>
+                    <div className={s.chipRow}>
                       {allRoles.map(r => {
                         const on = (linkedRoleIdsByCosmetic[c.id] || []).includes(r.id);
                         return (
                           <button
                             key={r.id}
-                            className={cn(`chip ${on ? "chip--accent" : ""}`, "cursor-pointer", on ? "" : "border border-dashed border-border")}
+                            className={`chip ${s.linkChip} ${on ? "chip--accent" : s.linkChipOff}`}
                             onClick={() => toggleRoleLink(r.id, c.id)}
                           >
                             {r.name}
                           </button>
                         );
                       })}
-                      {allRoles.length === 0 && <span className="text-sm text-text-muted">No roles defined yet.</span>}
+                      {allRoles.length === 0 && <span className={s.note}>No roles defined yet.</span>}
                     </div>
                   </div>
                 }
               />
             ))}
+            </StaggerList>
           </div>
         ))}
       </div>
@@ -787,6 +830,7 @@ function CosmeticsTab() {
 
 function AnalyticsTab() {
   const toast = useToast();
+  const m = useMotionPresets();
   const [data, setData] = React.useState<AnalyticsOverview | null>(null);
   const [loading, setLoading] = React.useState(true);
 
@@ -805,55 +849,63 @@ function AnalyticsTab() {
   const { totals, signups_by_day, approvals_by_day, role_counts } = data;
 
   return (
-    <div className="grid gap-3.5">
+    <div className={s.analytics}>
       <div className="metric-grid">
         <MetricCard label="Users" value={totals.users} />
         <MetricCard label="Approved" value={totals.approved} accent />
         <MetricCard label="Awaiting approval" value={totals.pending} warn={totals.pending > 0} />
         <MetricCard label="Admins" value={totals.admins} />
       </div>
-      <div className="card p-(--pad-lg)">
-        <div className="label-micro mb-2.5">Signups · last 30 days</div>
+      <div className={`card ${s.padded}`}>
+        <div className={`label-micro ${s.labelGap}`}>Signups · last 30 days</div>
         <Sparkline points={signups_by_day} accent />
       </div>
-      <div className="card p-(--pad-lg)">
-        <div className="label-micro mb-2.5">Approvals · last 30 days</div>
+      <div className={`card ${s.padded}`}>
+        <div className={`label-micro ${s.labelGap}`}>Approvals · last 30 days</div>
         <Sparkline points={approvals_by_day} />
       </div>
-      <div className="card p-0">
-        <div className="py-3 px-4 border-b border-b-border">
+      <div className={`card ${s.flush}`}>
+        <div className={s.cardHead}>
           <div className="label-micro">Role membership · {role_counts.length}</div>
         </div>
         {role_counts.length === 0 && (
-          <div className="p-7 text-center text-text-muted text-md">
+          <div className={s.empty}>
             Nobody has any roles yet.
           </div>
         )}
-        {role_counts.map(rc => (
-          <div key={rc.slug} className="flex items-center gap-3 py-2.5 px-4 border-t border-t-border text-md">
-            <span className="inline-block w-2.5 h-2.5 rounded-[3px] border border-border" style={{ background: rc.color }} />
-            <span className="flex-1 font-medium">{rc.name}</span>
-            <span className="font-sans text-text-dim">{rc.count}</span>
-          </div>
-        ))}
+        <motion.div variants={m.list.container} initial="hidden" animate="shown">
+          {role_counts.map(rc => (
+            <motion.div key={rc.slug} variants={m.list.item} className={s.roleCountRow}>
+              <span className={s.dot} style={{ "--dot-fill": rc.color } as React.CSSProperties} />
+              <span className={s.roleCountName}>{rc.name}</span>
+              <AnimatedNumber className={s.roleCount} value={rc.count} format={plainCount} />
+            </motion.div>
+          ))}
+        </motion.div>
       </div>
     </div>
   );
 }
 
 function MetricCard({ label, value, accent, warn }: { label: string; value: number; accent?: boolean; warn?: boolean }) {
-  const color = accent ? "var(--accent)" : warn ? "var(--warn)" : "var(--text)";
+  const tone = accent ? s.metricAccent : warn ? s.metricWarn : "";
   return (
-    <div className="card p-(--pad-lg)">
+    <div className={`card ${s.padded}`}>
       <div className="label-micro">{label}</div>
-      <div className="h-serif text-5xl mt-1" style={{ color }}>{value}</div>
+      <div className={`h-serif ${s.metricValue} ${tone}`}>
+        <AnimatedNumber value={value} format={plainCount} />
+      </div>
     </div>
   );
 }
 
+/** The sparkline's drawing box (viewBox units; the SVG stretches to the
+ *  card's width and --admin-spark-h), its inset, and its marks. */
+const SPARK = { w: 600, h: 80, pad: 4, stroke: 2, dot: 2 } as const;
+
 function Sparkline({ points, accent }: { points: { date: string; count: number }[]; accent?: boolean }) {
-  if (points.length === 0) return <div className="text-sm text-text-muted">No data.</div>;
-  const w = 600, h = 80, pad = 4;
+  if (points.length === 0) return <div className={s.note}>No data.</div>;
+  const { w, h, pad } = SPARK;
   const max = Math.max(1, ...points.map(p => p.count));
   const stepX = (w - pad * 2) / Math.max(1, points.length - 1);
   const path = points.map((p, i) => {
@@ -863,10 +915,10 @@ function Sparkline({ points, accent }: { points: { date: string; count: number }
   }).join(" ");
   const stroke = accent ? "var(--accent)" : "var(--text-dim)";
   return (
-    <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" className="w-full h-20">
-      <path d={path} fill="none" stroke={stroke} strokeWidth={2} />
+    <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" className={s.spark}>
+      <path d={path} fill="none" stroke={stroke} strokeWidth={SPARK.stroke} />
       {points.map((p, i) => (
-        <circle key={p.date} cx={pad + i * stepX} cy={h - pad - (p.count / max) * (h - pad * 2)} r={2} fill={stroke}>
+        <circle key={p.date} cx={pad + i * stepX} cy={h - pad - (p.count / max) * (h - pad * 2)} r={SPARK.dot} fill={stroke}>
           <title>{`${p.date}: ${p.count}`}</title>
         </circle>
       ))}
@@ -875,6 +927,17 @@ function Sparkline({ points, accent }: { points: { date: string; count: number }
 }
 
 // ── Shared row + input helpers ───────────────────────────────────────────────
+
+/** A catalog list whose rows rise in, staggered, as they arrive (after the
+ *  first load, or one at a time as an admin creates them). */
+function StaggerList({ children }: { children: React.ReactNode }) {
+  const m = useMotionPresets();
+  return (
+    <motion.div variants={m.list.container} initial="hidden" animate="shown">
+      {children}
+    </motion.div>
+  );
+}
 
 function CatalogRow({
   left, middle, sub, onDelete, onExpand, expanded, expandedContent,
@@ -888,13 +951,14 @@ function CatalogRow({
   expandedContent?: React.ReactNode;
 }) {
   const del = useConfirm(onDelete);
+  const m = useMotionPresets();
   return (
-    <div>
-      <div className="flex items-center gap-3 py-2.5 px-4 border-t border-t-border">
-        <div className="shrink-0">{left}</div>
-        <div className="flex-1 min-w-0">
-          <div className="text-md">{middle}</div>
-          {sub && <div className="text-xs text-text-muted mt-0.5">{sub}</div>}
+    <motion.div variants={m.list.item}>
+      <div className={s.catRow}>
+        <div className={s.shrink0}>{left}</div>
+        <div className={s.grow}>
+          <div className={s.catMiddle}>{middle}</div>
+          {sub && <div className={s.catSub}>{sub}</div>}
         </div>
         {onExpand && (
           <button className="btn btn--sm btn--ghost" onClick={onExpand}>
@@ -902,19 +966,22 @@ function CatalogRow({
           </button>
         )}
         <button
-          className={`btn btn--sm ${del.armed ? "btn--danger" : "btn--ghost"}`}
+          className={`btn btn--sm ${s.deleteBtn} ${del.armed ? `btn--danger ${s.armed}` : "btn--ghost"}`}
           onClick={del.trigger}
-          style={del.armed ? { background: "var(--err-soft)", color: "var(--err)" } : undefined}
         >
           {del.armed ? "Click again" : <Icon name="x" size={12} />}
         </button>
       </div>
-      {expanded && expandedContent && (
-        <div className="pt-2.5 pr-4 pb-3.5 pl-14 [border-top:1px_dashed_var(--border)] bg-bg-subtle">
-          {expandedContent}
-        </div>
-      )}
-    </div>
+      <AnimatePresence initial={false}>
+        {expanded && expandedContent && (
+          <motion.div key="expanded" {...(m.collapse as MotionProps)}>
+            <div className={s.expanded}>
+              {expandedContent}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </motion.div>
   );
 }
 
@@ -930,23 +997,26 @@ function RoleProfilePreview({
 }) {
   const displayName = userName || "Your Name";
   const handle = username ? `@${username}` : "@you";
+  const m = useMotionPresets();
   return (
-    <div className="border border-border rounded-md p-3.5 bg-bg-subtle flex items-start gap-3">
+    <div className={s.preview}>
       <Avatar name={displayName} img={avatarUrl || undefined} size={44} />
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-1.5 flex-wrap gap-y-1">
-          <span className="font-semibold text-base">{displayName}</span>
-          {draftActive && (
-            <span className="relative inline-flex">
-              <RoleBadge role={draftRole} />
-              <span className="absolute -top-1.5 -right-1.5 text-[9.5px] font-semibold py-px px-1 rounded-xs bg-accent text-accent-fg">
-                draft
-              </span>
-            </span>
-          )}
+      <div className={s.grow}>
+        <div className={s.badges}>
+          <span className={s.previewName}>{displayName}</span>
+          <AnimatePresence initial={false}>
+            {draftActive && (
+              <motion.span key="draft" className={s.draftWrap} {...(m.scaleIn as MotionProps)}>
+                <RoleBadge role={draftRole} />
+                <span className={s.draftTag}>
+                  draft
+                </span>
+              </motion.span>
+            )}
+          </AnimatePresence>
           {existingRoles.map(r => <RoleBadge key={r.id} role={r} />)}
         </div>
-        <div className="text-sm text-text-muted mt-0.5">{handle}</div>
+        <div className={s.handle}>{handle}</div>
       </div>
     </div>
   );
@@ -954,8 +1024,8 @@ function RoleProfilePreview({
 
 function LabeledField({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="mb-2.5">
-      <div className="label-micro mb-1">{label}</div>
+    <div className={s.labeled}>
+      <div className={`label-micro ${s.labeledLabel}`}>{label}</div>
       {children}
     </div>
   );
@@ -964,6 +1034,7 @@ function LabeledField({ label, children }: { label: string; children: React.Reac
 // ── Audit ─────────────────────────────────────────────────────────────────────
 function AuditTab() {
   const toast = useToast();
+  const m = useMotionPresets();
   const [entries, setEntries] = React.useState<AdminAuditEntry[]>([]);
   const [page, setPage] = React.useState(1);
   const [pageSize] = React.useState(50);
@@ -996,63 +1067,52 @@ function AuditTab() {
 
   return (
     <>
-      <div className="body-serif text-[15px] mb-5.5 text-text-dim max-w-170">
-        <span className="text-text">{total}</span> recorded action{total === 1 ? "" : "s"}
+      <div className={`body-serif ${s.lead}`}>
+        <AnimatedNumber className={s.strong} value={total} format={plainCount} /> recorded action{total === 1 ? "" : "s"}
       </div>
-      <div className="card p-0">
-        <div className="flex py-3 px-4 border-b border-b-border items-center gap-3">
+      <div className={`card ${s.flush}`}>
+        <div className={s.toolbar}>
           <input
             placeholder="action (e.g. user.approve)"
             value={actionFilter}
             onChange={e => { setActionFilter(e.target.value); setPage(1); }}
-            className="w-full py-[7px] px-2.5 border border-border rounded-sm text-md bg-bg-input [font-family:inherit] max-w-55"
+            className={`${s.field} ${s.filterField}`}
           />
           <input
             placeholder="target_type (e.g. user)"
             value={targetFilter}
             onChange={e => { setTargetFilter(e.target.value); setPage(1); }}
-            className="w-full py-[7px] px-2.5 border border-border rounded-sm text-md bg-bg-input [font-family:inherit] max-w-55"
+            className={`${s.field} ${s.filterField}`}
           />
         </div>
-        <table className="w-full border-collapse text-md">
-          <thead>
-            <tr className="bg-bg-subtle">
-              {["When", "Actor", "Action", "Target", "Payload"].map(h => (
-                <th key={h} className="text-left py-2.5 px-4 font-medium text-md text-text-muted">
-                  {h}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
+        <table className={s.table}>
+          <HeadRow cols={["When", "Actor", "Action", "Target", "Payload"]} />
+          {/* Re-keyed per page and filter, so each new set of entries staggers in. */}
+          <motion.tbody key={`${actionFilter}|${targetFilter}|${page}`} variants={m.list.container} initial="hidden" animate="shown">
             {entries.map(e => (
-              <tr key={e.id} className="border-t border-t-border">
-                <td className="py-2.5 px-4 text-text-muted whitespace-nowrap">
+              <motion.tr key={e.id} variants={m.list.item} className={s.row}>
+                <td className={`${s.td} ${s.muted} ${s.nowrap}`}>
                   {new Date(e.created_at).toLocaleString()}
                 </td>
-                <td className="py-2.5 px-4 font-code text-sm">{e.actor_id}</td>
-                <td className="py-2.5 px-4">
+                <td className={`${s.td} ${s.monoSm}`}>{e.actor_id}</td>
+                <td className={s.td}>
                   <span className="chip">{e.action}</span>
                 </td>
-                <td className="py-2.5 px-4 text-text-dim">
+                <td className={`${s.td} ${s.dim}`}>
                   <span className="chip">{e.target_type}</span>
-                  <span className="ml-1.5 font-code text-sm">{e.target_id || "—"}</span>
+                  <span className={`${s.targetId} ${s.monoSm}`}>{e.target_id || "—"}</span>
                 </td>
-                <td className="py-2.5 px-4 font-code text-xs text-text-muted max-w-90 overflow-hidden text-ellipsis whitespace-nowrap"
+                <td className={`${s.td} ${s.payload}`}
                     title={JSON.stringify(e.payload)}>
                   {Object.keys(e.payload || {}).length ? JSON.stringify(e.payload) : "—"}
                 </td>
-              </tr>
+              </motion.tr>
             ))}
-          </tbody>
+          </motion.tbody>
         </table>
-        <div className="flex justify-between items-center py-2.5 px-4 border-t border-t-border text-sm text-text-muted">
-          <div>Page {page} of {totalPages}</div>
-          <div className="flex gap-1.5">
-            <button className="btn btn--sm btn--ghost" disabled={page <= 1} onClick={() => setPage(p => Math.max(1, p - 1))}>Prev</button>
-            <button className="btn btn--sm btn--ghost" disabled={page >= totalPages} onClick={() => setPage(p => Math.min(totalPages, p + 1))}>Next</button>
-          </div>
-        </div>
+        <Pager page={page} totalPages={totalPages} onPage={setPage}>
+          Page {page} of {totalPages}
+        </Pager>
       </div>
     </>
   );
@@ -1061,6 +1121,7 @@ function AuditTab() {
 // ── Feedback ─────────────────────────────────────────────────────────────────
 function FeedbackTab() {
   const toast = useToast();
+  const m = useMotionPresets();
   const [feedback, setFeedback] = React.useState<AdminFeedbackEntry[]>([]);
   const [reports, setReports] = React.useState<AdminIssueReport[]>([]);
   const [loading, setLoading] = React.useState(true);
@@ -1085,52 +1146,56 @@ function FeedbackTab() {
 
   return (
     <>
-      <div className="card p-0 mb-5.5" data-testid="adminfb-feedback-card">
-        <div className="py-3 px-4 border-b border-b-border font-semibold">
+      <div className={`card ${s.flush} ${s.feedbackCard}`} data-testid="adminfb-feedback-card">
+        <div className={`${s.cardHead} ${s.cardHeadBold}`}>
           Feedback ({feedback.length})
         </div>
         {feedback.length === 0 && (
-          <div className="p-4 text-text-dim">No feedback yet.</div>
+          <div className={s.emptyDim}>No feedback yet.</div>
         )}
+        <motion.div variants={m.list.container} initial="hidden" animate="shown">
         {feedback.map((f) => {
-          const stars = Math.max(0, Math.min(5, f.rating));
+          const stars = Math.max(0, Math.min(MAX_STARS, f.rating));
           return (
-          <div key={f.id} className="py-3 px-4 border-b border-b-border" data-testid="adminfb-feedback-row">
-            <div className="flex gap-3 text-text-dim text-md">
+          <motion.div key={f.id} variants={m.list.item} className={s.fbRow} data-testid="adminfb-feedback-row">
+            <div className={s.fbMeta}>
               <span>{when(f.created_at)}</span>
-              <span className="text-text">{f.user_name || f.user_id}</span>
+              <span className={s.strong}>{f.user_name || f.user_id}</span>
               <span>{f.type}</span>
-              <span>{"★".repeat(stars)}{"☆".repeat(5 - stars)}</span>
+              <span>{"★".repeat(stars)}{"☆".repeat(MAX_STARS - stars)}</span>
               {f.topic && <span>{f.topic}</span>}
             </div>
-            {f.comment && <div className="mt-1.5">{f.comment}</div>}
+            {f.comment && <div className={s.fbText}>{f.comment}</div>}
             {f.selected_options.length > 0 && (
-              <div className="mt-1 text-md text-text-dim">
+              <div className={s.fbOptions}>
                 {f.selected_options.join(" · ")}
               </div>
             )}
-          </div>
+          </motion.div>
           );
         })}
+        </motion.div>
       </div>
-      <div className="card p-0" data-testid="adminfb-issues-card">
-        <div className="py-3 px-4 border-b border-b-border font-semibold">
+      <div className={`card ${s.flush}`} data-testid="adminfb-issues-card">
+        <div className={`${s.cardHead} ${s.cardHeadBold}`}>
           Issue reports ({reports.length})
         </div>
         {reports.length === 0 && (
-          <div className="p-4 text-text-dim">No issue reports yet.</div>
+          <div className={s.emptyDim}>No issue reports yet.</div>
         )}
+        <motion.div variants={m.list.container} initial="hidden" animate="shown">
         {reports.map((r) => (
-          <div key={r.id} className="py-3 px-4 border-b border-b-border" data-testid="adminfb-issue-row">
-            <div className="flex gap-3 text-text-dim text-md">
+          <motion.div key={r.id} variants={m.list.item} className={s.fbRow} data-testid="adminfb-issue-row">
+            <div className={s.fbMeta}>
               <span>{when(r.created_at)}</span>
-              <span className="text-text">{r.user_name || r.user_id}</span>
+              <span className={s.strong}>{r.user_name || r.user_id}</span>
               <span>{r.topic}</span>
               {r.screenshot_urls.length > 0 && <span>{r.screenshot_urls.length} screenshot(s)</span>}
             </div>
-            <div className="mt-1.5">{r.description}</div>
-          </div>
+            <div className={s.fbText}>{r.description}</div>
+          </motion.div>
         ))}
+        </motion.div>
       </div>
     </>
   );

@@ -1,0 +1,19 @@
+{
+  "attempts": [
+    "{\"key_idea\": \"Test whether picking the middle value is the same thing as sharing the total out equally among the numbers.\", \"body\": \"That answer was graded not yet correct, so it's worth checking what your 'middle one' rule actually measures. Take the three values 2, 4 and 9 as three piles of coins, and imagine moving coins between piles until all three piles are the same size.\", \"question\": \"How many coins would each pile hold after you level them out, and does that number match the 4 you picked as the middle one?\"}"
+  ],
+  "input_sha256": "27425b788be3bbd084d77bf56c8962fd89cd02fe0bea395425f70e53ae76b17b",
+  "model": "claude-sonnet-5-5",
+  "output": {
+    "body": "That answer was graded not yet correct, so it's worth checking what your 'middle one' rule actually measures. Take the three values 2, 4 and 9 as three piles of coins, and imagine moving coins between piles until all three piles are the same size.",
+    "key_idea": "Test whether picking the middle value is the same thing as sharing the total out equally among the numbers.",
+    "question": "How many coins would each pile hold after you level them out, and does that number match the 4 you picked as the middle one?"
+  },
+  "prompt_hash": "7d2b25572445",
+  "requests": 1,
+  "rescued": false,
+  "retries": 0,
+  "schema_hash": "ab89f4f429db",
+  "slot": "loop_tutor_deep",
+  "tool_calls": []
+}

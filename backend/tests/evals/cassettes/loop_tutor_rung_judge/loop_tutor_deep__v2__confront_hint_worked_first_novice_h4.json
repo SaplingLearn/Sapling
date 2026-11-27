@@ -1,0 +1,10 @@
+{
+  "judge_model": "claude-opus-5-5",
+  "judge_prompt_hash": "cc1e83e5b7c838b2c60a65904ec8353cfb3a297465e097f7a140412831b1740d",
+  "output": {
+    "evidence": "What slope does your belief give for x^2 at x = 3, and what does the difference quotient approach as h gets very small?",
+    "reveals_final_answer": false,
+    "rung": 3
+  },
+  "served_sha256": "cfa4d47c7e5d9e0b58bdb0c925fc3adc11c5188dc7b0859f8592f93891c3d34e"
+}

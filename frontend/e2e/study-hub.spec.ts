@@ -23,7 +23,7 @@
  * So this journey must arrive by CLICKING through the hub, never by `goto`.
  *
  * Seeded (db/seed_local_rich.py): rich-user-active's first course is CS101,
- * with five concepts (mastery 92 / 60 / 25 / 5 / 80; the 5% one counts as not
+ * with five concepts (mastery 96 / 60 / 25 / 5 / 80; the 5% one counts as not
  * started) and flashcards on the topic "CS Basics" only — none on "Recursion".
  * No daily goal is seeded, so the Daily Goal starts at the column default
  * (`user_settings.daily_goal_minutes`, 30).
@@ -72,8 +72,9 @@ test("the hub renders the seeded course, and an edited daily goal persists", asy
 
   // (a) The hub, on the student's first course.
   // Readiness is the mean mastery of the course's concepts, a not-started one
-  // counting as 0: (92 + 60 + 25 + 0 + 80) / 5 = 51.4.
-  await expect(page.getByTestId("readiness-pct")).toHaveText("51%", { timeout: 30_000 });
+  // counting as 0: (96 + 60 + 25 + 0 + 80) / 5 = 52.2. Variables is seeded at
+  // 0.96, mastered on the learning loop's 0.95 cut (seed_local_rich.py).
+  await expect(page.getByTestId("readiness-pct")).toHaveText("52%", { timeout: 30_000 });
   // The course field is the page's only listbox trigger.
   await expect(page.locator('button[aria-haspopup="listbox"]')).toContainText("CS101");
   const roadmap = page.getByRole("region", { name: "Roadmap" });

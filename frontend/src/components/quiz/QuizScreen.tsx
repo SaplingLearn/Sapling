@@ -7,13 +7,18 @@
  * It replaces the `screens/Quiz.tsx` → `QuizPanel.tsx` chain, whose whole
  * concept-picking job now lives in `QuizHome`. The AI-disclaimer gate is carried
  * over unchanged (it self-gates on `localStorage["sapling_disclaimer_ack"]`, and
- * the chip in the TopBar reopens it on demand).
+ * the chip in the TopBar / session top reopens it on demand).
  *
  * `--quiz-accent` is bound here from the active concept's course colour. That
  * inline custom property is the ONE inline style anywhere under
  * `components/quiz/**` (R-1); everything else is a class over tokens.
+ *
+ * W7.1 focus session: while `QUESTION_PHASES` is live the app TopBar is swapped
+ * for the question screen's session chrome, and `data-quiz-session` lets
+ * `quiz.css` hide SideNav / TopNav. Home and results keep the ordinary shell.
  */
 
+import { carriesSkill } from "@/lib/levels";
 import React, { useMemo, useState } from "react";
 import type { CSSProperties } from "react";
 import { useSearchParams } from "next/navigation";
@@ -23,6 +28,7 @@ import { FullHeightScreen } from "../FullHeightScreen";
 import { AIDisclaimerChip } from "../chat/AIDisclaimerChip";
 import { DisclaimerModal } from "../DisclaimerModal";
 import { useUser } from "@/context/UserContext";
+import { useLoopStatus } from "../learn/useLoopStatus";
 import { useActiveSemester } from "@/lib/useActiveSemester";
 import { usePrefersReducedMotion } from "@/lib/usePrefersReducedMotion";
 import { siblingsFor } from "@/lib/graph/neighbourhood";
@@ -66,6 +72,12 @@ export function QuizScreen() {
     pickedConceptId,
   );
   const { session, pending, config, actions } = useQuizSession(userId ?? "", entry);
+  // Learning-loop spec §13 A132: the question screen asks "How sure are you?"
+  // only while the loop is on for the student (#866 K46): the learning_loop flag
+  // AND the loop status probe, so the kill switch's pre-loop quiz asks none.
+  // A recent answer (Learn's or Study's probe) is reused: no second probe, and
+  // the control is there from the first question.
+  const { status: loopActive } = useLoopStatus(userId ?? "", userReady, { reuse: true });
 
   // `?concept=<id>` / `?topic=<name>` resolved against the SCOPED graph, so a
   // link into a term the student isn't looking at reads as unresolved rather
@@ -98,6 +110,9 @@ export function QuizScreen() {
       color: accent ?? "",
       tier: activeNode?.mastery_tier ?? "unexplored",
       mastery: activeNode?.mastery_score ?? 0,
+      ladder: !!activeNode && carriesSkill(activeNode),
+      timesStudied: activeNode?.times_studied ?? 0,
+      lastStudiedAt: activeNode?.last_studied_at ?? null,
     }),
     [activeNode, activeCourse, accent, session.conceptId],
   );
@@ -173,6 +188,7 @@ export function QuizScreen() {
           userId={userId}
           courseId={activeNode?.course_id ?? null}
           pending={pending}
+          askConfidence={loopActive === true}
         />
       );
     }
@@ -208,22 +224,32 @@ export function QuizScreen() {
     : QUESTION_PHASES.has(session.phase) || session.phase === "error"
       ? "question"
       : "home";
+  // Mid-attempt only — error/home/results keep the ordinary TopBar + nav.
+  const focusSession = QUESTION_PHASES.has(session.phase);
 
   return (
     <FullHeightScreen className="quiz-root" style={rootStyle}>
       <DisclaimerModal />
-      {/* The Study Guide / Flashcards / Quiz switcher that sat here is gone:
-          all three are opened from the Study hub, so this page names itself
-          and offers the way back instead. */}
-      <TopBar title="Quiz" subtitle="Test what you know." actions={<><AIDisclaimerChip /><BackLink {...backLink(entry.source, isNavHidden)} /></>} />
+      {/* Focus session owns its chrome inside QuizQuestion; everywhere else
+          the page still names itself and offers the way back to Study. */}
+      {!focusSession && (
+        <TopBar title="Quiz" subtitle="Test what you know." actions={<><AIDisclaimerChip /><BackLink {...backLink(entry.source, isNavHidden)} /></>} />
+      )}
       {/* `study-mode-enter`: the Study tools' arrival fade (globals.css), so
-          leaving the hub for a quiz reads as a move, not a cut. */}
-      <div className={`quiz-body quiz-body--${layout} tool-enter`}>
+          leaving the hub for a quiz reads as a move, not a cut.
+          `data-quiz-session` is the hook `quiz.css` uses to hide SideNav /
+          TopNav for the attempt (same `:has()` pattern as the guide print
+          stylesheet). */}
+      <div
+        className={`quiz-body quiz-body--${layout}${focusSession ? " quiz-body--session" : ""} tool-enter`}
+        {...(focusSession ? { "data-quiz-session": "" } : {})}
+      >
         {/* Home is full-bleed: its resume strip has to reach both edges under
             the TopBar, so the screen wraps its own content (`.quiz-col--home`
-            + `.quiz-inset--home`, see quiz.css). Question and results keep the
-            centred column here. */}
-        {layout === "home"
+            + `.quiz-inset--home`, see quiz.css). A focus session is also
+            full-bleed so SessionTop can span the viewport; QuizQuestion owns
+            the centred column. Results (and error) keep the centred wrap. */}
+        {layout === "home" || focusSession
           ? body()
           : <div className={`quiz-col quiz-col--${layout}`}>{body()}</div>}
       </div>

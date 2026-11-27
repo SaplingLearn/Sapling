@@ -1,16 +1,11 @@
 "use client";
-import { PanelModal } from "@/components/ui/PanelModal";
 import React from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { AnimatePresence, motion, MotionGlobalConfig, useReducedMotion } from "framer-motion";
-import { IS_TEST_MODE } from "@/lib/testMode";
-
-// Deterministic DOM for browser tests (#383): framer-motion's own test
-// seam jumps every animation straight to its final keyframe. No-op in
-// production builds (flag inlined to false at build time). Same gate as
-// Study.tsx / HowItWorks.tsx — the flag is module-side-effect scoped, so
-// every framer-motion consumer must set it for direct-navigation runs.
-if (IS_TEST_MODE) MotionGlobalConfig.skipAnimations = true;
+import { AnimatePresence, motion, type MotionProps } from "framer-motion";
+// Importing lib/motion also sets framer's test-mode skip (#383): every
+// framer-motion consumer needs it for direct-navigation browser runs.
+import { useMotionPresets, type MotionPreset } from "@/lib/motion";
+import styles from "./Calendar.module.css";
 import { TopBar } from "../TopBar";
 import { Icon } from "../Icon";
 import { Toggle } from "@/components/ui";
@@ -38,7 +33,14 @@ import {
 import { now } from "@/lib/testMode";
 import { humanizeError } from "@/lib/errorMessage";
 import { CALENDAR_ERROR_PARAM, calendarConnectError } from "@/lib/calendarConnect";
-import { cn } from "@/lib/cn";
+import { useFlag } from "@/context/FlagsContext";
+import { CalendarV2 } from "../calendar/v2/CalendarV2";
+import { GOOGLE_EVENTS_DAYS, GoogleEventsModal } from "../calendar/GoogleEventsModal";
+
+// lib/motion types a preset's `initial` as TargetAndTransition, which
+// motion.div's `initial` prop does not accept as written; the values are the
+// same shape, so view one as the other.
+const asProps = (p: MotionPreset): MotionProps => p as MotionProps;
 
 type View = "month" | "week" | "day" | "table";
 
@@ -50,6 +52,13 @@ const TYPE_COLOR: Record<string, string> = {
   reading: "var(--c-plum)",
   other: "var(--text-muted)",
 };
+
+/** A syllabus's assignments land after the upload returns; reload once more after this. */
+const SYLLABUS_RELOAD_DELAY_MS = 1500;
+/** Assignments a month cell lists before "+N more". */
+const MONTH_ITEMS_SHOWN = 3;
+/** Six weeks of seven days: every month fits. */
+const MONTH_CELLS = 42;
 
 const TYPE_OPTIONS = [
   { value: "homework", label: "Homework" },
@@ -82,10 +91,9 @@ export function Calendar() {
   const search = useSearchParams();
   const toast = useToast();
   const { userId, userReady } = useUser();
-  // Disable the view-swap fade/slide for users who ask for reduced motion.
-  // The global CSS reduced-motion rule only neutralises CSS transitions;
-  // framer's JS-driven animations need this explicit opt-out.
-  const prefersReduced = useReducedMotion();
+  // The view-swap fade/rise; already opacity-only under reduced motion.
+  const m = useMotionPresets();
+  const v2 = useFlag("calendar_v2") === "on";
 
   const [assignments, setAssignments] = React.useState<Assignment[]>([]);
   const [courses, setCourses] = React.useState<EnrolledCourse[]>([]);
@@ -205,7 +213,7 @@ export function Calendar() {
   const doImport = async () => {
     setImportingGoogle(true);
     try {
-      const res = await importGoogleEvents(userId, 60);
+      const res = await importGoogleEvents(userId, GOOGLE_EVENTS_DAYS);
       setGoogleEvents(res.events || []);
     } catch (err) {
       toast.error(humanizeError(err, "Couldn't import those events."));
@@ -282,9 +290,8 @@ export function Calendar() {
             <Icon name="cal" size={12} /> {importingGoogle ? "Loading…" : "View Google events"}
           </button>
           <button
-            className="btn btn--sm"
+            className={`btn btn--sm${disconnectConfirm.armed ? ` ${styles.armed}` : ""}`}
             onClick={disconnectConfirm.trigger}
-            style={disconnectConfirm.armed ? { background: "var(--err-soft)", color: "var(--err)" } : undefined}
           >
             {disconnectConfirm.armed ? "Click again" : "Disconnect"}
           </button>
@@ -300,23 +307,26 @@ export function Calendar() {
   const rangeLabel = formatRange(cursor, view);
 
   return (
-    <div>
+    <div className={styles.screen}>
+      {v2 && !loading && !loadError ? (
+        <CalendarV2 assignments={assignments} courses={courses} now={new Date(now())} googleConnected={googleConnected}
+          importingGoogle={importingGoogle} disconnectArmed={disconnectConfirm.armed} onImportSyllabus={() => setUploadOpen(true)}
+          onConnectGoogle={connect} onSyncGoogle={doSync} onViewGoogleEvents={doImport} onDisconnectGoogle={disconnectConfirm.trigger}
+          onExportCsv={exportCsv} onReload={() => void load()} />
+      ) : (<>
       <TopBar
         title="Calendar"
         subtitle={`${rangeLabel} · ${assignments.length} assignment${assignments.length === 1 ? "" : "s"}`}
-        actions={topActions}
+        actions={v2 ? undefined : topActions}
       />
 
-      {/* Crossfade/slide the calendar body when the view (or load state)
-          changes, keyed on that state. Mirrors Study.tsx's mode="wait"
-          pattern so the swap settles instead of snapping (#295). */}
-      <AnimatePresence mode="wait" initial={false}>
+      {/* Rise the body in when the view, range or load state changes (not on
+          first paint). Enter only: a mode="wait" exit hand-off stalled the
+          Table view under load, so the old body unmounts at once. */}
+      <AnimatePresence initial={false}>
         <motion.div
-          key={loading ? "loading" : loadError ? "error" : view}
-          initial={prefersReduced ? false : { opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={prefersReduced ? { opacity: 1 } : { opacity: 0, y: -8 }}
-          transition={{ duration: prefersReduced ? 0 : 0.22, ease: [0.2, 0.85, 0.35, 1] }}
+          key={loading ? "loading" : loadError ? "error" : `${view}:${rangeLabel}`}
+          {...asProps(m.fadeUp)} exit={undefined}
         >
           {loading ? (
             <CalendarMonthSkeleton />
@@ -341,6 +351,7 @@ export function Calendar() {
           )}
         </motion.div>
       </AnimatePresence>
+      </>)}
 
       <DocumentUploadModal
         open={uploadOpen}
@@ -351,18 +362,21 @@ export function Calendar() {
           const hasSyllabus = items.some(it => it.category === "syllabus");
           await load();
           if (hasSyllabus) {
-            setTimeout(load, 1500);
+            setTimeout(load, SYLLABUS_RELOAD_DELAY_MS);
             toast.success("Syllabus processed — new assignments added.");
           }
         }}
       />
 
-      {googleEvents !== null && (
-        <GoogleEventsModal
-          events={googleEvents}
-          onClose={() => setGoogleEvents(null)}
-        />
-      )}
+      <AnimatePresence>
+        {googleEvents !== null && (
+          <GoogleEventsModal
+            key="google-events"
+            events={googleEvents}
+            onClose={() => setGoogleEvents(null)}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }
@@ -371,21 +385,15 @@ export function Calendar() {
 // Mirrors the Gradebook course ErrorBanner: what went wrong + a retry.
 function LoadErrorBanner({ message, onRetry }: { message: string; onRetry: () => void }) {
   return (
-    <div className="py-5 px-8">
-      <div
-        role="alert"
-        data-testid="calendar-load-error"
-        className="py-5 px-6 rounded-md bg-err-soft border border-[color-mix(in_oklab,_var(--err)_20%,_transparent)] flex gap-4 items-center justify-between flex-wrap"
-      >
+    <div className={styles.body}>
+      <div role="alert" data-testid="calendar-load-error" className={styles.errorBanner}>
         <div>
-          <div className="font-semibold text-err mb-1">
-            We couldn&apos;t load your calendar.
-          </div>
-          <div className="text-md text-text-dim">{message}</div>
+          <div className={styles.errorTitle}>We couldn&apos;t load your calendar.</div>
+          <div className={styles.errorMessage}>{message}</div>
         </div>
         <button
           type="button"
-          className="btn btn--primary py-2 px-4"
+          className={`btn btn--primary ${styles.retry}`}
           data-testid="calendar-load-retry"
           onClick={onRetry}
         >
@@ -393,57 +401,6 @@ function LoadErrorBanner({ message, onRetry }: { message: string; onRetry: () =>
         </button>
       </div>
     </div>
-  );
-}
-
-function GoogleEventsModal({
-  events, onClose,
-}: {
-  events: GoogleEvent[];
-  onClose: () => void;
-}) {
-  return (
-    <PanelModal label="Upcoming Google Calendar events" onClose={onClose} maxWidth="max-w-160" maxHeight="max-h-[82vh]">
-        <div className="p-5">
-          {events.length === 0 ? (
-            <div className="text-text-muted text-md text-center p-7">
-              No upcoming events in the next 60 days.
-            </div>
-          ) : (
-            <div className="flex flex-col gap-2.5">
-              {events.map(e => (
-                <div key={e.google_event_id} className="card p-3">
-                  <div className="flex justify-between items-baseline gap-2.5">
-                    <div className="font-semibold text-md">{e.title}</div>
-                    <span className="chip text-xs">
-                      {e.all_day ? "All day" : e.start_datetime?.slice(11, 16) || ""}
-                    </span>
-                  </div>
-                  <div className="text-xs text-text-muted mt-1">
-                    {e.start_date} {e.end_date && e.end_date !== e.start_date ? `→ ${e.end_date}` : ""}
-                    {e.location ? ` · ${e.location}` : ""}
-                  </div>
-                  {e.description && (
-                    <div className="text-sm text-text-dim mt-1.5 leading-[1.5]">
-                      {e.description.length > 140 ? e.description.slice(0, 140) + "…" : e.description}
-                    </div>
-                  )}
-                  {e.html_link && (
-                    <a
-                      href={e.html_link}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-xs text-accent mt-1.5 inline-block"
-                    >
-                      Open in Google Calendar →
-                    </a>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-    </PanelModal>
   );
 }
 
@@ -477,10 +434,17 @@ function startOfWeekMon(d: Date) {
   return x;
 }
 
+/** An assignment's dot: its course colour, else its type's. */
+function dotStyle(a: Assignment, courseColor: Map<string, string | null | undefined>): React.CSSProperties {
+  const color = TYPE_COLOR[a.assignment_type || "other"];
+  const dot = a.course_id ? courseColor.get(a.course_id) || color : color;
+  return { "--dot": dot } as React.CSSProperties;
+}
+
 function MonthView({ cursor, byDate, today, courses }: { cursor: Date; byDate: Map<string, Assignment[]>; today: Date; courses: EnrolledCourse[] }) {
   const first = new Date(cursor.getFullYear(), cursor.getMonth(), 1);
   const start = startOfWeekMon(first);
-  const cells: Date[] = Array.from({ length: 42 }, (_, i) => {
+  const cells: Date[] = Array.from({ length: MONTH_CELLS }, (_, i) => {
     const d = new Date(start);
     d.setDate(start.getDate() + i);
     return d;
@@ -488,40 +452,33 @@ function MonthView({ cursor, byDate, today, courses }: { cursor: Date; byDate: M
   const weekdays = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
   const courseColor = new Map(courses.map(c => [c.course_id, c.color]));
   return (
-    <div className="py-5 px-8">
-      <div className="grid grid-cols-[repeat(7,_1fr)] gap-1 mb-1">
-        {weekdays.map(d => <div key={d} className="label-micro p-1.5">{d}</div>)}
+    <div className={styles.body}>
+      <div className={styles.monthHead}>
+        {weekdays.map(d => <div key={d} className={`label-micro ${styles.weekday}`}>{d}</div>)}
       </div>
-      <div className="grid grid-cols-[repeat(7,_1fr)] gap-1">
+      <div className={styles.monthGrid}>
         {cells.map((d, i) => {
           const key = dateKey(d);
           const items = byDate.get(key) || [];
           const inMonth = d.getMonth() === cursor.getMonth();
           const isToday = d.getTime() === today.getTime();
+          const cls = [
+            "card",
+            styles.monthCell,
+            inMonth ? "" : styles.outside,
+            isToday ? styles.today : "",
+          ].filter(Boolean).join(" ");
           return (
-            <div
-              key={i}
-              className={cn("card", "p-2 min-h-24 flex flex-col gap-1", inMonth ? "opacity-100" : "opacity-45", isToday ? "bg-accent-soft" : "bg-bg-panel", isToday ? "border-accent-border" : "border-border")}
-            >
-              <div className={cn("text-xs font-semibold", isToday ? "text-accent" : "text-text-dim")}>
-                {d.getDate()}
-              </div>
-              {items.slice(0, 3).map(a => {
-                const color = TYPE_COLOR[a.assignment_type || "other"];
-                const dotColor = a.course_id ? courseColor.get(a.course_id) || color : color;
-                return (
-                  <div
-                    key={a.id}
-                    className="text-2xs py-[3px] px-1.5 rounded-xs bg-transparent text-text flex items-center gap-[5px] overflow-hidden text-ellipsis whitespace-nowrap"
-                    title={a.title}
-                  >
-                    <span aria-hidden className="w-1.5 h-1.5 rounded-[50%] shrink-0" style={{ background: dotColor }} />
-                    <span className="overflow-hidden text-ellipsis">{a.title}</span>
-                  </div>
-                );
-              })}
-              {items.length > 3 && (
-                <div className="text-2xs text-text-muted">+{items.length - 3} more</div>
+            <div key={i} className={cls}>
+              <div className={styles.monthDate}>{d.getDate()}</div>
+              {items.slice(0, MONTH_ITEMS_SHOWN).map(a => (
+                <div key={a.id} className={styles.monthItem} title={a.title}>
+                  <span aria-hidden className={styles.dot} style={dotStyle(a, courseColor)} />
+                  <span className={styles.ellipsis}>{a.title}</span>
+                </div>
+              ))}
+              {items.length > MONTH_ITEMS_SHOWN && (
+                <div className={styles.more}>+{items.length - MONTH_ITEMS_SHOWN} more</div>
               )}
             </div>
           );
@@ -538,40 +495,28 @@ function WeekView({ cursor, byDate, today, courses }: { cursor: Date; byDate: Ma
   });
   const courseColor = new Map(courses.map(c => [c.course_id, c.color]));
   return (
-    <div className="py-5 px-8">
-      <div className="grid grid-cols-[repeat(7,_1fr)] gap-2">
+    <div className={styles.body}>
+      <div className={styles.weekGrid}>
         {days.map((d, i) => {
           const key = dateKey(d);
           const items = byDate.get(key) || [];
           const isToday = d.getTime() === today.getTime();
           return (
-            <div
-              key={i}
-              className={cn("card", "p-2.5 min-h-50", isToday ? "bg-accent-soft" : "bg-bg-panel", isToday ? "border-accent-border" : "border-border")}
-            >
-              <div className="flex justify-between items-baseline mb-2">
-                <span className="h-serif text-[20px]">{d.getDate()}</span>
+            <div key={i} className={`card ${styles.weekCell}${isToday ? ` ${styles.today}` : ""}`}>
+              <div className={styles.weekHead}>
+                <span className={`h-serif ${styles.weekNum}`}>{d.getDate()}</span>
                 <span className="label-micro">{d.toLocaleDateString("en-US", { weekday: "short" })}</span>
               </div>
-              {items.length === 0 && <div className="text-xs text-text-muted">—</div>}
-              {items.map(a => {
-                const color = TYPE_COLOR[a.assignment_type || "other"];
-                const dotColor = a.course_id ? courseColor.get(a.course_id) || color : color;
-                return (
-                  <div
-                    key={a.id}
-                    className="text-xs py-1.5 px-0 mb-1.5 flex gap-2 items-start"
-                  >
-                    <span aria-hidden className="w-1.5 h-1.5 rounded-[50%] mt-[5px] shrink-0" style={{ background: dotColor }} />
-                    <div className="min-w-0">
-                      <div className="font-semibold text-text">{a.title}</div>
-                      <div className="text-text-muted text-2xs">
-                        {a.course_code || a.course_name}
-                      </div>
-                    </div>
+              {items.length === 0 && <div className={styles.weekEmpty}>—</div>}
+              {items.map(a => (
+                <div key={a.id} className={styles.weekItem}>
+                  <span aria-hidden className={styles.dot} style={dotStyle(a, courseColor)} />
+                  <div className={styles.minW0}>
+                    <div className={styles.itemTitle}>{a.title}</div>
+                    <div className={styles.itemCourse}>{a.course_code || a.course_name}</div>
                   </div>
-                );
-              })}
+                </div>
+              ))}
             </div>
           );
         })}
@@ -584,36 +529,33 @@ function DayView({ cursor, byDate, courses }: { cursor: Date; byDate: Map<string
   const key = dateKey(cursor);
   const items = byDate.get(key) || [];
   const courseColor = new Map(courses.map(c => [c.course_id, c.color]));
+  const m = useMotionPresets();
   return (
-    <div className="py-5 px-8 max-w-180">
-      <div className="h-serif text-[24px] font-medium mb-4">
+    <div className={`${styles.body} ${styles.dayBody}`}>
+      <div className={`h-serif ${styles.dayTitle}`}>
         {cursor.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}
       </div>
-      {items.length === 0 && (
-        <div className="card p-(--pad-lg) text-center text-text-muted">
-          Nothing scheduled.
-        </div>
-      )}
-      {items.map(a => {
-        const color = TYPE_COLOR[a.assignment_type || "other"];
-        const dotColor = a.course_id ? courseColor.get(a.course_id) || color : color;
-        const dl = dueLabel(a.due_date);
-        return (
-          <div key={a.id} className="card p-(--pad-lg) mb-2.5 flex gap-3.5 items-start">
-            <span aria-hidden className="w-2 h-2 rounded-[50%] mt-2 shrink-0" style={{ background: dotColor }} />
-            <div className="flex-1">
-              <div className="flex items-center gap-2 mb-1">
-                <strong>{a.title}</strong>
-                <span className={`chip ${dl.cls}`}>{dl.label}</span>
+      {items.length === 0 && <div className={`card ${styles.dayEmpty}`}>Nothing scheduled.</div>}
+      <motion.div variants={m.list.container} initial="hidden" animate="shown">
+        {items.map(a => {
+          const dl = dueLabel(a.due_date);
+          return (
+            <motion.div key={a.id} className={`card ${styles.dayItem}`} variants={m.list.item}>
+              <span aria-hidden className={styles.dot} style={dotStyle(a, courseColor)} />
+              <div className={styles.grow}>
+                <div className={styles.dayItemHead}>
+                  <strong>{a.title}</strong>
+                  <span className={`chip ${dl.cls}`}>{dl.label}</span>
+                </div>
+                <div className={styles.dayMeta}>
+                  {a.course_code || a.course_name || "—"} · {a.assignment_type || "task"}
+                </div>
+                {a.notes && <div className={styles.dayNotes}>{a.notes}</div>}
               </div>
-              <div className="text-sm text-text-muted">
-                {a.course_code || a.course_name || "—"} · {a.assignment_type || "task"}
-              </div>
-              {a.notes && <div className="text-sm text-text-dim mt-1.5">{a.notes}</div>}
-            </div>
-          </div>
-        );
-      })}
+            </motion.div>
+          );
+        })}
+      </motion.div>
     </div>
   );
 }
@@ -639,6 +581,7 @@ function AssignmentTable({
   type SortKey = "due_date" | "title" | "course" | "type";
   const [sortKey, setSortKey] = React.useState<SortKey>("due_date");
   const [sortDir, setSortDir] = React.useState<"asc" | "desc">("asc");
+  const m = useMotionPresets();
 
   const sorted = React.useMemo(() => {
     const copy = [...assignments];
@@ -732,14 +675,15 @@ function AssignmentTable({
   };
 
   return (
-    <div className="py-5 px-8">
-      <div className="flex gap-2 mb-3 items-center flex-wrap">
+    <div className={styles.body}>
+      <div className={styles.toolbar}>
         <div className="label-micro">{selected.size} of {assignments.length} selected</div>
-        <div className="flex-1" />
-        <div className="flex items-center gap-1.5">
-          <span className="label-micro text-sm">Sort</span>
-          <div className="min-w-35">
+        <div className={styles.spacer} />
+        <div className={styles.sortGroup}>
+          <span className={`label-micro ${styles.sortLabel}`}>Sort</span>
+          <div className={styles.sortSelect}>
             <CustomSelect
+              ariaLabel="Sort"
               size="sm"
               value={sortKey}
               onChange={v => setSortKey(v as SortKey)}
@@ -774,42 +718,45 @@ function AssignmentTable({
           </button>
         )}
       </div>
-      <div className="card p-0 overflow-hidden">
-        <table className="w-full border-collapse text-sm">
+      <div className={`card ${styles.tableCard}`}>
+        <table className={styles.table}>
           <thead>
-            <tr className="bg-bg-subtle text-left">
-              <th className="p-2.5 w-8">
+            <tr className={styles.headRow}>
+              <th className={styles.colCheck}>
                 <input type="checkbox" aria-label="Select all assignments" checked={selected.size === assignments.length && assignments.length > 0} onChange={toggleAll} />
               </th>
-              <th className="p-2.5">Title</th>
-              <th className="p-2.5">Course</th>
-              <th className="p-2.5">Type</th>
-              <th className="p-2.5">Due</th>
-              <th className="p-2.5 w-22.5"></th>
+              <th>Title</th>
+              <th>Course</th>
+              <th>Type</th>
+              <th>Due</th>
+              <th className={styles.colActions}></th>
             </tr>
           </thead>
-          <tbody>
-            {sorted.map((a, i) => {
+          {/* Rows arrive with the list stagger: on the view swap and when a
+              reload adds one; a re-sort keeps its rows (stable keys). */}
+          <motion.tbody variants={m.list.container} initial="hidden" animate="shown">
+            {sorted.map(a => {
               const editingThis = editing === a.id;
               return (
-                <tr key={a.id} className={cn(i === 0 ? "border-t-0" : "border-t border-t-border")}>
-                  <td className="p-2.5">
+                <motion.tr key={a.id} className={styles.row} variants={m.list.item}>
+                  <td>
                     <input type="checkbox" aria-label={`Select ${a.title}`} checked={selected.has(a.id)} onChange={() => toggleOne(a.id)} />
                   </td>
-                  <td className="p-2.5">
+                  <td>
                     {editingThis ? (
                       <input
                         value={draft.title || ""}
                         onChange={e => setDraft(d => ({ ...d, title: e.target.value }))}
-                        className="py-1 px-1.5 border border-border rounded-xs text-sm w-full"
+                        className={`${styles.input} ${styles.inputWide}`}
                       />
                     ) : (
                       <strong>{a.title}</strong>
                     )}
                   </td>
-                  <td className="p-2.5">
+                  <td>
                     {editingThis ? (
                       <CustomSelect
+                        ariaLabel="Course"
                         size="sm"
                         value={draft.course_id || ""}
                         onChange={v => setDraft(d => ({ ...d, course_id: v }))}
@@ -820,9 +767,10 @@ function AssignmentTable({
                       a.course_code || a.course_name || "—"
                     )}
                   </td>
-                  <td className="p-2.5">
+                  <td>
                     {editingThis ? (
                       <CustomSelect
+                        ariaLabel="Type"
                         size="sm"
                         value={draft.assignment_type || ""}
                         onChange={v => setDraft(d => ({ ...d, assignment_type: v }))}
@@ -830,22 +778,22 @@ function AssignmentTable({
                         placeholder="—"
                       />
                     ) : (
-                      <span className="capitalize">{a.assignment_type || "—"}</span>
+                      <span className={styles.capitalize}>{a.assignment_type || "—"}</span>
                     )}
                   </td>
-                  <td className="p-2.5">
+                  <td>
                     {editingThis ? (
                       <input
                         type="date"
                         value={(draft.due_date || "").slice(0, 10)}
                         onChange={e => setDraft(d => ({ ...d, due_date: e.target.value }))}
-                        className="py-1 px-1.5 border border-border rounded-xs text-sm"
+                        className={styles.input}
                       />
                     ) : (
                       a.due_date || "No date"
                     )}
                   </td>
-                  <td className="p-2.5 flex gap-1">
+                  <td className={styles.actions}>
                     {editingThis ? (
                       <>
                         <button className="btn btn--sm btn--primary" onClick={saveEdit} disabled={saving}>
@@ -859,7 +807,7 @@ function AssignmentTable({
                           <Icon name="pencil" size={11} />
                         </button>
                         <button
-                          className="btn btn--sm btn--ghost text-err"
+                          className={`btn btn--sm btn--ghost ${styles.danger}`}
                           onClick={() => removeOne(a)}
                           disabled={deletingId === a.id}
                           title="Delete"
@@ -869,17 +817,17 @@ function AssignmentTable({
                       </>
                     )}
                   </td>
-                </tr>
+                </motion.tr>
               );
             })}
             {assignments.length === 0 && (
               <tr>
-                <td colSpan={6} className="p-8 text-center text-text-muted">
+                <td colSpan={6} className={styles.emptyRow}>
                   No assignments yet.
                 </td>
               </tr>
             )}
-          </tbody>
+          </motion.tbody>
         </table>
       </div>
     </div>

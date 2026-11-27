@@ -6,6 +6,7 @@ import { useUser } from "@/context/UserContext";
 import { importGenerate } from "@/lib/api";
 import { useCrisisSupport } from "@/components/safety/CrisisSupportCard";
 import type { ParsedCard } from "@/lib/flashcardParsers";
+import { withheldNotice } from "@/lib/integrityNotice";
 import s from "../FlashcardImportModal.module.css";
 import { humanizeError } from "@/lib/errorMessage";
 
@@ -22,6 +23,9 @@ function documentPlaceholder(loading: boolean, count: number): string {
   if (count) return "Pick a document…";
   return loading ? "Loading your documents…" : "No library documents yet";
 }
+
+/** How many cards a run asks for unless the student picks a number ("Auto" too). */
+const DEFAULT_CARD_COUNT = 25;
 
 const COUNT_OPTIONS = [
   { value: "10", label: "10 cards" },
@@ -44,11 +48,11 @@ export function AiTab({ documents, documentsLoading = false, onCards }: Props) {
   const [mode, setMode] = React.useState<"paste" | "library_doc">("paste");
   const [text, setText] = React.useState("");
   const [docId, setDocId] = React.useState("");
-  const [count, setCount] = React.useState<string>("25");
+  const [count, setCount] = React.useState<string>(String(DEFAULT_CARD_COUNT));
   const [difficulty, setDifficulty] = React.useState<"recall" | "application" | "conceptual">("recall");
   const [busy, setBusy] = React.useState(false);
 
-  const numericCount = count === "auto" ? 25 : parseInt(count, 10);
+  const numericCount = count === "auto" ? DEFAULT_CARD_COUNT : parseInt(count, 10);
 
   const generate = async () => {
     if (!userId) return;
@@ -60,7 +64,9 @@ export function AiTab({ documents, documentsLoading = false, onCards }: Props) {
       if (crisis.intercept(res)) return; // no cards were generated
       onCards(res.cards.map((c, i) => ({ front: c.front, back: c.back, row: i + 1 })));
       toast.success(`Generated ${res.cards.length} cards.`);
+      if (res.withheld) toast.warn(withheldNotice(res.withheld, "card"));
     } catch (err) {
+      // humanizeError: a 409 integrity detail (spec §13 A125) reads as prose
       toast.error(humanizeError(err, "Couldn't generate cards. Try again."));
     } finally {
       setBusy(false);
@@ -82,6 +88,7 @@ export function AiTab({ documents, documentsLoading = false, onCards }: Props) {
       ) : (
         <div className={s.fill}>
           <CustomSelect
+            ariaLabel="Library document"
             className={`${s.select} ${s.selectFill}`}
             size="sm"
             value={docId}

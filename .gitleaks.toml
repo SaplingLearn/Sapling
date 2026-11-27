@@ -70,3 +70,11 @@ condition = "AND"
 paths = ['''^backend/tests/evals/cassettes/''']
 regexTarget = "line"
 regexes = ['''"wrong_key":''']
+
+[[allowlists]]
+description = """A keyword argument the generic-api-key rule reads as a value: in \
+`AnthropicModelSettings(max_tokens=ANTHROPIC_MAX_TOKENS, anthropic_effort="low")` it takes \
+`TOKENS,` as a key name and `anthropic_effort=` as its secret (the eval judges' Claude settings, #866 Z04). Not a credential."""
+condition = "AND"
+paths = ['''^backend/tests/evals/_judge_model\.py$''']
+regexes = ['''^anthropic_effort=$''']

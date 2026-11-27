@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Session wrap-up</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Aleo:ital,wght@0,400;0,600;0,700;1,400&amp;family=SUSE:wght@400;500;600;700&amp;display=swap">
+<style>
+body{margin:0}
+a{color:#445D22;text-decoration:none}a:hover{color:#384E19}
+</style>
+</helmet>
+<div style="min-height: 1060px; display: flex; flex-wrap: wrap; background: #faf8f3; font-family: 'SUSE', system-ui, sans-serif; color: #1a1814;">
+  <dc-import name="Sidebar" active="session" hint-size="264px,1060px"></dc-import>
+  <main style="flex: 999 1 560px; min-width: 0; display: flex; flex-direction: column;">
+    <header style="display: flex; align-items: center; gap: 24px; padding: 16px 40px; border-bottom: 1px solid rgba(42,39,31,0.10); flex-wrap: wrap;">
+      <h2 style="margin: 0; font-family: 'Aleo', Georgia, serif; font-size: 22px; font-weight: 600;">Prepare for Midterm 2</h2>
+      <ol aria-label="Session steps" style="margin: 0; padding: 0; list-style: none; display: flex; align-items: center; gap: 10px; font-size: 14px; color: #3f3b31;">
+        <li>Check-in</li><li aria-hidden="true" style="width: 20px; height: 1px; background: #b9b1a0;"></li>
+        <li>Plan</li><li aria-hidden="true" style="width: 20px; height: 1px; background: #b9b1a0;"></li>
+        <li>Learn</li><li aria-hidden="true" style="width: 20px; height: 1px; background: #b9b1a0;"></li>
+        <li aria-current="step" style="font-weight: 600; color: #1a1814;">Wrap up</li>
+      </ol>
+    </header>
+    <div style="flex: 1; padding: 48px 40px;">
+      <div style="max-width: 720px; margin: 0 auto; display: flex; flex-direction: column; gap: 32px;">
+        <h1 style="margin: 0; font-family: 'Aleo', Georgia, serif; font-size: 30px; font-weight: 600; line-height: 1.25;">Hash tables moved up to Developing</h1>
+
+        <section aria-label="What changed" style="border-radius: 16px; background: #fdfcf9; border: 1px solid rgba(42,39,31,0.10);">
+          <sc-for list="{{rows}}" as="r" hint-placeholder-count="4">
+            <div style="display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 16px; align-items: center; padding: 16px 22px; border-bottom: 1px solid rgba(42,39,31,0.08); font-size: 15px;">
+              <span style="{{r.nameStyle}}">{{r.name}}</span>
+              <span style="font-size: 14px; color: #3f3b31;">{{r.change}}</span>
+            </div>
+          </sc-for>
+        </section>
+
+        <p style="margin: 0; font-family: 'Aleo', Georgia, serif; font-size: 17px; line-height: 1.65;">You reviewed stacks, learned how a hash table places keys, and worked out why linear probing slows down as the table fills. Collision resolution is next; you've had your first look at it.</p>
+
+        <section aria-labelledby="next-time-h" style="display: flex; flex-direction: column; gap: 8px;">
+          <h2 id="next-time-h" style="margin: 0; font-family: 'Aleo', Georgia, serif; font-size: 22px; font-weight: 600;">Next time</h2>
+          <p style="margin: 0; font-size: 15px; line-height: 1.6;">When you open your notes on Thursday, redo the two collision questions before reading anything new.</p>
+        </section>
+
+        <div style="display: flex; gap: 12px; flex-wrap: wrap; align-items: center;">
+          <a href="Review.dc.html" style="height: 46px; padding: 0 24px; border-radius: 10px; background: #445D22; color: #ffffff; font-size: 15px; font-weight: 600; display: inline-flex; align-items: center;">Review 7 due, about 6 minutes</a>
+          <a href="Milestone.dc.html" style="height: 46px; padding: 0 18px; border-radius: 10px; border: 1px solid rgba(42,39,31,0.18); background: #fdfcf9; color: #1a1814; font-size: 15px; font-weight: 500; display: inline-flex; align-items: center;">Back to Midterm 2</a>
+        </div>
+
+        <fieldset style="margin: 0; padding: 20px 0 0; border: 0; border-top: 1px solid rgba(42,39,31,0.10); display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+          <legend style="float: left; margin-right: 8px; font-size: 15px;">How was this session?</legend>
+          <sc-for list="{{rates}}" as="x" hint-placeholder-count="4">
+            <button type="button" style="height: 38px; padding: 0 16px; border-radius: 999px; border: 1px solid rgba(42,39,31,0.18); background: #fdfcf9; font: inherit; font-size: 14px; color: #1a1814;">{{x}}</button>
+          </sc-for>
+        </fieldset>
+      </div>
+    </div>
+  </main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1060}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const rows = [
+      ['Hash tables', 'Getting started to Developing', true],
+      ['Stacks', 'Developing, a little higher', false],
+      ['Collision resolution', 'Measured for the first time: Getting started', false],
+      ['Queues', 'Not reached today', false]
+    ];
+    return {
+      rows: rows.map(([name, change, lead]) => ({ name, change, nameStyle: lead ? 'font-weight: 600;' : '' })),
+      rates: ['Frustrating', 'Okay', 'Good', 'Great']
+    };
+  }
+}
+</script>
+</body>
+</html>

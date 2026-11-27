@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>New session</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Aleo:wght@400;600;700&amp;family=SUSE:wght@400;500;600;700&amp;display=swap">
+<style>
+body{margin:0}
+a{color:#445D22;text-decoration:none}a:hover{color:#384E19}
+</style>
+</helmet>
+<div style="min-height: 980px; display: flex; flex-wrap: wrap; background: #faf8f3; font-family: 'SUSE', system-ui, sans-serif; color: #1a1814;">
+  <dc-import name="Sidebar" active="home" hint-size="264px,980px"></dc-import>
+  <main style="flex: 999 1 560px; min-width: 0; display: flex; flex-direction: column; box-sizing: border-box;">
+    <header style="display: flex; align-items: center; gap: 12px; padding: 18px 40px; border-bottom: 1px solid rgba(42,39,31,0.10); flex-wrap: wrap;">
+      <a href="Course.dc.html" style="font-size: 15px; font-weight: 600; color: #1a1814;">CS 112</a>
+      <span style="display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 6px 0 12px; border-radius: 999px; background: #f2f6ee; border: 1px solid #c5d7b2; font-size: 13px;">For Midterm 2
+        <button type="button" aria-label="Remove Midterm 2" style="width: 22px; height: 22px; border: 0; border-radius: 50%; background: transparent; color: #3f3b31; display: inline-flex; align-items: center; justify-content: center;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"></path></svg></button>
+      </span>
+    </header>
+    <div style="flex: 1; display: flex; align-items: center; justify-content: center; padding: 40px;">
+      <div style="width: 100%; max-width: 760px; display: flex; flex-direction: column; gap: 24px;">
+        <h1 style="margin: 0; text-align: center; font-family: 'Aleo', Georgia, serif; font-size: 30px; font-weight: 600;">What are we working on?</h1>
+        <fieldset style="margin: 0; padding: 0; border: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px;">
+          <legend style="position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0);">Kind of session</legend>
+          <sc-for list="{{intents}}" as="it" hint-placeholder-count="4">
+            <label style="{{it.style}}">
+              <input type="radio" name="intent" checked="{{it.on}}" onChange="{{it.pick}}" style="accent-color: #445D22; margin: 3px 0 0;">
+              <span style="display: flex; flex-direction: column; gap: 4px;">
+                <span style="font-size: 16px; font-weight: 600;">{{it.title}}</span>
+                <span style="font-size: 14px; color: #3f3b31;">{{it.line}}</span>
+              </span>
+            </label>
+          </sc-for>
+        </fieldset>
+        <div style="display: flex; flex-direction: column; gap: 10px; align-items: center;">
+          <a href="{{startHref}}" style="height: 48px; padding: 0 32px; border-radius: 12px; background: #445D22; color: #ffffff; font-size: 16px; font-weight: 600; display: inline-flex; align-items: center;">{{startLabel}}</a>
+          <p style="margin: 0; font-size: 14px; color: #3f3b31;">This wraps up your open session, Hash tables and 2 more.</p>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":980}}'>
+class Component extends DCLogic {
+  constructor(props) { super(props); this.state = { picked: 'goal' }; }
+  renderVals() {
+    const list = [
+      { id: 'goal', title: 'Prepare for Midterm 2', line: '8 concepts. Starts with a short check-in.', label: 'Start preparing', href: 'Plan.dc.html' },
+      { id: 'next', title: 'Learn what’s next', line: 'Hash tables. You know what it builds on.', label: 'Start learning', href: 'Plan.dc.html' },
+      { id: 'review', title: 'Review what’s due', line: '7 items, about 6 minutes.', label: 'Start review', href: 'Review.dc.html' },
+      { id: 'ask', title: 'Just ask a question', line: 'Talk it through. Nothing is graded.', label: 'Start chatting', href: 'Session.dc.html' }
+    ];
+    const p = this.state.picked;
+    const cur = list.find((x) => x.id === p) || list[0];
+    return {
+      intents: list.map((x) => ({
+        ...x, on: x.id === p,
+        pick: () => this.setState({ picked: x.id }),
+        style: 'display: flex; gap: 12px; align-items: flex-start; padding: 18px; border-radius: 14px; cursor: pointer; background: ' + (x.id === p ? '#f2f6ee' : '#fdfcf9') + '; border: ' + (x.id === p ? '2px solid #445D22' : '1px solid rgba(42,39,31,0.14)') + ';'
+      })),
+      startLabel: cur.label,
+      startHref: cur.href
+    };
+  }
+}
+</script>
+</body>
+</html>

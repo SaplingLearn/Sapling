@@ -4,7 +4,9 @@ docs/security/rls-step2-plan.md §4.4: once the flag is past ``off`` a request's
 PostgREST calls run as the student, and each place that deliberately keeps the
 service role (``@runs_as_service``, ``with service_scope()``, a
 ``service_route`` / ``admin_service_route`` dependency on an endpoint or a
-router mount) bypasses RLS. This test finds them all by AST and compares the
+router mount, or a direct ``service_route(request)`` call that marks one
+request conditionally) bypasses RLS. ``learning/`` (the loop's stores) is
+scanned with routes/, services/ and agents/. This test finds them all by AST and compares the
 set with ``ALLOWLIST`` below, in the style of ``test_migration_naming.py``: a
 new opt-out fails CI until it is listed here with a one-line reason, so it
 shows up in review instead of quietly widening the service-role surface. A
@@ -51,7 +53,19 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
     ("main.py", "/api/social social.router", "service_route"):
         "until step 2e: room_messages has no policies; invite join/owner transfer/teardown/"
         "friendships are cross-user (plan §6.3: social last)",
+    ("main.py", "/api/learn/loop learn_loop.router", "service_route"):
+        "learning loop (spec §13 A148): its tables are service-only (bucket E); every handler "
+        "checks ownership in code, pinned by the cross-user matrix",
+    ("main.py", "/api/admin/check-items admin_check_items_router", "admin_service_route"):
+        "learning-loop check-item review queue (A113): check_items/reports are service-only",
     # ── Endpoints ──
+    ("routes/learn.py", "delegate", "service_route"):  # _loop_delegate's closure
+        "spec §13 A148: a /api/learn request the loop gate hands to a loop handler runs as the "
+        "loop router does",
+    ("services/loop/posed.py", "posed_items", "runs_as_service"):
+        "A93/A101 scan set over service-only loop tables; called by the loop and the notes/flashcards guard",
+    ("services/quiz/submission.py", "_claim_quiz_evidence", "runs_as_service"):
+        "quiz_evidence_claims is a service-only loop table (A148)",
     ("routes/auth.py", "google_login", "service_route"): "OAuth redirect: no session yet",
     ("routes/auth.py", "google_callback", "service_route"):
         "OAuth callback: no session yet; upserts users/oauth_tokens/newsletter_emails (account state)",
@@ -77,6 +91,66 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
     ("routes/profile.py", "get_roles", "service_route"):
         "roles of any live user; needs a session (anonymous is a 401)",
     ("services/quiz/limits.py", "_daily_spend_exceeded", "runs_as_service"): "llm_usage is service-only (bucket E)",
+    # ── Learning loop stores (spec §13 A148: its tables are service-only) ──
+    ("learning/help_ledger.py", "record_help", "runs_as_service"): "help ledger (learning_reveals) is service-only (A148); reached from quiz, notes, flashcards",
+    ("learning/help_ledger.py", "record_posed", "runs_as_service"): "help ledger (learning_reveals) is service-only (A148); reached from quiz, notes, flashcards",
+    ("learning/help_ledger.py", "mark_graded", "runs_as_service"): "help ledger (learning_reveals) is service-only (A148); reached from quiz, notes, flashcards",
+    ("learning/help_ledger.py", "max_help", "runs_as_service"): "help ledger (learning_reveals) is service-only (A148); reached from quiz, notes, flashcards",
+    ("learning/help_ledger.py", "max_help_many", "runs_as_service"): "help ledger (learning_reveals) is service-only (A148); reached from quiz, notes, flashcards",
+    ("learning/help_ledger.py", "earliest_open_pose", "runs_as_service"): "help ledger (learning_reveals) is service-only (A148); reached from quiz, notes, flashcards",
+    ("learning/help_ledger.py", "ungraded_posed_window", "runs_as_service"): "help ledger (learning_reveals) is service-only (A148); reached from quiz, notes, flashcards",
+    ("learning/reveal_store.py", "record_reveals", "runs_as_service"): "learning_reveals is service-only (A148)",
+    ("learning/reveal_store.py", "record_unscanned", "runs_as_service"): "learning_reveals is service-only (A148)",
+    ("learning/reveal_store.py", "unscanned_since", "runs_as_service"): "learning_reveals is service-only (A148)",
+    ("learning/void_store.py", "voided_event_ids", "runs_as_service"): "learning_evidence_voids is service-only (A148)",
+    ("learning/void_store.py", "voided_by_node", "runs_as_service"): "learning_evidence_voids is service-only (A148)",
+    ("learning/void_store.py", "voided_sessions", "runs_as_service"): "learning_evidence_voids is service-only (A148)",
+    ("learning/misconceptions.py", "record", "runs_as_service"): "misconceptions + its RPCs are service-only (A148)",
+    ("learning/misconceptions.py", "resolve", "runs_as_service"): "misconceptions + its RPCs are service-only (A148)",
+    ("learning/misconceptions.py", "open_keys", "runs_as_service"): "misconceptions + its RPCs are service-only (A148)",
+    ("learning/misconceptions.py", "open_for", "runs_as_service"): "misconceptions + its RPCs are service-only (A148)",
+    ("learning/misconceptions.py", "rollup", "runs_as_service"): "misconceptions + its RPCs are service-only (A148)",
+    ("learning/evidence_transaction.py", "read_receipt", "runs_as_service"): "the evidence transaction RPCs are service_role-only (A148)",
+    ("learning/evidence_transaction.py", "commit_evidence_transaction", "runs_as_service"): "the evidence transaction RPCs are service_role-only (A148)",
+    ("learning/evidence_transaction.py", "void_pending", "runs_as_service"): "the evidence transaction RPCs are service_role-only (A148)",
+    ("learning/evidence_transaction.py", "commit_void_transaction", "runs_as_service"): "the evidence transaction RPCs are service_role-only (A148)",
+    ("learning/learner_state.py", "read_states", "runs_as_service"): "learner_state is service-only (A148)",
+    ("learning/prequestion_store.py", "store_answer", "runs_as_service"): "learning_prequestions is service-only (A148)",
+    ("learning/prequestion_store.py", "stored_answer", "runs_as_service"): "learning_prequestions is service-only (A148)",
+    ("learning/prequestion_store.py", "releases", "runs_as_service"): "learning_prequestions is service-only (A148)",
+    ("learning/loop_state_store.py", "recent_evidence", "runs_as_service"): "reads service-only loop tables (A148)",
+    ("learning/loop_state_store.py", "revealed_hashes", "runs_as_service"): "reads service-only loop tables (A148)",
+    ("learning/loop_state_store.py", "_answered_prequestion_hashes", "runs_as_service"): "reads service-only loop tables (A148)",
+    ("learning/loop_state_store.py", "reported_hashes", "runs_as_service"): "reads service-only loop tables (A148)",
+    ("learning/item_reports.py", "record_report", "runs_as_service"): "check_item_reports/reviews + RPCs are service-only (A148)",
+    ("learning/item_reports.py", "decide", "runs_as_service"): "check_item_reports/reviews + RPCs are service-only (A148)",
+    ("learning/item_reports.py", "review_statuses", "runs_as_service"): "check_item_reports/reviews + RPCs are service-only (A148)",
+    ("learning/item_reports.py", "audit_holds", "runs_as_service"):
+        "PR #866 Z09: check_item_audits and check_item_reviews are service-only (A148); the drafting write reads them",
+    ("learning/item_reports.py", "retired_items", "runs_as_service"): "check_item_reports/reviews + RPCs are service-only (A148)",
+    ("learning/item_reports.py", "report_counts", "runs_as_service"): "check_item_reports/reviews + RPCs are service-only (A148)",
+    ("learning/item_reports.py", "reviews", "runs_as_service"): "check_item_reports/reviews + RPCs are service-only (A148)",
+    ("services/ai_budget.py", "_load_rows", "runs_as_service"): "llm_usage / ai_tutor_daily_calls are service-only (bucket E)",
+    ("services/ai_budget.py", "count_tutor_call", "runs_as_service"): "llm_usage / ai_tutor_daily_calls are service-only (bucket E)",
+    ("services/ai_budget.py", "_tutor_calls_today", "runs_as_service"): "llm_usage / ai_tutor_daily_calls are service-only (bucket E)",
+    ("services/ai_budget.py", "_check_platform", "runs_as_service"): "llm_usage / ai_tutor_daily_calls are service-only (bucket E)",
+    ("services/checklist_budget.py", "_call", "runs_as_service"): "checklist_budget_* RPCs and tables are service-only (A148)",
+    ("services/check_item_service.py", "retire_items_for_documents", "runs_as_service"): "check_items is a service-only course asset (A148)",
+    ("services/check_item_service.py", "claim_undrafted_documents", "runs_as_service"):
+        "draft on enable: check_items is a service-only course asset (A148); the delegating legacy start reaches it",
+    ("services/check_item_service.py", "_with_live_sources", "runs_as_service"):
+        "A23: an item's source documents are its uploaders', never the reader's (live or not)",
+    ("services/quiz_learning.py", "_open_misconceptions", "runs_as_service"):
+        "misconceptions is service-only (A148); the quiz plan reads it (A143, A146)",
+    ("services/quiz_learning.py", "_bank_keys", "runs_as_service"):
+        "check_items is a service-only course asset (A148); the quiz plan reads its keys (A144)",
+    ("services/check_item_service.py", "retire_items_for_uploader", "runs_as_service"): "check_items is a service-only course asset (A148)",
+    ("services/check_item_service.py", "generate_for_document", "runs_as_service"):
+        "PR #866 Z14: upload-time drafting is backend work on a course asset (check_items and its "
+        "bookkeeping are service-only, A148); it runs in the upload's post-roll and drafting pool",
+    ("services/check_item_service.py", "_write_drafting", "runs_as_service"):
+        "PR #866 Z66: documents.check_items_status/_at are backend bookkeeping, outside the "
+        "student's column UPDATE grant; written from the upload's post-roll and the drafting pool",
     # ── Services ──
     ("services/academics.py", "resolve_offering", "service_scope"): "on-demand course_offerings insert (catalog)",
     ("services/academics.py", "school_peer_user_ids", "runs_as_service"): "reads other students' enrollments",
@@ -134,6 +208,10 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
     ("services/feature_flags.py", "_read_version", "service_scope"):
         "#117 flag store's version row (cross-replica cache bust)",
     ("services/graph_service.py", "ensure_user_exists", "runs_as_service"): "inserts a users row",
+    ("services/graph_service.py", "_erase_node_loop_rows", "runs_as_service"):
+        "PR #866 C9: a deleted node's loop rows (posttest_*, the teach-prompt erase RPC) are service-only (A148)",
+    ("services/tutor/sessions.py", "_erase_session_text", "runs_as_service"):
+        "PR #866 C8: a deleted session's teach-prompt text, through a service-only erase RPC (A148)",
     ("services/graph_service.py", "aensure_user_exists", "runs_as_service"):
         "inserts a users row (#117 async twin)",
     ("services/gradescope/jobs.py", "stage_sync", "runs_as_service"):
@@ -187,6 +265,12 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
     ("services/tutor_sessions.py", "amaterialize_stored", "runs_as_service"):
         "#117 stateless_tutor_sessions: materialize_tutor_session() writes the caller's "
         "own sessions row + greeting from the service-only pending row",
+    ("services/tutor_sessions.py", "materialize_stored", "runs_as_service"):
+        "#117 stateless_tutor_sessions: the sync twin of amaterialize_stored (learning-loop routes)",
+    ("services/tutor_sessions.py", "_store_claim", "runs_as_service"):
+        "#117 stateless_tutor_sessions: claims and tombstones the caller's own pending row (loop close)",
+    ("services/tutor_sessions.py", "_store_release", "runs_as_service"):
+        "#117 stateless_tutor_sessions: drops the caller's claim tombstone once the close stored the row",
     ("services/rag_service.py", "index_document_chunks", "runs_as_service"): "shared content-addressed chunks",
     ("services/rag_service.py", "index_document_chunks_detailed", "runs_as_service"): "shared chunks",
     ("services/rag_service.py", "_uploaders_of", "runs_as_service"):
@@ -213,7 +297,7 @@ def _kind_of(segment: str) -> str | None:
 def scan() -> set[tuple[str, str, str]]:
     found: set[tuple[str, str, str]] = set()
     files = [BACKEND / "main.py"] + sorted(
-        p for d in ("routes", "services", "agents") for p in (BACKEND / d).rglob("*.py")
+        p for d in ("routes", "services", "agents", "learning") for p in (BACKEND / d).rglob("*.py")
     )
     for path in files:
         rel = path.relative_to(BACKEND).as_posix()
@@ -242,6 +326,11 @@ def scan() -> set[tuple[str, str, str]]:
                     call = item.context_expr
                     if isinstance(call, ast.Call) and getattr(call.func, "id", None) == "service_scope":
                         found.add((rel, enclosing(node), "service_scope"))
+            elif isinstance(node, ast.Call) and getattr(node.func, "id", None) in (
+                "service_route", "admin_service_route",
+            ):
+                # a direct call marking the request (a conditional opt-out)
+                found.add((rel, enclosing(node), node.func.id))
             elif isinstance(node, ast.Call) and getattr(node.func, "attr", None) == "include_router":
                 deps = next((k.value for k in node.keywords if k.arg == "dependencies"), None)
                 kind = _kind_of(ast.get_source_segment(src, deps) or "") if deps is not None else None

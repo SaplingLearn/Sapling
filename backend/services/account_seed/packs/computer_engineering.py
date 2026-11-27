@@ -50,7 +50,7 @@ MA225 = Course(
     nickname="Multivariate",
     color="#7C3AED",
     concepts=[
-        Concept(name="Vectors, Lines and Planes", mastery=0.92,
+        Concept(name="Vectors, Lines and Planes", mastery=0.96,
                 description="Dot and cross products, projections, the parametric and symmetric forms of a "
                             "line, and the point-normal equation of a plane in space."),
         Concept(name="Partial Derivatives", mastery=0.86,
@@ -524,7 +524,7 @@ EK131 = Course(
     nickname="Hands On",
     color="#0EA5E9",
     concepts=[
-        Concept(name="3D Visualization and CAD", mastery=0.9,
+        Concept(name="3D Visualization and CAD", mastery=0.96,
                 description="Reading and producing solid models: sketch-then-extrude workflow, datum "
                             "planes, revolves and fillets, and exporting a watertight mesh for printing."),
         Concept(name="Breadboarding and Circuit Wiring", mastery=0.84,
@@ -978,7 +978,7 @@ CH131 = Course(
     nickname="Gen Chem",
     color="#059669",
     concepts=[
-        Concept(name="Stoichiometry", mastery=0.88,
+        Concept(name="Stoichiometry", mastery=0.96,
                 description="Moles as the bridge between mass and particles, balancing equations, "
                             "limiting reagents, and percent yield in a real reaction."),
         Concept(name="Atomic and Molecular Structure", mastery=0.81,
@@ -1486,7 +1486,7 @@ CO540 = Course(
     nickname="MiSIP",
     color="#DB2777",
     concepts=[
-        Concept(name="Community Partner Collaboration", mastery=0.87,
+        Concept(name="Community Partner Collaboration", mastery=0.96,
                 description="Working inside a partner organisation rather than studying it: showing up "
                             "to their meetings, learning their constraints, and taking direction."),
         Concept(name="Stakeholder Interviewing", mastery=0.8,
@@ -1956,7 +1956,7 @@ SI480 = Course(
     nickname="Tech Business",
     color="#EA580C",
     concepts=[
-        Concept(name="Finding Business Ideas", mastery=0.85,
+        Concept(name="Finding Business Ideas", mastery=0.96,
                 description="Where opportunities actually come from: a problem you have lived with, a "
                             "shift in cost or regulation, or a technology that just became affordable."),
         Concept(name="Evaluating an Opportunity", mastery=0.79,

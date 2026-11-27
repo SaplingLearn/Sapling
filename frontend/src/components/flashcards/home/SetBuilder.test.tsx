@@ -25,6 +25,16 @@ vi.mock("@/lib/useIsMobile", () => ({
   useIsMobile: () => false,
 }));
 
+vi.mock("@/context/FlagsContext", () => ({
+  useFlagMap: () => ({ flags: {}, ready: true }),
+}));
+
+vi.mock("next/link", () => ({
+  default: ({ children, href, ...rest }: { children: React.ReactNode; href: string }) => (
+    <a href={href} {...rest}>{children}</a>
+  ),
+}));
+
 vi.mock("@/components/flashcards/FlashcardImportModal", () => ({
   FlashcardImportModal: () => null,
 }));
@@ -551,11 +561,11 @@ describe("Flashcards builder: a reload, and the browser's Back", () => {
 
     // Leaving it is leaving it: the home, and a reload there stays home.
     await userEvent.click(screen.getByRole("button", { name: "All sets" }));
-    expect(await screen.findByRole("heading", { name: "What do you want to study?" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "What do you want to practice?" })).toBeTruthy();
     expect(new URLSearchParams(window.location.search).has("build")).toBe(false);
     cleanup();
     renderPage();
-    expect(await screen.findByRole("heading", { name: "What do you want to study?" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "What do you want to practice?" })).toBeTruthy();
     expect(screen.queryByRole("complementary", { name: "Your selection" })).toBeNull();
   });
 
@@ -570,7 +580,7 @@ describe("Flashcards builder: a reload, and the browser's Back", () => {
       window.dispatchEvent(new PopStateEvent("popstate"));
     });
 
-    expect(await screen.findByRole("heading", { name: "What do you want to study?" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "What do you want to practice?" })).toBeTruthy();
     expect(screen.queryByRole("complementary", { name: "Your selection" })).toBeNull();
   });
 });

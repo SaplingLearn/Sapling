@@ -1,0 +1,19 @@
+{
+  "attempts": [
+    "{\"key_idea\": \"Recursion solves a problem by reducing it to a smaller copy of the same problem, and it stops at a base case that needs no further reduction.\", \"body\": \"Before I explain more, I want to see how you think about it. Take the countdown task: print n, n-1, ..., 1 using a function countdown(n) that is allowed to call itself. You don't need working code, and plain words or rough pseudocode is fine.\", \"question\": \"In your own words, what is the one case where countdown(n) should stop and not call itself, and what should it do for every other n before calling itself on a smaller number?\"}"
+  ],
+  "input_sha256": "200369c1c6f5b815b98fcbdecd543a3403c5d483a099df7a70f6371be6dc2ccb",
+  "model": "claude-sonnet-5-5",
+  "output": {
+    "body": "Before I explain more, I want to see how you think about it. Take the countdown task: print n, n-1, ..., 1 using a function countdown(n) that is allowed to call itself. You don't need working code, and plain words or rough pseudocode is fine.",
+    "key_idea": "Recursion solves a problem by reducing it to a smaller copy of the same problem, and it stops at a base case that needs no further reduction.",
+    "question": "In your own words, what is the one case where countdown(n) should stop and not call itself, and what should it do for every other n before calling itself on a smaller number?"
+  },
+  "prompt_hash": "7d2b25572445",
+  "requests": 1,
+  "rescued": false,
+  "retries": 0,
+  "schema_hash": "ab89f4f429db",
+  "slot": "loop_tutor_deep",
+  "tool_calls": []
+}

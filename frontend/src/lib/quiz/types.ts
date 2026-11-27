@@ -7,8 +7,10 @@
  * session/scope model, the phase machine) is marked as a client concept.
  */
 
+import type { StudentConfidence } from "@/lib/api";
 import type { GamificationMe } from "@/lib/types";
 import type { QuizError } from "./errors";
+import type { SkillBand } from "@/lib/levels";
 
 /** `GET /api/quiz/config` — the ONLY source of option lists (never enumerate
  *  counts or difficulties in code; `services/quiz_config.py::quiz_config_payload`). */
@@ -22,6 +24,13 @@ export interface QuizConfig {
  *  only decides when the verdict is shown. There is no `/config` list for it. */
 export type FeedbackMode = "as-you-go" | "at-end";
 
+/**
+ * W7.8: Practice (learning evidence path) vs Exam Twin (score-only, tool-light).
+ * Wire twin of `learning/quiz_session_mode.py`. Default Practice keeps
+ * pre-W7.8 behaviour.
+ */
+export type QuizSessionMode = "practice" | "exam_twin";
+
 /** Persisted under `sapling_quiz_prefs`. `null` means "no stored preference —
  *  fall back to the config-derived default". */
 export interface QuizPrefs {
@@ -29,6 +38,8 @@ export interface QuizPrefs {
   count: number | null;
   difficulty: string | null;
   feedback: FeedbackMode;
+  /** W7.8: omitted → Practice. */
+  sessionMode?: QuizSessionMode;
 }
 
 /** An answer option as the keyless projection sends it (`include_answer_key: false`
@@ -50,6 +61,240 @@ export function isWrittenType(type: string | null | undefined): boolean {
   return typeof type === "string" && WRITTEN_TYPES.has(type);
 }
 
+/**
+ * W7.2 interactive kit (phased): Sort (7.1), Sequence (7.2), Label (7.4),
+ * Build (~7.x construct), Compare. Optional on a `short_answer` wire question —
+ * generation does not emit them yet. The UI serialises placements into
+ * `answerText` via `lib/quiz/sortInteraction` / `sequenceInteraction` /
+ * `labelInteraction` / `buildInteraction` / `compareInteraction`.
+ */
+export interface SortInteractionItem {
+  id: string;
+  label: string;
+}
+
+export interface SortInteraction {
+  kind: "sort";
+  buckets: string[];
+  items: SortInteractionItem[];
+}
+
+/** One card in a Sequence (design kit 7.2) ordered list. */
+export interface SequenceInteractionStep {
+  id: string;
+  label: string;
+}
+
+export interface SequenceInteraction {
+  kind: "sequence";
+  steps: SequenceInteractionStep[];
+}
+
+/** One numbered region on the diagram stub (design kit spot). */
+export interface LabelInteractionSpot {
+  id: string;
+  /** Caption on the pin (often "1"… or a short name). */
+  label: string;
+}
+
+/** One tray card the student assigns to a spot. */
+export interface LabelInteractionItem {
+  id: string;
+  label: string;
+}
+
+export interface LabelInteraction {
+  kind: "label";
+  spots: LabelInteractionSpot[];
+  labels: LabelInteractionItem[];
+}
+
+/** One target slot in a Build (W7.2d / design kit ~7.x construct). */
+export interface BuildInteractionSlot {
+  id: string;
+  label: string;
+}
+
+/** One tray part the student assigns to a slot. */
+export interface BuildInteractionPart {
+  id: string;
+  label: string;
+}
+
+/**
+ * W7.2 Build — assemble parts into slots (`parts.length >= slots.length`).
+ * Prefer `kind: "build"` over design "construct" naming.
+ */
+export interface BuildInteraction {
+  kind: "build";
+  slots: BuildInteractionSlot[];
+  parts: BuildInteractionPart[];
+}
+
+/** One fixed panel in a Compare (left / right). */
+export interface CompareInteractionSide {
+  id: string;
+  label: string;
+}
+
+/** One relation chip the student may pick (e.g. only left / both). */
+export interface CompareInteractionOption {
+  id: string;
+  label: string;
+}
+
+/**
+ * W7.2 Compare — two sides + ≥2 relation options; answer is one option id.
+ */
+export interface CompareInteraction {
+  kind: "compare";
+  left: CompareInteractionSide;
+  right: CompareInteractionSide;
+  options: CompareInteractionOption[];
+}
+
+/**
+ * W7.2 Dialogue (design kit 7.17) — scripted partner turns + student replies.
+ * Opening and follow-up are fixed copy; the student sends ≥ `minReplies`
+ * messages (default 2). Answer encodes as joined reply text.
+ */
+export interface DialogueInteraction {
+  kind: "dialogue";
+  /** Partner label shown above their bubbles (e.g. "Confused Classmate"). */
+  role: string;
+  /** Partner's opening line. */
+  open: string;
+  /** Partner's follow-up after the student's first reply. */
+  follow: string;
+  /** Composer placeholder. */
+  placeholder?: string;
+  /** Replies required before Check unlocks (default 2). */
+  minReplies?: number;
+  /** Cap on student messages (default 4). */
+  maxReplies?: number;
+}
+
+/**
+ * W7.2 Explain (design kit 7.16) — multi-line explanation on short_answer.
+ * Optional rubric lines are display-only until richer grading lands; mic is
+ * refused (W6). Answer is the typed prose as `answerText`.
+ */
+export interface ExplainInteraction {
+  kind: "explain";
+  placeholder?: string;
+  /** Criteria shown under the field (informational; not scored client-side). */
+  rubric?: string[];
+}
+
+/** One clickable passage / value in a Highlight (design kit 7.10). */
+export interface HighlightInteractionPassage {
+  id: string;
+  label: string;
+}
+
+/**
+ * W7.2 Highlight (7.10) — toggle one or more passages; answer is selected ids.
+ */
+export interface HighlightInteraction {
+  kind: "highlight";
+  passages: HighlightInteractionPassage[];
+  /** Optional instruction above the list. */
+  note?: string;
+  /** Selections required before Check (default 1). */
+  minSelected?: number;
+}
+
+/**
+ * W7.2 Calculate (7.13) — numeric value + unit (+ optional working steps).
+ * Encode: `value|unit` or `value|unit|steps`. Grading uses value|unit only.
+ */
+export interface CalculateInteraction {
+  kind: "calculate";
+  /** Unit field placeholder (default "Units"). */
+  unitLabel?: string;
+  /** Value field placeholder. */
+  placeholder?: string;
+  /** Working-steps placeholder. */
+  stepsPlaceholder?: string;
+}
+
+/** One marker the student places on a Position scale (7.12). */
+export interface PositionInteractionMarker {
+  id: string;
+  label: string;
+}
+
+/** One stop on the Position continuum. */
+export interface PositionInteractionStop {
+  id: string;
+  label: string;
+}
+
+/**
+ * W7.2 Position (7.12) — place every marker on a stop.
+ * Encode: `marker=stop;…` (Build-shaped).
+ */
+export interface PositionInteraction {
+  kind: "position";
+  markers: PositionInteractionMarker[];
+  stops: PositionInteractionStop[];
+  /** Optional axis caption (e.g. "pH scale"). */
+  axisLabel?: string;
+}
+
+/** One card in a Rank & Judge list (7.15). */
+export interface RankInteractionItem {
+  id: string;
+  label: string;
+}
+
+/**
+ * W7.2 Rank (7.15) — order items best→worst plus a short why.
+ * Encode: `id;id;…` + record-separator + why prose.
+ */
+export interface RankInteraction {
+  kind: "rank";
+  items: RankInteractionItem[];
+  hint?: string;
+  whyPlaceholder?: string;
+}
+
+/** One node in a Connect match (design kit 7.3). */
+export interface ConnectInteractionNode {
+  id: string;
+  label: string;
+}
+
+/**
+ * W7.2 Connect — `mode: "match"` (7.3, default) left↔right pairs, or
+ * `mode: "map"` undirected edges among `nodes` (concept-map).
+ * Match encode: `left=right;…`. Map encode: sorted undirected `a=b;…`.
+ */
+export interface ConnectInteraction {
+  kind: "connect";
+  /** Default `"match"` when omitted. */
+  mode?: "match" | "map";
+  left: ConnectInteractionNode[];
+  right: ConnectInteractionNode[];
+  /** Concept-map chips; required when `mode === "map"` (≥3). */
+  nodes?: ConnectInteractionNode[];
+  note?: string;
+}
+
+export type QuestionInteraction =
+  | SortInteraction
+  | SequenceInteraction
+  | LabelInteraction
+  | BuildInteraction
+  | CompareInteraction
+  | DialogueInteraction
+  | ExplainInteraction
+  | HighlightInteraction
+  | CalculateInteraction
+  | PositionInteraction
+  | RankInteraction
+  | ConnectInteraction;
+
 export interface WireQuestion {
   material_context?: "course_material" | "catalog" | "general";
   type?: QuestionType;
@@ -58,6 +303,8 @@ export interface WireQuestion {
   options: WireOption[];
   concept_tested?: string;
   difficulty: string;
+  /** W7.2 kit stub — ignored unless `kind` is recognised client-side. */
+  interaction?: QuestionInteraction;
 }
 
 /**
@@ -76,6 +323,21 @@ export interface GenerateSource {
   regenerated_count: number;
 }
 
+/**
+ * W7.6: generate preferred a weak prerequisite (fringe readiness). Present
+ * only with `quiz_concept_plan` on and a real prereq edge; empty/upload-flat
+ * graphs omit it. `redirected` means the attempt was written under the
+ * prereq, not the requested dependent.
+ */
+export interface QuizPrereqBanner {
+  prereq_id: string;
+  prereq_name: string;
+  dependent_id: string;
+  dependent_name: string;
+  course_id: string | null;
+  redirected: boolean;
+}
+
 export interface GenerateResult {
   quiz_id: string;
   questions: WireQuestion[];
@@ -83,6 +345,12 @@ export interface GenerateResult {
   resolved_difficulty: string;
   requested_count: number;
   delivered_count: number;
+  /** W7.8: Practice | Exam Twin — echoed from the stored attempt. */
+  session_mode?: QuizSessionMode;
+  /** W7.6: posed concept when generate redirected to a weak prerequisite. */
+  concept_node_id?: string;
+  /** W7.6: session banner when a weak prerequisite steered the pose. */
+  prereq?: QuizPrereqBanner;
   source?: GenerateSource;
 }
 
@@ -148,11 +416,79 @@ export type SubmitGamification =
   | (SubmitAward & GamificationMe)
   | (SubmitAward & { [K in keyof GamificationMe]?: undefined });
 
+/** Learning-loop spec §13 A143 (`quiz_concept_plan`): why the learner model
+ *  proposes a concept — an FSRS review is due, the student holds an open
+ *  misconception on it, or everything it builds on is proficient. */
+export type PlanReason = "due" | "misconception" | "ready";
+
+/** The skill bands of the learner model (`learning/bkt.py::band`); the one
+ *  ladder's words for them are `lib/levels.ts`. */
+export type { SkillBand };
+
+/** One concept of `GET /api/quiz/plan`, in the learner model's order. */
+export interface PlannedConcept {
+  node_id: string;
+  concept_name: string;
+  course_id: string | null;
+  reason: PlanReason;
+  /** Decayed BKT p_known, 0–1: the skill meter. */
+  p_known: number;
+  band: SkillBand;
+  due_at: string | null;
+  open_misconceptions: number;
+}
+
+export interface QuizPlan {
+  concepts: PlannedConcept[];
+}
+
+/** Learning-loop spec §13 A147 (`quiz_results_routing`): what the quiz did to
+ *  the learner model, in the submit reply. Absent while the flag is off. */
+export interface QuizLearning {
+  /** Each skill meter that moved (the quizzed concept first, then the
+   *  prerequisites and dependents its evidence reached). */
+  changes: {
+    concept_id: string;
+    concept_name: string;
+    before: number;
+    after: number;
+    band_before: SkillBand;
+    band_after: SkillBand;
+  }[];
+  review: {
+    /** Concepts of the course due for review now. */
+    due_count: number;
+    /** When the quizzed concept is next due, or null when it has no schedule. */
+    next_due_at: string | null;
+  };
+  /** The server's next step: review what is due, practise in Learn, or none. */
+  next_step: "review" | "learn" | "none";
+  /** The weakest concept the student is ready to learn, when there is one. */
+  learn: { concept_id: string; concept_name: string; course_id: string | null } | null;
+}
+
+/** #866 K40: each is true of at least one question of the submit; `write_failed`
+ *  is the evidence claim or the graph write failing (#760), and comes alone. */
+export type MasteryUnmovedReason =
+  | "not_verified"
+  | "already_counted"
+  | "helped"
+  | "write_failed"
+  | "exam_twin";
+
 export interface SubmitResult {
   score: number;
   total: number;
   mastery_before: number;
   mastery_after: number;
+  /** PKG-14b: `mastery_after − mastery_before` of the evidence the submit applied. */
+  p_delta?: number;
+  /** Spec §13 A147: present only with `quiz_results_routing` on. */
+  learning?: QuizLearning;
+  /** #866 K40: why no question of this submit could move the mastery
+   *  (backend services/quiz/unmoved.py). Present only then: absent, a
+   *  question could have moved it, whatever the shown percent did. */
+  mastery_unmoved?: MasteryUnmovedReason[];
   results: {
     question_id: string;
     selected: string;
@@ -184,7 +520,8 @@ export interface AttemptSummary {
   difficulty: string;
   mastery_before: number | null;
   mastery_after: number | null;
-  mastery_delta: number | null;
+  /** `mastery_after − mastery_before` (PKG-14b renamed it from the legacy delta key). */
+  p_delta: number | null;
   created_at: string;
   completed_at: string | null;
 }
@@ -209,6 +546,9 @@ export interface AttemptDetail {
     selected_index: number | null;
     answer_text?: string | null;
     is_correct: boolean;
+    /** Learning-loop spec §13 A132: the confidence stated with this answer, as
+     *  the label the answer body took; null when none was (a skip, an idk). */
+    confidence?: StudentConfidence | null;
     answered_at: string;
   }[];
   score: number | null;
@@ -259,6 +599,14 @@ export interface QuizItem {
   selectedIndex: number | null;
   verdict: { isCorrect: boolean; correctIndex: number; explanation: string; correctAnswer?: string | null } | null;
   flagged: boolean;
+  /**
+   * Learning-loop spec §13 A132: the student's optional stated confidence
+   * ("Guessing" / "Fairly sure" / "Sure", A127). Null (or absent, in a record
+   * saved before A132) = none chosen, which `/answer` sends as nothing at all.
+   * Persisted with the session; on resume an answered question's comes from
+   * its recorded response.
+   */
+  confidence?: StudentConfidence | null;
 }
 
 export type Phase =
@@ -277,7 +625,14 @@ export interface QuizSession {
   intent: QuizIntent;
   scope: QuizScope;
   source: QuizSource;
-  config: { count: number; difficulty: string; feedback: FeedbackMode; questionFormat?: string };
+  config: {
+    count: number;
+    difficulty: string;
+    feedback: FeedbackMode;
+    questionFormat?: string;
+    /** W7.8: Practice when omitted (pre-W7.8 sessions / fixtures). */
+    sessionMode?: QuizSessionMode;
+  };
   conceptId: string;
   courseId: string | null;
   attemptId: string | null;
@@ -300,4 +655,6 @@ export interface QuizSession {
    *  request named a source attempt — which is exactly when the results
    *  eyebrow may claim "the ones you missed, again". */
   reserved: { reservedCount: number; regeneratedCount: number } | null;
+  /** W7.6: weak-prerequisite banner from generate; null when none / flags off. */
+  prereq: QuizPrereqBanner | null;
 }

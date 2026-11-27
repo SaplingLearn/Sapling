@@ -1,0 +1,476 @@
+@layer components {
+/* The Settings screen (Settings.tsx): a scrolling form column on the left,
+   the tab rail on the right, and the profile-preview modal. */
+
+.screen {
+  /* Layout sizes, not design tokens. */
+  --settings-col: 640px;
+  --settings-col-wide: 720px;
+  --settings-rail-w: 200px;
+  --settings-select-w: 180px;
+
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.main {
+  flex: 1;
+  min-width: 0;
+  padding: var(--sp-12) var(--sp-16);
+  overflow-y: auto;
+}
+
+.section {
+  max-width: var(--settings-col);
+  margin: 0 auto;
+}
+.sectionWide {
+  max-width: var(--settings-col-wide);
+  margin: 0 auto;
+}
+
+.sectionTitle {
+  font-size: var(--fs-2xl);
+  margin-bottom: var(--sp-10);
+}
+.sectionTitleTight {
+  font-size: var(--fs-2xl);
+  margin-bottom: var(--sp-6);
+}
+
+/* ── Profile ─────────────────────────────────────────────────────────── */
+
+.avatarCard {
+  padding: var(--pad-lg);
+  display: flex;
+  gap: var(--sp-10);
+  align-items: center;
+  margin-bottom: var(--sp-8);
+}
+
+.grow { flex: 1; }
+
+.userName {
+  font-size: var(--fs-xl);
+  font-weight: 600;
+  font-family: var(--font-display);
+}
+
+.hint {
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+  margin-top: var(--sp-1);
+}
+
+.fileInput { display: none; }
+
+.usernameWrap { position: relative; }
+
+/* The "@" sits on the input's text line: centred on the box, which is where
+   its old fixed offset put it. */
+.at {
+  position: absolute;
+  left: var(--sp-5);
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: var(--fs-md);
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+.input {
+  padding: var(--sp-4) var(--sp-6);
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  font-size: var(--fs-md);
+  transition: border-color var(--dur-fast) var(--ease);
+}
+
+/* The username's border follows the availability check
+   (settingsUsername.ts usernameBorderColor). */
+.usernameInput {
+  width: 100%;
+  padding-left: var(--sp-13);
+  border-color: var(--username-border, var(--border));
+}
+
+.usernameMsg {
+  font-size: var(--fs-xs);
+  margin-top: var(--sp-2);
+  color: var(--username-msg, var(--text-muted));
+}
+
+/* A label-and-control row; `.ruled` underlines it. */
+.row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--sp-8) 0;
+  gap: var(--sp-10);
+}
+.ruled { border-bottom: 1px solid var(--border); }
+.signOutRow { margin-top: var(--sp-4); }
+
+.rowLabel {
+  font-size: var(--fs-md);
+  font-weight: 500;
+}
+.rowHint {
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  margin-top: var(--sp-1);
+}
+
+.select { min-width: var(--settings-select-w); }
+
+/* ── Accent swatches ──────────────────────────────────────────────────── */
+
+.swatches {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+}
+
+.swatch {
+  --swatch-size: 24px;
+  width: var(--swatch-size);
+  height: var(--swatch-size);
+  padding: 0;
+  border-radius: var(--r-full);
+  background: var(--swatch);
+  border: 2px solid transparent;
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  cursor: pointer;
+  transition:
+    transform var(--dur) var(--ease),
+    border-color var(--dur-fast) var(--ease),
+    outline-color var(--dur-fast) var(--ease);
+}
+.swatchActive {
+  border-color: var(--text);
+  outline-color: var(--swatch);
+}
+
+/* The custom-colour picker: a hue wheel drawn from the categorical palette. */
+.swatchCustom {
+  position: relative;
+  background: conic-gradient(
+    from 0deg,
+    var(--c-crimson),
+    var(--c-amber),
+    var(--c-sage),
+    var(--c-sky),
+    var(--c-plum),
+    var(--c-crimson)
+  );
+}
+
+.colorInput {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .swatch:hover { transform: scale(1.1); }
+  .swatch:active { transform: scale(0.95); transition-duration: var(--dur-instant); }
+}
+
+/* ── Notifications ────────────────────────────────────────────────────── */
+
+.toggleRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--sp-7) 0;
+  border-bottom: 1px solid var(--border);
+}
+.toggleLabel { font-size: var(--fs-md); }
+
+/* ── Data ─────────────────────────────────────────────────────────────── */
+
+.card { padding: var(--pad-lg); }
+.cardTitle {
+  font-weight: 600;
+  margin-bottom: var(--sp-2);
+}
+.cardBody {
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+  margin-bottom: var(--sp-6);
+}
+
+/* Underlined: a link inside running text must not rely on colour alone (WCAG 1.4.1). */
+.link {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.dangerTitle {
+  font-size: var(--fs-xl);
+  margin: var(--sp-14) 0 var(--sp-6);
+  color: var(--err);
+}
+.dangerCard {
+  padding: var(--pad-lg);
+  border-color: var(--err);
+}
+
+/* ── Tab rail ─────────────────────────────────────────────────────────── */
+
+.rail {
+  width: var(--settings-rail-w);
+  flex-shrink: 0;
+  border-left: 1px solid var(--border);
+  padding: var(--sp-9) var(--sp-6);
+  background: var(--bg-subtle);
+  overflow-y: auto;
+}
+
+.railTab,
+.railLink {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: var(--sp-4) var(--sp-6);
+  font-size: var(--fs-md);
+  color: var(--text-dim);
+  border-radius: var(--r-sm);
+  transition:
+    background-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
+}
+.railTab:hover,
+.railLink:hover { color: var(--text); }
+
+.railTab {
+  background: transparent;
+  margin-bottom: var(--sp-1);
+  font-weight: 400;
+  text-transform: capitalize;
+}
+.railTab[aria-current="true"] {
+  background: var(--bg-soft);
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* Connected accounts: its own route, styled like a tab under a rule. */
+.railLink {
+  margin-top: var(--sp-3);
+  padding-top: var(--sp-7);
+  text-decoration: none;
+  border-top: 1px solid var(--border);
+}
+
+/* ── Cosmetics ────────────────────────────────────────────────────────── */
+
+.cosmeticBar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: var(--sp-8);
+}
+
+.cosmeticTabs {
+  display: flex;
+  gap: var(--sp-2);
+}
+.cosmeticTab {
+  padding: var(--sp-4) var(--sp-7);
+  font-size: var(--fs-md);
+  font-weight: 400;
+  color: var(--text-dim);
+  border-bottom: 2px solid transparent;
+  transition:
+    color var(--dur-fast) var(--ease),
+    border-color var(--dur) var(--ease-out);
+}
+.cosmeticTab:hover { color: var(--text); }
+.cosmeticTabActive {
+  font-weight: 600;
+  color: var(--text);
+  border-bottom-color: var(--text);
+}
+
+.viewSwitch {
+  display: flex;
+  gap: var(--sp-2);
+  padding: var(--sp-2) 0;
+}
+.viewBtn {
+  padding: var(--sp-2) var(--sp-5);
+  font-size: var(--fs-xs);
+  border-radius: var(--r-full);
+  background: transparent;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  text-transform: capitalize;
+  transition:
+    background-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
+}
+.viewBtn:hover { color: var(--text); }
+.viewBtnActive {
+  background: var(--bg-soft);
+  color: var(--text);
+}
+
+.empty {
+  padding: var(--sp-14);
+  text-align: center;
+  color: var(--text-muted);
+}
+.emptyAction { margin-top: var(--sp-4); }
+
+.grid {
+  --cosmetic-min: 180px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(var(--cosmetic-min), 1fr));
+  gap: var(--sp-6);
+}
+
+.lockedNote {
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+  margin-top: var(--sp-6);
+  text-align: center;
+}
+
+/* One cosmetic. The top rule carries its rarity colour (set per card). */
+.cosmeticCard {
+  --rarity-rule: 3px;
+  position: relative;
+  padding: var(--sp-6);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sp-4);
+  border-top: var(--rarity-rule) solid var(--rarity-color, var(--border));
+  outline: 2px solid transparent;
+  outline-offset: -1px;
+  transition:
+    outline-color var(--dur) var(--ease),
+    opacity var(--dur) var(--ease);
+}
+.cosmeticEquipped { outline-color: var(--accent); }
+.cosmeticLocked { opacity: 0.6; }
+
+.lockChip {
+  position: absolute;
+  top: var(--sp-4);
+  right: var(--sp-4);
+  font-size: var(--fs-xs);
+}
+
+.cosmeticName {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  text-align: center;
+}
+.rarity {
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+.unlock {
+  font-size: var(--fs-2xs);
+  color: var(--text-muted);
+  text-align: center;
+  min-height: var(--sp-7);
+}
+.fullWidth { width: 100%; }
+
+/* Previews */
+.frame {
+  --frame-size: 64px;
+  position: relative;
+  width: var(--frame-size);
+  height: var(--frame-size);
+}
+.frameImg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  object-fit: contain;
+}
+
+.banner {
+  --banner-h: 48px;
+  width: 100%;
+  height: var(--banner-h);
+  border-radius: var(--r-sm);
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+.bannerImg {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* A name colour is stored data: a colour or a gradient (set per preview). */
+.nameColor {
+  font-size: var(--fs-xl);
+  font-weight: 600;
+  color: var(--name-color);
+}
+.nameGradient {
+  font-size: var(--fs-xl);
+  font-weight: 600;
+  background-image: var(--name-color);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.titleChip {
+  font-size: var(--fs-sm);
+}
+
+/* ── Profile preview modal ────────────────────────────────────────────── */
+
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-modal);
+  background: var(--scrim);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--sp-12);
+}
+
+.dialog {
+  --preview-w: 920px;
+  --preview-max-h: 88vh;
+  background: var(--bg);
+  border-radius: var(--r-lg);
+  border: 1px solid var(--border);
+  max-width: var(--preview-w);
+  width: 100%;
+  max-height: var(--preview-max-h);
+  overflow: auto;
+}
+
+.dialogHead {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--sp-7) var(--sp-10);
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  background: var(--bg);
+  z-index: var(--z-raised);
+}
+
+.dialogBody { padding: var(--sp-10); }
+
+}

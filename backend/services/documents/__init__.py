@@ -6,7 +6,10 @@ backend/services/documents/ — the documents domain (#118).
 - ``persistence``: idempotent replay, the documents insert, and the syllabus /
   graph post-steps.
 - ``post_roll``: an upload's best-effort side effects and the SSE route's
-  post-roll tasks (``drain_post_roll`` runs at shutdown).
+  post-roll tasks (``drain_post_roll`` runs at shutdown); with the learning
+  loop on, the ordered index-then-draft check-item chain
+  (``_index_then_check_items``; ``_index_then_draft`` is the
+  ``check_items.document`` job's body, services/check_item_jobs.py).
 - ``library``: list / soft-delete / update an owned document (async, ``a*``).
 - ``scan``: the concept scan (concept_scan_agent -> apply_graph_update).
 - ``stream``: the streaming upload's SSE event stream.
@@ -30,7 +33,11 @@ from services.documents.library import (
     update_document_row,
 )
 from services.documents.persistence import _existing_doc_by_request_id, _persist_document
-from services.documents.post_roll import drain_post_roll
+from services.documents.post_roll import (
+    _index_then_check_items,
+    _index_then_draft,
+    drain_post_roll,
+)
 from services.documents.scan import _scan_concepts_for_course
 from services.documents.stream import upload_event_stream
 from services.documents.upload import (
@@ -46,6 +53,8 @@ __all__ = [
     "UNREADABLE_DOCUMENT_DETAIL",
     "UPLOAD_FAILED_DETAIL",
     "_existing_doc_by_request_id",
+    "_index_then_check_items",
+    "_index_then_draft",
     "_persist_document",
     "_scan_concepts_for_course",
     "drain_post_roll",

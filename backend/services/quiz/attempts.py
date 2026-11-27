@@ -11,10 +11,12 @@ underscores included) are unchanged, and routes/quiz.py re-exports them.
 import logging
 from datetime import datetime, timedelta, timezone
 
+from starlette.concurrency import run_in_threadpool
 from starlette.requests import Request
 
 from db.connection import table
 from models import AnswerQuestionBody
+from services import quiz_learning
 from services.auth_guard import require_self, guard_off_loop
 from services.quiz.config import QUIZ_ATTEMPT_ABANDON_TTL_HOURS
 from services.quiz.errors import QuizAPIError, QuizErrorCode
@@ -22,6 +24,8 @@ from services.encryption import bind, encrypt_json, decrypt_json_column
 from services.quiz.grading import WRITTEN_TYPES, grade_written
 from services.timestamps import parse_ts
 from services.quiz.wire import _strip_answer_key, _written_response_text
+from learning import quiz_evidence
+from learning.evidence import stated_confidence
 
 # Log records keep the name they had in routes/quiz.py before the #118 split:
 # the move must not change what an operator (or a caplog test) filters on.
@@ -232,17 +236,23 @@ def _sweep_abandoned(user_id: str, *, active_attempt_ids: set[str] | None = None
         logger.exception("quiz: abandon sweep failed user=%s", user_id)
 
 
+#: Columns added after the attempt-insert path shipped. Each is stripped on a
+#: PostgREST schema-cache miss so a billed generation still lands a row (same
+#: seatbelt as `exam_days_away` / H3). Ordering is still: migration before code.
+_ATTEMPT_OPTIONAL_COLUMNS = ("exam_days_away", "session_mode")
+
+
 def _insert_attempt(attempt_row: dict) -> None:
-    """Write the attempt, surviving a schema that predates `exam_days_away`.
+    """Write the attempt, surviving a schema that predates optional columns.
 
     The omit-when-None rule alone does NOT make a pre-migration environment
     safe, and the failure is nastier than it looks: it strikes exactly the
-    students the feature is FOR (the ones with a dated upcoming exam), so it
-    presents as a random partial outage rather than an obvious missing
-    migration. And it strikes late — the agent has already run and been
-    billed — so an unhandled 400 here loses the generated quiz, writes no
-    attempt row, emits no `quiz.generation_failed`, and never refunds the
-    rate-limit slot.
+    students the feature is FOR (the ones with a dated upcoming exam, or an
+    Exam Twin start), so it presents as a random partial outage rather than
+    an obvious missing migration. And it strikes late — the agent has already
+    run and been billed — so an unhandled 400 here loses the generated quiz,
+    writes no attempt row, emits no `quiz.generation_failed`, and never
+    refunds the rate-limit slot.
     #
     Ordering is still the rule (migration before code, as with
     20260814051517). This is the seatbelt for the window where PostgREST has
@@ -252,15 +262,33 @@ def _insert_attempt(attempt_row: dict) -> None:
         table("quiz_attempts").insert(attempt_row)
         return
     except Exception:
-        if "exam_days_away" not in attempt_row:
+        if not any(c in attempt_row for c in _ATTEMPT_OPTIONAL_COLUMNS):
             raise
-    retry = {k: v for k, v in attempt_row.items() if k != "exam_days_away"}
+    retry = {k: v for k, v in attempt_row.items() if k not in _ATTEMPT_OPTIONAL_COLUMNS}
     logger.warning(
-        "quiz: attempt insert failed with exam_days_away present; retrying "
-        "without it (is 20260822090747 applied?) quiz_id=%s",
+        "quiz: attempt insert failed with optional columns present; retrying "
+        "without %s quiz_id=%s",
+        [c for c in _ATTEMPT_OPTIONAL_COLUMNS if c in attempt_row],
         attempt_row.get("id"),
     )
     table("quiz_attempts").insert(retry)
+
+
+async def _stated(body: AnswerQuestionBody, user_id: str, written: bool) -> float | None:
+    """The confidence an answer stores (learning-loop spec §13 A132), or None.
+
+    The stated confidence is the learning system's: the quiz asks for it only
+    while the loop is on for the student, and only then is it kept (owner
+    decision 2026-11-18, #866 K46: with the loop off the quiz is main's, which
+    stores none). The gate is read only when a level was sent, off the event
+    loop."""
+    if body.confidence is None:
+        return None
+    if not await run_in_threadpool(quiz_learning.stated_confidence_on, user_id):
+        return None
+    return stated_confidence(
+        body.confidence, idk=written and quiz_evidence.is_idk_answer(body.answer_text)
+    )
 
 
 async def answer_question(attempt_id: str, body: AnswerQuestionBody, request: Request):
@@ -334,7 +362,11 @@ async def answer_question(attempt_id: str, body: AnswerQuestionBody, request: Re
             "selected_index": body.selected_index,
             "is_correct": _is_correct(body.selected_index, body.answer_text),
             "time_ms": body.time_ms,
-            "confidence": body.confidence,
+            # Learning-loop spec §13 A132: the stated label's
+            # STUDENT_CONFIDENCE_LEVELS value, or None for a skip; an idk
+            # written answer states none (A127 (c)). Submit carries it onto
+            # the question's evidence. Kept only with the loop on (K46).
+            "confidence": await _stated(body, attempt["user_id"], written),
         }
         if written:
             row["answer_text"] = encrypt_json(

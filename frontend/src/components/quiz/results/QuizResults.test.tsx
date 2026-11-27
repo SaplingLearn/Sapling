@@ -13,9 +13,18 @@ import { buildMissedItems } from "./MissedList";
 // seed. The mock renders the seed so the assertion is on the props, not on
 // whatever the real sheet does with them.
 vi.mock("../question/AskPanel", () => ({
-  AskPanel: (props: { open: boolean; seed: Record<string, string>; conceptName: string }) =>
+  AskPanel: (props: {
+    open: boolean;
+    seed: Record<string, string>;
+    conceptName: string;
+    quizAsk?: { attemptId: string; questionIndex: number };
+  }) =>
     props.open ? (
-      <div data-testid="quiz-ask-panel" data-concept={props.conceptName}>
+      <div
+        data-testid="quiz-ask-panel"
+        data-concept={props.conceptName}
+        data-quiz-ask={props.quizAsk ? JSON.stringify(props.quizAsk) : ""}
+      >
         {JSON.stringify(props.seed)}
       </div>
     ) : null,
@@ -115,6 +124,7 @@ function session(over: Partial<QuizSession> = {}): QuizSession {
     deliveredShort: false,
     sourceAttemptId: null,
     reserved: null,
+    prereq: null,
     ...over,
   };
 }
@@ -187,6 +197,59 @@ const PERFECT: Partial<QuizSession> = {
 };
 
 describe("QuizResults", () => {
+  it("shows the learner model's block only when the submit reply carries one (A147)", () => {
+    renderResults();
+    expect(screen.queryByTestId("quiz-results-learning")).toBeNull();
+    cleanup();
+    renderResults({
+      result: {
+        ...RESULT,
+        learning: {
+          changes: [
+            { concept_id: "recursion", concept_name: "Recursion", before: 0.29, after: 0.46, band_before: "novice", band_after: "develop" },
+          ],
+          review: { due_count: 0, next_due_at: null },
+          next_step: "learn",
+          learn: { concept_id: "recursion", concept_name: "Recursion", course_id: "cs101" },
+        },
+      },
+    });
+    // One measure: the quizzed concept's skill move leads; nothing else moved.
+    expect(screen.getByTestId("quiz-results-mastery")).toHaveTextContent("Skill rose from 29% to 46% (now developing)");
+    expect(screen.queryByTestId("quiz-results-change")).toBeNull();
+    expect(screen.getByTestId("quiz-next-step-learn")).toHaveAttribute(
+      "href",
+      "/learn?topic=Recursion&concept=recursion&mode=socratic&course=cs101",
+    );
+    expect(screen.getByTestId("quiz-next-step-tree")).toHaveAttribute(
+      "href",
+      "/tree?node=recursion",
+    );
+  });
+
+  it("names a level on one scale: with the learner model's block, the header is its skill meter (#866 K42)", () => {
+    // The block says "still proficient" from 80%; the tier map says "learning"
+    // up to 95%. One screen, one belief: the block's levels are the scale.
+    renderResults({
+      result: {
+        ...RESULT,
+        mastery_before: 0.82,
+        mastery_after: 0.88,
+        learning: {
+          changes: [
+            { concept_id: "recursion", concept_name: "Recursion", before: 0.82, after: 0.88, band_before: "profic", band_after: "profic" },
+          ],
+          review: { due_count: 0, next_due_at: null },
+          next_step: "none",
+          learn: null,
+        },
+      },
+    });
+    expect(screen.getByTestId("quiz-results-mastery")).toHaveTextContent(/^Skill rose from 82% to 88% \(still proficient\)$/);
+    expect(screen.getByTestId("quiz-results-mastery")).not.toHaveTextContent(/learning|struggling|mastered/);
+    expect(screen.queryByTestId("quiz-results-change")).toBeNull();
+  });
+
   it("shows the score, the mastery delta and the XP line", () => {
     renderResults();
     expect(screen.getByTestId("quiz-results-score")).toHaveTextContent("2 of 3 correct");
@@ -210,6 +273,79 @@ describe("QuizResults", () => {
       "aria-label",
       "Recursion node grew from 29% to 46% mastery",
     );
+  });
+
+  it("never says grew of a node that did not move, and says why when submit names it (#866 K40)", () => {
+    // A submit writes evidence for a question at most once a day (A100) and
+    // never for one its checks flagged: an all-right quiz can move nothing.
+    renderResults({
+      ...PERFECT,
+      result: { ...PERFECT.result!, mastery_before: 0.4, mastery_after: 0.4, mastery_unmoved: ["not_verified", "already_counted"] },
+    });
+    expect(screen.getByTestId("quiz-results-graph")).toHaveAttribute("aria-label", "Recursion node stayed at 40% mastery");
+    expect(screen.getByTestId("quiz-results-perfect")).toHaveTextContent(/^Nothing to review — every answer was right\.$/);
+    expect(screen.getByTestId("quiz-results-unchanged")).toHaveTextContent(
+      "Your mastery didn't change this time: a question that didn't pass its checks doesn't count; a question counts toward it once a day.",
+    );
+    // half a point is still the same whole percent on screen
+    cleanup();
+    renderResults({ result: { ...RESULT, mastery_before: 0.402, mastery_after: 0.404 } });
+    expect(screen.getByTestId("quiz-results-graph")).toHaveAttribute("aria-label", "Recursion node stayed at 40% mastery");
+  });
+
+  it("states no reason for an unchanged percent submit names none for (#866 K40)", () => {
+    // Evidence was written (a 99.5% mastery reads 100%; answers that net out):
+    // "once a day" or "its checks" would be false.
+    renderResults({ ...PERFECT, result: { ...PERFECT.result!, mastery_before: 0.996, mastery_after: 0.998 } });
+    expect(screen.getByTestId("quiz-results-graph")).toHaveAttribute("aria-label", "Recursion node stayed at 100% mastery");
+    expect(screen.queryByTestId("quiz-results-unchanged")).toBeNull();
+  });
+
+  it("names help and a failed write as what they are (#866 K40)", () => {
+    renderResults({ result: { ...RESULT, mastery_before: 0.4, mastery_after: 0.4, mastery_unmoved: ["helped"] } });
+    expect(screen.getByTestId("quiz-results-unchanged")).toHaveTextContent(
+      "Your mastery didn't change this time: a right answer you had help with earns no credit.",
+    );
+    cleanup();
+    renderResults({ result: { ...RESULT, mastery_before: 0.4, mastery_after: 0.4, mastery_unmoved: ["write_failed"] } });
+    expect(screen.getByTestId("quiz-results-unchanged")).toHaveTextContent(
+      "Your score is saved, but your mastery couldn't be updated this time.",
+    );
+  });
+
+  it("says a round of the last quiz's missed questions was practice when it was all counted already (#866 K40)", () => {
+    const missedRound = {
+      scope: { kind: "missed", conceptId: "recursion", missedCount: 3 } as const,
+      reserved: { reservedCount: 3, regeneratedCount: 0 },
+    };
+    renderResults({ ...missedRound, result: { ...RESULT, mastery_before: 0.4, mastery_after: 0.4, mastery_unmoved: ["already_counted"] } });
+    expect(screen.getByTestId("quiz-results-unchanged")).toHaveTextContent(
+      "These questions were in your last quiz, and a question counts toward your mastery once a day, so this round was practice.",
+    );
+    cleanup();
+    // the same round with a flagged question too is not just practice
+    renderResults({
+      ...missedRound,
+      result: { ...RESULT, mastery_before: 0.4, mastery_after: 0.4, mastery_unmoved: ["not_verified", "already_counted"] },
+    });
+    expect(screen.getByTestId("quiz-results-unchanged")).not.toHaveTextContent("this round was practice");
+  });
+
+  it("adds no note when the mastery moved, or when the learner model's block says it", () => {
+    renderResults();
+    expect(screen.queryByTestId("quiz-results-unchanged")).toBeNull();
+    cleanup();
+    renderResults({
+      result: {
+        ...RESULT,
+        mastery_before: 0.4,
+        mastery_after: 0.4,
+        mastery_unmoved: ["already_counted"],
+        learning: { changes: [], review: { due_count: 0, next_due_at: null }, next_step: "none", learn: null },
+      },
+    });
+    expect(screen.queryByTestId("quiz-results-unchanged")).toBeNull();
+    expect(screen.getByTestId("quiz-results-no-change")).toBeInTheDocument();
   });
 
   it("says the node moved, not grew, when mastery went down", () => {
@@ -281,6 +417,11 @@ describe("QuizResults", () => {
     fireEvent.click(screen.getByTestId("quiz-missed-ask-102"));
     const panel = screen.getByTestId("quiz-ask-panel");
     expect(panel).toHaveAttribute("data-concept", "Recursion");
+    // spec §13 A99: the panel names the row's question (attempt + index)
+    expect(JSON.parse(panel.getAttribute("data-quiz-ask") || "null")).toEqual({
+      attemptId: "attempt-1",
+      questionIndex: 1, // question 102 is the attempt's second item
+    });
     expect(JSON.parse(panel.textContent ?? "{}")).toEqual({
       stem: STEMS[102],
       chosenLabel: "A",
@@ -290,6 +431,41 @@ describe("QuizResults", () => {
       explanation: "Without a base case the recursion never stops.",
       written: false,
     });
+  });
+
+  it.each(["short_answer", "numeric", "symbolic"] as const)("shows the actual missed %s response and expected answer while preserving its tutor identity", (type) => {
+    const written = item(102);
+    written.question = { ...written.question, type, options: [] };
+    const result = {
+      ...RESULT,
+      results: RESULT.results.map((row) => row.question_id === "102"
+        ? { ...row, selected: "the submitted response", correct_answer: "the expected response" }
+        : row),
+    };
+    renderResults({ items: [item(101), written, item(103)], result });
+    const missed = screen.getByTestId("quiz-missed-102");
+    expect(missed).toHaveTextContent("You wrote the submitted response · the answer is the expected response");
+    expect(missed).not.toHaveTextContent("You chose Your answer");
+    fireEvent.click(screen.getByTestId("quiz-missed-ask-102"));
+    const panel = screen.getByTestId("quiz-ask-panel");
+    expect(JSON.parse(panel.getAttribute("data-quiz-ask") || "null"))
+      .toEqual({ attemptId: "attempt-1", questionIndex: 1 });
+    expect(JSON.parse(panel.textContent ?? "{}"))
+      .toMatchObject({ chosenText: "the submitted response", correctText: "the expected response" });
+  });
+
+  it("honestly labels an unanswered written item while still showing the expected answer", () => {
+    const written = item(102);
+    written.question = { ...written.question, type: "short_answer", options: [] };
+    renderResults({ items: [item(101), written, item(103)], result: {
+      ...RESULT,
+      results: RESULT.results.map((row) => row.question_id === "102"
+        ? { ...row, selected: "", correct_answer: "base case" } : row),
+    } });
+    expect(screen.getByTestId("quiz-missed-102")).toHaveTextContent("No answer · the answer is base case");
+    fireEvent.click(screen.getByTestId("quiz-missed-ask-102"));
+    expect(JSON.parse(screen.getByTestId("quiz-ask-panel").textContent ?? "{}"))
+      .toMatchObject({ chosenLabel: "", chosenText: "", correctText: "base case" });
   });
 
   it("replaces the review section with the perfect-run line", () => {
@@ -354,7 +530,7 @@ describe("QuizResults", () => {
   it("falls back to practising the missed questions, and calls practiseMissed", () => {
     const { acts } = renderResults();
     const button = screen.getByTestId("quiz-practise-missed");
-    expect(button).toHaveTextContent("Practise the one you missed");
+    expect(button).toHaveTextContent("Practice the one you missed");
     fireEvent.click(button);
     expect(acts.practiseMissed).toHaveBeenCalledTimes(1);
   });
@@ -371,7 +547,7 @@ describe("QuizResults", () => {
     });
     expect(screen.getByTestId("quiz-missed-list")).toHaveTextContent("2 to look at");
     expect(screen.getByTestId("quiz-practise-missed")).toHaveTextContent(
-      "Practise the ones you missed",
+      "Practice the ones you missed",
     );
   });
 

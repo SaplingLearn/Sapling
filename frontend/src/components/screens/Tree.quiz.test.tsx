@@ -39,6 +39,11 @@ vi.mock("@/context/UserContext", () => ({
   useUser: () => ({ userId: "u1", userReady: true, userName: "Ada" }),
 }));
 
+const flagState = vi.hoisted(() => ({ loop: "off" as string }));
+vi.mock("@/context/FlagsContext", () => ({
+  useFlag: (key: string) => (key === "learning_loop" ? flagState.loop : "off"),
+}));
+
 vi.mock("@/lib/useIsMobile", () => ({ useIsMobile: () => false }));
 
 // A clickable stand-in for the real graph: one button per node, so a test can
@@ -115,7 +120,7 @@ function attempt(over: Partial<AttemptSummary> & { quiz_id: string }): AttemptSu
     difficulty: "medium",
     mastery_before: 0.4,
     mastery_after: 0.44,
-    mastery_delta: 0.04,
+    p_delta: 0.04,
     created_at: "2026-08-20T10:00:00Z",
     completed_at: "2026-08-20T10:05:00Z",
     ...over,
@@ -137,6 +142,7 @@ async function selectNode(user: ReturnType<typeof userEvent.setup>, id: string) 
 
 beforeEach(() => {
   vi.clearAllMocks();
+  flagState.loop = "off";
   params.value = new URLSearchParams();
   window.localStorage.clear();
   // jsdom has no ResizeObserver; the graph slot measures itself with one.
@@ -181,7 +187,7 @@ describe("Quick quiz links (§6)", () => {
     renderTree();
     await selectNode(user, RECURSION);
 
-    await user.click(screen.getByRole("button", { name: /quick quiz/i }));
+    await user.click(screen.getByTestId("tree-node-action-quiz"));
 
     expect(push).toHaveBeenCalledWith(
       `/quiz?concept=${RECURSION}&from=tree&return=${encodeURIComponent(`/tree?node=${RECURSION}`)}`,
@@ -193,11 +199,34 @@ describe("Quick quiz links (§6)", () => {
     renderTree();
     await selectNode(user, ROOT_ID);
 
-    await user.click(screen.getByRole("button", { name: /quick quiz/i }));
+    await user.click(screen.getByTestId("tree-node-action-quiz"));
 
     expect(push).toHaveBeenCalledWith(
       `/quiz?course=${COURSE_ID}&from=tree&return=${encodeURIComponent("/tree")}`,
     );
+  });
+});
+
+describe("W8.2 coherence actions (learning_loop on)", () => {
+  it("offers Learn / Quiz / Cards / Guide deep links for a concept", async () => {
+    flagState.loop = "on";
+    const user = userEvent.setup();
+    renderTree();
+    await selectNode(user, RECURSION);
+
+    const menu = screen.getByTestId("tree-node-actions");
+    expect(within(menu).getByTestId("tree-node-action-teach")).toHaveTextContent("Learn");
+    expect(within(menu).getByTestId("tree-node-action-quiz")).toHaveTextContent("Quiz");
+    expect(within(menu).getByTestId("tree-node-action-cards")).toHaveTextContent("Cards");
+    expect(within(menu).getByTestId("tree-node-action-guide")).toHaveTextContent("Guide");
+
+    await user.click(screen.getByTestId("tree-node-action-cards"));
+    expect(push).toHaveBeenCalledWith(
+      "/flashcards?course=course-cs101&concepts=Recursion&start=1",
+    );
+    push.mockClear();
+    await user.click(screen.getByTestId("tree-node-action-guide"));
+    expect(push).toHaveBeenCalledWith(`/study/guide?concept=${RECURSION}`);
   });
 });
 
@@ -267,9 +296,9 @@ describe("Recent quizzes", () => {
       limit: 100,
       offset: 0,
       attempts: [
-        attempt({ quiz_id: "q-up", score: 3, total: 3, mastery_delta: 0.04, completed_at: "2026-08-21T10:00:00Z" }),
-        attempt({ quiz_id: "q-down", score: 1, total: 4, mastery_delta: -0.02, completed_at: "2026-08-20T10:00:00Z" }),
-        attempt({ quiz_id: "q-null", score: 2, total: 3, mastery_delta: null, completed_at: "2026-08-19T10:00:00Z" }),
+        attempt({ quiz_id: "q-up", score: 3, total: 3, p_delta: 0.04, completed_at: "2026-08-21T10:00:00Z" }),
+        attempt({ quiz_id: "q-down", score: 1, total: 4, p_delta: -0.02, completed_at: "2026-08-20T10:00:00Z" }),
+        attempt({ quiz_id: "q-null", score: 2, total: 3, p_delta: null, completed_at: "2026-08-19T10:00:00Z" }),
       ],
     });
     const user = userEvent.setup();

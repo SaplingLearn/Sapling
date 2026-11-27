@@ -5,25 +5,34 @@
    as the card's accent (--fc-accent, set on the stage), the side nav's olive
    for the answer side. */
 
-.stage { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 16px; padding: 32px 0 8px; }
+.stage {
+  /* The card's text sizes, between the type scale's steps: the question
+     reads large, the answer a step down. */
+  --fc-card-text: 24px;
+  --fc-card-answer-text: 20px;
+  flex: 1; display: flex; flex-direction: column; align-items: center; gap: var(--sp-8); padding: var(--sp-16) 0 var(--sp-4);
+}
 .column { width: 100%; max-width: 620px; }
-.message { text-align: center; padding: 48px 0; color: var(--text-muted); }
+.message { text-align: center; padding: var(--sp-24) 0; color: var(--text-muted); }
+.messageTitle { font-size: var(--fs-2xl); color: var(--text); }
+.messageNote { margin-top: var(--sp-3); }
+.messageAction { margin-top: var(--sp-8); }
 
 /* ── progress: "Card N of M", the tally, one segment per card ─────────────── */
 
 .meta {
-  display: flex; align-items: center; justify-content: space-between; gap: 12px;
-  margin-bottom: 8px; font-size: var(--fs-sm); color: var(--text-muted);
+  display: flex; align-items: center; justify-content: space-between; gap: var(--sp-6);
+  margin-bottom: var(--sp-4); font-size: var(--fs-sm); color: var(--text-muted);
 }
-.tally { display: inline-flex; align-items: center; gap: 12px; }
-.tallyItem { display: inline-flex; align-items: center; gap: 5px; font-variant-numeric: tabular-nums; }
+.tally { display: inline-flex; align-items: center; gap: var(--sp-6); }
+.tallyItem { display: inline-flex; align-items: center; gap: var(--sp-2); font-variant-numeric: tabular-nums; }
 .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: var(--bg-soft); }
 .dot[data-kind="easy"], .segment[data-rated="easy"], .stackPart[data-kind="easy"] { background: var(--state-mastery); }
 .dot[data-kind="hard"], .segment[data-rated="hard"], .stackPart[data-kind="hard"] { background: var(--state-progress); }
 .dot[data-kind="forgot"], .segment[data-rated="forgot"], .stackPart[data-kind="forgot"] { background: var(--state-struggle); }
 
-/* The 3px of padding is room for the current segment's outline. */
-.segments { display: flex; gap: 3px; padding: 3px 0; }
+/* The padding is room for the current segment's outline (2px + 1px offset). */
+.segments { display: flex; gap: var(--sp-2); padding: var(--sp-2) 0; }
 .segment {
   flex: 1 1 0; min-width: 0; height: 6px; border-radius: var(--r-full); background: var(--bg-soft);
   transition: background-color var(--dur) var(--ease);
@@ -31,10 +40,11 @@
 .segment[data-current="true"] { outline: 2px solid var(--brand-forest); outline-offset: 1px; }
 
 /* A deck past the segment cap keeps the continuous bar. */
-.progress { height: 6px; margin: 3px 0; border-radius: var(--r-full); background: var(--bg-soft); overflow: hidden; }
+.progress { height: 6px; margin: var(--sp-2) 0; border-radius: var(--r-full); background: var(--bg-soft); overflow: hidden; }
 .progressFill {
   width: 100%; height: 100%; background: var(--brand-forest);
-  transform-origin: left; transition: transform var(--dur) var(--ease);
+  transform: scaleX(var(--progress, 0));
+  transform-origin: left; transition: transform var(--dur) var(--ease-out);
 }
 
 /* ── the card ────────────────────────────────────────────────────────────── */
@@ -43,7 +53,7 @@
 .cardInner {
   position: relative; width: 100%; min-height: 320px;
   transform-style: preserve-3d;
-  transition: transform 500ms cubic-bezier(.2, .85, .35, 1);
+  transition: transform var(--dur-slow) var(--ease-emphasized);
 }
 .cardInner[data-flipped="true"] { transform: rotateY(180deg); }
 
@@ -51,7 +61,7 @@
    used to carry the course's colour along its top edge, which read as a
    stripe stuck on a rounded card.) */
 .face {
-  position: relative; width: 100%; min-height: 320px; padding: 32px;
+  position: relative; width: 100%; min-height: 320px; padding: var(--sp-16);
   display: flex; flex-direction: column; justify-content: center;
   background: var(--bg-panel); border: 1px solid var(--border); border-radius: var(--r-lg);
   box-shadow: var(--shadow-sm);
@@ -65,10 +75,10 @@
   border-color: color-mix(in srgb, var(--sidenav-bg) 45%, transparent);
   box-shadow: var(--shadow-sm);
 }
-.faceHead { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+.faceHead { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-6); margin-bottom: var(--sp-7); }
 /* The concept the card is about, in the course's colour. */
 .topic {
-  min-width: 0; max-width: 65%; padding: 3px 10px; border-radius: var(--r-full);
+  min-width: 0; max-width: 65%; padding: var(--sp-2) var(--sp-5); border-radius: var(--r-full);
   font-size: var(--fs-xs); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   background: color-mix(in srgb, var(--fc-accent, var(--brand-forest)) 16%, var(--bg-panel));
   border: 1px solid color-mix(in srgb, var(--fc-accent, var(--brand-forest)) 40%, transparent);
@@ -76,17 +86,17 @@
 }
 /* Two classes, so these win over .h-serif's own line-height whatever order
    the stylesheets load in. */
-.face .faceText { font-size: 24px; line-height: 1.35; font-weight: 500; }
-.faceBack .faceText { font-size: 20px; }
-.faceHint { margin-top: 18px; font-size: var(--fs-xs); color: var(--text-muted); }
+.face .faceText { font-size: var(--fc-card-text); line-height: 1.35; font-weight: 500; }
+.faceBack .faceText { font-size: var(--fc-card-answer-text); }
+.faceHint { margin-top: var(--sp-9); font-size: var(--fs-xs); color: var(--text-muted); }
 
 /* ── ratings: three equal buttons the card's width, each filled softly in its
    own colour (the pairs the app's chips use) ─────────────────────────────── */
 
-.rates { width: 100%; max-width: 620px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.rates { width: 100%; max-width: 620px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--sp-4); }
 .rate {
   --rate-bg: var(--bg-panel); --rate-fg: var(--text);
-  height: 44px; display: flex; align-items: center; justify-content: center; gap: 8px;
+  height: 44px; display: flex; align-items: center; justify-content: center; gap: var(--sp-4);
   border: 1px solid transparent; border-radius: var(--r-md);
   background: var(--rate-bg); color: var(--rate-fg);
   font: inherit; font-size: var(--fs-md); font-weight: 600;
@@ -97,34 +107,42 @@
 .rate[data-kind="hard"] { --rate-bg: var(--warn-soft); --rate-fg: var(--warn); }
 .rate[data-kind="easy"] { --rate-bg: var(--sap-100); --rate-fg: var(--brand-forest); }
 .rate:hover:not(:disabled) { background: color-mix(in srgb, var(--rate-fg) 14%, var(--rate-bg)); }
+/* Press: the button gives under the finger (motion only when it is welcome). */
+@media (prefers-reduced-motion: no-preference) {
+  .rate { transition: background-color var(--dur-fast) var(--ease), opacity var(--dur-fast) var(--ease), transform var(--dur-instant) var(--ease-out); }
+  .rate:active:not(:disabled) { transform: scale(0.97); }
+}
 .rate:disabled { opacity: 0.45; cursor: not-allowed; }
 .key {
-  font-size: 10px; padding: 1px 5px; border-radius: var(--r-xs);
+  font-size: var(--fs-2xs); padding: var(--sp-1) var(--sp-2); border-radius: var(--r-xs);
   background: color-mix(in srgb, var(--rate-fg) 14%, transparent); color: inherit;
 }
 
 .foot {
-  width: 100%; max-width: 620px; display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  width: 100%; max-width: 620px; display: flex; align-items: center; justify-content: space-between; gap: var(--sp-6);
   font-size: var(--fs-xs); color: var(--text-muted);
 }
-.delete { margin-right: -10px; font-size: var(--fs-xs); color: var(--text-muted); }
+.delete { margin-right: calc(-1 * var(--sp-5)); font-size: var(--fs-xs); color: var(--text-muted); }
 .delete:hover { color: var(--err); }
 
 /* ── deck complete: how the session went ─────────────────────────────────── */
 
-.summary { width: 100%; max-width: 620px; padding: 40px 0; text-align: center; color: var(--text-muted); }
+.summary { width: 100%; max-width: 620px; padding: var(--sp-20) 0; text-align: center; color: var(--text-muted); }
 .summaryTitle { font-size: var(--fs-2xl); color: var(--text); }
+.summaryNote {
+  max-width: 420px; margin: var(--sp-4) auto 0; font-size: var(--fs-sm); line-height: 1.45; color: var(--text-dim);
+}
 .stack {
-  display: flex; gap: 2px; height: 10px; max-width: 420px; margin: 18px auto 12px;
+  display: flex; gap: var(--sp-1); height: 10px; max-width: 420px; margin: var(--sp-9) auto var(--sp-6);
   border-radius: var(--r-full); overflow: hidden; background: var(--bg-soft);
 }
 .stackPart { height: 100%; min-width: 6px; }
-.counts { display: flex; justify-content: center; flex-wrap: wrap; gap: 6px 18px; font-size: var(--fs-md); color: var(--text-dim); }
+.counts { display: flex; justify-content: center; flex-wrap: wrap; gap: var(--sp-3) var(--sp-9); font-size: var(--fs-md); color: var(--text-dim); }
 .counts .tallyItem b { font-weight: 600; color: var(--text); }
-.summaryActions { display: flex; justify-content: center; flex-wrap: wrap; gap: 8px; margin-top: 22px; }
+.summaryActions { display: flex; justify-content: center; flex-wrap: wrap; gap: var(--sp-4); margin-top: var(--sp-11); }
 
 @media (max-width: 768px) {
-  .stage { padding-top: 20px; }
+  .stage { padding-top: var(--sp-10); }
 }
 
 /* The app-wide reduced-motion reset already collapses these; said here too so

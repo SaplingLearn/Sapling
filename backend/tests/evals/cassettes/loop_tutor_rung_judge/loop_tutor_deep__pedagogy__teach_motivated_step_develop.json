@@ -1,0 +1,10 @@
+{
+  "judge_model": "claude-opus-5-5",
+  "judge_prompt_hash": "4d944931440b65151857a8a7b51c4506a65cc2c35d04e030249204021e211a3d",
+  "output": {
+    "evidence": "how could the answer for a general n be built from the answer for something smaller, so that it eventually reaches the base case you already have?",
+    "reveals_final_answer": false,
+    "rung": 3
+  },
+  "served_sha256": "d6a2e549e16d47081e5a51ef374ab775a078efecb17ac0a61e3c8bcb8ea4d01a"
+}

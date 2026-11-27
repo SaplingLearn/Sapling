@@ -11,6 +11,7 @@ import pytest
 
 import services.study as study
 from services.study import daily, goal
+from services.study import next as study_next
 from services.study.daily import Window
 
 UTC = timezone.utc
@@ -395,8 +396,24 @@ def test_set_daily_goal_lets_a_failed_write_fail():
 def test_package_exports_its_public_api():
     assert sorted(study.__all__) == [
         "DEFAULT_GOAL_MIN", "MAX_GOAL_MIN", "MIN_GOAL_MIN",
-        "get_daily", "read_daily_goal", "set_daily_goal",
+        "clamp_tz_offset", "get_daily", "get_next", "local_date", "read_daily_goal",
+        "set_daily_goal",
     ]
     assert study.get_daily is daily.get_daily
+    assert study.local_date is daily.local_date  # #866 K17: Study's review queue keeps this day
     assert study.set_daily_goal is goal.set_daily_goal
+    assert study.get_next is study_next.get_next  # W8.3: Focus / Quick Reviews
     assert Window.__module__ == "services.study.daily"
+
+
+def test_local_date_is_the_students_day_and_clamps_junk():
+    """#866 K17: one definition of the student's day, from JS getTimezoneOffset
+    (minutes BEHIND UTC): 02:00 UTC on Sep 27 is still Sep 26 in New York (300)
+    and already Sep 27 in Tokyo (-540); a junk offset is held to UTC-12."""
+    from datetime import date, datetime, timezone
+
+    at = datetime(2026, 9, 27, 2, 0, tzinfo=timezone.utc)
+    assert daily.local_date(at, 0) == date(2026, 9, 27)
+    assert daily.local_date(at, 300) == date(2026, 9, 26)
+    assert daily.local_date(at, -540) == date(2026, 9, 27)
+    assert daily.local_date(at, 100_000) == daily.local_date(at, daily.TZ_OFFSET_MIN_HIGHEST)

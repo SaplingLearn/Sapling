@@ -43,6 +43,9 @@
   --color-brand-forest-bright: var(--brand-forest-bright);
   --color-brand-forest-bright-hover: var(--brand-forest-bright-hover);
   --color-sidenav-bg: var(--sidenav-bg);
+  --color-sidenav-fg: var(--sidenav-fg);
+  --color-sidenav-wash: var(--sidenav-wash);
+  --color-sidenav-wash-strong: var(--sidenav-wash-strong);
   --color-sap-50: var(--sap-50);
   --color-sap-100: var(--sap-100);
   --color-sap-200: var(--sap-200);
@@ -110,7 +113,12 @@
   --color-grade-c: var(--grade-c);
   --color-grade-d: var(--grade-d);
   --color-grade-f: var(--grade-f);
-
+  --color-scrim: var(--scrim);
+  --color-focus-ring: var(--focus-ring);
+  --color-focus-halo: var(--focus-halo);
+  --color-tool-quiz: var(--tool-quiz);
+  --color-tool-quiz-soft: var(--tool-quiz-soft);
+  --color-series-compare: var(--series-compare);
   --color-moss-900: var(--moss-900);
   --color-moss-700: var(--moss-700);
   --color-moss-500: var(--moss-500);

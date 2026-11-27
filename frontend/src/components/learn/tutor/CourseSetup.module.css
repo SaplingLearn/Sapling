@@ -1,0 +1,288 @@
+@layer components {
+/* Course setup (CourseSetup.tsx), after the Claude Design board
+   (learn/__fixtures__/setup.design.html): the steps, the title, then one card
+   per part, the Confirm row last. */
+
+.page {
+  padding: var(--sp-16) var(--sp-11);
+}
+
+.col {
+  max-width: 840px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-14);
+}
+
+.back {
+  align-self: flex-start;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: var(--fs-md);
+  font-weight: 600;
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.steps {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-6);
+  font-size: var(--fs-base);
+  color: var(--text-dim);
+}
+
+.step,
+.stepOn {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+}
+
+.stepOn {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.rule {
+  flex: 1;
+  height: 1px;
+  background: var(--border-strong);
+}
+
+.dot,
+.dotOn,
+.dotDone {
+  width: 24px;
+  height: 24px;
+  border-radius: var(--r-full);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+}
+
+.dot {
+  border: 1px solid var(--border-strong);
+  font-weight: 400;
+}
+
+.dotDone {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.dotOn {
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+.title {
+  margin: 0;
+  font-size: var(--fs-4xl);
+  font-weight: 600;
+}
+
+.title:focus {
+  outline: none;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-6);
+  padding: var(--sp-12);
+  border-radius: var(--r-lg);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+}
+
+.h3 {
+  margin: 0;
+  font-size: var(--fs-2xl);
+  font-weight: 600;
+}
+
+.sub {
+  margin: 0;
+  font-size: var(--fs-base);
+  color: var(--text-dim);
+}
+
+.sub:empty {
+  display: none;
+}
+
+.error {
+  margin: 0;
+  font-size: var(--fs-base);
+  color: var(--err);
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-8);
+  flex-wrap: wrap;
+}
+
+.quiet {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: var(--fs-base);
+  font-weight: 600;
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.quiet:disabled {
+  color: var(--text-dim);
+  cursor: default;
+}
+
+.dates {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.dateRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 180px 80px;
+  align-items: center;
+  gap: var(--sp-8);
+  padding: var(--sp-5) 0;
+  border-top: 1px solid var(--border);
+}
+
+.dateName {
+  font-size: var(--fs-lg);
+  overflow-wrap: anywhere;
+}
+
+.input {
+  height: 38px;
+  min-width: 0;
+  padding: 0 var(--sp-6);
+  border-radius: var(--r-sm);
+  border: 1px solid var(--border-strong);
+  background: var(--bg-input);
+  font: inherit;
+  font-size: var(--fs-base);
+  color: var(--text);
+}
+
+.remove {
+  height: 38px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: var(--fs-base);
+  color: var(--text-dim);
+  text-align: right;
+  cursor: pointer;
+}
+
+.add {
+  align-self: flex-start;
+}
+
+.chips {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-4);
+}
+
+.chip,
+.chipOff {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-4);
+  min-height: 36px;
+  padding: 0 var(--sp-6);
+  border-radius: var(--r-full);
+  font-size: var(--fs-base);
+  cursor: pointer;
+}
+
+.chip {
+  border: 1px solid var(--accent-border);
+  background: var(--accent-soft);
+}
+
+.chipOff {
+  border: 1px solid var(--border-strong);
+  background: transparent;
+  color: var(--text-dim);
+}
+
+.chip input,
+.chipOff input {
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.foot {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-8);
+}
+
+.footLine {
+  flex: 1;
+  margin: 0;
+  font-size: var(--fs-base);
+  color: var(--text-dim);
+}
+
+.srOnly {
+  --sr-px: 1px;
+  position: absolute;
+  width: var(--sr-px);
+  height: var(--sr-px);
+  padding: 0;
+  margin: calc(-1 * var(--sr-px));
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (max-width: 640px) {
+  .page {
+    padding: var(--sp-12) var(--sp-8);
+  }
+
+  .dateRow {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  /* the name on its own line, then the date and Remove side by side */
+  .dateName,
+  .dateRow > .input:first-child {
+    grid-column: 1 / -1;
+  }
+
+  .remove {
+    padding: 0 var(--sp-2);
+  }
+
+  .foot {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
+
+}

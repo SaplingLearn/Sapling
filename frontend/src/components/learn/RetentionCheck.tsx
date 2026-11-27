@@ -1,0 +1,308 @@
+"use client";
+
+import { CtaLink } from "@/components/ui/HandoffLink";
+import React, { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { motion } from "framer-motion";
+import { useMotionPresets } from "@/lib/motion";
+import { useRetentionDue } from "@/context/RetentionDueContext";
+import { useFlag } from "@/context/FlagsContext";
+import { useStudyNavShown } from "@/components/useRetentionNav";
+import {
+  answerRetentionCheck, budgetPauseOf, markRetentionShown, startRetentionCheck, type EnrolledCourse,
+  type LoopBudgetPause, type RetentionItem,
+} from "@/lib/api";
+import { extractErrorDetail } from "@/lib/errorMessage";
+import { useFeedbackHold } from "@/lib/feedbackPacing";
+import { retentionEmptyHandoffCtas } from "@/lib/learningHandoffs";
+import styles from "./LoopLearn.module.css";
+import own from "./RetentionCheck.module.css";
+import { useCrisisSupport } from "../safety/CrisisSupportCard";
+import { RetentionPauseBanner, retentionErrorText } from "./retentionPause";
+import { OptionList } from "./OptionList";
+import { AnswerField, CHECKING, DONT_KNOW, QuestionActions, QuestionCard, REASON_LABEL, SUBMIT_ANSWER } from "./question/QuestionCard";
+
+/** Spec §13 A126: how often and how long the page was hidden while one item
+ *  was on screen. Telemetry for the outcome record — the server clamps it and
+ *  never grades with it. */
+interface Visibility { count: number; hiddenMs: number; hiddenSince: number | null }
+
+function visibilityNow(): Visibility {
+  const hidden = typeof document !== "undefined" && document.visibilityState === "hidden";
+  return { count: hidden ? 1 : 0, hiddenMs: 0, hiddenSince: hidden ? Date.now() : null };
+}
+
+function hiddenReport(v: Visibility): { hidden_count: number; hidden_s: number } {
+  const ongoing = v.hiddenSince !== null ? Date.now() - v.hiddenSince : 0;
+  return { hidden_count: v.count, hidden_s: (v.hiddenMs + ongoing) / 1000 };
+}
+
+/** Opening a post-test commits its pose. Only an explicit learner action may
+ * call it; eligibility and delayed/assisted credit remain entirely server-owned.
+ *
+ * `initialCourseId` is the deep link's course (`?retention-course=`). A link to
+ * a course that is not in `courses` falls back to the first course and SAYS so,
+ * until the student picks one: a silent switch would check the wrong course.
+ *
+ * Keyboard and screen reader (spec §13 A135, as DueQueue does it): an action
+ * whose control goes away moves focus to what it produced — Open to the first
+ * question's answer (or the line saying none is open), Check answer and "I don't
+ * know" to the result, Continue to the next question's answer (or the line
+ * saying the set is finished), a failure to its error. Every result and status
+ * line is written into a live region that is already on the page. */
+export function RetentionCheck({ userId, courses, initialCourseId = "" }: {
+  userId: string; courses: EnrolledCourse[]; initialCourseId?: string;
+}) {
+  const [selected, setSelected] = useState(initialCourseId);
+  const noteId = useId();
+  const { courseIds: dueCourseIds } = useRetentionDue();
+  const courseId = courses.some((course) => course.course_id === selected)
+    ? selected : courses[0]?.course_id ?? "";
+  // The link's course is not one of the student's: say which course shows instead.
+  const fellBack = !!initialCourseId && selected === initialCourseId && !!courseId && courseId !== selected;
+  const shown = courses.find((course) => course.course_id === courseId);
+  // review_v2 (the Review board): a check due for the course names it
+  const readyHere = useFlag("review_v2") === "on" && !!shown && dueCourseIds.includes(courseId);
+  return (
+    <section aria-label="Retention check" className={`card ${styles.retention} ${own.flush}`}>
+      <h2 className={own.title} data-testid="retention-title">
+        {readyHere ? `Retention check ready for ${shown.course_code || shown.course_name}` : "Retention check"}
+      </h2>
+      <p className={own.copy}>See what you remember after some time away. There are no hints here.</p>
+      <label>Course
+        {/* #866 Z29: the answer boxes' field style — Tailwind's preflight strips a select's border and fill */}
+        <select aria-label="Retention course" aria-describedby={fellBack ? noteId : undefined} data-testid="retention-course" value={courseId} onChange={(event) => setSelected(event.target.value)} className={`${styles.scopeText} ${own.select}`}>
+          {!courseId && <option value="">Add a course first</option>}
+          {courses.map((course) => <option key={course.course_id} value={course.course_id}>{course.course_name}</option>)}
+        </select>
+      </label>
+      {fellBack && (
+        <p id={noteId} data-testid="retention-course-fallback" className={own.copy}>
+          The course in your link isn&apos;t one of your courses, so this check is set to {shown?.course_name ?? "your first course"}. Pick another course above if you meant a different one.
+        </p>
+      )}
+      <RetentionSession key={`${userId}:${courseId}`} userId={userId} courseId={courseId} />
+    </section>
+  );
+}
+
+/** Where focus goes once the action in flight settles (see RetentionCheck). */
+type FocusTarget = "item" | "result";
+
+type Handoff = ReturnType<typeof retentionEmptyHandoffCtas>[number];
+
+/** The way on from an empty or finished set (a plain render call, so the
+ *  element tree is the one the inline JSX produced). */
+function renderHandoffs(links: readonly Handoff[], keyOf: (link: Handoff) => string, testIdOf: (link: Handoff) => string) {
+  if (links.length === 0) return null;
+  return (
+    <p className={own.handoffs}>
+      {links.map((link) => (
+        <CtaLink key={keyOf(link)} cta={link} testId={testIdOf(link)} variant="plain" className={own.handoffLink} />
+      ))}
+    </p>
+  );
+}
+
+/** An mc_reason answer needs its option and its reason; any other its text. */
+function retentionAnswered(item: RetentionItem, choice: string, reason: string, answer: string): boolean {
+  return item.format === "mc_reason" ? !!choice && !!reason.trim() : !!answer.trim();
+}
+
+function RetentionSession({ userId, courseId }: { userId: string; courseId: string }) {
+  // docs/safety/crisis-support.md: an answer the crisis screen answered
+  const crisis = useCrisisSupport();
+  const studyShown = useStudyNavShown();
+  const tutorShown = useFlag("hide_tutor") !== "on";
+  const emptyHandoffs = retentionEmptyHandoffCtas({
+    courseId: courseId || null,
+    visibility: { study: studyShown, tutor: tutorShown },
+  });
+  const [items, setItems] = useState<RetentionItem[] | null>(null);
+  const [index, setIndex] = useState(0);
+  const [answer, setAnswer] = useState("");
+  const [choice, setChoice] = useState("");
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  // #866 K13: a 429 "ai budget reached" — a pause until its reset, not an error
+  const [pause, setPause] = useState<LoopBudgetPause | null>(null);
+  const [result, setResult] = useState<boolean | null>(null);
+  // The last item could not be answered any more (a 404): it was skipped.
+  const [skipped, setSkipped] = useState(false);
+  const mounted = useRef(true);
+  const focusNext = useRef<FocusTarget | null>(null);
+  const itemRef = useRef<HTMLDivElement>(null);
+  const resultRef = useRef<HTMLParagraphElement>(null);
+  const statusRef = useRef<HTMLDivElement>(null);
+  const errorRef = useRef<HTMLParagraphElement>(null);
+  const pauseRef = useRef<HTMLDivElement>(null);
+  const request = useRef(0);
+  const visibility = useRef<Visibility>({ count: 0, hiddenMs: 0, hiddenSince: null });
+  const { refresh: refreshDue } = useRetentionDue();
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
+  const resetDraft = () => { setAnswer(""); setChoice(""); setReason(""); setResult(null); };
+  // spec §13 A135: apply `focusNext` once nothing is in flight and its target
+  // is on screen. A failure focuses its error; a dialog (the crisis card) keeps focus.
+  useLayoutEffect(() => {
+    const want = focusNext.current;
+    if (!want || busy) return;
+    if (document.querySelector('[aria-modal="true"]')) { focusNext.current = null; return; }
+    const target = errorRef.current ?? pauseRef.current ?? (want === "result" ? resultRef.current
+      : itemRef.current?.querySelector<HTMLElement>("[data-answer-start], textarea, input") ?? statusRef.current);
+    if (!target) return;
+    focusNext.current = null;
+    target.focus();
+  });
+  /** Move to the next question (Continue, or a skip). */
+  const advance = () => { focusNext.current = "item"; setIndex((current) => current + 1); resetDraft(); };
+  const open = async () => {
+    if (!courseId || !userId || busy) return;
+    const mine = ++request.current;
+    focusNext.current = "item";
+    setBusy(true); setError(null); setSkipped(false);
+    try {
+      const response = await startRetentionCheck(userId, courseId);
+      if (!mounted.current || mine !== request.current) return;
+      setItems(response.items); setIndex(0); resetDraft(); setPause(null);
+      refreshDue(); // opening changed what is due (A126)
+    } catch (err) {
+      if (!mounted.current || mine !== request.current) return;
+      const paused = budgetPauseOf(err);
+      if (paused) setPause(paused);
+      else setError(retentionErrorText(err, "Couldn't open retention checks. Try again.", "Couldn't open retention checks right now. Try again in a moment."));
+    } finally {
+      if (mounted.current && mine === request.current) setBusy(false);
+    }
+  };
+  const item = items?.[index];
+  // No feedback survey during an opened retention check (lib/feedbackPacing.ts).
+  useFeedbackHold(!!item);
+  // A126: the item is on screen — the server stamps its first display (the
+  // answer's latency runs from it), and the page's hidden periods are counted
+  // from now until the answer. A failed stamp only leaves the latency unknown.
+  const nodeId = item?.node_id;
+  const questionHash = item?.question_hash;
+  useEffect(() => {
+    if (!nodeId || !questionHash) return;
+    visibility.current = visibilityNow();
+    // The server keeps the FIRST display (a conditional UPDATE on served_at IS NULL).
+    void (async () => {
+      try { await markRetentionShown({ user_id: userId, node_id: nodeId, question_hash: questionHash }); } catch { /* telemetry only */ }
+    })();
+    const onVisibility = () => {
+      const v = visibility.current;
+      if (document.visibilityState === "hidden") {
+        if (v.hiddenSince === null) { v.count += 1; v.hiddenSince = Date.now(); }
+      } else if (v.hiddenSince !== null) {
+        v.hiddenMs += Date.now() - v.hiddenSince;
+        v.hiddenSince = null;
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
+  }, [nodeId, questionHash, userId]);
+  const submit = async (idk: boolean) => {
+    if (!item || busy || result !== null) return;
+    const mine = request.current;
+    focusNext.current = "result";
+    setBusy(true); setError(null); setSkipped(false);
+    try {
+      const response = await answerRetentionCheck({ user_id: userId, node_id: item.node_id, question_hash: item.question_hash, idk,
+        ...(idk ? {} : item.format === "mc_reason" ? { selected_option: choice, reason } : { answer }),
+        ...hiddenReport(visibility.current) });
+      if (!mounted.current || mine !== request.current) return;
+      if (crisis.intercept(response)) { setAnswer(""); setReason(""); return; } // nothing graded; still open
+      if ("correct" in response) { setResult(response.correct); setPause(null); refreshDue(); }
+      else setError("Answer in your own words. Nothing was recorded; you can try again.");
+    } catch (err) {
+      if (!mounted.current || mine !== request.current) return;
+      const { status } = extractErrorDetail(err);
+      if (status === 404) {
+        // withdrawn since the set opened: every resend would 404 too — move on
+        advance(); setSkipped(true); refreshDue();
+      } else if (status === 409) {
+        setItems(null);
+        setError("This question has closed. Open the check again to continue.");
+      } else if (budgetPauseOf(err)) setPause(budgetPauseOf(err)); // the typed answer stays
+      else setError(retentionErrorText(err, "Couldn't check your answer. Your work is still here; try again.",
+        "Couldn't check your answer right now, so nothing was recorded. Your work is still here; try again later."));
+    } finally {
+      if (mounted.current && mine === request.current) setBusy(false);
+    }
+  };
+  const canSubmit = !!item && !busy && retentionAnswered(item, choice, reason, answer);
+  const submitIfReady = () => { if (canSubmit) void submit(false); };
+  const m = useMotionPresets();
+  return <>
+    {crisis.dialog}
+    {/* A block, not a flex item: the button keeps its own width (the card's
+        column stretched it into something that read as a text field), and the
+        live region below it takes no gap while it is empty. */}
+    <div>
+      <button type="button" data-testid="retention-open" className={`${item ? "btn btn--sm" : "btn btn--sm btn--primary"} ${own.press}`} disabled={!courseId || busy} onClick={() => void open()}>{busy ? "Checking…" : "Open eligible retention checks"}</button>
+      {/* Always in the DOM, so each status line is announced when it appears. */}
+      <div aria-live="polite">
+        {skipped && <p data-testid="retention-skipped" className={own.statusLine}>That question is no longer available, so it was skipped.</p>}
+        {items?.length === 0 && (
+          <div ref={statusRef} tabIndex={-1} data-testid="retention-empty" className={own.statusLine}>
+            <p className={own.bare}>Nothing is ready yet. Retention checks open a few days after you first study a concept.</p>
+            {renderHandoffs(emptyHandoffs, (link) => link.testId, (link) => link.testId)}
+          </div>
+        )}
+        {items && items.length > 0 && !item && (
+          <div ref={statusRef} tabIndex={-1} data-testid="retention-finished" className={own.statusLine}>
+            <p className={own.bare}>That&apos;s the set. More open as time passes.</p>
+            {renderHandoffs(emptyHandoffs, (link) => `fin-${link.testId}`, (link) => `retention-finished-${link.key}-link`)}
+          </div>
+        )}
+      </div>
+    </div>
+    {error && <p ref={errorRef} tabIndex={-1} role="alert" className={own.copy}>{error}</p>}
+    <RetentionPauseBanner pause={pause} focusRef={pauseRef} />
+    {/* Keyed on the question: the next one rises in as a new card. */}
+    {/* Keyed on the question: the next one rises in as a new card. The
+        question is the shared card (learn/question), bare in this panel. */}
+    {item && <motion.div key={`${index}:${item.question_hash}`} {...m.fadeUp} ref={itemRef} data-testid="retention-item" className={own.item}>
+      <QuestionCard
+        bare
+        graded
+        animateIn={false}
+        meta={`Question ${index + 1} of ${items?.length}`}
+        prompt={item.prompt}
+        afterPrompt={
+          // Present while the question is, so the result is announced when it is written.
+          <div aria-live="polite">
+            {/* The verdict lands with a pulse (right) or a shake (wrong). */}
+            {result !== null && <motion.p {...m.pulse(result ? "correct" : "wrong")} ref={resultRef} tabIndex={-1} data-testid="retention-result" className={own.result}>{result ? "Right. You remembered this one." : "Not quite. It's worth a review before it comes back."}</motion.p>}
+          </div>
+        }
+      >
+        {({ promptId }) => result === null ? <>
+          {item.format === "mc_reason" ? <>
+            <OptionList
+              options={item.options ?? []}
+              selected={choice}
+              onSelect={setChoice}
+              testIdPrefix="retention-option"
+              labelledBy={promptId}
+              disabled={busy}
+            />
+            <AnswerField label={REASON_LABEL} name="reason" testId="retention-reason" singleLine describedByPrompt={false}
+              placeholder="Because…" value={reason} disabled={busy} onChange={setReason} onSubmit={submitIfReady} />
+          </> : (
+            <AnswerField label="Your answer" name="answer" testId="retention-answer" start rows={3}
+              value={answer} disabled={busy} onChange={setAnswer} onSubmit={submitIfReady} />
+          )}
+          <QuestionActions
+            size="sm"
+            submit={{ label: SUBMIT_ANSWER, busyLabel: CHECKING, busy, disabled: !canSubmit, onClick: submitIfReady, testId: "retention-submit" }}
+            optOut={{ label: DONT_KNOW, disabled: busy, onClick: () => void submit(true), testId: "retention-idk" }}
+          />
+        </> : <button data-testid="retention-next" type="button" className={`btn btn--sm ${own.next} ${own.press}`} onClick={() => { setSkipped(false); advance(); }}>Continue</button>}
+      </QuestionCard>
+    </motion.div>}
+  </>;
+}

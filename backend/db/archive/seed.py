@@ -11,7 +11,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from config import get_mastery_tier
+from learning.bkt import tier_for  # PKG-14b
 from db.connection import table
 
 
@@ -56,7 +56,7 @@ def seed_graph(user_id: str, nodes_data: list, edges_data: list):
             "user_id": user_id,
             "concept_name": n["concept_name"],
             "mastery_score": n["mastery_score"],
-            "mastery_tier": get_mastery_tier(n["mastery_score"]),
+            "mastery_tier": tier_for(n["mastery_score"]),
             "subject": n["subject"],
         })
     if node_rows:

@@ -33,6 +33,12 @@
  *    percentage points.
  */
 
+import { LEVEL_WORDS, carriesSkill, type SkillLevel } from "@/lib/levels";
+import { handoffPracticeDueHref } from "@/lib/learningHandoffs";
+
+/** One day, in ms. */
+const DAY_MS = 86_400_000;
+
 export type Status = "mastered" | "progress" | "review" | "new";
 export type AssessType = "Exam" | "Quiz" | "Homework";
 
@@ -51,6 +57,8 @@ export interface Concept {
   gap: string;
   /** Mastery change over the last 7 days, 0..1 units. */
   weekDelta: number;
+  /** From a skill graph (the loop on): its status words are the ladder's. */
+  ladder?: boolean;
 }
 
 export interface Assessment {
@@ -69,6 +77,9 @@ export const ST_LABEL: Record<Status, string> = {
   review: "Struggling",
   new: "Not Started",
 };
+const ST_LEVEL: Record<Status, SkillLevel> = { mastered: "profic", progress: "develop", review: "novice", new: "not_started" };
+/** A status's word: the ladder's on a skill graph (`lib/levels.ts`), else ST_LABEL. */
+export const stLabel = (st: Status, ladder = false): string => (ladder ? LEVEL_WORDS[ST_LEVEL[st]] : ST_LABEL[st]);
 /** Status fill colors (squares, rings, bars). */
 export const TC: Record<Status, string> = {
   // The app's mastery-state tokens (globals.css), the same four the
@@ -246,7 +257,7 @@ export function conceptsForCourse(
   const own = nodes.filter(n => n && n.course_id === courseId && !n.is_subject_root && n.mastery_tier !== "subject_root");
   const { pre, post } = prereqLinks(edges, new Set(own.map(n => String(n.id))));
   const depth = depthFinder(pre);
-  const weekAgo = now.getTime() - 7 * 86400000;
+  const weekAgo = now.getTime() - 7 * DAY_MS;
   const base = own.map((n): Concept => {
     const id = String(n.id);
     const st: Status = TIER[n.mastery_tier] ?? "new";
@@ -262,6 +273,7 @@ export function conceptsForCourse(
       group: "",
       gap: "",
       weekDelta: weekDeltaOf(n, weekAgo),
+      ...(carriesSkill(n) ? { ladder: true } : {}),
     };
   });
   const byId = new Map(base.map(c => [c.id, c]));
@@ -302,7 +314,7 @@ export const parseIso = (iso: string) => {
 };
 export const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
 export const daysTo = (iso: string, today: Date) =>
-  Math.round((parseIso(iso).getTime() - startOfDay(today).getTime()) / 86400000);
+  Math.round((parseIso(iso).getTime() - startOfDay(today).getTime()) / DAY_MS);
 const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 /** "Fri, Nov 13" */
@@ -316,7 +328,7 @@ export const fmtDow = (iso: string, today?: Date) => {
 export function fmtWhen(ts: string, today: Date): string {
   const t = new Date(ts);
   if (Number.isNaN(t.getTime())) return "";
-  const diff = Math.round((startOfDay(today).getTime() - startOfDay(t).getTime()) / 86400000);
+  const diff = Math.round((startOfDay(today).getTime() - startOfDay(t).getTime()) / DAY_MS);
   if (diff === 0) return "Today";
   if (diff === 1) return "Yesterday";
   return `${MON[t.getMonth()]} ${t.getDate()}`;
@@ -449,13 +461,77 @@ export function quickReviews(topics: Concept[], today: Date) {
     .map(t => {
       const last = t.lastStudied ? Date.parse(t.lastStudied) : NaN;
       const ago = Number.isFinite(last)
-        ? Math.max(0, Math.floor((startOfDay(today).getTime() - startOfDay(new Date(last)).getTime()) / 86400000))
+        ? Math.max(0, Math.floor((startOfDay(today).getTime() - startOfDay(new Date(last)).getTime()) / DAY_MS))
         : 0;
       return { t, ago, score: ago * 3 + (100 - t.m) };
     })
     .filter(x => x.ago >= 7 || x.t.st === "review" || x.t.m < 70)
     .sort((a, b) => b.score - a.score)
     .slice(0, 5);
+}
+
+/**
+ * W8.3: Quick Reviews from the learner-next `due[]` (FSRS-due), in that
+ * order. Concepts missing from the hub's graph (other courses, deleted) are
+ * skipped. No length cap — the server is already the shared source of truth.
+ */
+export function dueReviewsFromNext(
+  topics: Concept[],
+  dueIds: readonly string[],
+  today: Date,
+): { t: Concept; ago: number }[] {
+  const byId = new Map(topics.map(t => [t.id, t]));
+  const out: { t: Concept; ago: number }[] = [];
+  for (const id of dueIds) {
+    const t = byId.get(id);
+    if (!t) continue;
+    const last = t.lastStudied ? Date.parse(t.lastStudied) : NaN;
+    const ago = Number.isFinite(last)
+      ? Math.max(0, Math.floor((startOfDay(today).getTime() - startOfDay(new Date(last)).getTime()) / DAY_MS))
+      : 0;
+    out.push({ t, ago });
+  }
+  return out;
+}
+
+/**
+ * W8.3b / W3.3c: Quiz Practice deep link for Due Reviews (and wrap-up).
+ * Same learner-next `due[]` the rail lists, as a multi-concept `scope=due`
+ * queue when the session supports it (`queueStartRequest`). Null when the
+ * bucket is empty unless `courseStartIfEmpty` — then course+start (wrap-up
+ * when due ids are unknown). Flashcards stay the primary Hub CTA.
+ */
+export function dueReviewsQuizHref(
+  courseId: string,
+  dueConceptIds: readonly string[],
+  opts: { courseStartIfEmpty?: boolean } = {},
+): string | null {
+  if (dueConceptIds.some((id) => id.trim())) {
+    return handoffPracticeDueHref(courseId, dueConceptIds);
+  }
+  if (opts.courseStartIfEmpty) {
+    return handoffPracticeDueHref(courseId, []);
+  }
+  return null;
+}
+
+/**
+ * W8.3: Up Next queue from learner-next order (due → misconceptions → ready).
+ * Same exam-scope fallback as `examQueue`: once the scoped set is empty the
+ * course-wide order is used again.
+ */
+export function examQueueFromNext(
+  topics: Concept[],
+  scope: ExamScope | null,
+  orderedIds: readonly string[],
+): { queue: Concept[]; fallback: boolean } {
+  const byId = new Map(topics.map(t => [t.id, t]));
+  const course = orderedIds.map(id => byId.get(id)).filter((t): t is Concept => !!t);
+  // Nothing from the learner model in this course: keep the graph-tier queue
+  // so Focus does not go empty while the roadmap still has work.
+  if (course.length === 0) return examQueue(topics, scope);
+  const own = scope ? course.filter(t => scope.ids.has(t.id)) : course;
+  return own.length ? { queue: own, fallback: false } : { queue: course, fallback: !!scope };
 }
 
 export const ring = (m: number, r: number) => {

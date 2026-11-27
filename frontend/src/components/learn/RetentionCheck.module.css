@@ -1,0 +1,76 @@
+@layer components {
+/* The retention check (RetentionCheck): the styles its inline style objects
+   held (#866). The card's own layout stays in LoopLearn.module.css. */
+
+/* On Study the card sits flush in its column. Doubled class: outranks
+   LoopLearn's .retention margin whichever stylesheet loads last. */
+.flush.flush {
+  margin: 0;
+}
+
+/* 17px, between --fs-lg and --fs-xl: rounded up a px to --fs-xl, the size
+   the app's other card titles use. */
+.title {
+  margin: 0;
+  font-size: var(--fs-xl);
+}
+
+.copy {
+  margin: 0;
+  font-size: var(--fs-md);
+}
+
+.bare {
+  margin: 0;
+}
+
+.select {
+  display: block;
+  min-width: 0;
+  margin-top: var(--sp-2);
+}
+
+.statusLine {
+  margin: var(--sp-5) 0 0;
+  font-size: var(--fs-md);
+}
+
+.handoffs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-5);
+  margin: var(--sp-4) 0 0;
+}
+
+.handoffLink {
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  min-width: 0;
+}
+
+.result {
+  margin: var(--sp-4) 0 0;
+}
+
+.next {
+  align-self: flex-start;
+}
+
+/* A press sinks the button a touch (the global .btn transition carries it). */
+.press {
+  --press-scale: 0.98;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .press:active:not(:disabled) {
+    transform: scale(var(--press-scale));
+  }
+}
+
+}

@@ -4,7 +4,7 @@ no model call, so the modal can redraw it on every change.
 """
 from __future__ import annotations
 
-from config import get_mastery_tier
+from learning.bkt import tier_for_stored
 from models.study_guide import Depth, GuidePlan, GuideRequest, PlanSection, Tier
 from services.study_guides.materials import aload_concepts
 from services.study_guides.scopes import aresolve_offering
@@ -60,7 +60,7 @@ def _weakest(names: list[str], known: dict[str, float], limit: int) -> list[str]
 
 
 def _tier(score: float | None) -> Tier:
-    return "unexplored" if score is None else get_mastery_tier(score)
+    return "unexplored" if score is None else tier_for_stored(score)
 
 
 def plan_sections(

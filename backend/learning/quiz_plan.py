@@ -1,0 +1,340 @@
+"""The quiz's choices, made by the learner model in code (spec §13 A143,
+A144, A147).
+
+Pure: imports only learning.bkt, learning.learner_next, learning.planner and
+learning.params (all pure), so it is listed in
+tests/test_learning_loop_invariants.py::PURE_MODULES. The service
+(services/quiz_learning.py) reads the student's state and hands it in; the
+quiz route acts on the answers. Shared Hub / Dashboard buckets live in
+learning.learner_next (W8.6); this module caps them for the quiz home.
+
+Three choices live here, each behind its own flag:
+
+- **Which concepts the quiz proposes** (A143, flag `quiz_concept_plan`):
+  `rank_concepts` orders via `learner_next` — due reviews first (FSRS due
+  date passed; the DASH overdue triage of `fsrs.order_due`), then concepts
+  with an open misconception, then the outer fringe (`planner.outer_fringe`:
+  below proficiency, every prerequisite proficient), in the planner's own
+  order. A concept whose prerequisites are not proficient is not proposed
+  (its weakest prerequisite is, in the fringe), and a proficient concept
+  that is not due is left until it is. The response bound
+  (QUIZ_PLAN_MAX_CONCEPTS) applies per course, so a plan over every course
+  never drops one course's concepts because the others filled the list.
+- **What each question asks for** (A144, flag `quiz_planned_questions`):
+  `question_specs` gives every question its difficulty and at most one
+  misconception to target. An explicit difficulty the student asked for is
+  theirs; "adaptive" is the band's loop check difficulty (`difficulty_for`).
+  The targets are the student's open misconceptions on the concept first,
+  then the concept's vetted bank keys, each targeted at most once per quiz.
+  The writing model is told exactly this and chooses nothing else.
+- **What the results say next** (A147, flag `quiz_results_routing`):
+  `skill_changes` lists what moved, in plain words; `next_step` routes the
+  student to the review queue when something is due, else to the weakest
+  concept they are ready to learn.
+- **Which concept to pose when a pick is blocked** (W7.6, flag
+  `quiz_concept_plan`): `prefer_pose` uses the same fringe readiness cut
+  (`prerequisite_ready` / BKT_PROFICIENT) — not a second planner.
+"""
+
+from __future__ import annotations
+
+import math
+import re
+from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass
+from datetime import datetime
+
+from learning import bkt, planner
+from learning.learner_next import (  # noqa: F401 — ConceptState/DUE/… re-exported
+    ConceptState,
+    DUE,
+    MISCONCEPTION,
+    READY,
+    REASONS,
+    learner_next,
+)
+from learning.learner_next import NextConcept as PlannedConcept
+from learning.learner_next import is_due as _due
+from learning.params import (
+    BKT_L0,
+    BKT_PROFICIENT,
+    LOOP_CHECK_DIFFICULTY_BY_BAND,
+    MISCONCEPTION_KEY_MAX_CHARS,
+    QUIZ_DIFFICULTY_NAMES,
+    QUIZ_MISCONCEPTION_KEYS_MAX,
+    QUIZ_PLAN_MAX_CONCEPTS,
+    QUIZ_RESULTS_MIN_CHANGE,
+)
+
+#: A misconception key as the store keeps one (learning/misconceptions.py
+#: KEY_PATTERN, restated because that module does IO; pinned equal by test).
+_KEY = re.compile(rf"[a-z0-9][a-z0-9_]{{0,{MISCONCEPTION_KEY_MAX_CHARS - 1}}}")
+
+#: The request's "let the learner model choose" difficulty (services/
+#: quiz_config.py REQUESTED_DIFFICULTIES' fourth value).
+ADAPTIVE = "adaptive"
+
+#: Where a planned question's difficulty came from (stored with it).
+FROM_REQUEST = "requested"
+FROM_LEARNER_MODEL = "learner_model"
+
+#: The formats whose items have distractors a misconception can be tagged on.
+_TAGGABLE_FORMATS = ("multiple_choice", "mixed")
+
+
+def is_key(key: object) -> bool:
+    """An identifier-shaped misconception key (snake_case, bounded)."""
+    return isinstance(key, str) and _KEY.fullmatch(key) is not None
+
+
+def key_words(key: str) -> str:
+    """A key read as words, for a key no vetted text describes."""
+    return key.replace("_", " ")
+
+
+# ── A144: what each question asks for ──────────────────────────────────────
+
+
+def difficulty_for(p_known: float) -> str:
+    """The quiz difficulty of the band's loop check level
+    (LOOP_CHECK_DIFFICULTY_BY_BAND: novice 1, develop 2, profic 3)."""
+    return QUIZ_DIFFICULTY_NAMES[LOOP_CHECK_DIFFICULTY_BY_BAND[bkt.band(p_known)] - 1]
+
+
+@dataclass(frozen=True)
+class MisconceptionKey:
+    """One misconception a planned quiz may target or tag a distractor with."""
+
+    key: str
+    text: str  # what the misconception says, for the writing model
+    held: bool  # the student holds it: an open misconception on the concept
+
+
+def misconception_keys(
+    open_keys: Iterable[tuple[str, int]], bank: Iterable[tuple[str, str]]
+) -> list[MisconceptionKey]:
+    """The keys a planned quiz names, in target order: the student's open
+    misconceptions on the concept (most often recorded first, then by key),
+    then the concept's vetted bank keys (`check_items.common_wrong`, in the
+    bank's order). Identifier-shaped keys only, each once, at most
+    QUIZ_MISCONCEPTION_KEYS_MAX. An open key keeps the bank's text when the
+    bank has one, else its own words."""
+    texts: dict[str, str] = {}
+    for key, text in bank:
+        if is_key(key) and key not in texts and str(text or "").strip():
+            texts[key] = " ".join(str(text).split())
+    out: list[MisconceptionKey] = []
+    seen: set[str] = set()
+    for key, _count in sorted(
+        ((k, c) for k, c in open_keys if is_key(k)), key=lambda kc: (-int(kc[1] or 0), kc[0])
+    ):
+        if key not in seen:
+            seen.add(key)
+            out.append(MisconceptionKey(key, texts.get(key) or key_words(key), True))
+    for key, text in texts.items():
+        if key not in seen:
+            seen.add(key)
+            out.append(MisconceptionKey(key, text, False))
+    return out[:QUIZ_MISCONCEPTION_KEYS_MAX]
+
+
+@dataclass(frozen=True)
+class QuestionSpec:
+    """What one planned question must be: its 1-based slot, its difficulty
+    and the misconception (a key of `misconception_keys`) one of its
+    distractors must embody, or None."""
+
+    slot: int
+    difficulty: str
+    target: str | None = None
+
+
+def difficulty_source(requested: str) -> str:
+    """FROM_REQUEST when the student named a difficulty, else FROM_LEARNER_MODEL."""
+    return FROM_LEARNER_MODEL if requested == ADAPTIVE else FROM_REQUEST
+
+
+def question_specs(
+    count: int,
+    *,
+    requested: str,
+    p_known: float,
+    keys: Sequence[MisconceptionKey],
+    question_format: str,
+) -> list[QuestionSpec]:
+    """One spec per question. The difficulty is the requested one when the
+    student named it, else `difficulty_for(p_known)` for every question.
+    Targets go to slots in order, each key once (the held keys come first in
+    `keys`); a format with no distractors (a written format) targets none."""
+    if count < 1:
+        return []
+    if requested == ADAPTIVE:
+        difficulty = difficulty_for(p_known)
+    elif requested in QUIZ_DIFFICULTY_NAMES:
+        difficulty = requested
+    else:
+        raise ValueError(f"unknown quiz difficulty {requested!r}")
+    targets = [k.key for k in keys] if question_format in _TAGGABLE_FORMATS else []
+    return [
+        QuestionSpec(slot, difficulty, targets[slot - 1] if slot <= len(targets) else None)
+        for slot in range(1, count + 1)
+    ]
+
+
+# ── A143: which concepts the quiz proposes ─────────────────────────────────
+# ConceptState / DUE / MISCONCEPTION / READY / PlannedConcept (= NextConcept)
+# and the uncapped buckets come from learning.learner_next (W8.6).
+
+
+def rank_concepts(
+    states: Sequence[ConceptState],
+    prereq_edges: Iterable[tuple[str, str]],
+    now: datetime,
+) -> list[PlannedConcept]:
+    """The concepts the quiz proposes, in order (see the module docstring).
+    `prereq_edges` are (prerequisite, dependent) pairs among the states'
+    nodes. At most QUIZ_PLAN_MAX_CONCEPTS per course (`ConceptState.course_id`;
+    states without one share one bucket), each course's own first ones."""
+    nxt = learner_next(states, prereq_edges, now)
+    by_id = {s.node_id: s for s in states}
+    by_next = {c.node_id: c for c in nxt.ordered}
+    order = [(c.node_id, c.reason) for c in nxt.ordered]
+    return [by_next[node] for node, _reason in _capped_per_course(order, by_id)]
+
+
+def _capped_per_course(
+    order: list[tuple[str, str]], by_id: Mapping[str, ConceptState]
+) -> list[tuple[str, str]]:
+    """`order` with at most QUIZ_PLAN_MAX_CONCEPTS of each course, in order."""
+    kept: dict[str | None, int] = {}
+    out = []
+    for node, reason in order:
+        course = by_id[node].course_id
+        if kept.get(course, 0) < QUIZ_PLAN_MAX_CONCEPTS:
+            kept[course] = kept.get(course, 0) + 1
+            out.append((node, reason))
+    return out
+
+
+# ── A147: what the results say ─────────────────────────────────────────────
+
+@dataclass(frozen=True)
+class SkillChange:
+    node_id: str
+    before: float
+    after: float
+    band_before: str
+    band_after: str
+
+
+#: The decimals a skill-meter value goes out with (services/quiz_learning.py
+#: results_block), which the results screen shows in whole percent.
+RESULTS_DECIMALS = 4
+
+
+def shown_percent(p: float) -> int:
+    """`p` as the results screen shows it: the value the response carries
+    (RESULTS_DECIMALS), in whole percent, half up — the client's Math.round
+    (frontend LearningBlock.tsx `pct`), on the same double."""
+    value = round(p, RESULTS_DECIMALS) * 100
+    whole = math.floor(value)
+    return int(whole) + (1 if value - whole >= 0.5 else 0)
+
+
+def skill_changes(
+    before: Mapping[str, float], after: Mapping[str, float], order: Sequence[str]
+) -> list[SkillChange]:
+    """Every node in `order` whose decayed p_known moved by at least
+    QUIZ_RESULTS_MIN_CHANGE between the two reads AND reads as moved in whole
+    percent (#866 K42: a change of half a point or more can still round to the
+    same percent, and "rose from 45% to 45%" says nothing moved), in `order`'s
+    order (the quizzed concept first). A node read on one side only is not
+    listed."""
+    out = []
+    for node in order:
+        if node not in before or node not in after:
+            continue
+        if abs(after[node] - before[node]) < QUIZ_RESULTS_MIN_CHANGE:
+            continue
+        if shown_percent(after[node]) == shown_percent(before[node]):
+            continue
+        out.append(
+            SkillChange(node, before[node], after[node], bkt.band(before[node]), bkt.band(after[node]))
+        )
+    return out
+
+
+#: The next steps the results can offer.
+NEXT_REVIEW = "review"
+NEXT_LEARN = "learn"
+NEXT_NONE = "none"
+
+
+@dataclass(frozen=True)
+class NextStep:
+    kind: str  # NEXT_REVIEW / NEXT_LEARN / NEXT_NONE
+    due_count: int  # concepts of the course due for review now
+    learn_node_id: str | None  # the weakest concept the student is ready to learn
+
+
+def weakest_ready(
+    p_known: Mapping[str, float], prereq_edges: Iterable[tuple[str, str]]
+) -> str | None:
+    """The concept with the lowest p_known among the ready ones below
+    proficiency (`planner.outer_fringe`'s set), ties in its order; None."""
+    fringe = planner.outer_fringe(dict(p_known), prereq_edges)
+    if not fringe:
+        return None
+    return min(fringe, key=lambda n: p_known[n])
+
+
+def prefer_pose(
+    node_id: str,
+    p_known: Mapping[str, float],
+    prereq_edges: Iterable[tuple[str, str]],
+) -> str | None:
+    """W7.6: when `node_id` is not prerequisite-ready, the parent the quiz
+    should pose instead — the weakest direct parent below BKT_PROFICIENT
+    (ties by node id).
+
+    Same fringe story as the home plan: `outer_fringe` / `rank_concepts` never
+    propose a blocked dependent (its weak parent sits on the fringe instead).
+    This is that preference at generate time for a deep-linked or picked
+    concept the plan would not have offered. Empty edges → None (every node
+    is vacuously ready; upload graphs without `upload_prereq_edges` stay
+    inert). A ready concept → None."""
+    states = {n: float(p) for n, p in p_known.items()}
+    if node_id not in states:
+        states[node_id] = BKT_L0
+    edges = [(s, t) for s, t in prereq_edges if s != t]
+    if node_id in planner.prerequisite_ready(states, edges):
+        return None
+    parent_p: dict[str, float] = {}
+    for src, tgt in edges:
+        if tgt != node_id or src not in states:
+            continue
+        prev = parent_p.get(src)
+        if prev is None or states[src] < prev:
+            parent_p[src] = states[src]
+    weak = [n for n, p in parent_p.items() if p < BKT_PROFICIENT]
+    if not weak:
+        return None
+    return min(weak, key=lambda n: (parent_p[n], n))
+
+
+def next_step(
+    states: Sequence[ConceptState], prereq_edges: Iterable[tuple[str, str]], now: datetime
+) -> NextStep:
+    """Review what is due when anything in the course is (spaced retrieval
+    first, as the loop's plan puts due reviews first); else practise the
+    weakest concept the student is ready for in Learn; else nothing. The
+    learn target is always named when there is one, so a client without the
+    review queue (the learning loop switched off) can offer it instead."""
+    due = sum(1 for s in states if _due(s, now))
+    learn = weakest_ready({s.node_id: s.p_plan for s in states}, prereq_edges)
+    if due:
+        return NextStep(NEXT_REVIEW, due, learn)
+    if learn is not None:
+        return NextStep(NEXT_LEARN, 0, learn)
+    return NextStep(NEXT_NONE, 0, None)
+

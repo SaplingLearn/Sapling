@@ -1,0 +1,20 @@
+{
+  "attempts": [
+    "{\"key_idea\": \"Test the belief that the numbers run out by tracing what a recursive call does with a number like 2 when nothing tells it to stop.\", \"body\": \"Take a version of factorial(n) that only says 'return n * factorial(n-1)', with no special case for 0. Your belief predicts that the calls end once the numbers run out, so you can check it by following the calls one at a time. Start at factorial(2) and write down which call comes next, then the next one after that, for at least five calls.\", \"question\": \"Where in your list of calls does anything actually stop, and does it match your idea that the numbers run out?\"}",
+    "{\"key_idea\": \"Test the belief that the numbers run out by following what each call does when nothing tells it to stop.\", \"body\": \"Take a version of factorial(n) that only says 'return n * factorial(n-1)', with no special case for 0. Start at factorial(2) and write down which call comes next, then the next, for at least five calls.\", \"question\": \"Where in your list of calls does anything actually stop, and does that match your idea that the numbers run out?\"}"
+  ],
+  "input_sha256": "bf364d85a82c7cae594d1e360ec9924607e87ed2a3b8f2776603b485991feeeb",
+  "model": "claude-sonnet-5-5",
+  "output": {
+    "body": "Take a version of factorial(n) that only says 'return n * factorial(n-1)', with no special case for 0. Start at factorial(2) and write down which call comes next, then the next, for at least five calls.",
+    "key_idea": "Test the belief that the numbers run out by following what each call does when nothing tells it to stop.",
+    "question": "Where in your list of calls does anything actually stop, and does that match your idea that the numbers run out?"
+  },
+  "prompt_hash": "575193db5424",
+  "requests": 2,
+  "rescued": false,
+  "retries": 1,
+  "schema_hash": "ee2a0f1f177f",
+  "slot": "loop_tutor_deep",
+  "tool_calls": []
+}

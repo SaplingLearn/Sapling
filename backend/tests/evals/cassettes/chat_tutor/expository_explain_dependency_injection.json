@@ -1,11 +1,27 @@
 {
-  "text": "Your course materials don't cover dependency injection, so I'll explain it in general terms.\n\n## Overview\n**Dependency injection (DI)** means a piece of code receives the things it depends on from the outside. It doesn't create them itself. A \"dependency\" is any object the code needs, such as a database connection, an API client, or a clock.\n\n## Explanation\nWithout DI, a class builds its own dependencies:\n\n```python\nclass OrderService:\n    def __init__(self):\n        self.db = PostgresDatabase()   # hard-wired\n```\n\nThis causes three problems:\n- **Tight coupling:** `OrderService` is stuck with Postgres.\n- **Hard to test:** you can't swap in a fake database.\n- **Hidden requirements:** nothing in the signature tells you what the class needs.\n\nWith DI, the dependency is passed in:\n\n```python\nclass OrderService:\n    def __init__(self, db):\n        self.db = db                   # injected\n```\n\nThe three common forms are:\n1. **Constructor injection:** pass dependencies to `__init__`. This is the most common form.\n2. **Setter injection:** assign them after the object is created.\n3. **Parameter injection:** pass them into a single function call.\n\nThe idea behind DI is **inversion of control**. The caller or a central \"composition root\" decides which concrete implementation to use. The class only relies on an interface, meaning \"something with `save()` and `get()`\".\n\nDI frameworks (Spring, FastAPI's `Depends`, and others) automate the wiring. The pattern itself needs no framework.\n\n## Example\n```python\nclass FakeDB:\n    def __init__(self): self.rows = []\n    def save(self, row): self.rows.append(row)\n\nclass OrderService:\n    def __init__(self, db): self.db = db\n    def place(self, order): self.db.save(order)\n\n# Production\nservice = OrderService(PostgresDatabase())\n\n# Test, with no real database needed\nfake = FakeDB()\nOrderService(fake).place({\"id\": 1})\nassert fake.rows == [{\"id\": 1}]\n```\n\nThe same `OrderService` code runs against a real database in production and a fake one in tests. That flexibility is the main benefit of DI.\n\n**Connection to your course:** DI looks a bit like **Closures**, which are still unexplored in your graph. A closure can also capture a dependency, for example `def make_handler(db): return lambda x: db.save(x)`. I can cover closures next if you'd like.",
-  "tool_calls": [
-    {
-      "args": {
-        "query": "dependency injection"
+  "output": {
+    "text": "Your uploaded course materials don't cover dependency injection, so this explanation is general and doesn't come from your notes. I've added it to your knowledge graph.\n\n## Overview\n**Dependency injection (DI)** means an object receives the things it depends on from the outside. It doesn't create them itself. A \"dependency\" is any collaborator the code needs, such as a database connection, a clock, or an API client.\n\n## Explanation\nWithout DI, a class builds its own dependencies. That hard-wires it to one concrete implementation:\n\n```python\nclass ReportService:\n    def __init__(self):\n        self.db = PostgresDatabase()   # tightly coupled\n```\n\nWith DI, the caller passes the dependency in:\n\n```python\nclass ReportService:\n    def __init__(self, db):\n        self.db = db                   # injected\n```\n\nThis helps in three ways:\n- **Testability:** you can pass in a fake database in tests, so you don't need a real one.\n- **Flexibility:** you can swap implementations (Postgres, SQLite, in-memory) without editing `ReportService`.\n- **Clear dependencies:** the constructor signature shows what the class needs.\n\nThe three common forms are:\n1. **Constructor injection:** dependencies are passed to `__init__`. This is the most common form.\n2. **Setter injection:** dependencies are set after the object is created.\n3. **Parameter injection:** dependencies are passed into a single function call.\n\nA **DI container or framework** (Spring, FastAPI's `Depends`) can automate the wiring. The idea itself works fine with plain constructors.\n\n## Worked example\n```python\nclass FakeDB:\n    def fetch_sales(self):\n        return [10, 20, 30]\n\nclass ReportService:\n    def __init__(self, db):\n        self.db = db\n    def total(self):\n        return sum(self.db.fetch_sales())\n\n# Test: no real database needed\nassert ReportService(FakeDB()).total() == 60\n\n# Production: same class, real dependency\nservice = ReportService(PostgresDatabase())\n```\n\n`ReportService` never knows which database it has. It only needs an object with `fetch_sales()`. This is the main point of DI: the class depends on an interface, and the caller chooses the implementation.\n\n**Link to your coursework:** it's similar to how a function in your recursion lab takes its input as a parameter instead of making it up inside. DI applies that idea to whole objects.",
+    "tool_calls": [
+      {
+        "args": {
+          "query": "dependency injection"
+        },
+        "tool_name": "search_course_materials"
       },
-      "tool_name": "search_course_materials"
-    }
-  ]
+      {
+        "args": {
+          "concepts": [
+            "Dependency Injection"
+          ]
+        },
+        "tool_name": "apply_graph_update_tool"
+      }
+    ]
+  },
+  "recorded_under": {
+    "input_sha256": "9d81bc7ecae2454aaaccfc9338f2422778e6c506da964927e93d28fea4ce40c7",
+    "model": "claude-sonnet-5-5",
+    "prompt_hash": "7011ea8770e5",
+    "schema_hash": "38a346cadbd3"
+  }
 }

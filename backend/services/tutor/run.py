@@ -15,10 +15,12 @@ from agents import CONTINUATION_LIMITS, TUTOR_LIMITS
 from agents.chat_tutor import agent_for_mode
 from agents.deps import SaplingDeps
 from agents.usage import record_agent_usage, served_model_name
+from db.connection import table
 from models import ChatBody
 from services.chat_stream import join_text_parts
 from services.tutor.course import _get_catalog_chunk, _get_course_info
 from services.tutor_router import observe_tutor_turn
+from services.tutor_sessions import PENDING_SESSIONS
 
 # Log records keep the name they had in routes/learn.py before the #118 split:
 # the move must not change what an operator (or a caplog test) filters on.
@@ -44,6 +46,26 @@ _PREF_MODEL_NAMES: dict[str, str] = {
 # measurable tutor quality over `low` on Sonnet 5.5 at ~2x the cost, so
 # "smart" differs from "fast" by MODEL (Sonnet vs Haiku), not effort.
 _PRO_THINKING_BUDGET = 2048
+
+
+def _usage_session_id(session_id: str | None, user_id: str) -> str | None:
+    """The `llm_usage.session_id` to record for a legacy turn (A92): the caller's own
+    session only. A body-supplied id that belongs to someone else (or to nobody) is
+    recorded as NULL, so one student cannot move cost onto another's session in the
+    per-session cost report (PKG-14 review). A still-pending lazy session counts
+    when PENDING_SESSIONS records the same user. Never raises — usage recording is
+    best-effort (a failed read records NULL)."""
+    if not session_id:
+        return None
+    pending = PENDING_SESSIONS.get(session_id)
+    if pending is not None:
+        return session_id if pending.get("user_id") == user_id else None
+    try:
+        rows = table("sessions").select("user_id", filters={"id": f"eq.{session_id}"}, limit=1)
+    except Exception:  # noqa: BLE001 — best-effort; never fail a turn over usage
+        logger.warning("llm_usage session ownership read failed; recording NULL", exc_info=True)
+        return None
+    return session_id if rows and rows[0].get("user_id") == user_id else None
 
 
 def _resolve_model_pref(model_pref: str | None):
@@ -232,6 +254,7 @@ _CONTINUATION_RUN_KEYS = ("deps", "model", "model_settings")
 
 async def _continuation_text(
     agent, run_result, run_kwargs: dict, *, request_id: str | None = None,
+    usage_session_id: str | None,
 ) -> str | None:
     """Finish a turn the model abandoned after its tools ran (#646).
 
@@ -241,15 +264,19 @@ async def _continuation_text(
     only offered recovery — a manual retry — re-runs the turn, re-executes
     the tools, and can apply the same append-only mastery event twice.
 
+    ``usage_session_id`` is REQUIRED: the llm_usage session id the turn's own
+    run recorded (A92) — the owner-checked id a chat/action turn resolved, or
+    the server-minted id of a session opener — so the continuation's cost
+    lands on the same session without a second ownership read.
+
     This is NOT a re-run. `run_result.all_messages()` already contains every
     tool call AND its result, so the model composes the reply from them.
 
     `override(tools=[], toolsets=[])` is what makes that a guarantee rather
     than a hope: the continuation is handed NO tools, so it cannot write even
-    if the model tries. Without it the model could call `update_mastery_tool`
-    again and reintroduce the exact double-apply the writes-guard exists to
-    prevent — a re-run by a quieter name. Because the tutor's own
-    instructions (which demand a mastery call every turn) still reach this
+    if the model tries. Without it the model could call a graph writer
+    (`apply_graph_update_tool`) again and reintroduce the exact double-apply
+    the writes-guard exists to prevent — a re-run by a quieter name. Because the tutor instructions still reach this
     request, `_CONTINUATION_INSTRUCTIONS` tells the model that no tools
     exist on this pass and it must reply with a message, not a call.
 
@@ -274,6 +301,7 @@ async def _continuation_text(
     inventing a new `AgentTask` slot (the run IS a chat_tutor run).
     """
     carried = {k: run_kwargs[k] for k in _CONTINUATION_RUN_KEYS if k in run_kwargs}
+    deps = carried.get("deps")
     with agent.override(tools=[], toolsets=[]):
         result = record_agent_usage(
             await agent.run(
@@ -285,7 +313,8 @@ async def _continuation_text(
             ),
             feature="chat_tutor_continuation",
             task="chat_tutor",
-            user_id=getattr(carried.get("deps"), "user_id", None),
+            user_id=getattr(deps, "user_id", None),
+            session_id=usage_session_id,
             # Explicit, so the turn's rows can't depend on ambient state (the
             # contextvar does survive into the SSE generator —
             # tests/test_sse_request_context.py — but nothing else should

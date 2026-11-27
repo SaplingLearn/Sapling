@@ -15,6 +15,10 @@ hermetic Supabase/LLM guards keep everything offline.
 """
 from __future__ import annotations
 
+import ast
+import pathlib
+import re
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -111,6 +115,15 @@ def test_event_taxonomy_is_pinned():
         # test_quiz_answers_c.py::TestAnswerKeyFlagTelemetry (the C3 file).
         "quiz.answer_key_served",
         "quiz.answer_key_flag_omitted",
+        # Learning-loop spec §13 A132: a quiz answer kept out of mastery
+        # evidence for an item-flaw code. Emit coverage lives in
+        # test_quiz_confidence_lint.py.
+        "quiz.evidence_excluded",
+        # Learning-loop spec §13 A145 / A146: a generation's questions through
+        # the quiz item gates, and a misconception the quiz recorded. Emit
+        # coverage lives in test_quiz_learning.py.
+        "quiz.items_gated",
+        "quiz.misconception_recorded",
         "chat.message_sent",
         "note.created",
         # ADR 0028: flashcard generation/review had no event; added so both
@@ -137,6 +150,66 @@ def test_event_taxonomy_is_pinned():
         # #629: the Class Intel toggle moved but course_chunks.visibility did
         # not follow. A privacy control that fails silently is not one.
         "rag.visibility_resync_failed",
+        # Learning-loop spec §13 A128: one per open of the embeddings breaker,
+        # and the evidence-slot guard's two warnings. Emit coverage lives in
+        # test_learning_degraded_mode.py.
+        "rag.embedding_breaker_open",
+        "system.unevaluated_slot",
+        "system.slot_not_independent",
+        # Learning loop PKG-04 (spec §6, A8): a check-item batch or write failed.
+        "learn.check_items_failed",
+        # PKG-05 reopen (spec §6, §13 A33): an answer that addressed the grader
+        # was refused before grading. Emit coverage: test_learning_answer_guard.py.
+        "learn.answer_refused",
+        # A37 (coordinator's ruling, 2026-09-28): one mc_reason top-up call, its counts.
+        "learn.check_items_topup",
+        # Learning-loop spec §13 A113 (#695), A123: a student's "Report this
+        # question", an item quarantined by its reporters, and an item retired
+        # (its evidence voided) or approved by an admin. Emit coverage lives in
+        # test_learning_item_quality.py and test_learn_loop_routes.py.
+        "learn.check_item_reported",
+        "learn.check_item_quarantined",
+        "learn.check_item_retired",
+        "learn.check_item_approved",
+        # Spec §13 A141: a multi-concept item posed. Emit coverage lives in
+        # test_learning_varied_serving.py.
+        "learn.multi_concept_served",
+        # PKG-06 (spec §6); emit coverage in test_learning_zpd_policy.py
+        "zpd.step",
+        "zpd.offer",
+        "zpd.band_adjust",
+        "zpd.wheelspin",
+        "zpd.leak",
+        "zpd.reveal",
+        "zpd.rating",
+        # Spec §13 A133, A134: one hint-unlocking attempt as judged. Emit
+        # coverage lives in test_learning_help_gate.py.
+        "zpd.attempt",
+        # Spec §13 A125: the integrity guard of the AI surfaces outside the loop.
+        # Emit coverage lives in test_learning_outside_integrity.py.
+        "learn.outside_leak",
+        # PKG-05b: the typed decision seam (spec §6). Emit coverage: test_learning_decisions.py.
+        "decision.made",
+        "decision.shadow",
+        "decision.fallback",
+        "ai.budget_capped",           # PKG-06b: a per-student AI cap was hit
+        # PKG-08: probe finished (items/misses/novice_floor/skills) and the
+        # student approved a plan (concept_ids/n_reviews_first). Emit coverage
+        # lives in test_learning_probe_planner.py.
+        "learn.probe_done",
+        "learn.plan_approved",
+        "learn.session_closed",  # PKG-09: the loop session's close (counts/bools only)
+        # spec §13 A127: an open misconception closed by a correct unassisted
+        # isomorph answer. Emit coverage lives in test_learning_confidence_resolve.py.
+        "learn.misconception_resolved",
+        # spec §13 A138 / A139: the segment prequestion's lifecycle and the
+        # self-explanation prompts. Emit coverage lives in
+        # test_learning_teach_prompts_routes.py.
+        "learn.prequestion",
+        "learn.self_explanation",
+        "review.session_started",     # PKG-12: a daily review session row (not session.started)
+        "review.served",              # PKG-12: one per kind in a built review queue
+        "review.graded",              # PKG-12: one per graded review answer
         # #620: admin feature-flag change (audit). Emit coverage lives in
         # test_admin_flags_routes.py.
         "flag.changed",
@@ -151,21 +224,42 @@ def test_event_taxonomy_is_pinned():
         "account.purge",
         # #640/#642 (ADR 0027): one row per typed-decision call. Emit
         # coverage lives in test_decisions.py / test_tutor_router.py.
-        "decision.made",
+        # docs/safety/crisis-support.md: the crisis screen fired. Emit
+        # coverage (and the no-content / no-PostHog pins) lives in
+        # test_crisis_support_routes.py.
+        "safety.crisis_support_shown",
         # #115: the db_user_scope rollout signals. Emit coverage lives in
         # test_db_user_scope.py.
         "db.unscoped_query",
         "db.rls_shadow_divergence",
         "db.rls_denied",
-        # docs/safety/crisis-support.md: the crisis screen fired. Emit
-        # coverage (and the no-content / no-PostHog pins) lives in
-        # test_crisis_support_routes.py.
-        "safety.crisis_support_shown",
         # Finding M13: a 🔒 value refused at read. Emit coverage lives in
         # test_encryption_aad.py.
         "encryption.binding_mismatch",
         "encryption.legacy_refused",
     })
+
+
+def test_event_taxonomy_lists_each_event_once():
+    """A frozenset hides a repeated entry, so read the source: no event type is
+    listed twice in the literal, and the module docstring documents each
+    (event, category) once (decision.made has two: usage and system)."""
+    source = pathlib.Path(events_service.__file__).read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    literal = next(
+        node.value.args[0]
+        for node in tree.body
+        if isinstance(node, ast.AnnAssign)
+        and isinstance(node.target, ast.Name)
+        and node.target.id == "EVENT_TAXONOMY"
+    )
+    listed = Counter(e.value for e in literal.elts)
+    assert [e for e, n in listed.items() if n > 1] == []
+    documented = Counter(
+        re.findall(r"^([a-z0-9_]+\.[a-z0-9_.]+) +(usage|system|audit)\b", ast.get_docstring(tree), re.M)
+    )
+    assert ("safety.crisis_support_shown", "system") in documented
+    assert [e for e, n in documented.items() if n > 1] == []
 
 
 # ── Middleware: error.4xx / error.5xx ────────────────────────────────────────
@@ -1164,7 +1258,11 @@ def test_quiz_submit_emits_quiz_completed_on_success(sink):
     )
     with (
         patch_quiz("table", side_effect=with_async_twins(factory)),
-        patch_quiz("apply_graph_update"),
+        # PKG-14b: the graph reports the span of the evidence it applied.
+        patch_quiz(
+            "apply_graph_update",
+            return_value=[{"before": 0.5, "after": 0.53}, {"before": 0.53, "after": 0.56}],
+        ),
         patch_quiz("get_quiz_context", return_value={}),
         patch("services.quiz.submission.quiz_context_agent.run", new=noop_ctx),
         patch_quiz("save_quiz_context"),
@@ -1190,8 +1288,11 @@ def test_quiz_submit_emits_quiz_completed_on_success(sink):
     assert payload["concept_node_id"] == "node1"
     assert payload["score"] == 2
     assert payload["total"] == 2
-    # mastery 0.5 -> 0.5 + 2*0.03 = 0.56
-    assert payload["mastery_delta"] == pytest.approx(0.06)
+    # PKG-14b: p_delta = the evidence span's p_after − p_before (0.5 -> 0.56).
+    assert payload["p_delta"] == pytest.approx(0.06)
+    from test_learning_loop_invariants import LEGACY_MASTERY_SYMBOLS
+
+    assert LEGACY_MASTERY_SYMBOLS[0] not in payload  # the retired key (inv_21)
 
 
 # ── Chat: chat.message_sent ──────────────────────────────────────────────────
@@ -1214,6 +1315,8 @@ def _learn_table_factory(offering_id="off1"):
 SECRET_MESSAGE = "my very private question about recursion and my grades"
 
 
+# Spec §11.5 (PKG-14b): the legacy /api/learn/* path, so the loop is off.
+@pytest.mark.kill_switch
 def test_chat_json_emits_message_sent_with_fingerprint(sink):
     agent = MagicMock()
     agent.run = AsyncMock(return_value=run_result("A reply."))
@@ -1243,6 +1346,8 @@ def test_chat_json_emits_message_sent_with_fingerprint(sink):
     assert SECRET_MESSAGE not in str(ev)
 
 
+# Spec §11.5 (PKG-14b): the legacy /api/learn/* path, so the loop is off.
+@pytest.mark.kill_switch
 def test_chat_stream_emits_message_sent_with_explicit_request_id(sink):
     async def fake_stream(**kwargs):
         from services.agent_events import SaplingEvent
@@ -1290,6 +1395,8 @@ def test_chat_stream_emits_message_sent_with_explicit_request_id(sink):
 # ── Sessions: session.started + session.ended ────────────────────────────────
 
 
+# Spec §11.5 (PKG-14b): the legacy /api/learn/* path, so the loop is off.
+@pytest.mark.kill_switch
 def test_consume_pending_emits_session_started(sink):
     import routes.learn as learn
 
@@ -1319,6 +1426,8 @@ def test_consume_pending_emits_session_started(sink):
     assert "Extremely Private Topic" not in str(ev)
 
 
+# Spec §11.5 (PKG-14b): the legacy /api/learn/* path, so the loop is off.
+@pytest.mark.kill_switch
 def test_end_session_pending_early_return_emits_nothing(sink):
     import routes.learn as learn
 
@@ -1337,6 +1446,8 @@ def test_end_session_pending_early_return_emits_nothing(sink):
     assert _events(sink) == []
 
 
+# Spec §11.5 (PKG-14b): the legacy /api/learn/* path, so the loop is off.
+@pytest.mark.kill_switch
 def test_end_session_emits_session_ended(sink):
     # Naive-UTC isoformat, matching what the route stores (it subtracts this
     # from a naive utcnow); datetime.utcnow() itself is deprecated — don't copy it.
@@ -1478,6 +1589,8 @@ def test_unhandled_exception_emits_exactly_one_error_5xx(sink):
     assert ev["request_id"]
 
 
+# Spec §11.5 (PKG-14b): the legacy /api/learn/* path, so the loop is off.
+@pytest.mark.kill_switch
 def test_nonstream_fallback_turn_emits_chat_message_sent_exactly_once(sink):
     """PR #465 review (F1), reworked for #151a: a streamed turn served by the
     Rung-1 nonstream fallback (`_chat_turn_json`) is a fully persisted turn

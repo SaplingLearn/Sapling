@@ -110,6 +110,11 @@ class QuizQuestion(BaseModel):
     def _clip_accepted_answers(cls, accepted):
         return _clip(accepted, MAX_ACCEPTED_ANSWERS, "accepted_answers")
 
+    # W7 kit `interaction` is NOT on this schema: flag-off generation must stay
+    # byte-identical (tests/test_quiz_learning_flags_off.py). Planned writer
+    # carries it; wire attach is services/quiz/interaction.py. See
+    # docs/learning-loop/w7-generation-emit.md.
+
 
 class Quiz(BaseModel):
     """The agent's structured output."""

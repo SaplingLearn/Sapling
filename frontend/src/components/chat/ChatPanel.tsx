@@ -1,12 +1,17 @@
 "use client";
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
+import Link from "next/link";
+import { AnimatePresence, motion } from "framer-motion";
+import styles from "./ChatPanel.module.css";
+import { useMotionPresets } from "@/lib/motion";
 import { Icon } from "../Icon";
 import { CHAT_MESSAGE_MAX } from "@/lib/inputLimits";
 import { CrisisSupportCard } from "../safety/CrisisSupportCard";
 import type { CrisisSupport } from "@/lib/crisisSupport";
-import { cn } from "@/lib/cn";
+import type { MarkdownProfile } from "./inertMarkdown";
+import { MATERIALS_GROUNDED_HINT, MATERIALS_GROUNDED_LABEL } from "@/lib/loopTrustChrome";
 
 // MarkdownChat statically imports mermaid, katex, highlight.js, and the
 // remark/rehype stack. Static-importing it from a client component still
@@ -60,7 +65,18 @@ export interface ChatMsg {
    *  crisis-support card instead of a tutor reply. Rendered as the calm card,
    *  never as a tutor bubble; `content` keeps the same copy as text. */
   crisisSupport?: CrisisSupport;
+  /** Shown elsewhere on screen right now (the learning loop's check card shows
+   *  its pose and hint): the row stays in the log — announced when it arrives
+   *  and read in order — but is not painted, so nothing renders twice. Clearing
+   *  the flag only paints it: no node is added, so nothing is announced again. */
+  visuallyHidden?: boolean;
+  /** W4.3: this turn's prompt included the student's course passages — calm
+   *  "Grounded in your materials" chrome (no cite list; loop teach only). */
+  materialsGrounded?: boolean;
 }
+
+/** Kept in the accessibility tree, painted nowhere (ChatPanel.module.css). */
+const VISUALLY_HIDDEN = styles.visuallyHidden;
 
 interface ChatPanelProps {
   messages: ChatMsg[];
@@ -85,6 +101,25 @@ interface ChatPanelProps {
   /** Re-dispatch an interrupted turn (ADR 0020). Receives the interrupted
    *  message; Learn re-sends its `retryText` after dropping the failed pair. */
   onRetry?: (m: ChatMsg) => void;
+  /** The composer's textarea, for a parent that moves keyboard focus to it. */
+  composerRef?: React.RefObject<HTMLTextAreaElement | null>;
+  /** Wireframe T6: a "+" next to Send that opens where material is added. */
+  /** Content between the conversation and the composer: the learning loop's
+   *  check card and its next-step actions sit under the latest turn. */
+  footer?: React.ReactNode;
+  attachHref?: string;
+  /** How a tutor turn is drawn: in a bubble beside its avatar (default), or
+   *  on the page under the tutor's mark (`PageTurn`; the Tutor V2 layout).
+   *  The student's own messages are bubbles on the right either way. */
+  turnStyle?: "bubble" | "page";
+  /** Which markdown a tutor turn may use (`inertMarkdown.tsx`). "rich" (the
+   *  default) for every host but the learning loop, whose transcript repeats
+   *  class material verbatim from code — a check pose, an H2 passage, a worked
+   *  sibling, a reference — and so is drawn "inert" (Z08). */
+  markdown?: MarkdownProfile;
+  /** An action under a settled tutor turn (the Tutor's Save, `saved_items`);
+   *  null for a turn without one. Keep it stable (Message is memoised). */
+  messageAction?: (m: ChatMsg) => React.ReactNode;
 }
 
 export function ChatPanel({
@@ -100,30 +135,62 @@ export function ChatPanel({
   streamingStatus,
   onStop,
   onRetry,
+  composerRef,
+  attachHref,
+  footer,
+  turnStyle = "bubble",
+  markdown = "rich",
+  messageAction,
 }: ChatPanelProps) {
+  const onPage = turnStyle === "page";
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const isStreaming = streamingText !== null && streamingText !== undefined;
 
+  // Whether the student is reading the latest turn: then the log stays pinned
+  // to it when its box resizes (a footer appearing or growing shrinks the log
+  // after the messages rendered); scrolled up to read history, it is left alone.
+  const pinned = useRef(true);
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
     el.scrollTop = el.scrollHeight;
+    pinned.current = true;
   }, [messages, streamingText]);
+  const m = useMotionPresets();
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => {
+      if (pinned.current) el.scrollTop = el.scrollHeight;
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   return (
-    <div className="flex flex-col h-full min-h-0">
+    <div className={styles.panel}>
       {header && <div>{header}</div>}
+      {/* Focusable (tabIndex 0): the log scrolls on its own, and a scrolling
+          region must be reachable from the keyboard (WCAG 2.1.1) — the arrow
+          keys then scroll the history. */}
       <div
         ref={scrollRef}
+        onScroll={(e) => {
+          const el = e.currentTarget;
+          pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 8;
+        }}
         role="log"
         aria-live="polite"
         aria-relevant="additions"
         aria-atomic="false"
         aria-label="Conversation"
         data-testid="tutor-messages"
-        className="flex-1 overflow-y-auto py-6 px-8 flex flex-col gap-4"
+        tabIndex={0}
+        // With a footer the log only takes the height it needs (.log).
+        className={styles.log}
+        data-has-footer={!!footer}
       >
-        {messages.map(m => <Message key={m.id} m={m} onRetry={onRetry} />)}
+        {messages.map(msg => <Message key={msg.id} m={msg} onRetry={onRetry} onPage={onPage} markdown={markdown} action={messageAction} />)}
         {streamingText !== null && streamingText !== undefined && (
           // Reuse Message/MarkdownChat exactly as settled assistant messages
           // do, so a streaming reply never styles differently from a
@@ -136,6 +203,8 @@ export function ChatPanel({
           // aria-live region on the bubble itself.
           <Message
             key="streaming"
+            onPage={onPage}
+            markdown={markdown}
             m={{
               id: "streaming",
               role: "assistant",
@@ -147,6 +216,23 @@ export function ChatPanel({
         )}
       </div>
 
+      {/* The footer (the loop's check card and next steps) rises in under
+          the latest turn when it appears; it is there at once on first paint. */}
+      <AnimatePresence initial={false}>
+        {footer && (
+          <motion.div
+            key="chat-footer"
+            data-testid="chat-footer"
+            className={styles.footer}
+            initial={m.fadeUp.initial}
+            animate={m.fadeUp.animate}
+            transition={m.fadeUp.transition}
+          >
+            {footer}
+          </motion.div>
+        )}
+      </AnimatePresence>
+      {footer && <div aria-hidden className={styles.spacer} />}
       <ChatInputBar
         onSend={onSend}
         onAction={onAction}
@@ -156,6 +242,8 @@ export function ChatPanel({
         draftSeedKey={draftSeedKey}
         streaming={isStreaming}
         onStop={onStop}
+        composerRef={composerRef}
+        attachHref={attachHref}
       />
     </div>
   );
@@ -170,7 +258,13 @@ interface ChatInputBarProps {
   draftSeedKey?: number;
   streaming?: boolean;
   onStop?: () => void;
+  composerRef?: React.RefObject<HTMLTextAreaElement | null>;
+  attachHref?: string;
 }
+
+/** The composer's controls share one 32px square (Attach, Send; Stop is 32
+ *  tall): ChatPanel.module.css `.control` + `.iconControl`. */
+const COMPOSER_ICON = `${styles.control} ${styles.iconControl} ${styles.pressable}`;
 
 const ChatInputBar = React.memo(function ChatInputBar({
   onSend,
@@ -181,44 +275,66 @@ const ChatInputBar = React.memo(function ChatInputBar({
   draftSeedKey,
   streaming,
   onStop,
+  composerRef,
+  attachHref,
 }: ChatInputBarProps) {
   const [text, setText] = useState<string>(draftSeed ?? "");
+  const barRef = useRef<HTMLDivElement>(null);
+  const ownInputRef = useRef<HTMLTextAreaElement>(null);
+  const inputRef = composerRef ?? ownInputRef;
+  // The composer is disabled while a reply streams, and a disabled control
+  // loses keyboard focus to the page. A message sent from the composer (its
+  // textarea or Send) puts focus back in the textarea when the reply ends —
+  // unless something else (a posed check, a dialog) has taken focus by then.
+  const refocus = useRef(false);
+  const m = useMotionPresets();
 
-  // Apply seed when parent bumps the key (e.g. after a mode switch).
+  // Apply the seed when the parent bumps the key (e.g. after a mode switch) —
+  // never on mount: useState already starts from it, and a mount-time reset
+  // would erase text typed before this effect ran.
+  const seededKey = useRef(draftSeedKey);
   useEffect(() => {
-    if (draftSeedKey === undefined) return;
+    if (draftSeedKey === undefined || draftSeedKey === seededKey.current) return;
+    seededKey.current = draftSeedKey;
     setText(draftSeed ?? "");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draftSeedKey]);
 
+  useLayoutEffect(() => {
+    if (disabled || !refocus.current) return;
+    refocus.current = false;
+    const active = document.activeElement;
+    if (!active || active === document.body) inputRef.current?.focus();
+  }, [disabled, inputRef]);
+
   const submit = () => {
     const trimmed = text.trim();
     if (!trimmed || disabled) return;
+    refocus.current = !!barRef.current?.contains(document.activeElement);
     onSend(trimmed);
     setText("");
   };
 
   return (
-    <div
-      className="pt-3 px-8 pb-5 border-t border-t-border bg-bg-panel flex flex-col gap-2.5"
-    >
+    <div ref={barRef} className={styles.bar}>
       {onAction && (
-        <div className="flex gap-1.5">
-          <button data-testid="tutor-action-hint" className="btn btn--sm" onClick={() => onAction("hint")} disabled={disabled} title="Ask for a small nudge">
+        <div className={styles.actions}>
+          <button data-testid="tutor-action-hint" className={`btn btn--sm ${styles.pressable}`} onClick={() => onAction("hint")} disabled={disabled} title="Ask for a small nudge">
             <Icon name="sparkle" size={12} /> Hint
           </button>
-          <button data-testid="tutor-action-confused" className="btn btn--sm" onClick={() => onAction("confused")} disabled={disabled} title="Say you're stuck">
+          <button data-testid="tutor-action-confused" className={`btn btn--sm ${styles.pressable}`} onClick={() => onAction("confused")} disabled={disabled} title="Say you're stuck">
             <Icon name="bolt" size={12} /> I&apos;m confused
           </button>
-          <button data-testid="tutor-action-skip" className="btn btn--sm" onClick={() => onAction("skip")} disabled={disabled} title="Skip this concept">
+          <button data-testid="tutor-action-skip" className={`btn btn--sm ${styles.pressable}`} onClick={() => onAction("skip")} disabled={disabled} title="Skip this concept">
             <Icon name="chev" size={12} /> Skip
           </button>
         </div>
       )}
       <div
-        className="flex gap-2.5 items-end bg-bg-subtle border border-border rounded-lg py-2.5 px-3.5"
+        className={styles.composer}
       >
         <textarea
+          ref={inputRef}
           data-testid="tutor-input"
           maxLength={CHAT_MESSAGE_MAX}
           aria-label="Message"
@@ -232,22 +348,40 @@ const ChatInputBar = React.memo(function ChatInputBar({
           }}
           disabled={disabled}
           placeholder={placeholder}
-          className="flex-1 resize-none border-0 bg-transparent text-base leading-[1.5] py-1.5 px-0 font-sans max-h-40 min-h-9"
+          className={styles.input}
           rows={1}
         />
+        {/* Stop scales in as a reply starts streaming (no exit: it leaves
+            the moment the reply ends, as before). */}
         {streaming && onStop && (
-          <button
+          <motion.button
             data-testid="tutor-stop"
-            className="btn btn--sm"
+            className={`btn btn--sm ${styles.control} ${styles.pressable}`}
             onClick={onStop}
             aria-label="Stop response"
+            initial={m.scaleIn.initial}
+            animate={m.scaleIn.animate}
+            transition={m.scaleIn.transition}
           >
             Stop
-          </button>
+          </motion.button>
+        )}
+        {attachHref && (
+          // Attach sits next to Send (wireframe T6): material is added in the
+          // Library, where an upload is classified and indexed for the tutor.
+          <Link
+            href={attachHref}
+            data-testid="tutor-attach"
+            aria-label="Attach material"
+            title="Attach material"
+            className={`btn btn--sm btn--ghost ${COMPOSER_ICON}`}
+          >
+            <Icon name="plus" size={15} />
+          </Link>
         )}
         <button
           data-testid="tutor-send"
-          className="btn btn--primary btn--sm"
+          className={`btn btn--primary btn--sm ${COMPOSER_ICON} ${styles.sendControl}`}
           onClick={submit}
           disabled={disabled || !text.trim()}
           aria-label="Send"
@@ -259,68 +393,187 @@ const ChatInputBar = React.memo(function ChatInputBar({
   );
 });
 
+/** The loop tutor's turn carries a "Key idea:" paragraph the server adds
+ *  (routes/learn_loop.py) — first in a teaching turn, after "The answer: …" in
+ *  feedback. It shows as the design's key-idea block (a label over the idea, an
+ *  accent rule beside it) where it stands; the text still reads "Key idea: …"
+ *  to a screen reader and to `textContent`. */
+const KEY_IDEA = /^Key idea:\s*/;
+
+export type TurnPart = { kind: "text"; text: string } | { kind: "key"; text: string };
+
+export function splitKeyIdea(content: string): TurnPart[] {
+  const parts: TurnPart[] = [];
+  let buffer: string[] = [];
+  const flush = () => {
+    if (buffer.length) parts.push({ kind: "text", text: buffer.join("\n\n") });
+    buffer = [];
+  };
+  for (const para of content.split("\n\n")) {
+    const idea = KEY_IDEA.test(para) ? para.replace(KEY_IDEA, "").trim() : "";
+    if (idea) {
+      flush();
+      parts.push({ kind: "key", text: idea });
+    } else {
+      buffer.push(para);
+    }
+  }
+  flush();
+  return parts;
+}
+
+function AssistantBody({ content, profile }: { content: string; profile: MarkdownProfile }) {
+  const parts = splitKeyIdea(content);
+  if (!parts.some((p) => p.kind === "key")) return <MarkdownChat profile={profile}>{content}</MarkdownChat>;
+  return (
+    <>
+      {parts.map((p, i) => p.kind === "key" ? (
+        <div key={i} data-testid="tutor-key-idea" className={styles.keyIdea} data-first={i === 0}>
+          <span className={`label-micro ${styles.keyIdeaLabel}`}>
+            Key idea<span className={VISUALLY_HIDDEN}>: </span>
+          </span>
+          <MarkdownChat profile={profile}>{p.text}</MarkdownChat>
+        </div>
+      ) : (
+        <MarkdownChat key={i} profile={profile}>{p.text}</MarkdownChat>
+      ))}
+    </>
+  );
+}
+
+/**
+ * A tutor turn on the page (Tutor V2, wireframe T6: "tutor messages sit on the
+ * page — no bubble, like Claude; your messages are bubbles on the right"): the
+ * tutor's mark and name, then its text at a readable measure. `plain` keeps a
+ * plain-text turn's own line breaks; a markdown turn lays out its own.
+ */
+export function PageTurn({ children, testId, plain = false }: { children: React.ReactNode; testId?: string; plain?: boolean }) {
+  return (
+    <div className={styles.pageTurn}>
+      <div className={styles.turnMark}>
+        <span className={styles.turnAvatar} aria-hidden>
+          <Icon name="sparkle" size={12} />
+        </span>
+        Tutor<span className={VISUALLY_HIDDEN}>:</span>
+      </div>
+      <div className={plain ? `${styles.turnText} ${styles.turnPlain}` : styles.turnText} data-testid={testId}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+/** A message's text and its trust chrome (interrupted + Retry, "from your
+ *  materials"). A plain render call, so React sees the tree the inline JSX
+ *  produced. */
+function renderMessageBody(m: ChatMsg, isUser: boolean, markdown: MarkdownProfile, onRetry?: (m: ChatMsg) => void) {
+  return (
+    <>
+      {m.loading ? (
+        <span className={styles.thinking}>{m.loadingLabel || "Thinking…"}</span>
+      ) : isUser ? (
+        <div className={styles.userText}>{m.content}</div>
+      ) : (
+        // The tutor speaks in Spectral; the per-session DisclaimerModal
+        // covers AI disclosure once up front so each message stays clean
+        // (no "AI-Powered" pill — that anti-pattern is off the table).
+        // ADR 0020: an interrupted turn keeps its partial text visible,
+        // just dimmed — never blanked.
+        <div className={m.interrupted ? styles.dimmed : undefined}>
+          {m.content ? <AssistantBody content={m.content} profile={markdown} /> : null}
+        </div>
+      )}
+      {m.interrupted && !isUser && (
+        // The marker fades in where the reply stopped (enter only).
+        <motion.div
+          data-testid="tutor-interrupted"
+          className={`${styles.trust} ${styles.interrupted}`}
+          data-after-text={!!m.content}
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+        >
+          <span className={styles.interruptedLabel}>Interrupted</span>
+          {onRetry && m.retryText && (
+            <button
+              data-testid="tutor-retry"
+              className="btn btn--sm"
+              onClick={() => onRetry(m)}
+              aria-label="Retry this turn"
+            >
+              Retry
+            </button>
+          )}
+        </motion.div>
+      )}
+      {m.materialsGrounded && !isUser && !m.interrupted && (
+        <div
+          data-testid="loop-materials-grounded"
+          role="status"
+          title={MATERIALS_GROUNDED_HINT}
+          aria-label={`${MATERIALS_GROUNDED_LABEL}. ${MATERIALS_GROUNDED_HINT}`}
+          className={styles.trust}
+          data-after-text={!!m.content}
+        >
+          {MATERIALS_GROUNDED_LABEL}
+        </div>
+      )}
+    </>
+  );
+}
+
 const Message = React.memo(function Message({
   m,
   onRetry,
+  onPage,
+  markdown = "rich",
+  action,
 }: {
   m: ChatMsg;
+  /** ChatPanel's `messageAction`. */
+  action?: (m: ChatMsg) => React.ReactNode;
   onRetry?: (m: ChatMsg) => void;
+  /** A tutor turn sits on the page (`PageTurn`) rather than in a bubble. */
+  onPage?: boolean;
+  /** The markdown a tutor turn may use (ChatPanel's `markdown`). */
+  markdown?: MarkdownProfile;
 }) {
   const isUser = m.role === "user";
   if (m.crisisSupport && !isUser) {
     // Sapling speaking, not the tutor: no tutor avatar, no serif bubble.
     return (
-      <div className="fade-in self-stretch max-w-160 w-full">
+      <div className={`fade-in ${styles.crisisRow}`}>
         <CrisisSupportCard support={m.crisisSupport} />
+      </div>
+    );
+  }
+  const body = <>{renderMessageBody(m, isUser, markdown, onRetry)}{!isUser && !m.visuallyHidden && action?.(m)}</>;
+  // In the log but not painted (`visuallyHidden`): the row's own attributes.
+  const hidden = m.visuallyHidden ? { attr: "true", cls: ` ${VISUALLY_HIDDEN}` } : { attr: undefined, cls: "" };
+  if (onPage && !isUser) {
+    return (
+      <div
+        className={`fade-in ${styles.pageRow}${hidden.cls}`}
+        data-testid="tutor-turn"
+        data-visually-hidden={hidden.attr}
+      >
+        <PageTurn>{body}</PageTurn>
       </div>
     );
   }
   return (
     <div
-      className={cn("fade-in", "flex gap-3", isUser ? "max-w-[70%]" : "max-w-[85%]", isUser ? "self-end" : "self-start")}
+      className={`fade-in ${styles.bubbleRow}${hidden.cls}`}
+      data-role={m.role}
+      data-visually-hidden={hidden.attr}
     >
       {!isUser && (
-        <div
-          className="w-8 h-8 rounded-[50%] bg-accent-soft text-accent flex items-center justify-center shrink-0"
-        >
+        <div className={styles.bubbleAvatar}>
           <Icon name="sparkle" size={14} />
         </div>
       )}
-      <div
-        className={cn("py-3 px-4 rounded-lg text-base leading-[1.6] [word-break:break-word] [overflow-wrap:break-word] relative", isUser ? "bg-accent" : "bg-bg-panel", isUser ? "text-accent-fg" : "text-text", isUser ? "border-0" : "border border-border", isUser ? "font-sans" : "font-serif")}
-      >
-        {m.loading ? (
-          <span className="opacity-60 font-sans">{m.loadingLabel || "Thinking…"}</span>
-        ) : isUser ? (
-          <div className="whitespace-pre-wrap">{m.content}</div>
-        ) : (
-          // The tutor speaks in Spectral; the per-session DisclaimerModal
-          // covers AI disclosure once up front so each message stays clean
-          // (no "AI-Powered" pill — that anti-pattern is off the table).
-          // ADR 0020: an interrupted turn keeps its partial text visible,
-          // just dimmed — never blanked.
-          <div style={m.interrupted ? { opacity: 0.7 } : undefined}>
-            {m.content ? <MarkdownChat>{m.content}</MarkdownChat> : null}
-          </div>
-        )}
-        {m.interrupted && !isUser && (
-          <div
-            data-testid="tutor-interrupted"
-            className={cn("flex items-center gap-2.5 font-sans text-sm text-text-muted", m.content ? "mt-2" : "mt-0")}
-          >
-            <span className="italic">Interrupted</span>
-            {onRetry && m.retryText && (
-              <button
-                data-testid="tutor-retry"
-                className="btn btn--sm"
-                onClick={() => onRetry(m)}
-                aria-label="Retry this turn"
-              >
-                Retry
-              </button>
-            )}
-          </div>
-        )}
+      {/* The tutor speaks in the body serif, the student in the sans UI voice. */}
+      <div className={styles.bubble} data-role={m.role}>
+        {body}
       </div>
     </div>
   );

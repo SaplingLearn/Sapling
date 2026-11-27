@@ -1,0 +1,370 @@
+"""pydantic-evals cases for the check_items generator (learning loop PKG-04).
+
+    python tests/evals/check_items.py            # replay
+    SAPLING_EVAL_MODE=record python tests/evals/check_items.py
+
+Cases are derived from fixtures/tutor_course.json (plaintext by design): for
+each of the first two documents, one call for all three concepts at once → 2
+cases: production drafts CHECK_ITEM_CONCEPTS_PER_CALL concepts per call (27
+items), the shape A38's split-and-retry exists for (#866 Z24; recorded in the
+A111 pass). Two one-concept calls stay beside them (_SINGLE_CONCEPT_CASES): a
+formula concept whose final answers carry notation the A34 verbatim copy and
+the leak check must survive (Chain Rule), and the concept whose mc_reason
+drafts came back with no options in 2 of 3 Claude runs on 2026-11-24 (Big-O
+Notation; the drafter's option-less retry answers it). The other four
+one-concept cases were dropped on 2026-11-25 (owner's call: production never
+drafts one concept per call).
+ConceptsCovered scores that shape: every concept asked for gets a stored item
+and no item names a concept it was not asked for.
+Chunks are the document summary plus each concept_note description, ids
+"<document_id>:c<i>". Add cases when production produces a bad item; never
+edit an existing one to make it pass.
+
+Evaluators score the contracts the service enforces in code
+(learning/checks.py::validate_draft) plus grounding: every item has a
+reference answer, >= CHECK_ITEM_MIN_RUBRIC rubric items and >=
+CHECK_ITEM_MIN_WRONG paired, unique wrong reasons (for mc_reason, its
+distractors' own misconceptions — spec §13 A37), cites only input chunk ids,
+never leaks its reference into the prompt, and is stored — valid under
+validate_draft once repair_draft has made the repairs that need no guess,
+exactly as check_item_service.create_items stores it (the A22 / A37 option,
+numeric and stepwise rules and the A34 final_answer rules included).
+McOptionsValid (spec §13 A37) is required at 1.0: every mc_reason draft's
+options pass every A37 option rule (each distractor stating its own
+misconception, under a key of its own, once repaired), and a case with no
+mc_reason draft scores 0.0 — the live sequence test of 2026-09-27 stored 0 of
+12 when the options were parallel arrays. McReasonValid is the share of
+mc_reason drafts stored (the A34
+final_answer rules included), gated at its recorded rate.
+McCorrectNotLongest (review of A37) is the share of stored mc_reason drafts
+whose correct option is not strictly the longest, gated at its recorded rate.
+FinalAnswerValid (spec §13 A34) is required at 1.0: every accepted draft states
+a final_answer copied character for character from its reference_answer (a
+substring, surrounding whitespace and a closing period aside) that is not in
+its prompt — the answer the tutor's leak check matches. validate_draft already
+rejects an answer missing from the reference after checks.answer_tokens'
+normalisation, so repeating that check here would score 1.0 whatever the
+model wrote; the verbatim copy is what the prompt asks for and code does not
+enforce.
+"""
+
+from __future__ import annotations
+
+import json
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from pydantic_evals import Case, Dataset  # noqa: E402
+from pydantic_evals.evaluators import Evaluator, EvaluatorContext  # noqa: E402
+
+from agents._providers import model_name_for  # noqa: E402
+from agents.check_items import (  # noqa: E402
+    _PROMPT_HASH,
+    CheckItemsOutput,
+    build_prompt,
+    check_items_agent,
+)
+from learning.checks import (  # noqa: E402
+    MC_OPTION_RULES,
+    answer_in,
+    common_wrong,
+    leak_in_prompt,
+    repair_draft,
+    validate_draft,
+)
+from learning.item_alignment import concept_key  # noqa: E402
+from learning.params import (  # noqa: E402
+    CHECK_ITEM_CONCEPTS_PER_CALL,
+    CHECK_ITEM_MIN_RUBRIC,
+    CHECK_ITEM_MIN_WRONG,
+)
+from _replay import (  # noqa: E402  (sibling, sys.path-injected)
+    MODE,
+    _run_with_retry,
+    cli_main,
+    input_identity,
+    load_recording,
+    make_deps,
+    prompt_identity,
+    recorded_under,
+    run_settings,
+    save_recording,
+    schema_hash,
+)
+
+# (concept name — or, for a multi-concept call, a tuple of names — and
+# ((chunk_id, chunk_text), ...)); hashable so _INPUT_TO_NAME works.
+CheckItemsInput = tuple[str | tuple[str, ...], tuple[tuple[str, str], ...]]
+
+_FIXTURE = Path(__file__).parent / "fixtures" / "tutor_course.json"
+_DOCS_PER_DATASET = 2
+_CONCEPTS_PER_DOC = 3
+_MAX_CASES = 8  # the eval-recording budget per dataset
+#: The one-concept calls kept beside production's three-concept shape (see the
+#: module docstring for why each).
+_SINGLE_CONCEPT_CASES = ("eval-doc-1__chain_rule", "eval-doc-2__big-o_notation")
+
+
+def _cases() -> list[Case[CheckItemsInput, CheckItemsOutput]]:
+    data = json.loads(_FIXTURE.read_text())
+    cases = []
+    for doc in data["documents"][:_DOCS_PER_DATASET]:
+        chunks = [(f"{doc['document_id']}:c0", doc["summary"])] + [
+            (f"{doc['document_id']}:c{i + 1}", f"{n['name']}: {n['description']}")
+            for i, n in enumerate(doc["concept_notes"])
+        ]
+        for note in doc["concept_notes"][:_CONCEPTS_PER_DOC]:
+            name = note["name"]
+            case_name = f"{doc['document_id']}__{name.lower().replace(' ', '_')}"
+            if case_name in _SINGLE_CONCEPT_CASES:
+                cases.append(Case(name=case_name, inputs=(name, tuple(chunks))))
+    for doc in data["documents"][:_DOCS_PER_DATASET]:  # #866 Z24: production's call shape
+        chunks = [(f"{doc['document_id']}:c0", doc["summary"])] + [
+            (f"{doc['document_id']}:c{i + 1}", f"{n['name']}: {n['description']}")
+            for i, n in enumerate(doc["concept_notes"])
+        ]
+        names = tuple(n["name"] for n in doc["concept_notes"][:CHECK_ITEM_CONCEPTS_PER_CALL])
+        assert len(names) == CHECK_ITEM_CONCEPTS_PER_CALL
+        cases.append(Case(name=f"{doc['document_id']}__all_concepts", inputs=(names, tuple(chunks))))
+    assert {c.name for c in cases} >= set(_SINGLE_CONCEPT_CASES)
+    assert len(cases) <= _MAX_CASES
+    return cases
+
+
+CASES = _cases()
+_INPUT_TO_NAME = {c.inputs: c.name for c in CASES}
+
+
+def _ids(ctx) -> set[str]:
+    return {cid for cid, _ in ctx.inputs[1]}
+
+
+_Ctx = EvaluatorContext[CheckItemsInput, CheckItemsOutput]
+
+
+def _every(ctx: _Ctx, pred) -> float:
+    """1.0 when every item satisfies pred; 0.0 when none exist or one fails."""
+    items = ctx.output.items
+    return 1.0 if items and all(pred(i) for i in items) else 0.0
+
+
+@dataclass
+class HasReferenceEvaluator(Evaluator[CheckItemsInput, CheckItemsOutput]):
+    def evaluate(self, ctx: _Ctx) -> float:
+        return _every(ctx, lambda i: bool(i.reference_answer.strip()))
+
+
+@dataclass
+class RubricCountEvaluator(Evaluator[CheckItemsInput, CheckItemsOutput]):
+    def evaluate(self, ctx: _Ctx) -> float:
+        return _every(ctx, lambda i: len(i.rubric) >= CHECK_ITEM_MIN_RUBRIC)
+
+
+def _wrong_reasons_ok(draft) -> bool:
+    """>= CHECK_ITEM_MIN_WRONG reasons, unique keys, keys and texts paired.
+    An mc_reason item's reasons are its distractors' misconceptions (spec §13
+    A37, round 4: checks.common_wrong after repair_draft, as create_items
+    stores them) — each stated, under a distinct key — and its own
+    wrong_keys / wrong_texts are not read."""
+    if draft.format == "mc_reason":
+        wrong = common_wrong(repair_draft(draft)[0])
+        keys = [w.key for w in wrong]
+        return (
+            len(wrong) >= CHECK_ITEM_MIN_WRONG
+            and len(set(keys)) == len(keys)
+            and all(w.key.strip() and w.text.strip() for w in wrong)
+            and len({" ".join(w.text.split()).casefold() for w in wrong}) == len(wrong)
+        )
+    keys, texts = draft.wrong_keys, draft.wrong_texts
+    return len(keys) >= CHECK_ITEM_MIN_WRONG and len(set(keys)) == len(keys) == len(texts)
+
+
+@dataclass
+class WrongReasonCountEvaluator(Evaluator[CheckItemsInput, CheckItemsOutput]):
+    """Every item's wrong reasons are well formed (_wrong_reasons_ok)."""
+
+    def evaluate(self, ctx: _Ctx) -> float:
+        return _every(ctx, _wrong_reasons_ok)
+
+
+@dataclass
+class CitesChunkEvaluator(Evaluator[CheckItemsInput, CheckItemsOutput]):
+    """Share of items whose cited ids are all input ids (partial credit)."""
+
+    def evaluate(self, ctx: _Ctx) -> float:
+        items = ctx.output.items
+        return sum(set(i.chunk_ids) <= _ids(ctx) for i in items) / len(items) if items else 0.0
+
+
+@dataclass
+class NoLeakInPromptEvaluator(Evaluator[CheckItemsInput, CheckItemsOutput]):
+    def evaluate(self, ctx: _Ctx) -> float:
+        return _every(ctx, lambda i: not leak_in_prompt(i.prompt, i.reference_answer))
+
+
+def _stored(draft) -> bool:
+    """Whether create_items would store `draft`: valid once repaired (A37)."""
+    return validate_draft(repair_draft(draft)[0]) == []
+
+
+@dataclass
+class DraftValidEvaluator(Evaluator[CheckItemsInput, CheckItemsOutput]):
+    """Share of items that would be stored — the A22 / A37 option, numeric
+    and stepwise rules included, after repair_draft (partial credit)."""
+
+    def evaluate(self, ctx: _Ctx) -> float:
+        items = ctx.output.items
+        return sum(_stored(i) for i in items) / len(items) if items else 0.0
+
+
+def _mc_share(ctx: _Ctx, pred) -> float:
+    """The share of the case's mc_reason drafts satisfying pred; 0.0 when it
+    has none (the mc_reasoned channel would have no items)."""
+    mc = [i for i in ctx.output.items if i.format == "mc_reason"]
+    return sum(pred(i) for i in mc) / len(mc) if mc else 0.0
+
+
+@dataclass
+class McReasonValidEvaluator(Evaluator[CheckItemsInput, CheckItemsOutput]):
+    """A37: the share of the case's mc_reason drafts that would be stored."""
+
+    def evaluate(self, ctx: _Ctx) -> float:
+        return _mc_share(ctx, _stored)
+
+
+@dataclass
+class McOptionsValidEvaluator(Evaluator[CheckItemsInput, CheckItemsOutput]):
+    """A37, required 1.0: the share of the case's mc_reason drafts whose
+    options pass every A37 option rule (MC_OPTION_RULES) once repaired — the
+    structure the parallel arrays broke; the A34 rules are McReasonValid's."""
+
+    def evaluate(self, ctx: _Ctx) -> float:
+        def options_ok(draft) -> bool:
+            reasons = validate_draft(repair_draft(draft)[0])
+            return not any(r.startswith(f"{rule}:") for r in reasons for rule in MC_OPTION_RULES)
+
+        return _mc_share(ctx, options_ok)
+
+
+def _correct_is_longest(draft) -> bool:
+    """Whether the option marked correct is STRICTLY the longest by
+    characters (whitespace runs collapsed): a student who picks the longest
+    option finds it. A tie hides it."""
+    lengths = [(len(" ".join(o.text.split())), o.is_correct) for o in draft.options]
+    right = [n for n, correct in lengths if correct]
+    others = [n for n, correct in lengths if not correct]
+    return len(right) == 1 and bool(others) and right[0] > max(others)
+
+
+@dataclass
+class McCorrectNotLongestEvaluator(Evaluator[CheckItemsInput, CheckItemsOutput]):
+    """A37 review: the share of the case's STORED mc_reason drafts whose
+    correct option is not strictly the longest — the length cue that let
+    "pick the longest" find the answer in 10 of 12 live HIST200 items. Gated
+    at its recorded rate (the prompt asks for options alike in length; code
+    cannot shorten an option, and a drop rule cost most of the yield); 0.0
+    when the case stores no mc_reason draft."""
+
+    def evaluate(self, ctx: _Ctx) -> float:
+        stored = [i for i in ctx.output.items if i.format == "mc_reason" and _stored(i)]
+        return sum(not _correct_is_longest(i) for i in stored) / len(stored) if stored else 0.0
+
+
+def _copied(final_answer: str, text: str) -> bool:
+    """A34's "copied verbatim": the final answer, trimmed of surrounding
+    whitespace and a closing period, is a substring of `text`."""
+    core = final_answer.strip().rstrip(".").strip()
+    return bool(core) and core in text
+
+
+@dataclass
+class FinalAnswerValidEvaluator(Evaluator[CheckItemsInput, CheckItemsOutput]):
+    """A34, required 1.0: every accepted draft (one create_items would
+    store) states a final_answer copied verbatim from its reference_answer and
+    not in its prompt; 0.0 when no draft is accepted."""
+
+    def evaluate(self, ctx: _Ctx) -> float:
+        accepted = [i for i in ctx.output.items if _stored(i)]
+        ok = all(
+            _copied(i.final_answer, i.reference_answer) and not answer_in(i.prompt, i.final_answer)
+            for i in accepted
+        )
+        return 1.0 if accepted and ok else 0.0
+
+
+def _asked(case_input) -> list[str]:
+    """The concept names a case's call asks for (one, or a multi-concept call's)."""
+    concept = case_input[0]
+    return [concept] if isinstance(concept, str) else list(concept)
+
+
+@dataclass
+class ConceptsCoveredEvaluator(Evaluator[CheckItemsInput, CheckItemsOutput]):
+    """#866 Z24: the share of the call's concepts that get a stored item; 0.0
+    when an item names a concept the call did not ask for (A38: production
+    splits and retries a call that leaves a concept out)."""
+
+    def evaluate(self, ctx: _Ctx) -> float:
+        asked = {concept_key(c) for c in _asked(ctx.inputs)}
+        stored = [i for i in ctx.output.items if _stored(i)]
+        named = {concept_key(i.concept) for i in stored}
+        if not stored or not named <= asked:
+            return 0.0
+        return len(named & asked) / len(asked)
+
+
+def _message(case_input: CheckItemsInput) -> str:
+    _, chunks = case_input
+    return build_prompt(_asked(case_input), [{"id": cid, "text": text} for cid, text in chunks])
+
+
+def identity(case_input: CheckItemsInput) -> dict:
+    """What a check_items cassette must have been recorded under (D4): the
+    agent's prompt (and tools), its output schema, the slot's model and the
+    exact drafting message, so a changed prompt or passage never replays an
+    old draft."""
+    return recorded_under(
+        prompt_hash=prompt_identity(_PROMPT_HASH, check_items_agent),
+        schema_hash=schema_hash(CheckItemsOutput),
+        model=model_name_for("check_items"),
+        input_sha256=input_identity(_message(case_input), run_settings(check_items_agent)),
+    )
+
+
+async def _run(case_input: CheckItemsInput) -> CheckItemsOutput:
+    case_name = _INPUT_TO_NAME.get(case_input, "unknown")
+    if MODE == "replay":
+        body = load_recording("check_items", case_name, identity(case_input))
+        return CheckItemsOutput.model_validate(body)
+    result = await _run_with_retry(check_items_agent, _message(case_input), make_deps())
+    if MODE == "record":
+        save_recording("check_items", case_name, result.output, identity(case_input))
+    return result.output
+
+
+def make_dataset() -> Dataset[CheckItemsInput, CheckItemsOutput]:
+    return Dataset(
+        name="check_items",
+        cases=CASES,
+        evaluators=[
+            HasReferenceEvaluator(),
+            RubricCountEvaluator(),
+            WrongReasonCountEvaluator(),
+            CitesChunkEvaluator(),
+            NoLeakInPromptEvaluator(),
+            DraftValidEvaluator(),
+            McReasonValidEvaluator(),
+            McOptionsValidEvaluator(),
+            McCorrectNotLongestEvaluator(),
+            FinalAnswerValidEvaluator(),
+            ConceptsCoveredEvaluator(),
+        ],
+    )
+
+
+if __name__ == "__main__":
+    cli_main(make_dataset, _run)

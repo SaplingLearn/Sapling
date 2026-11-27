@@ -21,6 +21,18 @@
  * tutor's greeting from that first call is deliberately never rendered — the
  * student asked about a question, not for a hello.
  *
+ * QUIZ-ASK ORIGIN (spec §13 A99). The first call also names the question
+ * (`quizAsk`: the attempt id and the question's index). With the learning loop
+ * on, a plain start-session opens in the probe, and the follow-up chat would
+ * be refused ("finish the probe first"); a `quiz_ask` session starts teaching
+ * the quiz's concept instead. And the server records the help on that
+ * question, so answering it after the tutor explained it earns no unassisted
+ * quiz credit. Under the kill switch the legacy tutor serves both calls; the
+ * help is recorded the same way. The seed message names the question as well
+ * (#866 K12): it QUOTES it, so a crisis phrase the question itself holds (a
+ * patient's words in a nursing question) shows the crisis card beside the
+ * explanation rather than in place of it (docs/safety/crisis-support.md).
+ *
  * The session is LEFT OPEN on close (no `end-session`): it stays in the
  * tutor's session list, which is where a student who wants to keep going will
  * look for it. The accumulating-sessions cost is recorded as a seam in §8.
@@ -29,22 +41,32 @@
  * make sense in a transcript: a stream that produced nothing falls back to the
  * JSON route transparently, a stream that failed AFTER tokens (or one the
  * backend marked non-retryable, or a 413) surfaces an inline error with Retry.
+ *
+ * LEARNING LOOP. For a student with the loop on, `/chat/stream` hands the turn
+ * to the loop, whose stream can `retract` what it streamed (A46: the text is
+ * withdrawn and the whole reply follows) — so withdrawn text leaves the screen
+ * and is never kept as an interrupted partial — and can pause the tutor for
+ * the student's AI budget (`budget`, or a 429 "ai budget reached"): the pause
+ * copy shows, not an error.
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { Sheet } from "@/components/ui";
-import { newTurnId } from "@/lib/api";
+import { newTurnId, type LoopBudgetPause, type QuizAskOrigin } from "@/lib/api";
 import { tutorStepLabel } from "@/components/chat/ChatPanel";
+import { BudgetPausedBanner, tutorPauseMessage } from "@/components/learn/BudgetPausedBanner";
+import { CrisisSupportCard } from "@/components/safety/CrisisSupportCard";
+import type { CrisisSupport } from "@/lib/crisisSupport";
 import {
   ABORTED,
   askErrorCopy,
   chatWithFallback,
   openTutorSession,
+  quizAskOrigin,
+  turnPauseOf,
   type TurnProgress,
 } from "./askTurn";
-import { CrisisSupportCard } from "@/components/safety/CrisisSupportCard";
-import type { CrisisSupport } from "@/lib/crisisSupport";
 
 // The same renderer the tutor uses, loaded the same way `ChatPanel` loads it:
 // `MarkdownChat` statically imports mermaid, katex and highlight.js, and a
@@ -75,6 +97,15 @@ export interface AskPanelProps {
   courseId: string | null;
   courseLabel?: string;
   seed: AskSeed;
+  /**
+   * The quiz question this panel asks about — the attempt and the question's
+   * index in it (spec §13 A99). Sent on the session start as a `quiz_ask`
+   * origin: the server records the help on that question (quiz evidence on it
+   * then earns no unassisted credit) and, on the loop path, opens the session
+   * teaching the quiz's concept instead of probing. Omitted (no attempt yet),
+   * the session opens as an ordinary tutor session.
+   */
+  quizAsk?: QuizAskOrigin;
   /** Focused after the panel closes. `Sheet` restores focus on its own; this
    *  is the explicit target for a caller whose trigger re-renders (B3's
    *  missed-list rows), and it runs after Sheet's restore, so it wins. */
@@ -86,7 +117,8 @@ interface AskTurn {
   id: number;
   role: "user" | "assistant";
   text: string;
-  /** docs/safety/crisis-support.md: the crisis card instead of a tutor reply. */
+  /** docs/safety/crisis-support.md: the crisis card instead of a tutor reply
+   *  (`text` empty), or beside it (#866 K12: the question the seed quotes). */
   crisisSupport?: CrisisSupport;
   /** ADR 0020: the stream was cut off after producing this much. The partial
    *  stays in the thread, marked; Retry drops it and starts the answer over. */
@@ -120,6 +152,7 @@ export function AskPanel({
   courseId,
   courseLabel,
   seed,
+  quizAsk,
   returnFocusTo,
   testid = "quiz-ask-panel",
 }: AskPanelProps) {
@@ -132,6 +165,8 @@ export function AskPanel({
   const [status, setStatus] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The tutor is paused for the student's AI budget (see the header).
+  const [pause, setPause] = useState<LoopBudgetPause | null>(null);
   const [draft, setDraft] = useState("");
 
   // The tutor session, held in a ref: nothing renders off it, and a follow-up
@@ -154,6 +189,8 @@ export function AskPanel({
   // than answered twice.
   const lastMessageRef = useRef<string>("");
   const lastTurnIdRef = useRef<string>("");
+  // ...and whether it was the seed, which quotes the quiz question (#866 K12).
+  const lastQuotesRef = useRef(false);
   // The in-flight turn's text so far, readable by the close effect: closing
   // the sheet is this panel's Stop, and ADR 0020 keeps what was already shown.
   const partialRef = useRef("");
@@ -161,11 +198,15 @@ export function AskPanel({
   const lastSeededRef = useRef<string | null>(null);
 
   const seedMessage = useMemo(() => composeAskMessage(seed), [seed]);
+  // The question identity as primitives: a caller passing a fresh object each
+  // render must not re-create `runTurn`.
+  const askAttemptId = quizAsk?.attemptId;
+  const askQuestionIndex = quizAsk?.questionIndex;
 
   const nextId = () => ++idRef.current;
 
   const runTurn = useCallback(
-    async (message: string, turnId: string = newTurnId()) => {
+    async (message: string, turnId: string = newTurnId(), quotes = false) => {
       const token = ++runRef.current;
       // A new turn supersedes whatever was in flight; two streams writing into
       // the same partial-text state would interleave.
@@ -175,8 +216,10 @@ export function AskPanel({
       inFlightRef.current = true;
       lastMessageRef.current = message;
       lastTurnIdRef.current = turnId;
+      lastQuotesRef.current = quotes;
       setBusy(true);
       setError(null);
+      setPause(null);
       setStreaming("");
       setStatus(null);
       partialRef.current = "";
@@ -188,7 +231,13 @@ export function AskPanel({
       try {
         let sid = sessionIdRef.current;
         if (!sid) {
-          const opened = await openTutorSession(userId, conceptName, courseId, controller.signal);
+          const opened = await openTutorSession(
+            userId,
+            conceptName,
+            courseId,
+            controller.signal,
+            quizAskOrigin(askAttemptId, askQuestionIndex),
+          );
           if (opened === ABORTED) return;
           if (typeof opened === "object" && opened !== null) {
             // The card instead of a session: none was opened.
@@ -203,8 +252,12 @@ export function AskPanel({
           sessionIdRef.current = sid;
         }
 
+        // The seed names the quiz question it quotes (#866 K12): a crisis phrase
+        // the question holds then shows the card beside the explanation, not
+        // in place of it. A follow-up the student types quotes nothing.
+        const quote = quotes ? quizAskOrigin(askAttemptId, askQuestionIndex) : undefined;
         const reply = await chatWithFallback(
-          { sid, userId, message, turnId, signal: controller.signal, progress },
+          { sid, userId, message, turnId, signal: controller.signal, progress, quote },
           {
             onToken: delta => {
               // The pacer flushes its backlog after an abort; a closed or
@@ -219,6 +272,18 @@ export function AskPanel({
               const label = tutorStepLabel(step);
               if (label && runRef.current === token) setStatus(label);
             },
+            // A46: everything streamed so far is withdrawn; the whole reply
+            // follows as tokens. Nothing of it may stay on screen or be kept
+            // as the interrupted partial on Stop or an error.
+            onRetract: () => {
+              if (runRef.current !== token) return;
+              progress.partial = "";
+              partialRef.current = "";
+              setStreaming("");
+            },
+            onBudget: notice => {
+              if (runRef.current === token) setPause({ resetAt: notice.reset_at, sessionCapped: notice.session_capped });
+            },
           },
           () => {
             setStreaming(null);
@@ -232,10 +297,16 @@ export function AskPanel({
           ...t,
           typeof reply === "string"
             ? { id: nextId(), role: "assistant", text: reply }
-            : { id: nextId(), role: "assistant", text: "", crisisSupport: reply.crisis },
+            : { id: nextId(), role: "assistant", text: reply.reply ?? "", crisisSupport: reply.crisis },
         ]);
       } catch (err) {
         if (controller.signal.aborted || runRef.current !== token || !mountedRef.current) return;
+        const paused = turnPauseOf(err);
+        if (paused) {
+          // nothing was answered: the pause copy says why — no error, no Retry
+          setPause(paused);
+          return;
+        }
         // ADR 0020, and the whole reason `partial` exists: half an answer the
         // student was already reading must not blink out and be replaced by an
         // error strip. It stays in the thread, marked unfinished. Retry drops
@@ -258,7 +329,7 @@ export function AskPanel({
         }
       }
     },
-    [userId, conceptName, courseId],
+    [userId, conceptName, courseId, askAttemptId, askQuestionIndex],
   );
 
   // Seed on open, and re-seed when the question changes (B3 opens the same
@@ -273,7 +344,7 @@ export function AskPanel({
     setStreaming(null);
     setError(null);
     setDraft("");
-    void runTurn(seedMessage);
+    void runTurn(seedMessage, newTurnId(), true);
   }, [open, seedMessage, runTurn]);
 
   // Closing the sheet ends the turn it was showing — it is this panel's Stop.
@@ -346,7 +417,7 @@ export function AskPanel({
    */
   const retry = () => {
     setTurns(t => (t.length > 0 && t[t.length - 1].interrupted ? t.slice(0, -1) : t));
-    void runTurn(lastMessageRef.current, lastTurnIdRef.current);
+    void runTurn(lastMessageRef.current, lastTurnIdRef.current, lastQuotesRef.current);
   };
 
   const send = (e: React.FormEvent) => {
@@ -386,7 +457,15 @@ export function AskPanel({
         <div className="quiz-ask__thread" aria-live="polite">
           {turns.map(turn =>
             turn.crisisSupport ? (
-              <CrisisSupportCard key={turn.id} support={turn.crisisSupport} />
+              <React.Fragment key={turn.id}>
+                <CrisisSupportCard support={turn.crisisSupport} />
+                {/* #866 K12: beside a reply (the quoted question matched), the reply under it */}
+                {turn.text && (
+                  <div className="quiz-ask__turn--assistant">
+                    <MarkdownChat>{turn.text}</MarkdownChat>
+                  </div>
+                )}
+              </React.Fragment>
             ) : turn.role === "user" ? (
               <p key={turn.id} className="quiz-ask__turn--user">
                 {turn.text}
@@ -408,6 +487,14 @@ export function AskPanel({
                 <p className="quiz-ask__pending">{status ?? "Thinking…"}</p>
               )}
             </div>
+          )}
+          {pause && (
+            <BudgetPausedBanner
+              testId="quiz-ask-budget-paused"
+              resetAt={pause.resetAt}
+              sessionCapped={pause.sessionCapped}
+              message={tutorPauseMessage(pause.resetAt, pause.sessionCapped)}
+            />
           )}
           {error && (
             <div className="quiz-ask__error" role="alert">

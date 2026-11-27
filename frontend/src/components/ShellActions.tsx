@@ -1,12 +1,14 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Icon } from "./Icon";
 import { ReportIssueFlow } from "./ReportIssueFlow";
 import { Tooltip } from "./ui/Tooltip";
+import { useCornerDodge } from "./useCornerDodge";
+import styles from "./ShellActions.module.css";
 
 /** `showSettings={false}` drops the gear: in the sidebar layout Settings
  *  lives in the rail's account footer, so only Report remains.
@@ -43,10 +45,15 @@ export function ShellActions({
 /** The sidebar layout's Report button: rendered ONCE by `ShellFrame`, pinned
  *  to the content column's bottom-right corner, so it sits in the same spot
  *  on every page instead of wherever each page's header happened to put it.
- *  (The top-nav layout keeps it in the bar via `TopNav`.) */
+ *  (The top-nav layout keeps it in the bar via `TopNav`.) That corner is also
+ *  where pages dock their own controls, so it rises above any control under
+ *  it (`useCornerDodge`) instead of covering it. */
 export function ShellCornerActions() {
+  const ref = useRef<HTMLDivElement>(null);
+  const pathname = usePathname() ?? "";
+  useCornerDodge(ref, pathname);
   return (
-    <div className="shell-corner-actions" data-testid="shell-corner-actions">
+    <div ref={ref} className={`shell-corner-actions ${styles.corner}`} data-testid="shell-corner-actions">
       <ShellActions showSettings={false} tooltipPlacement="top" />
     </div>
   );

@@ -105,6 +105,14 @@ def clamp_tz_offset(tz_offset_min: int) -> int:
     return max(TZ_OFFSET_MIN_LOWEST, min(tz_offset_min, TZ_OFFSET_MIN_HIGHEST))
 
 
+def local_date(now: datetime, tz_offset_min: int) -> date:
+    """The student's local calendar date at the UTC instant ``now``, from JS
+    ``Date#getTimezoneOffset`` (clamped). The one definition of "the
+    student's day": the Daily Goal panel's window and Study's review queue
+    (``learning/review.py::review_session_id``, #866 K17)."""
+    return (now - timedelta(minutes=clamp_tz_offset(tz_offset_min))).date()
+
+
 @dataclass(frozen=True)
 class Window:
     """The ``DAYS`` local days ending on the student's today."""
@@ -130,7 +138,7 @@ class Window:
 
 def _window(tz_offset_min: int, now: datetime) -> Window:
     offset = timedelta(minutes=-tz_offset_min)
-    today = (now + offset).date()
+    today = local_date(now, tz_offset_min)
     first_midnight = datetime.combine(
         today - timedelta(days=DAYS - 1), time.min, tzinfo=timezone.utc
     )

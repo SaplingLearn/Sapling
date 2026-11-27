@@ -13,7 +13,7 @@
 import React from "react";
 import Link from "next/link";
 import hub from "../../study/StudyHub.module.css";
-import { ST_LABEL, TC } from "../../study/studyModel";
+import { TC, stLabel } from "../../study/studyModel";
 import {
   cardsLabel,
   columnCheck,
@@ -116,7 +116,7 @@ function Tile({
           <span className={h.tileName}>{item.name}</span>
           <span className={h.tileMeta}>{cardsLabel(item.cards, item.due)}</span>
         </span>
-        {item.status && <span aria-hidden="true" className={h.dot} style={{ background: TC[item.status] }} title={ST_LABEL[item.status]} />}
+        {item.status && <span aria-hidden="true" className={h.dot} style={{ background: TC[item.status] }} title={stLabel(item.status, item.ladder)} />}
       </label>
       {item.custom && (
         <button type="button" className={h.tileRemove} aria-label={`Remove ${item.name}`} title="Remove this concept" onClick={() => onRemove(item.name)}>

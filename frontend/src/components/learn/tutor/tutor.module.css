@@ -1,0 +1,1266 @@
+@layer components {
+/* The Tutor's shell (wireframes T1–T17, "AI tutor structure layout V2"):
+   a Claude-style tutor sidebar (new session, search, courses, recents), the
+   TopBar, the chat column, and the session panel on the right. Colours come
+   from the globals.css tokens only (WCAG 2.1 AA on every surface they meet). */
+
+.shell {
+  /* The Tutor's control height: the sidebar's rows, its search and New
+     session, the all-sessions search and filters, the actions under a turn. */
+  --side-control: 36px;
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+}
+
+/* ── Tutor sidebar ─────────────────────────────────────────────────────── */
+.side {
+  /* The sidebar's width: a layout size, not a scale step. */
+  --side-w: 252px;
+  width: var(--side-w);
+  flex-shrink: 0;
+  background: var(--bg-subtle);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* Sidebar sizes: every row, the search and New session are --side-control
+   tall (on .shell, and on .drawer for the phone's portal); the head's toggle
+   is the shell's 32px icon button. */
+.sideInner {
+  /* A hairline between rows: a step of the scale would add up down a long list. */
+  --side-row-gap: 1px;
+  padding: var(--sp-11) var(--sp-7) var(--sp-9);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-8);
+  overflow-y: auto;
+  height: 100%;
+}
+
+.sideHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 var(--sp-2);
+}
+
+.sideHead h2 {
+  margin: 0;
+  font-size: var(--fs-2xl);
+  line-height: 32px;
+}
+
+.sideNew {
+  width: 100%;
+  height: var(--side-control);
+  padding-top: 0;
+  padding-bottom: 0;
+  box-sizing: border-box;
+}
+
+.iconBtn {
+  width: var(--sp-16);
+  height: var(--sp-16);
+  border-radius: var(--r-sm);
+  display: inline-grid;
+  place-items: center;
+  color: var(--text-dim);
+  background: transparent;
+  border: 1px solid transparent;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+
+.iconBtn:hover {
+  background: var(--bg-soft);
+  color: var(--text);
+}
+
+.iconBtn:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.search {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  padding: 0 var(--sp-6);
+  height: var(--side-control);
+  box-sizing: border-box;
+  border-radius: var(--r-sm);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  transition:
+    border-color var(--dur-fast) var(--ease),
+    box-shadow var(--dur-fast) var(--ease);
+}
+
+.search input {
+  border: 0;
+  background: transparent;
+  outline: none;
+  width: 100%;
+  min-width: 0;
+  font: inherit;
+  font-size: var(--fs-md);
+  color: var(--text);
+}
+
+.search:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 var(--sp-2) var(--focus-halo);
+}
+
+.sideSec {
+  display: flex;
+  flex-direction: column;
+  gap: var(--side-row-gap);
+}
+
+/* A column of sidebar rows (the recents and each day's list), the rows' hairline apart. */
+.sideStack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--side-row-gap);
+}
+
+.bare {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.sideNote {
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+  padding: var(--sp-2) var(--sp-4);
+}
+
+.sideFoot {
+  padding: var(--sp-4) var(--sp-4) 0;
+}
+
+.sideSec > :global(.label-micro) {
+  padding: 0 var(--sp-4) var(--sp-3);
+}
+
+.sideRow {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-5);
+  height: var(--side-control);
+  box-sizing: border-box;
+  padding: 0 var(--sp-4);
+  border-radius: var(--r-sm);
+  font-size: var(--fs-md);
+  color: var(--text-dim);
+  text-align: left;
+  width: 100%;
+  min-width: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+
+.sideRow:hover {
+  background: var(--bg-soft);
+  color: var(--text);
+}
+
+/* milestones: a course's next dated work, indented under it, with its countdown. */
+.sideMilestone {
+  padding-left: var(--sp-14);
+}
+
+.sideDays {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+/* session_v2: Review at the sidebar's foot, with the queue's count. */
+.sideReview {
+  margin-top: auto;
+  flex-shrink: 0;
+  color: var(--text);
+  text-decoration: none;
+}
+
+.sideCount {
+  margin-left: auto;
+  min-width: 22px;
+  padding: 0 var(--sp-3);
+  border-radius: var(--r-full);
+  background: var(--brand-forest);
+  color: var(--accent-fg);
+  font: 600 var(--fs-xs)/22px var(--font-sans);
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.sideRow[aria-current="true"] {
+  background: var(--bg-panel);
+  color: var(--text);
+  font-weight: 600;
+  box-shadow: var(--shadow-sm);
+  border-color: var(--border);
+}
+
+.sideRow:disabled {
+  cursor: not-allowed;
+}
+
+.rowText {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.cdot {
+  width: var(--sp-4);
+  height: var(--sp-4);
+  border-radius: 50%;
+  background: var(--dot, var(--c-sage));
+  flex-shrink: 0;
+}
+
+/* An open session: filled. A wrapped-up one: a ring. */
+.sdot {
+  /* A ring a hair smaller than the course dot (.cdot), so the two read apart. */
+  --sdot-size: 7px;
+  width: var(--sdot-size);
+  height: var(--sdot-size);
+  border-radius: 50%;
+  flex-shrink: 0;
+  border: 1.5px solid var(--text-muted);
+}
+
+.sdotOn {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.sideWhen {
+  font: 400 var(--fs-sm)/14px var(--font-sans);
+  color: var(--text-muted);
+  padding: var(--sp-4) var(--sp-4) var(--sp-2);
+}
+
+.code {
+  font: 500 var(--fs-xs) var(--font-sans);
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.textLink {
+  color: var(--accent);
+  font-weight: 500;
+  font-size: var(--fs-md);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: none;
+  transition: color var(--dur-fast) var(--ease);
+}
+
+.textLink:hover {
+  color: var(--brand-forest);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* ── Main column + TopBar ──────────────────────────────────────────────── */
+.main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--bg);
+}
+
+.topbar {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--sp-6);
+  padding: var(--sp-11) clamp(var(--sp-12), 4vw, var(--sp-28)) var(--sp-8);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+  flex-shrink: 0;
+}
+
+/* One height on every Tutor page, whether or not a session's course crumb
+   sits above the title: the crumb's row is kept, and the title sits at its
+   foot (tutor-layout.spec pins the TopBar's height across pages). */
+.topTitle {
+  flex: 1;
+  min-width: 0;
+  min-height: calc(var(--sp-12) + var(--sp-1) + 36px);
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+
+/* TopBar rhythm: crumb (a session's course) · title 36, and every action 32px tall. */
+.topTitle h1 {
+  margin: 0;
+  font-size: var(--fs-4xl);
+  line-height: 36px;
+  overflow-wrap: anywhere;
+}
+
+.crumb {
+  display: block;
+  font-size: var(--fs-md);
+  line-height: var(--sp-12);
+  min-height: var(--sp-12);
+  margin-bottom: var(--sp-1);
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  color: var(--text-muted);
+  text-align: left;
+  transition: color var(--dur-fast) var(--ease);
+}
+
+.crumb:hover {
+  color: var(--accent);
+}
+
+.topActs {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.topActs > :is(button, a, span) {
+  height: var(--sp-16);
+  box-sizing: border-box;
+}
+
+.body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.center {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* ── T1 Tutor home ─────────────────────────────────────────────────────── */
+/* One 8px rhythm: mark 56 · 24 · heading 48 · 16 · intro 48 (2 × 24) · 24 ·
+   suggestions 40 · 16 · CTA 40. Every control on the page is 40px tall. */
+.home {
+  --home-control: 40px;
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+  padding: var(--sp-20) var(--sp-16);
+}
+
+.home > * {
+  margin: 0;
+}
+
+.home > .heroMark {
+  margin-bottom: var(--sp-12);
+}
+
+.home > h2 {
+  margin-bottom: var(--sp-8);
+}
+
+.home > .quote {
+  margin-bottom: var(--sp-12);
+}
+
+.home > .suggest {
+  margin-bottom: var(--sp-8);
+}
+
+.home > .ctaNote {
+  margin-top: var(--sp-6);
+}
+
+.heroMark {
+  width: var(--sp-28);
+  height: var(--sp-28);
+  flex-shrink: 0;
+  color: var(--accent);
+  display: grid;
+  place-items: center;
+}
+
+.home h2:focus {
+  outline: none;
+}
+
+.home h2 {
+  /* The home hero: larger than the type scale's top step, on the page's 8px rhythm. */
+  --home-title-size: 42px;
+  font: 600 var(--home-title-size)/var(--sp-24) var(--font-display);
+  letter-spacing: -0.02em;
+  text-wrap: balance;
+}
+
+.quote {
+  /* The pull quote sits between the body steps (14 and 16), with the rhythm's 24px line. */
+  --quote-size: 15px;
+  --quote-measure: 560px;
+  font: italic 400 var(--quote-size)/var(--sp-12) var(--font-serif);
+  color: var(--text-dim);
+  max-width: var(--quote-measure);
+  margin: 0;
+  text-wrap: balance;
+}
+
+.suggest {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-4);
+  justify-content: center;
+  --suggest-measure: 680px;
+  max-width: var(--suggest-measure);
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-3);
+  height: var(--home-control, var(--sp-20));
+  padding: 0 var(--sp-8);
+  box-sizing: border-box;
+  line-height: 1;
+  border-radius: var(--r-full);
+  font-size: var(--fs-md);
+  font-weight: 500;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  background: var(--bg-panel);
+  cursor: pointer;
+  text-decoration: none;
+  transition: border-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+
+.pill:hover {
+  border-color: var(--accent-border);
+  color: var(--accent);
+}
+
+.pill:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.cta {
+  height: var(--home-control, var(--sp-20));
+  padding: 0 var(--sp-8);
+  box-sizing: border-box;
+}
+
+.ctaNote {
+  font-size: var(--fs-sm);
+  line-height: 16px;
+  color: var(--text-muted);
+}
+
+/* ── T2 / T3 pages ─────────────────────────────────────────────────────── */
+.page {
+  padding: var(--sp-12) clamp(var(--sp-12), 4vw, var(--sp-28)) var(--sp-16);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-8);
+}
+
+.grid2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--sp-8);
+}
+
+.cardHead {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--sp-5);
+  padding: var(--sp-8) var(--sp-11) var(--sp-6);
+  border-bottom: 1px solid var(--border);
+}
+
+.cardHead h3 {
+  margin: var(--sp-1) 0 0;
+  font-size: var(--fs-xl);
+}
+
+.cardPad {
+  padding: var(--sp-9) var(--sp-11);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-7);
+}
+
+.listRow {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-6);
+  padding: var(--sp-6) var(--sp-11);
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  min-width: 0;
+  transition: background var(--dur-fast) var(--ease);
+}
+
+.listRow:last-child {
+  border-bottom: 0;
+}
+
+.listRow:hover {
+  background: var(--bg-subtle);
+}
+
+.listRowStatic {
+  cursor: default;
+}
+
+/* #866 K31: a row of every session (T3) with its rename and delete actions
+   beside the button that opens it (never inside it). */
+.sessionRow {
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid var(--border);
+}
+
+.sessionRow:last-child {
+  border-bottom: 0;
+}
+
+.sessionRow > .listRow {
+  flex: 1;
+  min-width: 0;
+  border-bottom: 0;
+}
+
+.rowActs {
+  display: flex;
+  gap: var(--sp-2);
+  padding-right: var(--sp-7);
+  flex-shrink: 0;
+}
+
+.renameInput {
+  flex: 1;
+  min-width: 0;
+  margin: var(--sp-4) var(--sp-6) var(--sp-4) var(--sp-11);
+  padding: var(--sp-3) var(--sp-5);
+  font: inherit;
+  font-size: var(--fs-base);
+  font-weight: 600;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--bg-input);
+  color: var(--text);
+}
+
+.listRowStatic:hover {
+  background: transparent;
+}
+
+.lt {
+  font-weight: 600;
+  font-size: var(--fs-base);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ls {
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+
+.grow {
+  flex: 1;
+  min-width: 0;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  flex-wrap: wrap;
+}
+
+/* The filters sit beside the 36px search: one height. */
+.segPill {
+  display: inline-flex;
+  align-items: center;
+  height: var(--side-control);
+  box-sizing: border-box;
+  padding: var(--sp-3) var(--sp-7);
+  border-radius: var(--r-full);
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  background: var(--bg-subtle);
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background-color var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
+}
+
+.segPill:hover {
+  color: var(--text);
+}
+
+.segPill:active {
+  transform: scale(0.97);
+}
+
+.segPill[aria-pressed="true"] {
+  background: var(--accent);
+  color: var(--accent-fg);
+  border-color: var(--accent);
+}
+
+/* ── Session panel (right) ─────────────────────────────────────────────── */
+.panel {
+  /* The session panel's width: a layout size, not a scale step. */
+  --panel-w: 300px;
+  width: var(--panel-w);
+  flex-shrink: 0;
+  border-left: 1px solid var(--border);
+  background: var(--bg-subtle);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.panelHead {
+  padding: var(--sp-9) var(--sp-9) var(--sp-6);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-4);
+}
+
+.panelHead h2 {
+  margin: 0;
+  /* Between the scale's 18 and 22: the panel's own heading size. */
+  --panel-title-size: 20px;
+  font-size: var(--panel-title-size);
+}
+
+.panelInner {
+  padding: 0 var(--sp-9) var(--sp-9);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-10);
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+.panelSec {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+}
+
+.planRow {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-5);
+  /* 9px: a step either way would shift every plan row by 2px. */
+  --plan-row-pad-y: 9px;
+  padding: var(--plan-row-pad-y) var(--sp-5);
+  border-radius: var(--r-md);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  min-width: 0;
+  transition:
+    background-color var(--dur) var(--ease-in-out),
+    border-color var(--dur) var(--ease-in-out),
+    color var(--dur) var(--ease-in-out);
+}
+
+.planCur {
+  background: var(--brand-forest);
+  border-color: transparent;
+  color: var(--accent-fg);
+}
+
+.planBox {
+  width: var(--sp-10);
+  height: var(--sp-10);
+  border-radius: var(--r-xs);
+  border: 1.5px solid var(--border-strong);
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  font: 600 var(--fs-2xs) var(--font-sans);
+  font-variant-numeric: tabular-nums;
+  transition:
+    background-color var(--dur) var(--ease-in-out),
+    border-color var(--dur) var(--ease-in-out),
+    color var(--dur) var(--ease-in-out);
+}
+
+.planCur .planBox {
+  border-color: color-mix(in srgb, var(--accent-fg) 70%, transparent);
+}
+
+.planDone .planBox {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-fg);
+}
+
+.pn {
+  font-size: var(--fs-md);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.ps {
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+
+.planCur .ps {
+  color: var(--accent-fg);
+}
+
+.meter {
+  /* The bar's and the percentage's columns: layout sizes, not scale steps. */
+  --meter-bar-w: 90px;
+  --meter-pct-w: 36px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--meter-bar-w) var(--meter-pct-w);
+  align-items: center;
+  gap: var(--sp-5);
+  font-size: var(--fs-md);
+}
+
+.meter > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bar {
+  height: var(--sp-3);
+  border-radius: var(--r-full);
+  background: var(--bg-soft);
+  overflow: hidden;
+  display: block;
+}
+
+/* The fill tweens when a score moves (a CSS transition: never on first paint). */
+.bar > i {
+  display: block;
+  height: 100%;
+  width: var(--fill, 0%);
+  background: var(--tone);
+  border-radius: var(--r-full);
+  transition:
+    width var(--dur-slow) var(--ease-out),
+    background-color var(--dur) var(--ease);
+}
+
+.pct {
+  font: 500 var(--fs-xs) var(--font-sans);
+  color: var(--text-dim);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.reviewBox {
+  padding: var(--sp-6);
+  border-radius: var(--r-md);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+}
+
+.planList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+/* A section's head: its label, and a link at the far end. */
+.secHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-4);
+}
+
+.note {
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+
+.small {
+  font-size: var(--fs-sm);
+}
+
+.medium {
+  font-weight: 500;
+}
+
+.mono {
+  font-family: var(--font-sans);
+  font-variant-numeric: tabular-nums;
+}
+
+.flush {
+  margin: 0;
+}
+
+/* A control that keeps its own width at the start of a column. */
+.start {
+  align-self: flex-start;
+}
+
+.loadFailed {
+  gap: var(--sp-5);
+  flex-wrap: wrap;
+}
+
+/* The all-sessions search: room to type, not the whole toolbar. */
+.searchWide {
+  --search-wide-max: 420px;
+  max-width: var(--search-wide-max);
+}
+
+.segGroup {
+  display: flex;
+  gap: var(--sp-3);
+  flex-wrap: wrap;
+}
+
+/* The session panel's knowledge map (SessionMap): the panel's full width, measured. */
+.sessionMap {
+  width: 100%;
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-3) var(--sp-6);
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-3);
+}
+
+.legend i {
+  background: var(--swatch);
+  width: var(--sp-4);
+  height: var(--sp-4);
+  border-radius: 50%;
+  display: inline-block;
+}
+
+/* W3.2: outline = practiced (solid ring on the map), not a mastery fill. */
+.legendOutline {
+  background: transparent;
+  box-sizing: border-box;
+  border: 1.5px solid var(--text);
+}
+
+/* ── Conversation pieces (T4–T12) ──────────────────────────────────────── */
+.col {
+  padding: var(--sp-12) clamp(var(--sp-12), 4vw, var(--sp-28)) var(--sp-16);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-8);
+}
+
+/* The phase stepper (wireframe D): Check-in · Plan · Learn · Wrap-up across
+   the top of the conversation, aligned with its text. Each step after the
+   first is drawn behind a rule that takes the free width. 22px marks. */
+.stepper {
+  /* Sized from the conversation column, not the viewport: with the sidebar
+     and the session panel open the column is ~280px at a 900px window, where
+     four labels cannot sit side by side (PR #866 review U7b). */
+  container: stepper / inline-size;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-5);
+  margin: 0;
+  padding: var(--sp-8) clamp(var(--sp-8), 4vw, var(--sp-28)) 0;
+  list-style: none;
+  min-width: 0;
+}
+
+.step {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  min-width: 0;
+  font-size: var(--fs-md);
+  line-height: var(--sp-11);
+  color: var(--text-muted);
+  white-space: nowrap;
+  transition: color var(--dur) var(--ease-in-out);
+}
+
+.step + .step {
+  flex: 1 1 0;
+}
+
+.step + .step::before {
+  content: "";
+  flex: 1 1 auto;
+  min-width: var(--sp-6);
+  height: 1px;
+  margin-right: var(--sp-1);
+  background: var(--border-strong);
+}
+
+/* A label that still does not fit is cut with an ellipsis, never drawn over
+   the next step's mark. */
+.stepLabel {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Too narrow for all four labels (they need ~370px with their marks): only
+   the current step keeps its label on screen; the others stay in the list
+   for a screen reader, as on a phone. */
+@container stepper (max-width: 400px) {
+  .step:not([data-state="current"]) .stepLabel {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+}
+
+.stepMark {
+  width: var(--sp-11);
+  height: var(--sp-11);
+  border-radius: 50%;
+  border: 1.5px solid var(--border-strong);
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  font: 600 var(--fs-xs)/1 var(--font-sans);
+  font-variant-numeric: tabular-nums;
+  transition:
+    background-color var(--dur) var(--ease-in-out),
+    border-color var(--dur) var(--ease-in-out),
+    color var(--dur) var(--ease-in-out);
+}
+
+.step[data-state="done"] {
+  color: var(--text-dim);
+}
+
+.step[data-state="done"] .stepMark {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.step[data-state="current"] {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.step[data-state="current"] .stepMark {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-fg);
+}
+
+/* The actions under the latest turn (Continue, Check me, Start with …): 36px,
+   the sidebar's control height. */
+.chatActions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  flex-wrap: wrap;
+}
+
+.chatActions > :is(button, a) {
+  height: var(--side-control);
+  padding-top: 0;
+  padding-bottom: 0;
+  box-sizing: border-box;
+}
+
+.qcard {
+  padding: var(--sp-10) var(--sp-11);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-7);
+}
+
+.qhead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-5);
+  flex-wrap: wrap;
+}
+
+.qlabel {
+  color: var(--accent);
+  margin: 0;
+  font-weight: 400;
+}
+
+/* A card's own title (the plan): a real heading, not an eyebrow. */
+.cardTitle {
+  margin: 0;
+  font: 600 var(--fs-xl)/1.3 var(--font-display);
+  color: var(--text);
+}
+
+/* A card's one meta line: what it is about, in plain body type. */
+.qmeta {
+  margin: 0;
+  font: 500 var(--fs-md)/1.4 var(--font-sans);
+  color: var(--text-muted);
+}
+
+.q {
+  font: 500 var(--fs-xl)/1.4 var(--font-display);
+  margin: 0;
+  letter-spacing: -0.01em;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.fl {
+  display: block;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text-dim);
+  margin-bottom: var(--sp-3);
+}
+
+.verdictYes,
+.verdictNo {
+  border-radius: var(--r-lg);
+  padding: var(--sp-7) var(--sp-9);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  border: 1px solid;
+}
+
+.verdictYes {
+  background: var(--accent-soft);
+  border-color: var(--accent-border);
+}
+
+.verdictNo {
+  background: var(--warn-soft);
+  border-color: color-mix(in srgb, var(--warn) 22%, transparent);
+}
+
+.closeGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--sp-8);
+}
+
+.moved {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  font-size: var(--fs-base);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.movedRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--sp-8);
+  flex-wrap: wrap;
+}
+
+@media (max-width: 1100px) {
+  .grid2,
+  .closeGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* A phone: the sidebar opens as a drawer over the page. */
+.drawerScrim {
+  position: fixed;
+  inset: 0;
+  /* over the app's own top bar, so the drawer's head (Tutor, Hide) shows */
+  z-index: var(--z-toast);
+  background: var(--scrim);
+}
+
+.drawer {
+  /* A portal outside .shell: it carries the shell's control height itself. */
+  --side-control: 36px;
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  --drawer-w: 300px;
+  width: min(var(--drawer-w), 86vw);
+  display: flex;
+  box-shadow: var(--shadow-lg);
+}
+
+/* Opening it: the scrim fades in and the drawer slides in from its edge. It
+   mounts on open and unmounts on close, so only the entrance animates. */
+@media (prefers-reduced-motion: no-preference) {
+  .drawerScrim {
+    animation: tutor-scrim-in var(--dur) var(--ease-out);
+  }
+
+  .drawer {
+    animation: tutor-drawer-in var(--dur-slow) var(--ease-out);
+  }
+}
+
+@keyframes tutor-scrim-in {
+  from { opacity: 0; }
+}
+
+@keyframes tutor-drawer-in {
+  from { transform: translateX(-100%); }
+}
+
+.drawer .side {
+  width: 100%;
+}
+
+@media (max-width: 767px) {
+  .panel {
+    display: none;
+  }
+
+  /* A phone: the title takes the full row, the actions wrap under it. */
+  .topbar {
+    flex-wrap: wrap;
+    align-items: flex-start;
+    padding: var(--sp-8);
+    row-gap: var(--sp-6);
+  }
+
+  .topTitle {
+    flex: 1 1 calc(100% - 44px);
+  }
+
+  .topActs {
+    flex: 1 1 100%;
+    justify-content: flex-start;
+  }
+
+  .topTitle h1 {
+    /* A phone's title: between the scale's 22 and 26. */
+    --top-title-size: 24px;
+    font-size: var(--top-title-size);
+  }
+
+  .home h2 {
+    font-size: var(--fs-4xl);
+    line-height: 36px;
+  }
+
+  .page,
+  .col {
+    padding: var(--sp-8);
+  }
+
+  /* Only the current step keeps its name on screen; the others keep theirs
+     for a screen reader. Four names do not fit across a phone. */
+  .step:not([data-state="current"]) .stepLabel {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+}
+
+/* A heading or card that takes focus programmatically (a new question, the
+   plan, the wrap-up — spec §13 A135) is not a control: no ring around it.
+   Every control keeps the global :focus-visible ring. */
+.shell [tabindex="-1"]:focus {
+  outline: none;
+}
+
+}

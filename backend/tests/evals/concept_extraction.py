@@ -17,6 +17,7 @@ Evaluators check the contracts in agents/concept_extraction.py:
 from __future__ import annotations
 
 import asyncio
+import os
 import re
 import sys
 from dataclasses import dataclass
@@ -308,6 +309,167 @@ CASES: list[Case[str, None]] = [
 _INPUT_TO_NAME: dict[str, str] = {case.inputs: case.name for case in CASES}
 
 
+# ── #866 Z25: the A118 relations variant (flag `upload_prereq_edges`) ────────
+#
+# With the flag on for the uploader, extraction also returns prerequisite
+# relations (`extraction_run_args(prerequisites=True)`: the course's existing
+# concepts in the message, PREREQUISITE_INSTRUCTIONS, the ConceptList schema),
+# and code writes the ones `services.concept_prereqs.resolve_prerequisites`
+# keeps as graph edges — which steer propagation, prerequisite bands and the
+# planner's order. Its own dataset, scored on what would be WRITTEN, replayed
+# once recorded (the flag waits on the recording).
+
+RELATIONS_DATASET = "concept_extraction__relations"
+
+RELATION_CASES: list[Case[str, None]] = [
+    Case(
+        name="relations_calculus_lecture",
+        inputs=(
+            "Lecture 4: Derivatives. Last week we defined the limit of a function as x "
+            "approaches a point. Today we use limits to define the derivative: the "
+            "derivative of f at a is the limit of the difference quotient (f(a+h) - f(a))/h "
+            "as h approaches 0. From the definition we prove the power rule. Finally we "
+            "meet the chain rule, which differentiates a composition f(g(x)) as "
+            "f'(g(x)) times g'(x); it only makes sense once derivatives of the inner and "
+            "outer functions are understood."
+        ),
+        metadata={
+            "existing": ["Limits", "Functions"],
+            "expected_edges": [("Limits", "Derivatives"), ("Derivatives", "Chain Rule")],
+        },
+    ),
+    Case(
+        name="relations_spread_of_data",
+        inputs=(
+            "Measuring spread. The mean is the sum of the values divided by their count. "
+            "The variance is the average squared distance of each value from the mean, so "
+            "it cannot be computed without the mean. The standard deviation is the square "
+            "root of the variance and is in the data's own units."
+        ),
+        metadata={
+            "existing": ["Mean"],
+            "expected_edges": [("Mean", "Variance"), ("Variance", "Standard Deviation")],
+        },
+    ),
+]
+_RELATIONS_BY_INPUT = {case.inputs: case for case in RELATION_CASES}
+
+
+def _resolution(ctx):
+    """What code would write for this case's output (A118's resolver)."""
+    from services.concept_prereqs import resolve_prerequisites
+
+    out = ctx.output
+    return resolve_prerequisites(
+        [(r.prerequisite, r.dependent) for r in out.prerequisites],
+        document_concepts=[(c.name, c.importance) for c in out.concepts],
+        course_concepts=[*ctx.metadata["existing"], *(c.name for c in out.concepts)],
+    )
+
+
+def _key(name: str) -> str:
+    return " ".join(name.split()).casefold()
+
+
+@dataclass
+class ExpectedEdgesWritten(Evaluator[str, ConceptList]):
+    """The share of the document's clear prerequisite links code would write."""
+
+    def evaluate(self, ctx: EvaluatorContext[str, ConceptList]) -> float:
+        written = {(_key(a), _key(b)) for a, b in _resolution(ctx).edges}
+        want = [(_key(a), _key(b)) for a, b in ctx.metadata["expected_edges"]]
+        return sum(edge in written for edge in want) / len(want)
+
+
+@dataclass
+class NoReversedEdge(Evaluator[str, ConceptList]):
+    """No written edge runs backwards along a clear link (a reversed edge inverts
+    the prerequisite bands and the plan order)."""
+
+    def evaluate(self, ctx: EvaluatorContext[str, ConceptList]) -> float:
+        written = {(_key(a), _key(b)) for a, b in _resolution(ctx).edges}
+        reversed_ = {(_key(b), _key(a)) for a, b in ctx.metadata["expected_edges"]}
+        return 0.0 if written & reversed_ else 1.0
+
+
+@dataclass
+class RelationsKept(Evaluator[str, ConceptList]):
+    """The share of the model's relations code keeps (none dropped as unknown,
+    a self-loop, off the document, a duplicate, a cycle or redundant)."""
+
+    def evaluate(self, ctx: EvaluatorContext[str, ConceptList]) -> float:
+        total = len(ctx.output.prerequisites)
+        if not total:
+            return 0.0  # every case has a clear dependency
+        return 1.0 - len(_resolution(ctx).dropped) / total
+
+
+def relations_identity(case_input: str) -> dict:
+    """What a relations cassette is recorded under: the flag-on prompt (system
+    prompt + PREREQUISITE_INSTRUCTIONS), the ConceptList schema, the slot's
+    model and the exact message."""
+    from _replay import input_identity, prompt_identity, recorded_under, run_settings, schema_hash
+    from agents._providers import model_name_for
+    from agents.concept_extraction import _PREREQ_PROMPT_HASH
+
+    message = _relations_args(case_input)["user_prompt"]
+    return recorded_under(
+        prompt_hash=prompt_identity(_PREREQ_PROMPT_HASH, concept_extraction_agent),
+        schema_hash=schema_hash(ConceptList),
+        model=model_name_for("concepts"),
+        input_sha256=input_identity(message, run_settings(concept_extraction_agent)),
+    )
+
+
+def _relations_args(case_input: str) -> dict:
+    """The upload route's run arguments (agents/document.py::_step_concepts)."""
+    from agents.concept_extraction import extraction_run_args
+
+    case = _RELATIONS_BY_INPUT[case_input]
+    return extraction_run_args(
+        wrap_document_input(case_input), prerequisites=True,
+        existing_concepts=case.metadata["existing"],
+    )
+
+
+async def _run_relations(case_input: str) -> ConceptList:
+    from _replay import MODE, _is_transient, load_recording, make_deps, save_recording
+
+    name = _RELATIONS_BY_INPUT[case_input].name
+    identity = relations_identity(case_input)
+    if MODE == "replay":
+        return ConceptList.model_validate(load_recording(RELATIONS_DATASET, name, identity))
+    args = _relations_args(case_input)
+    message = args.pop("user_prompt")
+    for attempt in range(5):
+        try:
+            result = await concept_extraction_agent.run(message, **args, deps=make_deps())
+            break
+        except Exception as exc:  # noqa: BLE001 - re-raised unless transient
+            if not _is_transient(exc) or attempt == 4:
+                raise
+            await asyncio.sleep(3.0 * (attempt + 1))
+    if MODE == "record":
+        save_recording(RELATIONS_DATASET, name, result.output, identity)
+    return result.output
+
+
+def make_relations_dataset() -> Dataset[str, None]:
+    return Dataset(
+        name=RELATIONS_DATASET,
+        cases=RELATION_CASES,
+        evaluators=[
+            ConceptCountInRangeEvaluator(),
+            NoAdministrativeNamesEvaluator(),
+            AllNamesTitleCaseEvaluator(),
+            OrderedByImportanceEvaluator(),
+            ExpectedEdgesWritten(),
+            NoReversedEdge(),
+            RelationsKept(),
+        ],
+    )
+
+
 async def _run(case_input: str) -> ConceptList:
     """Adapter: route through the cassette layer (record/replay/live)."""
     case_name = _INPUT_TO_NAME.get(case_input, "unknown")
@@ -333,7 +495,29 @@ def make_dataset() -> Dataset[str, None]:
     )
 
 
+def recorded(name: str) -> bool:
+    from _replay import CASSETTE_DIR
+
+    folder = CASSETTE_DIR / name
+    return folder.is_dir() and any(folder.glob("*.json"))
+
+
+def replay_variants(*, recorded=recorded) -> dict:
+    """The base dataset always; the A118 relations variant once recorded."""
+    out = {"concept_extraction": (make_dataset, _run)}
+    if recorded(RELATIONS_DATASET):
+        out[RELATIONS_DATASET] = (make_relations_dataset, _run_relations)
+    return out
+
+
+#: run_all.py iterates these.
+VARIANTS = replay_variants()
+
+
 if __name__ == "__main__":
     from _replay import cli_main  # noqa: E402
 
-    cli_main(make_dataset, _run)
+    if os.getenv("CONCEPT_EVAL_RELATIONS") == "1":  # record or replay the A118 variant
+        cli_main(make_relations_dataset, _run_relations)
+    else:
+        cli_main(make_dataset, _run)

@@ -1,0 +1,23 @@
+@layer components {
+/* The learning loop's written-answer field (FIELD_CLASS in loopShared.ts):
+   Tailwind's preflight strips a textarea's border, padding and fill, so each
+   answer box carries this to read as a field. */
+.field {
+  width: 100%;
+  padding: var(--sp-5) var(--sp-6);
+  font-size: var(--fs-base);
+  line-height: 1.45;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--bg-input);
+  resize: vertical;
+  box-sizing: border-box;
+  transition: border-color var(--dur-fast) var(--ease);
+}
+
+/* Writing in it firms its edge (the global focus ring still marks keyboard focus). */
+.field:focus {
+  border-color: var(--border-strong);
+}
+
+}

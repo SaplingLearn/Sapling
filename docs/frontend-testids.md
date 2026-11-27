@@ -95,11 +95,17 @@ renders the element.
 | Calendar | `calendar` | `frontend/src/components/screens/Calendar.tsx` (the `/calendar` screen — today just the #185 load-failure banner + retry) |
 | Gradebook | `gradebook` | `frontend/src/components/screens/Gradebook/Landing.tsx` + `Course.tsx` (the `/gradebook` screens), `frontend/src/components/Gradebook/TranscriptModal.tsx` (the transcript modal), `frontend/src/components/Gradebook/CourseCard.tsx` (the term-aware card links), `frontend/src/components/Gradebook/AssignmentList.tsx` + `AssignmentModal.tsx` (the add-assignment flow the #468 mutation leg drives) — added with the #139 term-switcher/transcript journey |
 | Admin analytics | `admin-analytics` | `frontend/src/components/screens/AdminAnalytics.tsx` (the `/admin/analytics` dashboard — range presets/inputs, cost group-by toggle, per-panel retry) — added with the #121 data layer |
+| Admin check-item review | `admin-items`, `admin-audit` | `frontend/src/components/screens/AdminCheckItems.tsx` (the `/admin/check-items` queue of learning-loop check items the item-flaw linter flagged, a key hold withdraws or students reported, with Approve / Retire — learning-loop spec §13 A113, A124 — one course's item statistics and its "Flagged by data" view — A131 — and its Key audit tab, a stratified sample of one course's keys with the key-error rate — A124) |
+| Report a question | passed in (`loop-check-report`, `review-report`) | `frontend/src/components/learn/ReportQuestion.tsx` (the shared "Report this question" control; the `loop` and `review` call sites write its prefix — spec §13 A113, GitHub #695) |
+| Stated confidence | passed in (`loop-check-confidence`, `loop-probe-confidence`, `review-confidence`, `quiz-confidence`) | `frontend/src/components/learn/ConfidenceControl.tsx` (the shared optional "How sure?" radio group — Guessing / Fairly sure / Sure — on the loop's check and probe cards, the review card and every quiz question, never the post-test; the call sites write its prefix — spec §13 A127, A132) |
 | Landing knowledge graph demo | `landing-graph` | `frontend/src/components/marketing/graph/KnowledgeGraphDemo.tsx` (the pre-auth landing page's interactive course-picker + laid-out concept graph, wearing the `landing-surface` chrome with an inspector rail and mastery legend since #344 step 3) |
 | Landing feature bands | `landing-band` | `frontend/src/components/marketing/FeatureBand.tsx` (the three full-width bands below the graph; content + side-alternation in `featureBands.tsx`, #344 step 2) |
 | Landing surface bento | `landing-bento` | `frontend/src/components/marketing/SurfaceBento.tsx` (the four-tile grid of built product surfaces, #344 step 2) |
 | Landing product surfaces | `landing-surface` | `frontend/src/components/marketing/surfaces/*.tsx` (the seven in-page recreations the bands and bento mount, #344 step 2) |
+| Learning loop | `loop` | `frontend/src/components/learn/LoopLearn.tsx` (the loop-path Learn screen `Learn()` renders when the loop status probe reports `{active: true}`; build phase: staff/QA toggle, after launch: every student — PKG-13) + `frontend/src/components/learn/BudgetPausedBanner.tsx` (the shared pause banner; the testid is passed in) + `OptionList.tsx` (the shared multiple-choice radio group; its prefix is passed in — `loop-probe-option`, `loop-attempt-option`, `loop-prequestion-option`) + `PrequestionCard.tsx` (the segment prequestion, spec §13 A138) + `SelfExplainCard.tsx` (the self-explanation prompt, spec §13 A139) |
+| Review queue | `review` | `frontend/src/components/learn/DueQueue.tsx` (the learning loop's "Due today" panel, rendered at the top of Study → Flashcards only while the loop is on — PKG-12; the launch Study surface, spec §11.3) |
 | Admin feedback | `adminfb` | `frontend/src/components/screens/Admin.tsx` (the `feedback` tab — decrypted-server-side feedback + issue-report review, #520) |
+| Crisis support | `crisis-support` | `frontend/src/components/safety/CrisisSupportCard.tsx` (the card shown instead of an AI turn when the crisis screen fired, inline or in its dialog — docs/safety/crisis-support.md) |
 | Admin users | `admin-user` (+ `admin-users-summary`) | `frontend/src/components/screens/Admin.tsx` (the `users` tab — people with access, and the "Remove access" confirm that sends one back to the Allowlist) |
 | Admin feature flags | `flag` (+ `admin-tab-*`) | `frontend/src/components/screens/admin/FeatureFlags.tsx` + `FlagPanel.tsx` (the `flags` tab — grouped list with a Visible/Hidden switch per flag, and a right-hand panel for rollout, per-user/per-role overrides, and a per-student check; #620/ADR 0029). The tab-bar buttons across every Admin tab carry `admin-tab-{tab}` (added with this surface, tagged directly in `Admin.tsx`). |
 | Admin account tools | `admin-account` | `frontend/src/components/screens/admin/AccountToolsDialog.tsx` (the per-account dialog opened from Admin → Users: environment badge, seed-by-major, wipe, copy to/from the peer environment; each action opens a review of what will be deleted, with counts, behind a typed email confirmation) |
@@ -288,6 +294,7 @@ journeys keep anchoring: `quiz-panel`, `quiz-start`,
 | `quiz-resume-discard` | "Discard" — abandons the attempt server-side (`POST /attempts/{id}/abandon`) and hides it locally |
 | `quiz-proposal` | the primary proposal card (headed by the concept's name; no eyebrow since #849) |
 | `quiz-proposal-name` | the card's title — the concept name, or "Practice {course}" / "Review everything due" on a queued card |
+| `quiz-plan-reason` | why the learner model proposes the card's concept, and its skill meter ("Due for review — … Skill meter: 62%.") — on the plan's own suggestion only, with `quiz_concept_plan` on (learning-loop spec §13 A143) |
 | `quiz-pick-reset` | "← Back to the suggestion", above the card's name once a concept has been picked off the list |
 | `quiz-definition-pending` | the definition's placeholder while its sentence is fetched (nothing remembered for that concept yet) |
 | `quiz-start` | "Start" on that card |
@@ -295,35 +302,111 @@ journeys keep anchoring: `quiz-panel`, `quiz-start`,
 | `quiz-review-due` | "Or review everything due · …" link under the card's Start / Adjust (absent on a due card) |
 | `quiz-pick-list` | the topic list beside the proposal (accessible name "Choose a topic"; groups headed by the course name) — every in-scope concept, grouped by course, weakest first; capped to the proposal's height and scrolled inside; leaves out the concept already on the card unless a search names it |
 | `quiz-pick-{nodeId}` | one concept row in that list — clicking it makes that concept the card (no dialog); the row the old card's concept returns to carries `data-returned` for a moment |
-| `quiz-topic-search` | the search pill in the toolbar above that list — filters by concept name or course code; Escape clears |
-| `quiz-course-all` / `quiz-course-{courseId}` | the course pills in that toolbar (`aria-pressed`); only drawn for 2+ courses |
+| `quiz-topic-search` | the search pill in the toolbar above that list — filters by concept name or course code; Escape clears; List mode only |
+| `quiz-course-all` / `quiz-course-{courseId}` | the course pills in that toolbar (`aria-pressed`); only drawn for 2+ courses; filter List and Map |
+| `quiz-browse` / `quiz-browse-list` / `quiz-browse-map` | List \| Map segmented control on the topics/Map pane (W7.10); Map replaces the topic list with `quiz-launcher-map` |
+| `quiz-launcher-map` | course-scoped full graph in Map mode (`KnowledgeGraph2D`; `graph-*` ids apply); node activate → choose, not start |
+| `quiz-launcher-map-empty` | honest empty copy when the course filter has no nodes (no ghost MATH 151) |
 | `quiz-topic-search-empty` | "No concepts match …" when the search finds nothing |
-| `quiz-neighbourhood` | the live neighbourhood window under the proposal (`KnowledgeGraph2D` inside; its own `graph-*` ids apply) |
+| `quiz-neighbourhood` | the live neighbourhood window under the proposal in List mode (`KnowledgeGraph2D` inside; its own `graph-*` ids apply); hidden in Map mode |
 | `quiz-empty-state` | the home's empty states (`ui/EmptyState`) — no courses, empty tree, or nothing left to propose; they are alternatives, so only one ever mounts |
 | `quiz-home-error` | the home's load-failure card |
 | `quiz-home-retry` | "Retry" inside it |
 | `quiz-adjust-dialog` | "Adjust this quiz" dialog |
 | `quiz-adjust-done` | its "Done" — keeps the settings without starting |
 | `quiz-adjust-start` | its "Start · {count} {difficulty}" — saves and starts in one |
-| `quiz-seg-count` / `quiz-seg-difficulty` / `quiz-seg-feedback` | the three `ui/SegmentedControl`s both dialogs share; each option is `${testid}-${value}` |
+| `quiz-seg-session-mode` / `quiz-seg-count` / `quiz-seg-difficulty` / `quiz-seg-feedback` | the `ui/SegmentedControl`s both dialogs share (Mode = Practice / Exam Twin, W7.8); each option is `${testid}-${value}` |
+| `quiz-exam-twin-note` | Adjust / Settings note when Mode is Exam Twin (score-only, no Ask) |
 | `quiz-generating` | the skeleton question screen while a quiz is being written |
 | `quiz-cancel-generate` | its "Cancel" — aborts the generation and returns to quiz home (#760) |
 | `quiz-panel` | question root (`phase: active \| answered`) |
 | `quiz-progress` | the question rail's progress dots (`ui/ProgressDots`) |
-| `quiz-answer-options` | answer radiogroup |
+| `quiz-question-meta` | W7.1 meta row (concept pill, tier / Returning chips, exam-distance pips, format tag, difficulty) |
+| `quiz-format-tag` | W7.2: `data-format` includes core types plus kit tags `sort`…`rank` (still `short_answer` on the wire) |
+| `quiz-action-bar` | W7.1 footer: Hint / Study guide / pager / Skip / Check |
+| `quiz-answer-options` | answer radiogroup (multiple choice) |
+| `quiz-keyboard-hint` | W7.2: sr-only MC keyboard map (`A`–`F` / `1`–`6`, Enter, Escape); describes `quiz-answer-options` |
+| `quiz-written` | W7.2: written answer surface root (`WrittenAnswer`); `data-format` = `short_answer` / `numeric` / `symbolic` |
 | `quiz-written-answer` | the single-line written-answer input (`WrittenAnswer`) for short answers, numeric answers and algebra; Enter submits |
-| `quiz-format-hint` | the visible answer-format rules for a written question (what the grader accepts); describes the written-answer input |
-| `quiz-key-{id}` | a symbol key under a numeric (`minus`/`fraction`/`percent`/`exponent`) or algebra (`squared`/`power`/`brackets`/`times`/`divide`/`minus`) input; inserts at the cursor |
+| `quiz-format-hint` | the visible answer-format rules for a written question (what the grader accepts); kit types (Sort…Calculate) use kit copy |
+| `quiz-sort` | W7.2 kit 7.1: Sort interaction root (`data-complete`, optional `data-verdict`); mounts when `question.interaction.kind === "sort"` on a short_answer item; Playwright `e2e/quiz-kit.spec.ts` |
+| `quiz-sort-tray` / `quiz-sort-tray-empty` | unassigned Items tray, or “Every item is sorted.” when empty |
+| `quiz-sort-buckets` | bucket grid |
+| `quiz-sort-bucket-{index}` | one bucket (`data-bucket` = name); place via “Place in {name}” |
+| `quiz-sort-item-{id}` | one sortable card (tray or bucket); `aria-pressed` while selected in the tray |
+| `quiz-sequence` | W7.2 kit 7.2: Sequence interaction root (`data-complete`, optional `data-verdict`); mounts when `question.interaction.kind === "sequence"` on a short_answer item |
+| `quiz-sequence-tray` / `quiz-sequence-tray-empty` | unassigned Steps tray, or “Every step is placed.” when empty |
+| `quiz-sequence-slots` | ordered slot list (1…n) |
+| `quiz-sequence-slot-{index}` | one slot (`data-slot` = index); place via “Place in position {n}” |
+| `quiz-sequence-item-{id}` | one step card (tray or slot); `aria-pressed` while selected in the tray |
+| `quiz-label` | W7.2 kit 7.4: Label interaction root (`data-complete`, optional `data-verdict`); mounts when `question.interaction.kind === "label"` on a short_answer item |
+| `quiz-label-tray` / `quiz-label-tray-empty` | unassigned Labels tray, or “Every label is placed.” when empty |
+| `quiz-label-spots` | numbered region grid (diagram SVG deferred) |
+| `quiz-label-spot-{id}` | one region (`data-spot` = id); place via “Place on {caption}” |
+| `quiz-label-item-{id}` | one label card (tray or spot); `aria-pressed` while selected in the tray |
+| `quiz-build` | W7.2d Build (~7.x construct): interaction root (`data-complete`, optional `data-verdict`); mounts when `question.interaction.kind === "build"` on a short_answer item |
+| `quiz-build-tray` / `quiz-build-tray-empty` | unassigned Parts tray, or “Every part is placed.” when empty (extras may remain when `parts > slots`) |
+| `quiz-build-slots` | target slot grid |
+| `quiz-build-slot-{id}` | one slot (`data-slot` = id); place via “Place on {caption}” |
+| `quiz-build-item-{id}` | one part card (tray or slot); `aria-pressed` while selected in the tray |
+| `quiz-compare` | W7.2 Compare: interaction root (`data-complete`, optional `data-verdict`); mounts when `question.interaction.kind === "compare"` on a short_answer item |
+| `quiz-compare-sides` | left/right panel grid |
+| `quiz-compare-side-{id}` | one side panel (`data-side` = id) |
+| `quiz-compare-options` | relation chip group |
+| `quiz-compare-option-{id}` | one relation chip; `aria-pressed` while selected |
+| `quiz-dialogue` | W7.2 Dialogue (7.17): interaction root (`data-complete`, `data-replies`, optional `data-verdict`); mounts when `question.interaction.kind === "dialogue"` on a short_answer item |
+| `quiz-dialogue-role` | partner role label |
+| `quiz-dialogue-thread` | chat log (opening + replies + follow-up) |
+| `quiz-dialogue-open` | partner opening bubble |
+| `quiz-dialogue-follow` | partner follow-up bubble (after the first student reply) |
+| `quiz-dialogue-reply-{i}` | one student reply bubble (0-indexed) |
+| `quiz-dialogue-composer` / `quiz-dialogue-input` / `quiz-dialogue-send` / `quiz-dialogue-count` | reply composer, textarea, Send, and message counter |
+| `quiz-explain` | W7.2 Explain (7.16): interaction root (`data-complete`, optional `data-verdict`); mounts when `question.interaction.kind === "explain"` on a short_answer item |
+| `quiz-explain-input` | multi-line explanation textarea |
+| `quiz-explain-rubric` / `quiz-explain-rubric-{i}` | optional criteria list shown after a verdict (informational; overall tone only) |
+| `quiz-highlight` | W7.2 Highlight (7.10): interaction root (`data-complete`, optional `data-verdict`); mounts when `question.interaction.kind === "highlight"` |
+| `quiz-highlight-note` | optional instruction above the passages |
+| `quiz-highlight-passages` / `quiz-highlight-row-{id}` | passage group / one toggle row (`data-selected`, `aria-pressed`) |
+| `quiz-calculate` | W7.2 Calculate (7.13): interaction root (`data-complete`, optional `data-verdict`); mounts when `question.interaction.kind === "calculate"` |
+| `quiz-calculate-value` / `quiz-calculate-unit` | number and unit inputs; encode as `value\|unit` |
+| `quiz-position` | W7.2 Position (7.12): interaction root; mounts when `kind === "position"` |
+| `quiz-position-axis` / `quiz-position-stops` / `quiz-position-stop-{id}` | axis caption, stop grid, one stop |
+| `quiz-position-tray` / `quiz-position-item-{id}` | markers tray / marker card |
+| `quiz-rank` | W7.2 Rank (7.15): interaction root; mounts when `kind === "rank"` |
+| `quiz-rank-hint` / `quiz-rank-slots` / `quiz-rank-slot-{i}` | hint, ordered slots |
+| `quiz-rank-tray` / `quiz-rank-item-{id}` / `quiz-rank-why` | items tray / card / why textarea |
+| `quiz-connect` | W7.2 Connect: interaction root (`data-mode` = `match` \| `map`); mounts when `kind === "connect"` |
+| `quiz-connect-map-nodes` / `quiz-connect-node-{id}` | Concept-map mode: concept chips |
+| `quiz-connect-map-edges` / `quiz-connect-edge-{a}-{b}` / `quiz-connect-remove-{a}-{b}` | Concept-map mode: undirected edge list + remove |
+| `quiz-connect-note` / `quiz-connect-columns` | optional note / two-column layout |
+| `quiz-connect-left` / `quiz-connect-left-{id}` | left column / one left node (`data-paired`) |
+| `quiz-connect-right` / `quiz-connect-right-{id}` | right column / one right node (`data-taken`) |
+| `quiz-key-{id}` | a symbol key under a numeric (`minus`/`fraction`/`percent`/`exponent`/`space`) or algebra (`squared`/`power`/`brackets`/`plus`/`minus`/`times`/`divide`, plus `more` toggle and `digit-*`/`point` behind it) input; inserts at the cursor |
 | `quiz-written-readback` | the live read-back under a numeric or algebra input ("Reads as 0.75", the superscript preview, or why it can't be graded); `data-ok` says which |
 | `quiz-material-context` | reports whether retrieved course material, catalog context, or general knowledge was supplied |
 | `quiz-seg-format` | question-format selector; each option uses `quiz-seg-format-{value}` |
 | `quiz-answer-option-{label}` | one answer choice (`ui/AnswerOption`), suffixed with its label (`A`…) |
+| `quiz-confidence` | the optional "How sure?" radio group under the answer, on multiple-choice and written questions alike (`learn/ConfidenceControl`; learning-loop spec §13 A132) — no request of its own, the level rides the question's `/answer`; shown only while the learning loop is on for the student (#866 K46) |
+| `quiz-confidence-{level}` | one level in it: `quiz-confidence-guessing` / `-fairly_sure` / `-sure` (`aria-checked`) |
+| `quiz-confidence-clear` | its "Clear", present once a level is chosen — takes the choice back (nothing is sent) |
 | `quiz-submit-answer` | the footer's primary button while the answer is unrevealed |
 | `quiz-next` | the same footer button once the verdict is showing — "Next question" / "See results" |
 | `quiz-review-verdict` | "Correct." / "Not quite." banner |
 | `quiz-flag` | "This question is confusing" (toggles, `aria-pressed`; persists nothing) |
 | `quiz-ask` | "Ask about this" — opens the tutor sheet |
-| `quiz-leave` | "Leave" |
+| `quiz-leave` | "Leave" (W7.1 session top uses this as the X control) |
+| `quiz-session-top` | W7.1: 64px focus-session top bar (course/topic, N-of-M, leave) |
+| `quiz-session-progress` | W7.1: “Question N of M” + progress in `quiz-session-top` |
+| `quiz-hint-slot` | W7.5: Hint control — toggles client scaffolding panel (Practice); disabled in Exam Twin |
+| `quiz-hint-panel` / `quiz-hint-rubric` / `quiz-hint-open-guide` | W7.5: scaffolding card (concept focus + format rules; never the answer); CTA opens study-guide drawer |
+| `quiz-skip-slot` | W7.5: Skip — enabled when `GO_TO` ahead is allowed (no mastery until answered); else disabled with reason in `title` |
+| `quiz-guide-slot` | W7.5: opens the leak-safe study-guide drawer scaffold |
+| `quiz-guide-drawer` / `quiz-guide-drawer-close` | W7.5: study-guide `Sheet` (cards + concept Ask; no answer key) |
+| `quiz-guide-open-home` / `quiz-guide-list` / `quiz-guide-card-{id}` / `quiz-guide-empty` | W7.5: drawer guide links (list cards only, never detail keys) |
+| `quiz-guide-ask-input` / `quiz-guide-ask-send` / `quiz-guide-ask-retry` | W7.5: concept Ask in the drawer (`guide_ask`; no quiz seed) |
+| `quiz-tier-chip` | W7.1: mastery tier chip in the question meta row |
+| `quiz-returning-chip` | W7 meta: “Returning” when `times_studied ≥ 1` or `last_studied_at` set ([`w7-meta-chips.md`](learning-loop/w7-meta-chips.md)) |
+| `quiz-exam-distance` | W7 meta: five exam-distance pips (`data-pips` 1…5; nearer exam-ready → more filled) |
 | `quiz-cancel-submit` | "Cancel" in place of Leave while scoring (`phase: submitting`) — aborts the submit and returns to the final verdict (#760) |
 | `quiz-leave-dialog` / `quiz-leave-cancel` / `quiz-leave-confirm` | the leave confirmation |
 | `quiz-ask-panel` | the tutor sheet (`ui/Sheet`) |
@@ -331,12 +414,22 @@ journeys keep anchoring: `quiz-panel`, `quiz-start`,
 | `quiz-ask-seed` | the composed first message shown at the top of the sheet |
 | `quiz-ask-retry` | "Try again" when the tutor stream failed |
 | `quiz-ask-input` / `quiz-ask-send` | the sheet's composer |
+| `quiz-ask-budget-paused` | the tutor is paused for the student's AI budget (the loop's `budget` event, or a 429 `ai budget reached`): the pause copy, no error and no Retry |
 | `quiz-results` | results root |
 | `quiz-results-graph` | the concept neighbourhood above the score (`graph/ConceptNeighbourhood`) |
 | `quiz-results-score` | the "{n} of {total} correct" line — a count, not a percentage |
-| `quiz-results-mastery` | the mastery delta line, "B% → A% · tier-before → tier-after" |
+| `quiz-results-mastery` | the line under the concept's name: "B% → A% · tier-before → tier-after" (the map's mastery) without the learner block; with `quiz-results-learning` shown, the quizzed concept's skill move, "Skill rose from B% to A% (still / now {level})", the screen's one measure (#866 K42), or no line when its meter did not move |
+| `quiz-results-unchanged` | why the mastery did not move, when the shown percent did not and submit's `mastery_unmoved` names why (a question counts once a day, one that failed its checks does not count, a right answer with help earns no credit, the write failed; a round of the last quiz's missed questions that was all counted already was practice) — absent when submit names no reason (evidence was written), and while `quiz-results-learning` is shown, whose `quiz-results-no-change` says it (#866 K40) |
 | `quiz-results-xp` | "+{Δ} XP · {streak}-day streak" — absent when either gamification read failed |
 | `quiz-results-perfect` | the line shown instead of the missed list on a clean sweep |
+| `quiz-results-learning` | the "Your skill meters" block (`results/LearningBlock`) — present only when the submit returned a `learning` block (`quiz_results_routing`, learning-loop spec §13 A147) |
+| `quiz-results-change` | one OTHER skill meter that moved, under "Also moved": "{concept}: rose from B% to A% (still / now {level})" — the prerequisites and dependents the quiz's answers reached (the quizzed concept's own move is `quiz-results-mastery`) |
+| `quiz-results-no-change` | the line shown instead when no meter moved |
+| `quiz-results-due` | how many concepts are due for review, and when this concept comes back |
+| `quiz-learning-next` | the "Next:" CTA row inside the learning block (W7.7) — Study review / Learn / Tree links that survive the matching `hide_*` flags |
+| `quiz-next-step-review` | "{n} reviews due" (`LEARNING_COPY.reviewLink`) — Study hub (`studyHref` / W3.4); only when the server's next step is review and the learning loop is on; omitted while `hide_study` |
+| `quiz-next-step-learn` | "Learn {concept}" — Tutor deep link on the weakest ready concept; omitted while `hide_tutor` |
+| `quiz-next-step-tree` | "See on your map" — Tree on the quizzed concept; omitted while `hide_tree` |
 | `quiz-missed-list` | the "to look at" section |
 | `quiz-missed-{questionId}` | one missed item |
 | `quiz-missed-explain-{questionId}` | its "Show explanation" disclosure |
@@ -350,6 +443,8 @@ journeys keep anchoring: `quiz-panel`, `quiz-start`,
 | `quiz-error-retry` / `quiz-error-back` | its "Try again" and "Back" |
 | `tree-node-recent-quizzes` | the tree node panel's "Recent quizzes" block (`screens/Tree.tsx`) |
 | `tree-node-recent-quiz-{attemptId}` | one row in it, suffixed with the attempt's `quiz_id` per the stable-domain-id rule |
+| `tree-node-actions` | W8.2: Learn / Quiz / Cards / Guide action menu on the selected node panel |
+| `tree-node-action-teach` / `tree-node-action-quiz` / `tree-node-action-cards` / `tree-node-action-guide` | one action link; Cards/Guide only when `learning_loop` is on and Study is shown |
 
 The last three carry another surface's prefix because they render in that
 surface's file. They are listed here because they are quiz entry points, and a
@@ -393,6 +488,8 @@ never collide in the DOM.
 | `error-fallback` | root `ErrorFallback` surface (`ErrorBoundary.tsx`) — the whole-app "We hit a snag" page; journeys assert its ABSENCE (#538) so the check survives copy rewording |
 | `nav-link-<route>` | a SideNav destination row (`SideNav.tsx` `NavLink`), `<route>` = its href minus the leading slash (`nav-link-quiz`, `nav-link-course-planner`, `nav-link-settings`); a feature hidden by its `hide_*` flag (#620) renders no row, so journeys assert its count is 0 |
 | `nav-feature-gate` | `NavFeatureGate.tsx` wrapper around every shell page (`display: contents`); carries `data-veiled` while a flagged route waits for flags or is redirecting (#620) |
+| `nav-retention-due` | the "retention check due" dot on the SideNav Study row's icon (`RetentionDueDot.tsx`; spec §13 A126, behind the `retention_due_badge` flag); the row's aria-label then reads "Study, retention check due" |
+| `topnav-group-retention-due` / `topnav-retention-due` / `topnav-menu-retention-due` / `topnav-mobile-retention-due` | the same dot in `TopNav.tsx`: on the group trigger holding Study, on the Study row of its dropdown, on the closed mobile menu button, and on the Study row of the open mobile menu |
 
 ### `social`
 
@@ -453,6 +550,9 @@ never collide in the DOM.
 | `dashboard-plan-quiz` / `dashboard-plan-first-session` / `dashboard-plan-due-{assignmentId}` | plan items other than the session resume |
 | `dashboard-action-start` / `dashboard-action-calendar` | the greeting row's Start learning / Calendar buttons |
 | `dashboard-course-rows` / `dashboard-mastery-tree` | the mastery card's per-course rows and its Open Tree link |
+| `dashboard-learn-next` / `dashboard-learn-next-tree` / `dashboard-study-room` | the top-nav layout's Learn next card (`dashboard/LearnNextCard.tsx`), its Tree → link and its Study room button |
+| `dashboard-learn-next-item` | one Learn next recommendation, repeated with **no suffix** (an older server names no concept); carries `data-node-id` when the recommendation names its concept. With the learning loop on it opens the Tutor on that concept (`?concept=&course=`, #866 K05), otherwise main's `?topic=&mode=socratic` link |
+| `dashboard-retention-due` / `dashboard-retention-open` | the "A retention check is due" notice (spec §13 A126; only while the shell's due read says so, behind the `retention_due_badge` flag) and its button to `/study?retention-course={courseId}` — a link, never an opened check |
 
 ### `calendar`
 
@@ -464,6 +564,13 @@ distinguishable from a genuinely empty calendar).
 | `calendar-load-error` | the load-failure banner (`role="alert"`) rendered instead of the calendar views when the initial assignments/courses fetch fails |
 | `calendar-load-retry` | the banner's "Try again" button — re-runs the load through the skeleton state |
 | `calendar-import-syllabus` | the header's "Import syllabus" button, which opens the upload modal (`upload-modal`) |
+| `calendar-v2` (`data-view` = `agenda` / `month` / `week` / `semester`) | `calendar_v2` on (`calendar/v2/CalendarV2.tsx`): the redesigned calendar's page; `calendar-view-{agenda,month,week,semester}` its view switch, `calendar-more` / `calendar-more-menu` / `calendar-add-date` the More menu, `calendar-courses` the course filter's dropdown button (`aria-expanded`) and `calendar-courses-menu` its list: `calendar-course-all` (`aria-pressed`) and `calendar-course-{courseId}` (a checkbox, checked = shown), `calendar-period` / `calendar-prev` / `calendar-today` / `calendar-next` a period's title, then its arrows and Today |
+| `calendar-agenda` / `calendar-group-calendar-{this,next,later,earlier}-h` / `calendar-item-{id}` (`data-kind`) / `calendar-prepare-{id}` / `calendar-earlier` | `calendar_v2`, Agenda: the list, each week's group, each item's row (its title button opens the panel), an upcoming exam's Prepare (with `milestones`), and the button that shows past dates |
+| `calendar-mini` / `calendar-busiest` / `calendar-google-card` | `calendar_v2`, Agenda's side column: the small month (a day opens its week), the busiest week ahead, Google Calendar |
+| `calendar-month` / `calendar-week` / `calendar-day-{YYYY-MM-DD}` (`aria-current="date"` today) / `calendar-pill-{id}` | `calendar_v2`, Month and Week: the grid, each day, each item's pill (opens the panel) |
+| `calendar-semester` / `calendar-week-load` / `calendar-mark-{id}` | `calendar_v2`, Semester: the timeline, each week's load, each item's mark (opens the panel) |
+| `calendar-panel` / `calendar-panel-close` / `calendar-panel-readiness` / `calendar-panel-prepare` / `calendar-panel-study-guide` / `calendar-panel-edit` / `calendar-panel-form` / `calendar-field-{title,date,type,course}` / `calendar-panel-save` / `calendar-panel-google` / `calendar-panel-delete` | `calendar_v2`: an item opened (or a new date): its readiness and ways to prepare (an exam, with `milestones`), Edit and its form, Save, Add to Google Calendar (connected), Delete (click twice) |
+| `calendar-empty` / `calendar-empty-import` / `calendar-empty-add` | `calendar_v2`, nothing on the calendar: the empty state and its Import a syllabus and Add a date yourself |
 
 ### `gradebook`
 
@@ -497,6 +604,64 @@ entered the lint block new, so there is no baselined backlog.
 | `admin-analytics-cost-group-feature` / `-user` / `-model` | the LLM-cost group-by toggle (drives the `group_by` query) |
 | `admin-analytics-usage-retry` / `-users-retry` / `-cost-retry` / `-errors-retry` | per-panel "Try again" after a failed load (`error && !data` gate) |
 | `admin-analytics-users-sort-events` / `-cost` / `-tokens` | Top-users table column-sort headers (#122) — first click sorts desc, second flips |
+| `admin-loop-gate-leaks` / `-ceiling` / `-earnest` | the spec §10 gate chips (`screens/admin/LoopGates.tsx`), `data-state` `pass` / `fail` / `inconclusive` — inconclusive when nothing in the range carries the gate's signal (#866 K56), never a silent pass |
+| `admin-loop-gate-counts` / `admin-loop-gate-unscanned` | #866 K57: what the gates counted — served reveals, leaks caught and cut before serving, turns served unscanned, the steps ceiling compliance was measured on — and, when any turn was served unscanned, the note that "Zero served reveals" cannot vouch for it (absent at zero) |
+| `admin-loop-items-link` | the Learning loop panel's link to the `/admin/check-items` review queue (spec §13 A113) |
+| `admin-loop-calibration-void` | the calibration's "N answers to retired questions left out" line (spec §13 A123: void evidence; absent at zero) |
+| `admin-loop-confidence` | the Learning loop panel's "Do students know what they know?" table (spec §13 A127): stated confidence vs correctness; rows `admin-loop-confidence-{channel}-{level}` (`other` for a value no level names) and `admin-loop-confidence-{channel}-all` |
+| `admin-loop-gain-{window}-post-ci` / `-diff-ci` / `admin-loop-gain-{window}-hidden` / `admin-loop-gain-ci-note` | spec §13 A126 in the learning-gain table: a window's bootstrap intervals under its post-test rate and paired change, its "page hidden while answering" stratum row, and the note naming the interval method |
+| `admin-loop-funnel` / `admin-loop-funnel-{window}` / `admin-loop-funnel-{window}-skipped` | A126: the funnel of the post-test windows that opened in the range (due, opened, answered, expired, open, skipped by reason, never opened, still open); the container says so when the funnel could not be read |
+| `admin-loop-delay` / `admin-loop-delay-{loDays}` | A126: the pairs binned by the days from the concept's first graded answer to the post-test answer |
+| `admin-loop-help-abuse` / `-overall` / `-unavailable` / `-limits` | spec §13 A133 (`screens/admin/HelpAbusePanel.tsx`): the "Are students gaming the hints?" section, its headline numbers, the note when its reads failed, and the note on what it cannot measure |
+| `admin-loop-help-abuse-{gate\|band\|course\|student}` / `…-{group}-{key}` | A133: the by-gate (standard / strict / none), by-band, by-course and by-student tables and their rows |
+| `admin-loop-help-abuse-students-toggle` | A133: "Show all N students" / "Show the top 10" under the by-student table |
+| `admin-loop-help-abuse-next` / `…-next-{none\|partial\|bottom_out}` | A133: what happened on the next item on the concept, by the help the item got |
+| `admin-loop-cost` / `admin-loop-cost-student-month` / `-tutor-month` / `-session` / `-total` | spec §13 A137 (`AdminLoopCost.tsx`): the "What did it cost?" section and its figures — $ per active student-month against the §3.5 target, the tutor share, $ per session, the loop spend — each with its n |
+| `admin-loop-cost-windows` / `admin-loop-cost-window-{window}` (`-pair-ci`, `-gain`, `-gain-ci`) | A137: per post-test window, pairs, gain points, $ per pair and per gain point with their bootstrap intervals ("unbounded" upper bound; "no net gain") |
+| `admin-loop-cost-courses` / `admin-loop-cost-course-{courseId}` / `admin-loop-cost-unattributed` / `admin-loop-cost-note` / `admin-loop-cost-unavailable` | A137: the per-course table, the spend with no course on record, the method note, and the state when the spend could not be read |
+| `admin-loop-self-explain` / `-unavailable` / `-empty` | spec §13 A139 (`screens/admin/SelfExplanationPanel.tsx`): the "Do students explain their steps?" section, the note when its reads failed, and the note when no prompt was shown in the range |
+| `admin-loop-self-explain-shown` / `-reply-rate` / `-reply-chars` | A139: prompts shown (replied / skipped / unanswered), the reply rate (n = shown) and the median reply length in characters (n = replies) |
+| `admin-loop-self-explain-next-replied` / `-next-not-replied` | A139: the next graded item on the concept, right with no help, after a reply against after none — each with its n and the prompts with no next item yet |
+| `admin-loop-self-explain-by-juncture` / `admin-loop-self-explain-juncture-{juncture}` | A139: the per-juncture table (`worked_example` / `released_solution` / `first_correct`) and its rows |
+
+### `admin-items`
+
+Added with the learning-loop check-item quality guards (spec §13 A113; GitHub
+#695). Owner: `frontend/src/components/screens/AdminCheckItems.tsx`, rendered by
+`src/app/(shell)/admin/check-items/page.tsx`; staff only (`require_admin` on every
+`/api/admin/check-items` call; a non-admin gets the refusal and no request). The
+file entered the lint block new, so there is no baselined backlog.
+
+| testid | element |
+| --- | --- |
+| `admin-items-tab-{view}` | the page's two tabs (`queue` / `audit`): the review queue and the A124 key audit |
+| `admin-items` | the queue's root |
+| `admin-items-count` | "N to review" (and "showing the first P" when the queue is longer than a page) |
+| `admin-items-empty` | nothing flagged, held or reported is waiting (the server's count is 0, never only an emptied page) |
+| `admin-items-more` | #866 K25: every row of the page was decided while the server counted more waiting — "N more to review", read again at once (the next page comes up), with the read's error and `admin-items-retry` if it failed |
+| `admin-items-retry` | "Try again" after the queue failed to load (`error && !data` gate), or after the next page failed to load (inside `admin-items-more`) |
+| `admin-items-row-{itemId}` | one queued check item: course · concept, format, flags, reports, the question with its key marked, the final answer, a numeric item's key value ± tolerance (A124) and the reference (`<details>`) |
+| `admin-items-held-{itemId}` | "Held — served to no one until approved": a hold withdraws it from every student — a key hold (spec §13 A124) or a staff hold (A123: quarantined by `quarantine_min_reporters` students' reports, nothing deleted; or retired and waiting to be removed, where it reads "Held — served to no one": a retired question is never approved); absent once approved. After a failed Approve or Retire the queue (and a loaded course's statistics) is read again, so a retire left pending shows as one (#866 K58) |
+| `admin-items-reports-{itemId}-{reason}` | a report-count chip by reason (`wrong_answer` / `unclear` / `not_from_my_course`); absent at zero |
+| `admin-items-flag-{itemId}-{flag}` | an item-flaw lint chip (`correct_longest` / `correct_repeats_stem` / `all_or_none_of_above` / `duplicate_options` / `negative_stem`), what the A119 alignment check changed (`rubric_unasked_dropped` / `concept_retagged`), or why it is held — A124's key holds (`key_disputed` / `key_unsolved` / `key_audit_wrong` / `key_audit_ambiguous`) or A123's staff holds (`reports_threshold` "Quarantined by student reports", `staff_retired`) |
+| `admin-items-approve-{itemId}` | Approve — reviewed, OK: its key confirmed (A124) and any hold lifted (A123: the quarantine), so a held item is restored to students ("Approve and restore" on a held item); every row of that course question leaves the queue until a newer report (absent on a retire-pending item) |
+| `admin-items-retire-{itemId}` | Retire — two clicks (`useConfirm`): withdraws the question for the whole course and voids every student's results on it (A123) |
+| `admin-items-stats-course` / `admin-items-stats-load` | spec §13 A131: the course id input and "Show item statistics" (disabled until a course id is typed) — one read of the course's evidence journal |
+| `admin-items-stats-summary` / `admin-items-stats-error` | A131: what the statistics count (students' first unassisted attempts), from how many graded answers, the minimum students a flag needs, and a cut-short read; or the failed read |
+| `admin-items-filter-queue` / `admin-items-filter-data` | A131: the two views once a course's statistics are loaded — the review queue, or "Flagged by data (N)": the course's questions the numbers flag, queued or not (`aria-pressed` on the shown one) |
+| `admin-items-data-empty` | A131: the numbers flag no question in the course |
+| `admin-items-data-more` / `admin-items-data-reload` | A131: every question of the loaded page was decided while more are flagged beyond it — "N more flagged" and "Load again" (re-reads the course's statistics) |
+| `admin-items-stats-{itemId}` | A131: a question's numbers — n first unassisted attempts, the share right with its Wilson 95% interval, the item–rest discrimination and its n — or "No unassisted first attempt yet." |
+| `admin-items-data-flag-{itemId}-{flag}` | A131: what the numbers flag (`too_easy` / `too_hard` / `low_discrimination` / `negative_discrimination`); a prompt to review, never written to the question |
+| `admin-audit` | the Key audit tab's root (spec §13 A124: a stratified sample of one course's stored keys) |
+| `admin-audit-course` | the course id input |
+| `admin-audit-draw` | "Draw sample" (disabled until a course id is typed) |
+| `admin-audit-retry` | "Try again" after the sample failed to load |
+| `admin-audit-summary` | the course's key-error rate with its Wilson 95% interval, the wrong-or-ambiguous rate, the sample's size against the stored questions, and the rate among keys the solve verified |
+| `admin-audit-empty` | the course has no stored question to audit |
+| `admin-audit-row-{itemId}` | one sampled item: concept, format · difficulty, key status, and the same text as a queue row |
+| `admin-audit-status-{itemId}` | the key's status when audited (`Key verified` / `Key held` / `Key unverified`) |
+| `admin-audit-{verdict}-{itemId}` | a verdict button (`correct` / `wrong` / `ambiguous`), `aria-pressed` on the recorded one; "wrong" and "ambiguous" hold the item, "correct" confirms its key |
 
 ### `admin-tab-*` / `flag`
 
@@ -512,7 +677,9 @@ baselined backlog — every button/input in them is tagged.
 | --- | --- |
 | `admin-tab-{tab}` | one tab-bar button per `Tab` value (`Admin.tsx`) |
 | `flag-row-{key}` | a flag's list row (grouped by nav section); click opens its right-hand panel |
-| `flag-state-{key}` | the row's current everyone-default in words (`Visible`/`Hidden` for a `hide_*` flag) |
+| `flag-state-{key}` | the row's current everyone-default in words (`Visible`/`Hidden` for a `hide_*` flag); for a learning-loop flag the server forces for everyone (#866 K24: the `LEARNING_LOOP_ENABLED` kill switch, a `SAPLING_FLAG_` override), that answer instead |
+| `flag-forced-{key}` | #866 K24: the chip beside it when the server decides above the stored settings — "Kill switch on", "Learning loop off" (the loop forced off by its env override) or "Set on the server" — its tooltip saying what every student gets and why (a loop flag's own env override that forces it on while `learning_loop` is not forced says it holds only for students with the loop on); `flag-forced-note-{key}` is the same note in the panel's Everyone section |
+| `flag-requires-{key}` | #866 K24: "Needs Learning loop" on a flag that acts only where the student's `learning_loop` flag is on (`learning/gate.py::LOOP_FLAGS`) |
 | `flag-toggle-{key}` | the row's `role="switch"` (`ui/Switch.tsx`); checked = Visible for a hide flag. Opens the confirm dialog, never saves directly |
 | `flag-open-{key}` | the row's chevron button that opens the panel (the keyboard path to it) |
 | `flag-save-scope-{key}` | the plain-language scope of a pending default/rollout change (design spec §7) — in the row switch's confirm dialog, or in the panel's sticky footer while edits are staged |
@@ -534,7 +701,7 @@ baselined backlog — every button/input in them is tagged.
 | `flag-target-add-{key}` | "Add override" (`adminUpsertFlagTarget`) |
 | `flag-explain-input-{key}` | "Check a student" input — name/email search, or a raw user id + Enter (`adminExplainFlag`) |
 | `flag-explain-user-{key}-{userId}` | one student search result there; clicking it runs the check |
-| `flag-explain-result-{key}` | the answer in words, e.g. `Hidden: from the Admin role override` |
+| `flag-explain-result-{key}` | the answer in words, e.g. `Hidden: from the Admin role override`; a learning-loop flag answers under the loop's gate (#866 K24), e.g. `Off: the LEARNING_LOOP_ENABLED kill switch turns the learning loop off for everyone` or `Off: needs Learning loop, which is off for them — the default for everyone` |
 
 ### `admin-user`
 
@@ -693,20 +860,25 @@ suite as well as to the journey. A new id on the hub takes the `study-` prefix
 
 Only the ids a browser journey uses are listed; the hub carries a few more
 for its unit suite (`focus-card`, `recent-toggle`, `recent-all`,
-`study-modal-backdrop`, and the three lines that say what the selected exam
-tab scopes: `roadmap-exam-caption`, `readiness-unlinked-note`,
-`focus-fallback-note`). Most of the hub's controls have no testid: a journey
-reaches them by role and a name built from DATA — the Daily Goal's target
-button (`Daily goal: {n} minutes. Change daily goal`) and its preset radios
-(`{n} minutes`), a tile menu's items inside `role="menu"` named
-`{concept} actions`, the course field (the page's only
-`button[aria-haspopup="listbox"]`).
+`study-modal-backdrop`, `study-tile-select-{conceptId}` (a tile's select
+button: its ring and name, `aria-pressed` while the concept is selected), and
+the three lines that say what the selected exam tab scopes:
+`roadmap-exam-caption`, `readiness-unlinked-note`, `focus-fallback-note`).
+Most of the hub's controls have no testid: a journey reaches them by role and
+a name built from DATA — the Daily Goal's target button (`Daily goal: {n}
+minutes. Change daily goal`) and its preset radios (`{n} minutes`), a tile
+menu's items inside `role="menu"` named `{concept} actions`, the course field
+(the page's only `button[aria-haspopup="listbox"]`). The accessibility lane
+(`a11y.spec.ts`) reaches the rest the same way: the exam tabs (`role="tab"`
+inside the `tablist` named "Exams"), the bell (`Upcoming deadlines, {n} this
+week`) and its `dialog` "Upcoming deadlines", and the dates editor's `dialog`
+"Exams and deadlines".
 
 | testid | element |
 | --- | --- |
 | `readiness-pct` | the readiness figure (`ReadinessBand.tsx`): the mean mastery of the concepts it is over as `{n}%`, or `–` when there are none to measure |
 | `daily-goal` | the Daily Goal card root (`DailyGoalCard.tsx`): today's minutes "of" the goal (the goal is the edit button), the week's bars, today by activity |
-| `tile-{conceptId}` | one concept on the roadmap (`RoadmapTile.tsx`; a `role="button"` that selects it), suffixed with the graph node id |
+| `tile-{conceptId}` | one concept on the roadmap (`RoadmapTile.tsx`), suffixed with the graph node id. Not itself a control (it holds two, spec §13 A135): a click on it selects the concept, as its select button `study-tile-select-{conceptId}` does from the keyboard; `data-dim` while the highlight is not about it |
 | `tile-actions-{conceptId}` | that tile's "..." button, which opens its menu: "Quiz Me" (absent under `hide_quiz`) and "Make Flashcards" / "{n} Flashcards", each a link INTO the tool for that concept (`start=1`, `lib/toolHrefs.ts`) |
 
 ### `flashcards`
@@ -761,6 +933,11 @@ under its Saved toggle).
 | `library-empty` / `library-empty-trash` | the empty state / "Empty Trash" |
 | `library-skeleton` | the first-load skeleton |
 | `library-toast` / `library-toast-undo` | the action toast and its Undo |
+| `library-next` | W8.1: Tree / Quiz CTA block on the document detail panel (`library/LibraryNextCtas.tsx`) |
+| `library-next-status` | drafting/ready status line inside `library-next` (loop on) |
+| `library-next-tree` / `library-next-quiz` | Open Tree / Quiz these concepts links |
+| `upload-next` | same CTA block on upload success (`DocumentUploadModal`; `testIdPrefix="upload-next"`) |
+| `upload-next-status` / `upload-next-tree` / `upload-next-quiz` | upload-success twins of the library-next ids |
 | `library-load-error` | load-failure notice (#769): the full error state when nothing has loaded, or an inline banner over the last-loaded list |
 | `library-load-retry` | that notice's "Try again" / "Retry" button |
 
@@ -801,7 +978,8 @@ content carries (`s1`, `s1-i2`, ...); a block's id is its item id.
 | `guide-step-next-{blockId}` | a worked example's "Show first step" / "Show next step" |
 | `guide-step-reset-{blockId}` | a worked example's "Start over" |
 | `guide-concept-{blockId}-{idx}` | one concept-map tile (render index; `aria-pressed` while its tutor prompts are open) |
-| `guide-concept-prompt-{blockId}-{idx}` | one tutor prompt for the selected tile (render index: 0 simpler, 1 example, 2 quiz me) |
+| `guide-concept-quiz-{blockId}` | "Quiz this concept" deep link (`topic` + `start=1`, return to the guide; absent under `hide_quiz`) |
+| `guide-concept-prompt-{blockId}-{idx}` | one tutor Ask prompt for the selected tile (render index: 0 simpler, 1 example — Quiz is the tool link above) |
 | `guide-concept-close-{blockId}` | closes the tutor prompts |
 | `guide-check-option-{blockId}-{optionId}` | one answer of a check-yourself question (`optionId` is `a`..`d`; `aria-checked` on the picked one, right or wrong) |
 | `guide-check-result-{blockId}` | the result line after an answer: correct or not, the explanation, and the mastery change when there was one |
@@ -880,6 +1058,233 @@ The New study guide dialog on the Study Guides home.
 | `guide-new-cancel` | the footer's "Cancel" |
 | `guide-new-generate` | the footer's "Generate guide" (disabled until there is a class and a material) |
 
+### `review`
+
+Added with the learning loop's daily review queue (PKG-12). Owner:
+`frontend/src/components/learn/DueQueue.tsx` (PKG-12; launch polish PKG-13 — the
+launch Study surface, spec §11.3). Rendered above the
+Flashcards filter bar in `screens/Study.tsx` only when `getLoopStatus` reports the
+loop active (`GET /api/learn/loop/review/active` 200 — a gate-only probe; the gate's 404 → absent).
+
+| testid | element |
+| --- | --- |
+| `review-due-panel` | the "Due today" panel root |
+| `review-budget` | chip: minutes left of today's review budget |
+| `review-empty` | "All caught up — nothing is due right now." (no item and nothing due; never shown beside a stale item; makes no "due later" claim — `/review/summary` counts today, as of its read); "Nothing else is due right now." while the summary holds concepts back (`paused` / `grading_paused`) |
+| `review-budget-paused` | the budget pause banner (PKG-13, spec §3.5): a review call answered 429 `ai budget reached` (by its `scope`: the per-minute rate limit says "Too many AI requests in the last minute. Send this answer again at <time>.", the grader cap "Today's grading limit is reached: checks can't be graded until <time>. Flashcards keep working.") or `/review/summary` reports `paused` > 0 novice concepts ("<n> concept(s) paused until <reset>, when your monthly AI budget resets. …" — the cap its `paused_scope` names, the reset `paused_until`, dated when a week or more away; #866 K18) or `grading_paused` > 0 concepts held at the grader cap ("Checks on <n> concept(s) wait until <time>, when today's grading limit resets. …", #866 K16); `role="status"`, `data-reset-at`, `data-session-capped` |
+| `review-budget-spent` | no item while items are still due — today's review budget is spent (shows how many remain: the due reviews, and the never-rated cards as "new cards", #866 K14) |
+| `review-item` | the served item (a check's prompt, or a flashcard's front/back) |
+| `review-new-card` | "New card" chip on a served flashcard never rated yet (`/review/next` item `new`; spec §13 A74's pool — a new card, not a review that is due; #866 K14) |
+| `review-answer-input` | free-response answer textarea (a `free` check) |
+| `review-option-{letter}` | one stored `mc_reason` option radio, suffixed with the option's own letter (stored order; correctness never marked, A22); the radio group is named by the question (spec §13 A135) |
+| `review-reason-input` | the one-sentence reason textarea of an `mc_reason` check, labelled "In one sentence: why?" (the shared `learn/question/QuestionCard`, bare in the panel) |
+| `review-confidence` | the optional "How sure?" radio group on a check, never a flashcard (spec §13 A127; shared `ConfidenceControl`); hidden once the answer is graded |
+| `review-confidence-{guessing,fairly_sure,sure}` | one level; a chosen one rides `/review/answer` as `confidence` |
+| `review-confidence-clear` | "Clear" — takes the choice back |
+| `review-submit` | "Submit answer" ("Checking…" while it is sent) / "Try again" — sends a check answer |
+| `review-flip` | "Show answer" on a flashcard |
+| `review-rate-1` / `review-rate-2` / `review-rate-3` | a flashcard self-rating (forgot / hard / easy) |
+| `review-hint` | the result line: verdict + corrective hint (with the answer when wrong), the grader-could-not-grade line (nothing recorded; Next moves on and the question comes back after the rest of today's review — #866 K16), or the A33 own-words prompt |
+| `review-graded` | "Your answer is already recorded" — a resend met `409 already graded` (the answer counted) |
+| `review-next` | "Next" — polls `/review/next` after a graded answer (also while paused, so review keeps moving, and after a grade the grader could not make — never after an A33 refusal; a check the queue moves past unanswered comes back with what was typed, #866 K16) |
+| `review-report` | "Report this question" on a served check (answered or not; never on a flashcard), only while the `item_reports` flag is on (spec §13 A113, #695) — opens the reasons |
+| `review-report-reasons` | the reasons group (`role="group"`): buttons only, no text box |
+| `review-report-reason-{reason}` | one reason — `wrong_answer` / `unclear` / `not_from_my_course` — posts `/api/learn/loop/report` (`surface: review`, the item's id) and loads the next item |
+| `review-report-cancel` | closes the reasons without reporting |
+| `review-reported` | "Thanks — that question is reported…" above the next item |
+| `review-skipped` | "That question is no longer available, so it was skipped." — a 404 on `/review/answer` or `/report` moved on to the next item |
+| `review-new-day` | "A new review day began, so the queue reloaded. …" — an answer met `409 review session expired`: the review session is one per the student's LOCAL day (`tz_offset_min`), and what was typed comes back with that check: on screen when today's queue serves it first, else kept until it is served again (the text says which; #866 K17) |
+| `review-not-reported` | a report met `409 review session expired` and today's queue does not serve the question again, so the report was not sent (said, never silently dropped; when the question is served again the report goes to today's session) (#866 K17) |
+| `review-load-error` / `review-load-retry` | `/review/next` failed: why, and "Try again" |
+
+### `retention`
+
+The delayed retention check (spec §13 A112, A126) on Study. Owner:
+`frontend/src/components/learn/RetentionCheck.tsx`, rendered by
+`screens/Study.tsx` beside the review queue while the loop is on.
+
+| testid | element |
+| --- | --- |
+| `retention-course` | the course select |
+| `retention-course-fallback` | the note that a deep-linked course (`?retention-course=`) is not one of the student's, so the first course shows instead |
+| `retention-open` | "Open eligible retention checks" — the only control that poses one |
+| `retention-budget-paused` | the budget pause banner (#866 K13): `/posttest/start` or `/posttest/answer` answered 429 `ai budget reached` ("AI checks are paused until <time>. Nothing was recorded; try again then."); `role="status"`, `data-reset-at`, `data-session-capped` |
+| `retention-empty` / `retention-finished` | no eligible check is open for the course / the opened set is done; W3.4 cross-links `retention-study-link` / `retention-tutor-link` (and `retention-finished-{study\|tutor}-link`) when Study / Tutor are visible |
+| `retention-skipped` | "That question is no longer available, so it was skipped." — a 404 on an answer |
+| `retention-item` | the question on screen |
+| `retention-answer` / `retention-reason` | the free answer textarea ("Your answer") / an `mc_reason` question's reason ("In one sentence: why?") |
+| `retention-option-{letter}` | one `mc_reason` option of a retention question: a radio of the group named by the question (`learn/OptionList`, as the loop's cards) |
+| `retention-submit` / `retention-idk` | "Submit answer" / "I don't know" |
+| `retention-result` / `retention-next` | the graded line / "Continue" |
+
+### `loop`
+
+Added with the learning loop's student UI (PKG-13; spec §9, §11.3). Owner:
+`frontend/src/components/learn/LoopLearn.tsx`. `Learn()` (`screens/Learn.tsx`)
+mounts it when `getLoopStatus` reports the loop active; the legacy `tutor`
+screen only when it reports inactive (the kill switch, PKG-14b). The chat log
+inside `loop-messages` is `ChatPanel`, whose own `tutor-*` ids
+(`tutor-messages`, `tutor-input`, `tutor-send`, `tutor-stop`) stay.
+
+| testid | element |
+| --- | --- |
+| `loop-status-error` | PKG-14b (spec §11.2): `Learn()`'s retry state — the status probe failed (5xx, network, timeout); "Couldn't reach the tutor. Try again." Never the legacy tree |
+| `loop-status-retry` | its button — re-runs `GET /api/learn/loop/review/active` |
+| `loop-phase` | root container; `data-phase` = probe / plan / teach / check / feedback / close (server-driven); `data-session-id` (empty until a session exists); `data-view` = session / home / course / all / goal (the Tutor shell's page, wireframes T1–T3; `goal` is the home's goal editor before a session starts) |
+| `tutor-sidebar` | the Tutor's own sidebar (`learn/tutor/TutorSidebar.tsx`): New session, the session search, the courses and the recents; a drawer on a phone (`tutor-sidebar-show` opens it, `tutor-sidebar-hide` closes it) |
+| `tutor-session-search` | the sidebar's session search (`type="search"`) |
+| `tutor-course-{courseId}` | one course in the sidebar; a click opens its page (T2); `aria-current="true"` while that page shows |
+| `loop-session-picker` | the sidebar's recents (`GET /api/learn/sessions/{user}` merged with `GET /api/learn/loop/sessions`, spec §11.3), one list per day group (Today / Yesterday / Previous 7 days / Older); no list while it lists nothing — it holds the "None yet" line (spec §13 A135) |
+| `loop-session-{sessionId}` | one OPEN session of the course on screen; `aria-current="true"` on the one shown; a click resumes it |
+| `tutor-recent-{sessionId}` | any other recent: an open session in another course (a click switches course and resumes it) or a wrapped-up one (opens read-only, T14) |
+| `tutor-view-all` | "View all sessions" — the all-sessions page (T3) |
+| `loop-new-session` | New session: opens the Tutor home (T1) and writes nothing; in the sidebar on wide screens, "+ New" in the TopBar on a phone |
+| `tutor-home` | the Tutor home (T1): "What do you want to learn today?" — where `/learn` lands when the course has no open session (a `?topic=` link still starts one) |
+| `loop-start-guided` | the home's "New session": wraps up (`/close`) the open session on screen first, so sessions do not pile up open (a 409 there starts nothing), then starts one |
+| `tutor-home-continue` / `tutor-home-due` / `tutor-home-start-with` / `tutor-home-goal` | the home's suggestions: back to the open session; Study's due review; a session on the weakest concept (its goal, #866 K05); the goal editor (`data-view="goal"`), before anything starts — saving starts the session on that goal |
+| `tutor-course-page` | a course page (T2); `data-course-id`: its sessions, progress and material; `tutor-course-start` (TopBar) goes to the home. Each skill meter in its progress (`Meter`, no testid: journeys select `[data-tier]` inside the page) carries `data-tier` = its concept's map tier (`unexplored` / `struggling` / `learning` / `mastered`, `nodeStyle.tierFor`, #866 K21) |
+| `tutor-all-sessions` | every session (T3), with a search and an All / In progress / Wrapped up filter |
+| `tutor-session-row-{sessionId}` | one session of every session's list: the button that opens it, then its Rename and Delete (#866 K31, as the legacy Learn screen's recent sessions) |
+| `tutor-session-rename-{sessionId}` / `tutor-session-name-{sessionId}` | Rename turns the row's name into the field `tutor-session-name-{sessionId}` (Enter or leaving it saves, Escape keeps the name) |
+| `tutor-session-delete-{sessionId}` | Delete, then "Confirm delete" within 3 s; the session leaves every list, and the screen lets go of it if it was on screen |
+| `tutor-learn-progress` | inside the stepper's current Learn step only: " i of n", the approved plan's cursor (a turn or Check me that moves it reports it); absent on a one-concept plan and in every other phase. It replaced the TopBar's `tutor-phase-line`, removed in the Tutor redesign's subtract pass (the stepper already said the phase) |
+| `tutor-phase-stepper` | the first row of the conversation column (`learn/tutor/PhaseStepper.tsx`): the ordered Check-in · Plan · Learn · Wrap-up list (`<ol aria-label="Session progress">`); each `li` has `data-state` = done / current / todo and the current one has `aria-current="step"` |
+| `tutor-turn` | a `ChatPanel` tutor turn drawn on the page (`turnStyle="page"`, `PageTurn`: the tutor's mark and name over the text, no bubble); `data-visually-hidden` while unpainted |
+| `tutor-session-map` | the session panel's knowledge map (`learn/tutor/SessionMap.tsx`): fixed mastery colours, no zoom buttons; it frames its nodes until the student zooms or pans it, and re-frames on a double-click or a new node set |
+| `tutor-map-key` | the map's key under it: four mastery tier swatches plus the W3.2 “Practiced” outline row |
+| `tutor-map-key-practiced` | legend row: solid outline = practiced this session (orthogonal to mastery fill) |
+| `tutor-map-practiced-{nodeId}` | solid practiced outline on a concept in the session map (`KnowledgeGraph2D`) |
+| `tutor-map-error` | in place of the session panel's map when the knowledge map failed to load: "Couldn't load …" with Try again (#866 Z63) |
+| `tutor-panel-due-count` | the session panel's count of reviews due (`GET /review/summary`: flashcards plus checks, all courses); absent while `hide_study` hides Study |
+| `tutor-drawer` / `tutor-drawer-scrim` | on a phone, the sidebar or session panel as a modal drawer (`learn/tutor/TutorDrawer.tsx`, `role="dialog"`, `aria-modal`) and its scrim (a click closes it) |
+| `tutor-recents-error` / `tutor-course-sessions-error` / `tutor-course-materials-error` / `tutor-all-sessions-error` | a failed sessions or materials read: "Couldn't load …" with Try again — never an empty state |
+| `tutor-course-sessions-count` | the course page's session count; after a failed read "Not loaded" (or "At least N" for the sessions that did load), never "0 sessions" |
+| `tutor-course-concepts-error` | the course page's concept count when the map failed to load: "Couldn't load …" with Try again, never "0 concepts" (#866 Z63) |
+| `tutor-crumb-course` | the TopBar's course breadcrumb (opens the course page) |
+| `tutor-panel-hide` / `tutor-panel-toggle` | hide the session panel (its head) / show it again (the TopBar, only while it is hidden) |
+| `tutor-key-idea` | the tutor turn's "Key idea:" paragraph, shown as the labelled key-idea block (`ChatPanel`'s `splitKeyIdea`) |
+| `chat-footer` | `ChatPanel`'s footer: the check card or the actions, right under the latest turn |
+| `loop-sessions-error` | `GET /sessions` (or a read-only resume) failed |
+| `loop-sessions-retry` | retry — never falls through to a new session or probe |
+| `loop-no-course` | the student has no enrolled course |
+| `loop-no-course-link` | the link inside `loop-no-course` to the Dashboard, where courses are added (#866 Z61) |
+| `loop-start-error` | a new session could not start (a 429 or an error on `/start-session`) — never an empty probe |
+| `loop-start-retry` | retry the start |
+| `loop-start-crisis` | `/start-session` answered with the crisis-support card (no session was opened); the card's `crisis-support-dismiss` starts a fresh session on the course (docs/safety/crisis-support.md) |
+| `loop-topic-offer` | a `?topic=` deep link arrived while a session is open: the session resumed, the topic is offered (`loop-topic-start`; with the link's `?concept=` of the course on screen, a session on that concept) |
+| `loop-topic-start` | "Learn <topic>" (wraps up the open session first, like `loop-new-session`; the offer says so) |
+| `loop-readonly-transcript` | a `?resume=` session that is not an open loop session (a legacy one), shown read-only |
+| `loop-readonly-new-session` | "New session" beside the read-only transcript |
+| `loop-notices` | the notices container (`components/ui/StatusSlot`) — always on the page, `aria-live="polite"` and empty until a notice arrives, so each notice below is announced as it is added (spec §13 A135). It shows ONE notice at a time, most important first: the budget pause, the topic offer, practice unavailable, no check items, preparing, materials unavailable; `data-notice` names the one shown ("" when none), `data-has-notices` whether there is one |
+| `loop-budget-paused` | the budget pause banner (A20/A26/A39); `role="status"`, `data-reset-at` (ISO or empty), `data-session-capped` (`true`: "paused for this session", no reset time); when the 429 or `budget` notice says `pause_novice`, it says checks on concepts the student is just starting are paused too, and a "Check me" that met that pause says so beside the button (#866 K35) |
+| `loop-budget-study-link` | link to `/study?mode=cards` inside the banner |
+| `loop-no-check-items` | "No check items for this course yet" (A23) |
+| `loop-tree-link` | link to `/tree` (`?node=<id>` once a `learner_state` event names the concept): the session panel's "Open map", or "Map" in the TopBar on a phone; absent while `hide_tree` hides the Tree |
+| `loop-rail` | the session panel, "Today's session" (wide screens only): the plan (the approved one from `/status` after a reload), optional `session-plan-deps` when kept `prereq_edges` are non-empty, a skill meter per concept, due review (`tutor-panel-review`) and the knowledge map; the tree link sits in the TopBar on narrow screens |
+| `loop-verdict` | wireframe T9: the graded check's verdict over the feedback; `data-verdict` = correct / not_yet / idk; a not_yet names the next concept ("Next up: …") when the grade moved the plan on. On a correct verdict `data-credit` = `full` / `partial` / `none`, the weight the answer's evidence was journaled at (#866 K07; absent from an older server); a partial one names what reduced it (the response's `credit_reasons`: a hint, a same-session re-check, a low-confidence grade, a multi-concept item) |
+| `loop-verdict-credit` / `loop-verdict-skill` / `loop-verdict-sure` | `verdict_v2` on (`learn/verdict/VerdictCard.tsx`): the card's title is "Correct", "Correct, half credit" (a hint), "Correct, part credit" or "Not quite"; then at most one credit line ("You used a hint, so this counts half toward {concept}. …"), the concept's skill change shown once ("{concept}: Getting started → Developing", "…, a little higher", or the first measurement "{concept}: Developing"), and after a confident miss "You were sure about this one, so take a moment with it." |
+| `loop-close-new-session` | the wrap-up's "New session" (to the Tutor home) |
+| `tutor-attach` | the composer's "+" next to Send: opens the Library to add material |
+| `loop-learner-state` | a hidden state hook (no visible chip since the Tutor redesign's subtract pass): the current concept's belief; `data-node-id`, `data-p-known`, `data-band` (present, empty, before any event) |
+| `loop-probe-greeting` | the session opener above the check-in (spec §13 A121: a template — a welcome and the check-in's intro, never teaching or a question) |
+| `loop-probe-item` | the current probe card; `data-question-hash` |
+| `loop-probe-input` | free/teachback probe answer textarea, labelled "Your answer" (the shared `learn/question/QuestionCard`) |
+| `loop-probe-options` | the options' radio group (`role="radiogroup"`, named by the question; spec §13 A135): one tab stop, the arrow keys move and choose, Home / End choose the ends |
+| `loop-probe-option-{letter}` | one served `mc_reason` option (stored order; never marked correct, A22); `role="radio"`, named "{letter}. {text}" |
+| `loop-probe-reason` | the one-sentence reason input (`mc_reason`) |
+| `loop-probe-confidence` | the optional "How sure?" radio group on the probe card (spec §13 A127; `role="radiogroup"`, labelled by its question): one tab stop, arrow keys move and choose; nothing chosen = nothing sent |
+| `loop-probe-confidence-{guessing,fairly_sure,sure}` | one level (`role="radio"`, `aria-checked`); a chosen one rides `/probe/answer` as `confidence` (never with an idk) |
+| `loop-probe-confidence-clear` | "Clear" — takes the choice back (shown only while one is chosen) |
+| `loop-probe-submit` | submit the probe answer (`/probe/answer`) |
+| `loop-probe-idk` | "I don't know" (submits `idk: true`, no answer text) |
+| `loop-probe-reference` | the answer shown after a wrong answer or idk (spec §3.3) |
+| `loop-probe-retry` | the next probe item failed to load — retry (`/probe/next`, same session) |
+| `loop-probe-next` | "Next" under the reference — the next probe item, or the plan after the probe's last answer |
+| `loop-plan-concept-{nodeId}` | one planned concept: its name, its one kind badge `loop-plan-kind-{nodeId}` (Due for review / New / Keep practicing / Related practice) and, in a goal session only, `loop-plan-reason-{nodeId}` (Your selected goal / Prerequisite for your goal), which /status's approved plan carries too |
+| `loop-plan-kind-{nodeId}` | that concept's kind badge (`learn/planLabels.ts::planKind`, from GET /plan `kind`: review / new / started / sibling); the session panel shows the same label under the concept's name |
+| `loop-plan-reason-{nodeId}` | why a goal session plans it (`planGoalReason`: `goal` / `prerequisite`); absent outside a goal session |
+| `loop-plan-retry` | the plan failed to load — retry (`GET /plan`) |
+| `loop-plan-deps` | W3.1: PlanPanel compact “How these connect” section (named by its heading) under the numbered plan; present only when at least one GET /plan `prereq_edges` pair touches a planned concept. Structure only — prerequisite order, never mastery |
+| `loop-plan-dep-{prereqId}-{dependentId}` | one prerequisite → dependent line in `loop-plan-deps` (concept names from the plan / names map), once per pair, in plan order (`PlanDeps.orderedPlanEdges`; an edge up to a goal target off the plan sorts last) |
+| `session-plan-deps` | W3.1b: SessionPanel twin of `loop-plan-deps` (same `PlanDeps` markup, `session-plan` prefix); under the rail’s Plan list when LoopLearn’s kept `prereq_edges` is non-empty; omitted when empty or while phase is `plan` (rail plan is hidden) |
+| `session-plan-dep-{prereqId}-{dependentId}` | one prerequisite → dependent line in `session-plan-deps` (same name resolution as PlanPanel) |
+| `loop-plan-approve` | approve the plan (`/plan/approve`, the proposed ids in order) |
+| `loop-plan-v2` / `loop-plan-intro` | `plan_v2` on (`learn/plan/PlanV2.tsx`): the rebuilt check-in result and plan, and the tutor's one line built from it ("Thanks. You have a head start on Stacks. You're just getting started on Hash tables. Collision resolution is new to you. Here's where you're starting and what I suggest for today."; "Building your plan…" until GET /plan lands), which takes focus. `loop-plan-starting` ("Where you're starting") holds `loop-plan-start-{nodeId}` per concept the check-in covered, `data-level` the ladder band (`not_started` / `novice` / `develop` / `profic`) from GET /plan's `starting`, never the prior. The plan rows keep `loop-plan-concept-{nodeId}` and `loop-plan-kind-{nodeId}` ("New, after Hash tables" when a planned prerequisite comes first; no `loop-plan-reason-*`, no `loop-plan-deps`). `loop-set-goal` moves into the plan beside `loop-plan-approve` as "Change goal" / "Set goal" (the header's copy steps aside in the plan phase) |
+| `tutor-new-session-v2` | `new_session_v2` on (`learn/tutor/NewSessionV2.tsx`), inside `tutor-home`: "What are we working on?" (takes focus), one radio card `tutor-new-intent-{prepare,continue,concept,course,goal,ask,review}` per kind of session (`prepare` with `milestones`, `ask`, "Just ask a question", with `just_ask`: an ungraded chat with no `loop-check-me`) (`data-picked`), the start button `loop-start-guided` with `data-intent` the pick (the whole-course session first, as before; an `<a>` to Study for review), and `tutor-new-wraps-up` ("This wraps up your open session, …") only for a pick that starts a new session |
+| `tutor-panel-v2` / `tutor-panel-concept-{nodeId}` / `tutor-side-review` | `session_v2` on (`learn/tutor/SessionPanelV2.tsx`, inside `loop-rail`): the panel's one list, a row per planned concept with `data-state` (`now`, which also carries `aria-current="step"`; `done` for the rows before it; `next`), `data-tier` and a `role="meter"` named "{concept} skill" whose `aria-valuetext` is its level; `loop-tree-link` at the foot. No `tutor-panel-due-count`, `tutor-map-key` or `session-plan-deps`. `tutor-side-review` is the Tutor sidebar's Review (to Study), with `tutor-side-review-count` when reviews are due |
+| `tutor-save-reply` / `tutor-panel-tab-{plan,saved}` / `tutor-saved-list` / `tutor-saved-{id}` / `tutor-saved-empty` | `saved_items` on (`learn/tutor/saved.tsx`): "Save" (then "Saved", disabled) under each settled tutor reply; with `session_v2`, the session panel's two tabs (Plan, "Saved (n)") and the Saved list (each item a `<details>` with Remove), or its empty line; with `milestones`, `tutor-milestone-saved-{id}` on the milestone page |
+| `tutor-course-setup` / `tutor-setup` (`data-step`) / `tutor-setup-steps` / `tutor-setup-back` / `tutor-setup-file` / `tutor-setup-choose` / `tutor-setup-skip` / `tutor-setup-status` / `tutor-setup-error` / `tutor-setup-row-{id}` / `tutor-setup-name-{id}` / `tutor-setup-date-{id}` / `tutor-setup-remove-{id}` / `tutor-setup-add-date` / `tutor-setup-concept-{nodeId}` / `tutor-setup-confirm` / `tutor-setup-done` / `tutor-setup-start` | `course_setup` on, with `course_page_v2` (`learn/tutor/CourseSetup.tsx`): Coming up's "Set up from syllabus", then the setup (`data-step` = `syllabus` / `review` / `done`): the steps, the back link, the hidden file input behind "Choose your syllabus", Skip, the reading status and an error; on Review each date row (a new row's name input), its date and Remove, Add a date, each concept's chip (its checkbox inside), Confirm; then Done and Start learning |
+| `tutor-course-v2` | `course_page_v2` on (`learn/tutor/CourseV2.tsx`, inside `tutor-course-page`): `tutor-course-ready-{nodeId}` per ready concept (`data-tier`, a `role="meter"`, and `tutor-course-learn-{nodeId}`, which starts a session on it), `tutor-course-session-{id}` per recent session, `tutor-course-due-{assignmentId}` per upcoming assignment ("Dec 2, in 6 days"), `tutor-course-retention` / `tutor-course-review` for the one note on top, `tutor-course-library` (the course's study guides `tutor-course-guide-{guideId}` and `tutor-course-flashcards` with its card count; absent while Study is hidden or the course has neither), and `tutor-course-{concepts,sessions,materials,upcoming}-error` when a read failed (with a retry) |
+| `tutor-milestone` / `tutor-milestone-{id}` | `milestones` on (`learn/tutor/MilestonePage.tsx`, `milestones.ts`): a milestone's page in the course view (`data-milestone-id`; `tutor-milestone-back`, `tutor-milestone-prepare`, `tutor-milestone-levels`, `tutor-milestone-concept-{nodeId}` with `data-level`, `tutor-milestone-guide-{guideId}`, `tutor-milestone-unlinked` when nothing is linked); `tutor-milestone-{assignmentId}` is a sidebar row under its course (title and countdown). With `course_page_v2`, `tutor-course-due-{id}` holds a button that opens it and `tutor-course-due-ready-{id}` ("3 of 8 ready"); with `new_session_v2`, `tutor-new-intent-prepare` |
+| `review-scope` / `review-scope-{courseId\|all}` / `review-progress` / `retention-title` | `review_v2` on (`learn/review/ReviewHead.tsx`, inside `review-due-panel`, which is headed "Review"): the course chips (a radiogroup named "Course", "All courses" first; shown with more than one course), the item's place ("3 of 9") while an item is on screen, and no `review-budget`. `retention-title` is the retention check's heading: "Retention check ready for {course}" when one is due for the course it shows, else "Retention check" |
+| `study-reviews` / `study-rail-review` / `study-rail-retention` | `review_v2` on (`learn/review/RailReviews.tsx`, in the Study hub's rail under Quick Reviews): the two rows that open the review queue (`study-rail-review-count`, "7 due", when reviews are due) and the retention check (`study-rail-retention-ready` when one is due) in the hub's modal (a `role="dialog"` named "Review" / "Retention check"); with the flag off `study-reviews` is the pair of cards under the hub's header |
+| `loop-messages` | the teach/check/feedback chat container (wraps `ChatPanel`) |
+| `loop-teach-start` | "Start with <first plan concept>" — sends that as the first chat turn (shown until the student has chatted) |
+| `loop-check-me` | "Check me": posts `/check/next` when no item is current (A27) |
+| `loop-check-prompt` | the current check pose (`check.prompt`, A17/A27); `data-question-hash`, `data-format` |
+| `loop-materials-grounded` | W4.3: calm "Grounded in your materials" status under a teach/opener assistant turn when the server sent `materials_grounded: true` (passages in the prompt); `title` / `aria-label` explain course-material grounding (never a cite list) |
+| `loop-figure-withheld` | W4.1a: honest empty figure slot when pose carries `figure.status === "withheld"` (visual surface, no drawable asset yet); never invents SVG client-side |
+| `loop-attempt-input` | free/teachback attempt textarea |
+| `loop-attempt-options` | the attempt box's options radio group, as `loop-probe-options` |
+| `loop-attempt-option-{letter}` | one served `mc_reason` option in the attempt box |
+| `loop-attempt-reason` | the one-sentence reason input in the attempt box (`mc_reason`) |
+| `loop-check-confidence` | the optional "How sure?" radio group on the check card (spec §13 A127), as `loop-probe-confidence`; it never holds up `loop-attempt-submit` |
+| `loop-check-confidence-{guessing,fairly_sure,sure}` | one level; a chosen one rides `/check/answer/stream` as `confidence` (never with an idk) |
+| `loop-check-confidence-clear` | "Clear" — takes the choice back |
+| `loop-attempt-submit` | submit the attempt to `/check/answer/stream` (never a chat turn, A16) |
+| `loop-attempt-idk` | "I don't know" in the attempt box (`idk: true`) |
+| `loop-hint-button` | request a hint: records the draft as an attempt (`/step/attempt`), moves the rung (`/hint`), then fetches the hint turn (`/action`) |
+| `loop-hint-denied` | denial line; `data-reason` = `no_genuine_attempt` / `too_soon` (a written attempt time alone kept from counting yet: /step/attempt's `wait_s`, #866 K32) / `dwell` / `ceiling` / `h6_gate` (never lifts on this item) / `h6_attempt` (an H6 gate another genuine try lifts: /hint's `lifts: "attempt"`) / `no_active_item` |
+| `loop-hint-reply` | the hint turn's text when allowed |
+| `loop-hint-ladder` | `hint_ladder` on (`learn/question/HintLadder.tsx`): the hints taken on the question, stacked, each `li` with `data-rung`; "Hint 1.", "Hint 2.", "Worked steps." (H4+). The latest step is `loop-hint-reply`, the earlier ones `loop-hint-step-{i}`. The button names the next step ("Hint 2", "Show worked steps") or, locked for time alone, counts down ("Hint in 0:30", `aria-disabled`) |
+| `loop-hint-cost` | `hint_ladder` on: what the next step costs, before it is taken: "Hints: half credit", "Worked steps: no credit", and before the worked steps "Showing steps means this question won't raise your skill level." |
+| `loop-check-report` | "Report this question" on the check card, only while the `item_reports` flag is on (spec §13 A113, #695) — opens the reasons |
+| `loop-check-report-reasons` | the reasons group (`role="group"`): buttons only, no text box |
+| `loop-check-report-reason-{reason}` | one reason — `wrong_answer` / `unclear` / `not_from_my_course` — posts `/api/learn/loop/report` (`surface: loop`, the pose's `question_hash`); the card goes and "Check me" brings another |
+| `loop-check-report-cancel` | closes the reasons without reporting |
+| `loop-check-reported` | the status line after a report ("…won't be shown to you again. Use Check me for another."); cleared by the next check |
+| `loop-prequestion` | spec §13 A138 (`PrequestionCard.tsx`, the `segment_prequestion` flag): the ungraded guess that opens a teaching segment — a `QuestionCard` with `data-graded="false"` whose meta line (its heading) is "Not graded"; a region named by its heading, in place of the Continue / Check me row; `data-question-hash`, `data-format` (`mc_reason` / `free`), `data-difficulty`, `data-answered` (`true`: the guess is saved and its explanation is owed — a resume) |
+| `loop-prequestion-prompt` | the guess's question (names the options' radio group, describes the guess box) |
+| `loop-prequestion-options` / `loop-prequestion-option-{letter}` | the multiple-choice guess: a radio group named by the question (spec §13 A135; never marked correct, A22) and one option, "{letter}. {text}" |
+| `loop-prequestion-reason` | the optional one-line "Why?" beside a multiple-choice guess |
+| `loop-prequestion-input` | the typed guess (a free item) |
+| `loop-prequestion-submit` | "Save guess": posts `/prequestion/answer/stream` — the guess, then in the same stream the explanation turn (the answer first, from code); nothing is graded |
+| `loop-prequestion-no-idea` | "No idea": the same stream with `no_idea: true` and no guess — no penalty |
+| `loop-prequestion-explain` | "Show the explanation" in the `data-answered` state: the same stream again (the saved guess stands) |
+| `loop-self-explain` | spec §13 A139 (`SelfExplainCard.tsx`, the `self_explanation_prompts` flag): the "why does this follow?" prompt — inside the check card under a worked-example or solution hint, or in place of the Continue / Check me row after feedback; `data-juncture` (`worked_example` / `released_solution` / `first_correct`), `data-prompt-id` |
+| `loop-self-explain-prompt` | the prompt (the turn's own last line; it describes the reply box) |
+| `loop-self-explain-input` | the reply box (after feedback, lost focus moves here) |
+| `loop-self-explain-send` | "Send": posts `/self-explain` with the reply — stored for diagnosis only, never graded |
+| `loop-self-explain-skip` | "Skip": posts `/self-explain` with `skip: true` |
+| `loop-self-explain-saved` | "Saved — thanks." in a polite live region that is always on the page (cleared by the next turn) |
+| `loop-continue` | "Continue" after feedback — sends the next chat turn; disabled while `loop-feedback-dwell` is showing (W2.5 hypercorrection). With `verdict_v2` on it names the plan's next concept ("Next: {concept}") and counts the hold down on itself ("Continue in 0:06"); `loop-feedback-dwell` is then not shown (the verdict card says why) |
+| `loop-feedback-dwell` | W2.5 status line while Continue / probe Next / review Next waits after a high-confidence wrong (`feedback_dwell_ms` from the grade) |
+| `loop-rating` | PKG-14: the perceived-difficulty prompt, shown when a graded check's `done` carries `ask_rating` (every `ZPD_RATING_EVERY_N_CHECKS` checks); hidden after one click |
+| `loop-rating-{too_easy,appropriate,too_hard}` | its three buttons — `POST /api/learn/loop/rating` |
+| `loop-close-button` | end the session (`/close`; teach/check/feedback only) |
+| `loop-close-summary` | the close summary text |
+| `loop-close-concept-{nodeId}` | one checked concept on the wrap-up (spec §13 A117): `data-baseline` = `pre_session` / `check_in` / `teaching` (where its change starts; a close stored before A117 reads `pre_session`), `data-direction` = `up` / `down` / `same` — a first measurement with no move after it is `same` with a "first measured" label, never an arrow |
+| `loop-close-if-then` | the stored if-then plan (rendered only when non-empty) |
+| `loop-close-rating` | the wrap-up's "How was that session?" card (paced: once per session, `lib/feedbackPacing.ts`); the 1–4 scale's buttons are `loop-close-rating-{1..4}` |
+| `loop-close-rating-details` | the follow-ups a rating reveals on the same card (U9): `loop-close-rating-helpful-{i}` / `loop-close-rating-friction-{i}` chips (`aria-pressed`), `loop-close-rating-comment` |
+| `loop-close-rating-send` | sends the rating, chips and note as ONE session feedback row |
+| `loop-close-rating-sent` | the thanks line once the feedback is sent |
+| `loop-close-done` | the closed state (the wrap-up's next-step links); also a session found closed elsewhere (a 409 `this session is closed`) whose stored close could not be read |
+| `loop-wrapup-v2` / `loop-close-headline` | `wrapup_v2` on (`learn/wrapup/WrapUpV2.tsx`): the rebuilt wrap-up and its headline, built from what moved ("Hash tables moved up to Developing", "2 concepts measured for the first time", "Nothing measured yet"), which takes focus. Its rows are `loop-close-concept-{id}` in the ladder's words, with `data-reached="false"` for the plan's concepts the session did not reach ("Not reached today"); `loop-close-done` holds ONE primary step (the Review link when reviews are due, else `loop-close-new-session`); the other hand-offs sit under "More practice"; no retention link |
+| `loop-close-study-link` | W3.4 "Review" inside `loop-close-done` (`/study?course=` when known); omitted while `hide_study` |
+| `loop-close-practice-link` | W3.3c "Practice what's due" → Quiz `scope=due` + learner_next due[] queue (or course+`start=1`); omitted while `hide_quiz` or `hide_study` |
+| `loop-close-quiz-link` | W3.4 "Quiz this concept" on a wrap-up concept that went down (else the first); omitted while `hide_quiz` or with no concept id |
+| `loop-close-tree-link` | W3.4 "See on your map" (`/tree?course=`); omitted while `hide_tree` |
+| `loop-practice-study-link` / `loop-practice-quiz-link` | practice-unavailable notice → Review / Quiz this concept |
+| `due-reviews-flashcards` | Study Hub Quick / Due Reviews primary link, "Review" (the concepts' flashcards), inside the list the row opens: the row is a disclosure (`aria-expanded`; a click or Enter opens it, Escape or a click outside closes it), never a hover pop-up |
+| `due-reviews-quiz` | Study Hub Due Reviews secondary link; label "Practice what's due" (W3.3b); omitted while `hide_quiz` / flags off |
+| `focus-learn` | Study Hub Focus "Learn"; omitted while `hide_tutor` |
+
+`loop-hint-offer` was removed in the PKG-13 fix round: PKG-07 sends `hint_offer`
+on the FEEDBACK turn, after the item closed, so the affordance (inside the check
+card) could never render, and a hint then has no item (`/hint` → `no_active_item`).
+Where a novice offer should live is PKG-07's open question (HANDOFF-13).
+
 ### `landing-graph`
 
 Added with the #344 landing-page knowledge-graph demo. Ships the static,
@@ -949,6 +1354,8 @@ no analytics).
 | testid | element |
 | --- | --- |
 | `settings-tab-${tab}` | the tab rail buttons — `tab` is the fixed tab key: `profile` / `cosmetics` / `preferences` / `notifications` / `data` |
+| `settings-quiz-prefs` | Preferences → Quiz block (Length / Difficulty / Answers / Format ↔ `lib/quiz/prefs.ts`; absent under `hide_quiz`) |
+| `settings-quiz-length` / `settings-quiz-difficulty` / `settings-quiz-answers` / `settings-quiz-format` | CustomSelect triggers for those rows (`-option-<value>` on each open option) |
 | `settings-analytics` | the Data tab's "Product analytics" card root (its description lists everything PostHog receives: pageviews, product events, AI-generation records, server error reports — all keyed to the Sapling account ID) |
 | `settings-analytics-toggle` | its switch (the shared `Toggle`: `role="switch"` + `aria-checked`) — shows and PATCHes the account's `analytics_opt_out`, which governs both the browser's pageviews and the backend's PostHog mirror (opt-out stops capture first, opt-in saves first). Usable whenever the account answer has loaded — also in a build that sends no pageviews (no key, local mode, the E2E/test build), with the `product_analytics` flag off, and under Do Not Track / GPC. **Disabled** only until that answer has loaded (or after a failed read) and while a save is in flight |
 | `settings-analytics-note` | the status line under it ("Loading your saved setting…" / "We couldn't load your saved setting…" / "No choice is saved to your account yet…" / "On — saved to your account…" (+ DNT/GPC or "Page views couldn't start in this browser…" variants) / "Off — saved to your account…" / "Off in this browser for this visit only…") |
@@ -986,7 +1393,7 @@ written in the spec.
 | `crisis-support-card` | the card's root (`<section>`, labelled by its title) |
 | `crisis-support-resource-{id}` | one resource; `id` is the payload's (`lifeline_988`, `crisis_text_line`, `campus_counseling`, `emergency`, `international`) |
 | `crisis-support-action` | one tappable way to reach a resource (`tel:`, `sms:` or `https:` link; repeated) |
-| `crisis-support-dismiss` | "Back to studying": closes the dialog |
+| `crisis-support-dismiss` | "Back to studying": closes the dialog (or, on the loop's start, starts a fresh session) |
 
 ## Enforcement
 

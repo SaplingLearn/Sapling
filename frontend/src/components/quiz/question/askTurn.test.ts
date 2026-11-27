@@ -1,9 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import crisisFixture from "@/test-utils/crisisSupport.json";
 import {
   ABORTED,
   askErrorCopy,
+  BudgetPausedError,
   chatWithFallback,
   openTutorSession,
+  quizAskOrigin,
+  turnPauseOf,
   type ChatLeg,
 } from "./askTurn";
 
@@ -13,12 +17,15 @@ const api = vi.hoisted(() => ({
   streamChat: vi.fn(),
   sendChat: vi.fn(),
   shouldFallBackToJson: vi.fn(() => true),
+  // the learning loop's budget pause (lib/api.ts): none unless a case says so
+  budgetPauseOf: vi.fn((_err: unknown): { resetAt: string | null; sessionCapped: boolean } | null => null),
 }));
 vi.mock("@/lib/api", () => api);
 
 beforeEach(() => {
   vi.clearAllMocks();
   api.shouldFallBackToJson.mockReturnValue(true);
+  api.budgetPauseOf.mockReturnValue(null);
 });
 
 describe("askErrorCopy", () => {
@@ -37,7 +44,7 @@ describe("openTutorSession", () => {
     const signal = new AbortController().signal;
     await expect(openTutorSession("u", "Recursion", "c1", signal)).resolves.toBe("s1");
     expect(api.startSessionStream).toHaveBeenCalledWith(
-      "u", "Recursion", "socratic", true, "c1", undefined, { signal },
+      "u", "Recursion", "socratic", true, "c1", undefined, { signal }, undefined,
     );
     expect(api.startSession).not.toHaveBeenCalled();
   });
@@ -74,7 +81,7 @@ describe("openTutorSession", () => {
     await expect(
       openTutorSession("u", "Recursion", null, new AbortController().signal),
     ).resolves.toBe("s2");
-    expect(api.startSession).toHaveBeenCalledWith("u", "Recursion", "socratic", undefined, true);
+    expect(api.startSession).toHaveBeenCalledWith("u", "Recursion", "socratic", undefined, true, undefined, undefined);
   });
 });
 
@@ -97,8 +104,58 @@ describe("chatWithFallback", () => {
     await expect(chatWithFallback(l, { onToken, onProgress }, vi.fn())).resolves.toBe("Because.");
     expect(api.streamChat).toHaveBeenCalledWith(
       "s1", "u", "Why?", "socratic", true, undefined,
-      { onToken, onProgress, signal: l.signal }, "turn-1",
+      { onToken, onProgress, onRetract: undefined, onBudget: expect.any(Function), signal: l.signal }, "turn-1",
+      undefined, // a follow-up quotes no quiz question (#866 K12)
     );
+  });
+
+  // ── the learning loop's stream: retract and the budget pause ──────────────
+
+  type LoopHandlers = { onRetract?: (r: string) => void; onBudget?: (n: unknown) => void };
+  const NOTICE = { level: "hard", reset_at: "2026-11-09T00:00:00Z", scope: "daily", session_capped: false };
+
+  it("passes the caller's retract handler to the stream", async () => {
+    const onRetract = vi.fn();
+    api.streamChat.mockImplementationOnce(async (...args: unknown[]) => {
+      (args[6] as LoopHandlers).onRetract?.("leak");
+      return { reply: "The whole reply." };
+    });
+    await expect(chatWithFallback(leg(), { onRetract }, vi.fn())).resolves.toBe("The whole reply.");
+    expect(onRetract).toHaveBeenCalledWith("leak");
+  });
+
+  it("a paused stream (its budget notice, then no reply) throws the pause — no JSON retry", async () => {
+    const onBudget = vi.fn();
+    api.streamChat.mockImplementationOnce(async (...args: unknown[]) => {
+      (args[6] as LoopHandlers).onBudget?.(NOTICE);
+      throw new Error("Chat stream ended without a done event.");
+    });
+    const beforeFallback = vi.fn();
+    const failure = chatWithFallback(leg(), { onBudget }, beforeFallback);
+    await expect(failure).rejects.toBeInstanceOf(BudgetPausedError);
+    await expect(failure).rejects.toMatchObject({ paused: { resetAt: "2026-11-09T00:00:00Z", sessionCapped: false } });
+    expect(onBudget).toHaveBeenCalledWith(NOTICE);
+    expect(beforeFallback).not.toHaveBeenCalled();
+    expect(api.sendChat).not.toHaveBeenCalled();
+  });
+
+  it("a budget notice before a served (template) reply resolves the reply", async () => {
+    api.streamChat.mockImplementationOnce(async (...args: unknown[]) => {
+      (args[6] as LoopHandlers).onBudget?.(NOTICE);
+      return { reply: "A worked example." };
+    });
+    await expect(chatWithFallback(leg(), {}, vi.fn())).resolves.toBe("A worked example.");
+  });
+
+  it("a failure after tokens is a failure, budget notice or not (the partial survives)", async () => {
+    const err = new Error("interrupted");
+    const l = leg();
+    api.streamChat.mockImplementationOnce(async (...args: unknown[]) => {
+      (args[6] as LoopHandlers).onBudget?.(NOTICE);
+      l.progress.sawToken = true;
+      throw err;
+    });
+    await expect(chatWithFallback(l, {}, vi.fn())).rejects.toBe(err);
   });
 
   it("maps an empty streamed reply to ''", async () => {
@@ -148,6 +205,70 @@ describe("chatWithFallback", () => {
       chatWithFallback(leg(), {}, () => order.push("beforeFallback")),
     ).resolves.toBe("");
     expect(order).toEqual(["beforeFallback", "sendChat"]);
-    expect(api.sendChat).toHaveBeenCalledWith("s1", "u", "Why?", "socratic", true, undefined, "turn-1");
+    expect(api.sendChat).toHaveBeenCalledWith("s1", "u", "Why?", "socratic", true, undefined, "turn-1", undefined);
+  });
+
+  it("names the quiz question the message quotes on both legs (#866 K12)", async () => {
+    const quote = { attemptId: "a1", questionIndex: 2 };
+    api.streamChat.mockRejectedValueOnce(new Error("stream died"));
+    api.sendChat.mockResolvedValueOnce({ reply: "Because." });
+    await expect(chatWithFallback(leg({ quote }), {}, vi.fn())).resolves.toBe("Because.");
+    expect(api.streamChat.mock.calls[0][8]).toEqual(quote);
+    expect(api.sendChat.mock.calls[0][7]).toEqual(quote);
+  });
+
+  it("a card beside the reply keeps the reply; a card instead of one has none (#866 K12)", async () => {
+    api.streamChat.mockResolvedValueOnce({ reply: "Because.", crisis_support: crisisFixture, crisis_support_alongside: true });
+    const beside = await chatWithFallback(leg(), {}, vi.fn());
+    expect(beside).toMatchObject({ reply: "Because.", crisis: { title: crisisFixture.title } });
+    api.streamChat.mockResolvedValueOnce({ reply: "the card as text", crisis_support: crisisFixture });
+    const instead = await chatWithFallback(leg(), {}, vi.fn());
+    expect(instead).toMatchObject({ crisis: { title: crisisFixture.title } });
+    expect(instead).not.toHaveProperty("reply");
+  });
+});
+
+describe("the quiz_ask origin and the crisis card (spec §13 A99; docs/safety/crisis-support.md)", () => {
+  it("builds the origin only from both parts", () => {
+    expect(quizAskOrigin("a1", 0)).toEqual({ attemptId: "a1", questionIndex: 0 });
+    expect(quizAskOrigin(undefined, 0)).toBeUndefined();
+    expect(quizAskOrigin("a1", undefined)).toBeUndefined();
+  });
+
+  it("sends the origin on both start routes", async () => {
+    const origin = { attemptId: "a1", questionIndex: 2 };
+    const signal = new AbortController().signal;
+    api.startSessionStream.mockRejectedValueOnce(new Error("no stream"));
+    api.startSession.mockResolvedValueOnce({ session_id: "s2" });
+    await expect(openTutorSession("u", "Recursion", null, signal, origin)).resolves.toBe("s2");
+    expect(api.startSessionStream.mock.calls[0][7]).toEqual(origin);
+    expect(api.startSession.mock.calls[0][6]).toEqual(origin);
+  });
+
+  it("returns the crisis card instead of a session", async () => {
+    api.startSessionStream.mockResolvedValueOnce({ session_id: null, reply: "card", crisis_support: crisisFixture });
+    const opened = await openTutorSession("u", "Recursion", null, new AbortController().signal);
+    expect(opened).toMatchObject({ crisis: { title: crisisFixture.title } });
+  });
+
+  it("carries a reply's crisis card", async () => {
+    api.streamChat.mockResolvedValueOnce({ reply: "card", crisis_support: crisisFixture });
+    const reply = await chatWithFallback(
+      { sid: "s1", userId: "u", message: "m", turnId: "t", signal: new AbortController().signal, progress: { sawToken: false, partial: "" } },
+      {},
+      vi.fn(),
+    );
+    expect(reply).toMatchObject({ crisis: { title: crisisFixture.title } });
+  });
+});
+
+describe("turnPauseOf", () => {
+  it("reads the stream's pause, a 429 'ai budget reached', or nothing", () => {
+    const paused = { resetAt: null, sessionCapped: true };
+    expect(turnPauseOf(new BudgetPausedError(paused))).toEqual(paused);
+    const refused = new Error("429");
+    api.budgetPauseOf.mockImplementation((e: unknown) => (e === refused ? paused : null));
+    expect(turnPauseOf(refused)).toEqual(paused);
+    expect(turnPauseOf(new Error("500"))).toBeNull();
   });
 });

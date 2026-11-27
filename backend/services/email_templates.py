@@ -51,7 +51,7 @@ TOKENS = {
     "brand-forest": "#445D22",   # buttons, links, progress
     "text": "#1a1814",           # headings, emphasis
     "text-dim": "#3f3b31",       # body copy
-    "text-muted": "#6f6857",     # footer, upcoming steps
+    "text-muted": "#696252",     # footer, upcoming steps
     "border": "#eae9e9",         # rules (rgba(42,39,31,.10) on white)
     "ink-300": "#b9b1a0",        # an unreached step's ring
 }

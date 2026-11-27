@@ -11,6 +11,7 @@
  * to see whether an event was accepted.
  */
 
+import type { StudentConfidence } from "@/lib/api";
 import { QUIZ_ERROR_COPY } from "./errors";
 import type { EntryRequest } from "./source";
 import type {
@@ -55,6 +56,16 @@ export type QuizEvent =
   | { type: "GENERATE_FAILED"; error: QuizError }
   | { type: "SELECT"; index: number }
   | { type: "WRITE"; text: string }
+  /**
+   * Learning-loop spec §13 A132: the current question's optional stated
+   * confidence (A127's "Guessing" / "Fairly sure" / "Sure"; null takes a
+   * choice back). Answer state like SELECT and WRITE: it lives on the item
+   * until `/answer` carries it, so choosing makes no request and Submit never
+   * waits on it. Accepted only while the current item is live (`active`, no
+   * verdict) — once recorded, the server keeps the first response, so a
+   * change afterwards would describe an answer it never went with.
+   */
+  | { type: "CONFIDENCE"; level: StudentConfidence | null }
   | { type: "SUBMIT_ANSWER" }
   | { type: "ANSWER_RECORDED"; result: AnswerResult }
   | { type: "ANSWER_FAILED"; error: QuizError }
@@ -113,10 +124,11 @@ const PRE_CONFIG_COUNT = 5;
 /** Likewise `GenerateQuizBody.difficulty = "medium"`. */
 const PRE_CONFIG_DIFFICULTY = "medium";
 const DEFAULT_FEEDBACK: SessionConfig["feedback"] = "at-end";
+const DEFAULT_SESSION_MODE: SessionConfig["sessionMode"] = "practice";
 
 /** Session config from stored prefs, falling back to config-derived defaults
  *  (§5 B1): 5 questions if offered else the middle option; "medium" if offered
- *  else the first difficulty. */
+ *  else the first difficulty. W7.8: sessionMode defaults to Practice. */
 export function defaultConfigFor(config: QuizConfig | null, prefs: QuizPrefs): SessionConfig {
   const options = config?.num_questions.options ?? [];
   const difficulties = config?.difficulties ?? [];
@@ -130,8 +142,21 @@ export function defaultConfigFor(config: QuizConfig | null, prefs: QuizPrefs): S
     ?? (difficulties.includes(PRE_CONFIG_DIFFICULTY)
       ? PRE_CONFIG_DIFFICULTY
       : difficulties[0] ?? PRE_CONFIG_DIFFICULTY);
-  return { count, difficulty, feedback: prefs.feedback ?? DEFAULT_FEEDBACK,
-    ...(prefs.questionFormat && config?.question_types.includes(prefs.questionFormat) ? { questionFormat: prefs.questionFormat } : {}) };
+  const sessionMode = prefs.sessionMode ?? DEFAULT_SESSION_MODE;
+  // Exam Twin is tool-light and post-test-like: verdicts stay at the end.
+  const feedback =
+    sessionMode === "exam_twin"
+      ? "at-end"
+      : (prefs.feedback ?? DEFAULT_FEEDBACK);
+  return {
+    count,
+    difficulty,
+    feedback,
+    sessionMode,
+    ...(prefs.questionFormat && config?.question_types.includes(prefs.questionFormat)
+      ? { questionFormat: prefs.questionFormat }
+      : {}),
+  };
 }
 
 function scopeForEntry(entry: EntryRequest): QuizScope {
@@ -170,6 +195,7 @@ export function initialSession(
     deliveredShort: false,
     sourceAttemptId: null,
     reserved: null,
+    prereq: null,
   };
 }
 
@@ -262,6 +288,7 @@ function itemsFor(questions: WireQuestion[]): QuizItem[] {
     selectedIndex: null,
     verdict: null,
     flagged: false,
+    confidence: null,
   }));
 }
 
@@ -288,6 +315,7 @@ function generatingFrom(
     xp: null,
     deliveredShort: false,
     reserved: null,
+    prereq: null,
   };
 }
 
@@ -367,6 +395,9 @@ function onGenerated(session: QuizSession, event: EventOf<"GENERATED">): QuizSes
     ...session,
     phase: "active",
     attemptId: result.quiz_id,
+    // W7.6: generate may have redirected to a weak prerequisite — follow it
+    // so the pill / accent / submit evidence match the attempt row.
+    conceptId: result.concept_node_id || session.conceptId,
     items: itemsFor(result.questions),
     cursor: 0,
     error: null,
@@ -379,6 +410,7 @@ function onGenerated(session: QuizSession, event: EventOf<"GENERATED">): QuizSes
         regeneratedCount: result.source.regenerated_count,
       }
       : null,
+    prereq: result.prereq ?? null,
   };
 }
 
@@ -398,6 +430,14 @@ function onSelect(session: QuizSession, event: EventOf<"SELECT">): QuizSession {
   if (session.phase !== "active") return session;
   if (!session.items[session.cursor]) return session;
   return withItem(session, session.cursor, { selectedIndex: event.index });
+}
+
+function onConfidence(session: QuizSession, event: EventOf<"CONFIDENCE">): QuizSession {
+  if (session.phase !== "active") return session;
+  const item = session.items[session.cursor];
+  if (!item || item.verdict) return session;
+  if ((item.confidence ?? null) === event.level) return session;
+  return withItem(session, session.cursor, { confidence: event.level });
 }
 
 function onSubmitAnswer(session: QuizSession): QuizSession {
@@ -567,6 +607,7 @@ function onExit(session: QuizSession): QuizSession {
     deliveredShort: false,
     sourceAttemptId: null,
     reserved: null,
+    prereq: null,
   };
 }
 
@@ -574,7 +615,7 @@ function onCancel(session: QuizSession): QuizSession {
   if (session.phase === "generating") {
     // Back to the same concept on home, minus any practice framing: the
     // student asked to stop, not to keep "the ones you missed" queued.
-    return { ...session, phase: "home", error: null, sourceAttemptId: null, reserved: null };
+    return { ...session, phase: "home", error: null, sourceAttemptId: null, reserved: null, prereq: null };
   }
   if (session.phase === "submitting") {
     return { ...session, phase: settledPhase(session), error: null };
@@ -617,6 +658,7 @@ const HANDLERS = {
   GENERATE_FAILED: onGenerateFailed,
   WRITE: onWrite,
   SELECT: onSelect,
+  CONFIDENCE: onConfidence,
   SUBMIT_ANSWER: onSubmitAnswer,
   ANSWER_RECORDED: onAnswerRecorded,
   ANSWER_FAILED: onAnswerFailed,
@@ -659,6 +701,15 @@ function wireVerdict(question: WireQuestion, response: WireResponse | undefined)
     : null;
 }
 
+/** §13 A132: an answered question's stated confidence is the one its recorded
+ *  response carries (null = none was stated) — the server's word, like the
+ *  answer itself. An unanswered one keeps the choice this browser saved before
+ *  it left. */
+function resumedConfidence(previous: QuizItem | undefined, response: WireResponse | undefined): StudentConfidence | null {
+  if (response) return response.confidence ?? null;
+  return previous?.confidence ?? null;
+}
+
 function resumedItem(
   question: WireQuestion,
   index: number,
@@ -673,6 +724,7 @@ function resumedItem(
     answerText: response?.answer_text ?? previous?.answerText,
     verdict: selected === undefined ? null : previous?.verdict ?? wireVerdict(question, response),
     flagged: previous?.flagged ?? false,
+    confidence: resumedConfidence(previous, response),
   };
 }
 
@@ -722,14 +774,15 @@ function resumedFraming(
 
 /** G5: only the stored session knows this attempt was a practice run and what
  *  it re-served — the resume payload has no idea. Without the carry a resumed
- *  practice quiz would lose its eyebrow. */
+ *  practice quiz would lose its eyebrow. W7.6: the prereq banner is local too. */
 function resumedPractice(
   matching: QuizSession | null,
-): Pick<QuizSession, "deliveredShort" | "sourceAttemptId" | "reserved"> {
+): Pick<QuizSession, "deliveredShort" | "sourceAttemptId" | "reserved" | "prereq"> {
   return {
     deliveredShort: matching?.deliveredShort ?? false,
     sourceAttemptId: matching?.sourceAttemptId ?? null,
     reserved: matching?.reserved ?? null,
+    prereq: matching?.prereq ?? null,
   };
 }
 

@@ -94,7 +94,7 @@ class World:
             "doc-1": ("recursion.pdf", "A recursive function calls itself.", CONCEPTS),
         }
         self.lectures: list[dict] = []
-        self.scores = {"Recursion": 0.2, "Control Flow": 0.5, "Variables and Types": 0.9}
+        self.scores = {"Recursion": 0.2, "Control Flow": 0.5, "Variables and Types": 0.98}
         self.mistakes: list[QuizMistake] = []
         self.logged: list[dict] = []
 
@@ -361,7 +361,7 @@ def test_without_history_every_section_is_unexplored_and_equal(world, function_m
 
 def test_concepts_the_tree_does_not_have_are_cleared(world, function_mode):
     world.guide()
-    world.scores = {"recursion": 0.9}
+    world.scores = {"recursion": 0.98}
 
     run(_follow(world))
 

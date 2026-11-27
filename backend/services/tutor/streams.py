@@ -13,7 +13,7 @@ from starlette.requests import Request
 
 from agents.usage import record_agent_usage
 from models import ChatBody, StartSessionBody
-from services import events_service
+from services import ai_budget, events_service
 from services.agent_events import SSE_CACHE_CONTROL, sapling_event_to_sse
 from services.auth_guard import guard_off_loop, require_self
 from services import abuse_limits
@@ -29,18 +29,20 @@ from services.tutor.messages import (
     _save_turn_rows,
     _turn_row_ids,
 )
+from services.quiz_ask import open_quiz_ask
 from services.tutor.pending import _open_turn_session
 from services.tutor.run import (
     _continuation_text,
     _observe_persisted_turn,
     _prepare_chat_run,
     _ran_on,
+    _usage_session_id,
 )
-from services.tutor.turns import _chat_turn_json, _start_session_agent
+from services.tutor.turns import _chat_turn_json, _loop_turn_entry, _start_session_agent
 from services.tutor_sessions import stash_pending
 
 
-async def chat_stream(body: ChatBody, request: Request):
+async def chat_stream(body: ChatBody, request: Request, loop_handler=None):
     """SSE token-streaming chat turn (#70) with live graph deltas (#74).
 
     The JSON /chat pipeline (`_chat_turn_json`, on the fast tier) is the
@@ -54,22 +56,38 @@ async def chat_stream(body: ChatBody, request: Request):
     """
     await guard_off_loop(require_self, body.user_id, request)
     await aenforce_abuse_limit(abuse_limits.TUTOR_TURN, body.user_id)
-    await _open_turn_session(body.session_id, body.user_id)
-
     request_id = (
         getattr(request.state, "request_id", None)
         or current_request_id()
         or str(uuid.uuid4())
     )
-
-    # #761: a re-sent turn that already persisted replays its stored reply
-    # over the same event vocabulary instead of running again.
-    replay = await _persisted_turn(body.session_id, body.turn_id)
+    # Learning loop (spec §7): `loop_handler` is the loop's handler when the
+    # route-entry gate is on for this student (routes/learn.py evaluates it,
+    # owner decision 00; the `learning_loop` flag defaults off). Only the loop
+    # path reads the AI budget (owner decision 2026-11-18: caps only when the
+    # loop is on), after the #761 replay and the ended-session 409
+    # (`_loop_turn_entry`); below is the legacy tutor exactly as before the
+    # loop, under main's own limits (the abuse limit above, the flagged
+    # llm_budget).
+    if loop_handler is not None:
+        replay = await _loop_turn_entry(body.session_id, body.user_id, body.turn_id)
+        if replay is None:
+            request.state.learning_loop = True  # A38 00: the loop handler reads no second gate
+            return await loop_handler(body, request)
+    else:
+        await _open_turn_session(body.session_id, body.user_id)
+        # #761: a re-sent turn that already persisted replays its stored reply
+        # over the same event vocabulary instead of running again.
+        replay = await _persisted_turn(body.session_id, body.turn_id)
     if replay is not None:
         return EventSourceResponse(
             _replay_events(replay),
             headers={"X-Request-ID": request_id, "Cache-Control": SSE_CACHE_CONTROL},
         )
+
+    # A92: the llm_usage session id, resolved here off the event loop (the
+    # usage hook below runs on it, inside the stream).
+    usage_session_id = await asyncio.to_thread(_usage_session_id, body.session_id, body.user_id)
 
     # Load prior turns BEFORE the new user row is written, so history is
     # conversation state up to (not including) this turn.
@@ -139,7 +157,9 @@ async def chat_stream(body: ChatBody, request: Request):
         # chat.message_sent, so _persist must not also run —
         # stream_agent_turn enforces that exclusivity. model_pref="fast"
         # (D2): the second chance runs on the fast tier.
-        return await _chat_turn_json(body, request, model_pref="fast")
+        return await _chat_turn_json(
+            body, request, model_pref="fast", usage_session_id=usage_session_id,
+        )
 
     def _usage(run_result) -> None:
         # #118: streaming turns report usage via the final AgentRunResultEvent,
@@ -148,6 +168,7 @@ async def chat_stream(body: ChatBody, request: Request):
         # turn's decision.made) by construction, not by ambient context.
         record_agent_usage(
             run_result, feature="chat_tutor", task="chat_tutor", user_id=body.user_id,
+            session_id=usage_session_id,
             request_id=request_id,
         )
         ran["on"] = _ran_on(run_result, agent, run_kwargs, body.model_pref)
@@ -162,7 +183,9 @@ async def chat_stream(body: ChatBody, request: Request):
             nonstream_fallback=_fallback,
             on_usage=_usage,
             request_id=request_id,
-            continuation=lambda rr: _continuation_text(agent, rr, run_kwargs, request_id=request_id),
+            continuation=lambda rr: _continuation_text(
+                agent, rr, run_kwargs, request_id=request_id, usage_session_id=usage_session_id,
+            ),
         ):
             yield sapling_event_to_sse(ev)
 
@@ -172,7 +195,7 @@ async def chat_stream(body: ChatBody, request: Request):
     )
 
 
-async def start_session_stream(body: StartSessionBody, request: Request):
+async def start_session_stream(body: StartSessionBody, request: Request, loop_handler=None):
     """Streamed session opener — runs chat_tutor_agent and streams the
     greeting (#152/#151).
 
@@ -194,12 +217,25 @@ async def start_session_stream(body: StartSessionBody, request: Request):
     """
     await guard_off_loop(require_self, body.user_id, request)
     await aenforce_abuse_limit(abuse_limits.TUTOR_SESSION_START, body.user_id)
+    # Learning loop (spec §7): as /start-session — only the loop path reads
+    # the AI budget (owner decision 2026-11-18).
+    if loop_handler is not None:
+        # A20: the loop's rate-limit read, after the ownership check (A93
+        # review). #117: off the event loop (it reads llm_usage).
+        await asyncio.to_thread(ai_budget.enforce_rate_limit_for, body.user_id)
+        request.state.learning_loop = True  # A38 00: the loop handler reads no second gate
+        return await loop_handler(body, request)
     request_id = (
         getattr(request.state, "request_id", None)
         or current_request_id()
         or str(uuid.uuid4())
     )
     session_id = str(uuid.uuid4())
+    # PKG-14 (spec §13 A99): a quiz-ask session's help row, before any tutor text;
+    # A106 (review m2): it runs on the quiz node's course, never the client's
+    target = await asyncio.to_thread(open_quiz_ask, body, session_id=session_id)
+    if target is not None:
+        body = body.model_copy(update={"course_id": target.course_id})
 
     course_id = body.course_id or await _get_course_id_for_topic(body.topic, body.user_id)
     offering_id = await run_in_threadpool(_session_offering, body, course_id)
@@ -263,6 +299,7 @@ async def start_session_stream(body: StartSessionBody, request: Request):
         # request_id, as in /chat/stream.
         record_agent_usage(
             run_result, feature="chat_tutor", task="chat_tutor", user_id=body.user_id,
+            session_id=session_id,
             request_id=request_id,
         )
 
@@ -276,7 +313,10 @@ async def start_session_stream(body: StartSessionBody, request: Request):
             nonstream_fallback=_fallback,
             on_usage=_usage,
             request_id=request_id,
-            continuation=lambda rr: _continuation_text(agent, rr, run_kwargs, request_id=request_id),
+            continuation=lambda rr: _continuation_text(
+                agent, rr, run_kwargs, request_id=request_id,
+                usage_session_id=session_id,  # the opener's server-minted id
+            ),
         ):
             yield sapling_event_to_sse(ev)
 

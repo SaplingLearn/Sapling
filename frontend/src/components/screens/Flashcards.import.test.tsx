@@ -22,6 +22,16 @@ vi.mock("@/lib/useIsMobile", () => ({
   useIsMobile: () => false,
 }));
 
+vi.mock("@/context/FlagsContext", () => ({
+  useFlagMap: () => ({ flags: {}, ready: true }),
+}));
+
+vi.mock("next/link", () => ({
+  default: ({ children, href, ...rest }: { children: React.ReactNode; href: string }) => (
+    <a href={href} {...rest}>{children}</a>
+  ),
+}));
+
 // The dialog itself is pinned in components/flashcards; here it only shows
 // what the page hands it.
 vi.mock("@/components/flashcards/FlashcardImportModal", () => ({

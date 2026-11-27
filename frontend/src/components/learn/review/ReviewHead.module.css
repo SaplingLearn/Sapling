@@ -1,0 +1,64 @@
+@layer components {
+/* The rebuilt review queue's head (ReviewHead.tsx), after the Claude Design
+   board: the title, the course chips and the progress on one wrapping line. */
+
+.head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-6);
+  flex-wrap: wrap;
+}
+
+.title {
+  margin: 0;
+  font-size: var(--fs-2xl);
+  font-weight: 600;
+}
+
+.chips {
+  display: flex;
+  gap: var(--sp-3);
+  flex-wrap: wrap;
+}
+
+.chip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  padding: 0 var(--sp-6);
+  border-radius: var(--r-full);
+  border: 1px solid var(--border);
+  background: var(--bg-panel);
+  font-size: var(--fs-sm);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.chip[data-picked="true"] {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  font-weight: 600;
+}
+
+/* The radio itself is the chip: hidden, still focusable and read. */
+.chip input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+}
+
+.chip:has(input:focus-visible) {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.progress {
+  margin-left: auto;
+  font-size: var(--fs-md);
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+}

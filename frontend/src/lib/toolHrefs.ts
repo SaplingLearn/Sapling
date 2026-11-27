@@ -27,9 +27,22 @@ export const SAVED_GUIDES_PARAM = "saved";
  * every class's guides. Under /study, so it is auth-gated, flag-gated
  * (hide_study) and keeps Study lit in the nav with no list of its own to
  * maintain (unlike /flashcards: see `flashcardsHref`).
+ *
+ * Optional `concept` / `course` mirror Quiz/Teach deep links (W8.2): Tree
+ * Guide actions stamp the same concept id so the spine stays concept-scoped
+ * even though Guides home does not yet open a per-concept create flow.
  */
-export function studyGuideHref({ saved = false }: { saved?: boolean } = {}): string {
-  return saved ? `/study/guide?${SAVED_GUIDES_PARAM}=1` : "/study/guide";
+export function studyGuideHref(opts?: {
+  concept?: string | null;
+  course?: string | null;
+  /** The home opens on the saved guides only. */
+  saved?: boolean;
+}): string {
+  const p = new URLSearchParams();
+  if (opts?.course) p.set("course", opts.course);
+  if (opts?.concept) p.set("concept", opts.concept);
+  if (opts?.saved) p.set(SAVED_GUIDES_PARAM, "1");
+  return p.size ? `/study/guide?${p.toString()}` : "/study/guide";
 }
 
 /** One guide, in the reader. */

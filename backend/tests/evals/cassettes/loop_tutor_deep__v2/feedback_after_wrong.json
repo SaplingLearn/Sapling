@@ -1,0 +1,19 @@
+{
+  "attempts": [
+    "{\"key_idea\": \"A recursive function stops only when some input is handled directly, with no further recursive call.\", \"body\": \"Your attempt has factorial(0) making another call, and that call would need its own call too, so nothing in that chain ever ends. Compare it with the stored solution above: what matters is what factorial(0) does with its own input.\", \"question\": \"Looking at the stored solution, what does factorial(0) do instead of calling factorial on a smaller number?\"}"
+  ],
+  "input_sha256": "f91b66d089a1599dad0888803e80c38ed8a894e91886a462eec99011e0e751b6",
+  "model": "claude-sonnet-5-5",
+  "output": {
+    "body": "Your attempt has factorial(0) making another call, and that call would need its own call too, so nothing in that chain ever ends. Compare it with the stored solution above: what matters is what factorial(0) does with its own input.",
+    "key_idea": "A recursive function stops only when some input is handled directly, with no further recursive call.",
+    "question": "Looking at the stored solution, what does factorial(0) do instead of calling factorial on a smaller number?"
+  },
+  "prompt_hash": "575193db5424",
+  "requests": 1,
+  "rescued": false,
+  "retries": 0,
+  "schema_hash": "ee2a0f1f177f",
+  "slot": "loop_tutor_deep",
+  "tool_calls": []
+}

@@ -1,5 +1,6 @@
 "use client";
 import React from "react";
+import { motion } from "framer-motion";
 
 import Dialog from "@/components/Dialog";
 import { Icon } from "@/components/Icon";
@@ -8,10 +9,16 @@ import { useToast } from "@/components/ToastProvider";
 import { Switch } from "@/components/ui/Switch";
 import { InfoTip, Tooltip } from "@/components/ui/Tooltip";
 import { adminListFlags, adminListRoles, adminUpdateFlag, type AdminFlag } from "@/lib/api";
+import { useMotionPresets } from "@/lib/motion";
 
 import { FlagPanel } from "./FlagPanel";
-import { changeSummary, flagMeta, groupFlags, relativeTime, rolloutPhrase, switchFor, variantLabel } from "./flagLabels";
+import {
+  changeSummary, flagMeta, forcedNote, groupFlags, relativeTime, rolloutPhrase, switchFor, variantLabel,
+} from "./flagLabels";
 import { sentenceCase } from "@/lib/sentenceCase";
+
+/** The row's open chevron (Icon's `size`, px). */
+const CHEVRON_PX = 14;
 
 /**
  * Admin "Feature flags" tab (#620, ADR 0029).
@@ -27,6 +34,7 @@ export function FeatureFlagsTab() {
   const [roles, setRoles] = React.useState<{ id: string; name: string }[]>([]);
   const [openKey, setOpenKey] = React.useState<string | null>(null);
   const [pending, setPending] = React.useState<{ flag: AdminFlag; next: string } | null>(null);
+  const m = useMotionPresets();
 
   React.useEffect(() => {
     adminListFlags().then(
@@ -70,7 +78,8 @@ export function FeatureFlagsTab() {
       {groupFlags(flags).map(({ group, flags: inGroup }) => (
         <section key={group} className="flags__group" aria-labelledby={`flags-group-${group}`}>
           <h3 id={`flags-group-${group}`} className="label-micro flags__group-title">{sentenceCase(group)}</h3>
-          <div className="card flags__list">
+          {/* Rows arrive in a short stagger once the list has loaded. */}
+          <motion.div className="card flags__list" variants={m.list.container} initial="hidden" animate="shown">
             {inGroup.map((f) => (
               <FlagRow
                 key={f.key}
@@ -79,7 +88,7 @@ export function FeatureFlagsTab() {
                 onToggle={(next) => setPending({ flag: f, next })}
               />
             ))}
-          </div>
+          </motion.div>
         </section>
       ))}
 
@@ -106,9 +115,15 @@ function FlagRow({ flag, onOpen, onToggle }: {
   const sw = switchFor(flag);
   const rollout = rolloutPhrase(flag, flag.rollout_percent, flag.rollout_variant);
   const overrides = flag.targets.length;
+  // #866 K24: the server can decide above the stored settings (the learning
+  // loop's kill switch, an env override): the row says what everyone gets
+  const forced = forcedNote(flag);
+  const needs = flag.requires ? flagMeta(flag.requires).title : null;
+  const m = useMotionPresets();
+  const stateLabel = variantLabel(flag, flag.forced?.variant ?? flag.default_variant);
 
   return (
-    <div className="flag-row" data-testid={`flag-row-${flag.key}`} onClick={onOpen}>
+    <motion.div className="flag-row" data-testid={`flag-row-${flag.key}`} onClick={onOpen} variants={m.list.item}>
       <div className="flag-row__main">
         <div className="flag-row__title">{title}</div>
         <div className="flag-row__desc">{flag.description}</div>
@@ -131,6 +146,11 @@ function FlagRow({ flag, onOpen, onToggle }: {
             </span>
           </Tooltip>
         )}
+        {needs && (
+          <Tooltip content={`Acts only for students who also have ${needs} on; nobody else gets it, whatever is set here.`}>
+            <span className="chip" tabIndex={0} data-testid={`flag-requires-${flag.key}`}>Needs {needs}</span>
+          </Tooltip>
+        )}
       </div>
 
       <div className="flag-row__changed">
@@ -148,9 +168,15 @@ function FlagRow({ flag, onOpen, onToggle }: {
       </div>
 
       <div className="flag-row__state" onClick={(e) => e.stopPropagation()}>
-        <span className="flag-row__state-label" data-testid={`flag-state-${flag.key}`}>
-          {variantLabel(flag, flag.default_variant)}
-        </span>
+        {/* Re-keyed on the label, so a saved change fades the new state in. */}
+        <motion.span key={stateLabel} className="flag-row__state-label" data-testid={`flag-state-${flag.key}`} variants={{ hidden: m.fade.initial, shown: m.fade.animate }} initial="hidden" animate="shown" transition={m.fade.transition}>
+          {stateLabel}
+        </motion.span>
+        {forced && (
+          <Tooltip content={forced.tip}>
+            <span className="chip chip--warn" tabIndex={0} data-testid={`flag-forced-${flag.key}`}>{forced.chip}</span>
+          </Tooltip>
+        )}
         {sw && (
           <Tooltip
             content={hideFlag
@@ -175,10 +201,10 @@ function FlagRow({ flag, onOpen, onToggle }: {
           data-testid={`flag-open-${flag.key}`}
           onClick={(e) => { e.stopPropagation(); onOpen(); }}
         >
-          <Icon name="chev" size={14} />
+          <Icon name="chev" size={CHEVRON_PX} />
         </button>
       </Tooltip>
-    </div>
+    </motion.div>
   );
 }
 

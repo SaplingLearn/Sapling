@@ -1,0 +1,10 @@
+{
+  "judge_model": "claude-opus-5-5",
+  "judge_prompt_hash": "ef37fe670c185dbbd3a48c9c1c6fd26940cb876f4d996a477462b25b084d6daf",
+  "output": {
+    "evidence": "Worked example on a different problem, sum_to(n) = 1+2+...+n: the base case is sum_to(0) = 0",
+    "reveals_final_answer": false,
+    "rung": 4
+  },
+  "served_sha256": "4609b33f370dfd994b0ed18f644a096fee5b7029f44271182c15ef290199ee4f"
+}

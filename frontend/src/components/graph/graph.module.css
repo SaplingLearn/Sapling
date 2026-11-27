@@ -1,0 +1,114 @@
+@layer components {
+/* The knowledge graph's chrome: the zoom stack, the colour toggle and its
+   key (KnowledgeGraph), and the SVG's frame, hover card and a11y list
+   (KnowledgeGraph2D). The graph itself is SVG, drawn in code. */
+
+/* ── frame ─────────────────────────────────────────────────────────────── */
+
+.container { position: relative; }
+.frame { position: relative; overflow: hidden; background: transparent; }
+.svg { display: block; cursor: grab; touch-action: none; }
+.node { cursor: grab; }
+
+/* Legible mode dims what is not in focus; the dimming eases in and out. */
+.legibleEdge { transition: stroke-opacity var(--dur-fast) var(--ease); }
+.legibleNode { transition: opacity var(--dur-fast) var(--ease); }
+
+/* A colour-mode switch recolours each mark rather than snapping. */
+.node path, .node circle { transition: fill var(--dur) var(--ease-in-out), stroke var(--dur) var(--ease-in-out); }
+
+/* Visually hidden, still read: the pointer-only SVG's nodes as a list. */
+.srOnly {
+  /* The standard visually-hidden box: one pixel, pulled back over itself. */
+  --sr-px: 1px;
+  position: absolute; width: var(--sr-px); height: var(--sr-px); padding: 0; margin: calc(-1 * var(--sr-px));
+  overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}
+
+/* ── hover card ────────────────────────────────────────────────────────── */
+
+.tooltip {
+  --tip-min-w: 200px;
+  --tip-dot: 8px;
+  --tip-bar-h: 4px;
+  position: fixed; z-index: var(--z-popover); pointer-events: none;
+  min-width: var(--tip-min-w); padding: var(--sp-5) var(--sp-6);
+  background: var(--bg-panel); border: 1px solid var(--border-strong); border-radius: var(--r-md);
+  box-shadow: var(--shadow-md); font-size: var(--fs-sm);
+  animation: tipIn var(--dur-fast) var(--ease-out) both;
+}
+@keyframes tipIn { from { opacity: 0; } to { opacity: 1; } }
+.tipName { font-family: var(--font-display); font-size: var(--fs-base); margin-bottom: var(--sp-2); }
+.tipCourse { display: flex; align-items: center; gap: var(--sp-3); color: var(--text-dim); }
+.tipDot { width: var(--tip-dot); height: var(--tip-dot); border-radius: 50%; background: var(--tip-color); }
+.tipMastery { margin-top: var(--sp-4); }
+.tipMasteryHead {
+  display: flex; justify-content: space-between; margin-bottom: var(--sp-2);
+  font-size: var(--fs-xs); color: var(--text-muted);
+}
+.tipValue { color: var(--text); }
+.tipTrack { height: var(--tip-bar-h); background: var(--bg-soft); border-radius: var(--r-full); overflow: hidden; }
+.tipFill {
+  width: 100%; height: 100%; background: var(--tip-color);
+  transform-origin: left; transform: scaleX(var(--tip-mastery));
+  transition: transform var(--dur) var(--ease);
+}
+.tipTier { margin-top: var(--sp-3); color: var(--text-dim); font-size: var(--fs-xs); text-transform: capitalize; }
+
+/* ── zoom stack ────────────────────────────────────────────────────────── */
+
+.zoom {
+  position: absolute; right: var(--sp-6);
+  display: flex; flex-direction: column; gap: var(--sp-2); padding: var(--sp-2);
+  background: var(--bg-panel); border: 1px solid var(--border); border-radius: var(--r-sm);
+  box-shadow: var(--shadow-sm);
+}
+/* Two classes: these also carry the shared .btn .btn--sm, whose padding they replace. */
+.zoom .zoomBtn { padding: var(--sp-1) var(--sp-4); font-family: var(--font-sans); }
+.zoom .zoomReset { padding: var(--sp-1) var(--sp-4); font-size: var(--fs-2xs); }
+
+/* ── colour toggle and key ─────────────────────────────────────────────── */
+
+.panel {
+  position: absolute; left: var(--sp-6); z-index: var(--z-raised);
+  background: var(--bg-panel); border: 1px solid var(--border); border-radius: var(--r-sm);
+  box-shadow: var(--shadow-sm);
+}
+/* The toggle is also a .btn .btn--ghost: the doubled class outranks those, so
+   it keeps the panel's fill and border (hover only firms the border). */
+.toggle.toggle {
+  position: absolute; left: var(--sp-6); top: var(--sp-6); z-index: var(--z-raised);
+  display: flex; align-items: center; gap: var(--sp-3); padding: var(--sp-2) var(--sp-4);
+  background: var(--bg-panel); border: 1px solid var(--border); border-radius: var(--r-sm);
+  box-shadow: var(--shadow-sm); font-size: var(--fs-xs);
+  transition: border-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease), transform var(--dur-instant) var(--ease);
+}
+.toggle.toggle:hover { background: var(--bg-panel); border-color: var(--border-strong); }
+.toggle.toggle.toggleOn { border-color: var(--toggle-on); color: var(--toggle-on); font-weight: 600; }
+.glyph { display: block; }
+.legend {
+  --legend-dot: 9px;
+  bottom: var(--sp-6); max-width: calc(100% - 2 * var(--sp-6));
+  list-style: none; margin: 0; padding: var(--sp-3) var(--sp-5);
+  display: flex; flex-wrap: wrap; gap: var(--sp-2) var(--sp-6);
+  font-size: var(--fs-xs); color: var(--text-dim);
+}
+.legendEnter { animation: legendIn var(--dur) var(--ease-out) both; }
+@keyframes legendIn { from { opacity: 0; } to { opacity: 1; } }
+.legendItem { display: flex; align-items: center; gap: var(--sp-3); }
+.legendDot { width: var(--legend-dot); height: var(--legend-dot); border-radius: 50%; }
+
+/* Pressing a control dips it; hover is the shared .btn's. */
+@media (prefers-reduced-motion: no-preference) {
+  .zoom .zoomBtn, .zoom .zoomReset, .toggle.toggle { --press-scale: 0.94; }
+  .zoom .zoomBtn:active, .zoom .zoomReset:active, .toggle.toggle:active { transform: scale(var(--press-scale)); }
+}
+
+/* ── crash fallback ────────────────────────────────────────────────────── */
+
+.crash {
+  display: flex; flex-direction: column; gap: var(--sp-5); align-items: center; justify-content: center;
+  height: 100%; color: var(--text-dim); font-size: var(--fs-md);
+}
+
+}

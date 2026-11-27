@@ -35,12 +35,14 @@
  * enters with the Study tools' `tool-enter` fade.
  */
 import React from "react";
+import { motion } from "framer-motion";
 
 import { BackLink } from "../BackLink";
 import { AIDisclaimerChip } from "../chat/AIDisclaimerChip";
 import { Icon } from "../Icon";
 import { CoursePicker } from "../study/CoursePicker";
 import fc from "./Flashcards.module.css";
+import { useMotionPresets } from "@/lib/motion";
 import { FlashcardsSkeleton } from "../Skeleton";
 import { useUser } from "@/context/UserContext";
 import { useIsMobile } from "@/lib/useIsMobile";
@@ -55,7 +57,7 @@ import type { StartProgress } from "../flashcards/home/useStart";
 import { Review } from "../flashcards/review/Review";
 import rv from "../flashcards/review/review.module.css";
 import { studyHref } from "@/lib/toolHrefs";
-import { cn } from "@/lib/cn";
+import { useIsNavHidden } from "@/lib/useNavHidden";
 
 export function Flashcards({
   now,
@@ -93,6 +95,7 @@ export function Flashcards({
 
 function PageBody({ page }: { page: FlashcardsPageState }) {
   const { view, courseId, model, exams, sets, draft, dispatch, progress, running, notice } = page;
+  const studyHidden = useIsNavHidden()("/study");
   switch (view.kind) {
     case "review":
       return (
@@ -105,6 +108,7 @@ function PageBody({ page }: { page: FlashcardsPageState }) {
           onAllSets={page.leaveReview}
           initial={page.session.initial}
           onProgress={page.session.onProgress}
+          studyHref={studyHidden ? null : studyHref(courseId || null)}
         />
       );
     case "arriving":
@@ -188,7 +192,7 @@ function PageHeader({
   return (
     <>
       <header className={fc.head}>
-        <h1 className={cn("h-serif", "m-0 tracking-[-0.02em] leading-[1.15] text-text", isMobile ? "text-[34px]" : "text-[42px]")}>Flashcards</h1>
+        <h1 className={`h-serif ${fc.title} ${isMobile ? fc.titleMobile : ""}`}>Flashcards</h1>
         {place && <span className={fc.deckName} data-testid="flashcards-deck-name">{place.label}</span>}
         {!place && courses.length > 0 && (
           <CoursePicker courses={courses} value={courseId} onChange={onCourse} fullWidth={isMobile} />
@@ -260,15 +264,17 @@ const NO_DOCUMENTS: LibraryDocument[] = [];
 
 /** Arrived with `start=1`: the deck is loading, or its cards are being made. */
 function Arriving({ progress }: { progress: StartProgress | null }) {
+  const m = useMotionPresets();
   if (!progress) return <div className={rv.stage}><FlashcardsSkeleton /></div>;
   return (
     <div className={rv.stage}>
-      <div className={rv.message} role="status">
-        <div className="h-serif text-2xl text-text">Making cards for {progress.name}…</div>
-        <div className="mt-1.5">
+      {/* Replaces the skeleton once the deck is known to be in the making. */}
+      <motion.div className={rv.message} role="status" variants={{ hidden: m.fade.initial, shown: m.fade.animate }} initial="hidden" animate="shown" transition={m.fade.transition}>
+        <div className={`h-serif ${fc.messageTitle}`}>Making cards for {progress.name}…</div>
+        <div className={fc.messageBody}>
           {progress.of > 1 ? `${progress.at} of ${progress.of}. ` : ""}From your course material. Review starts as soon as they&apos;re ready.
         </div>
-      </div>
+      </motion.div>
     </div>
   );
 }
@@ -276,13 +282,14 @@ function Arriving({ progress }: { progress: StartProgress | null }) {
 /** The card list could not be read. Offering the map now would call every
  *  concept "no cards yet" and generate over a deck that is really there. */
 function LoadFailed({ onRetry }: { onRetry: () => void }) {
+  const m = useMotionPresets();
   return (
     <div className={rv.stage}>
-      <div className={rv.message} role="alert">
-        <div className="h-serif text-2xl text-text">Couldn&apos;t load your flashcards</div>
-        <div className="mt-1.5">Check your connection and try again.</div>
-        <button type="button" className="btn btn--primary mt-4" onClick={onRetry}>Try again</button>
-      </div>
+      <motion.div className={rv.message} role="alert" variants={m.list.item} initial="hidden" animate="shown">
+        <div className={`h-serif ${fc.messageTitle}`}>Couldn&apos;t load your flashcards</div>
+        <div className={fc.messageBody}>Check your connection and try again.</div>
+        <button type="button" className={`btn btn--primary ${fc.messageAction}`} onClick={onRetry}>Try again</button>
+      </motion.div>
     </div>
   );
 }

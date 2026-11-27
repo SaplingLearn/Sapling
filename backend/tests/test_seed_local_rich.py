@@ -28,6 +28,52 @@ def test_guard_allows_local(monkeypatch):
     rich._guard_local()  # no raise
 
 
+# ── PKG-14 final fix round: seeded tiers follow the launch cuts (A95) ────────
+
+
+def _seeded_graph_nodes(monkeypatch) -> list[dict]:
+    """Every graph_nodes row the rich seed writes (seed_graph + the loop users),
+    captured at the helper seam — no database."""
+    from unittest.mock import MagicMock
+
+    rows: list[dict] = []
+
+    def upsert(name, row, **kw):
+        if name == "graph_nodes":
+            rows.append(dict(row))
+
+    monkeypatch.setattr(rich.h, "upsert", upsert)
+    monkeypatch.setattr(rich.h, "insert_if_absent", lambda *a, **k: None)
+    monkeypatch.setattr(rich, "table", lambda name: MagicMock(select=MagicMock(return_value=[])))
+    rich.seed_graph()
+    rich.seed_learning_loop()
+    return rows
+
+
+def test_every_seeded_tier_is_tier_for_its_score(monkeypatch):
+    from learning.bkt import tier_for
+
+    rows = _seeded_graph_nodes(monkeypatch)
+    assert rows, "the seed writes no graph_nodes rows"
+    for row in rows:
+        assert row["mastery_tier"] == tier_for(row["mastery_score"]), row["id"]
+
+
+def test_the_seeded_student_covers_every_tier(monkeypatch):
+    """frontend/e2e/graph.spec.ts's journey guard: the rich seed has a node in
+    EVERY tier for rich-user-active — after the launch cuts (mastered ≥ 0.95)."""
+    from learning.bkt import tier_for
+
+    tiers = {
+        tier_for(score)
+        for nodes in rich._GRAPH_NODES.values()
+        for _id, _name, score in nodes
+    }
+    assert tiers == {"mastered", "learning", "struggling", "unexplored"}
+    active = [r for r in _seeded_graph_nodes(monkeypatch) if r["user_id"] == rich.USER_ACTIVE]
+    assert {r["mastery_tier"] for r in active} == tiers
+
+
 def test_guard_allows_test_environment(monkeypatch):
     # scripts/e2e-up.sh accepts APP_ENV=test; its rich seed must not abort.
     monkeypatch.setenv("APP_ENV", "test")
@@ -309,7 +355,7 @@ def test_two_owners_get_independent_datasets_and_sample_fixtures_remain_unchange
     rich.main(["--owner-user-id", "user-second-owner"])
     assert [row for row in local_database.rows["graph_nodes"] if row["user_id"] == rich.USER_ACTIVE] == baseline_nodes
     assert all(row in local_database.rows["assignments"] for row in baseline_assignments)
-    assert len(local_database.rows["graph_nodes"]) == 39
+    assert len(local_database.rows["graph_nodes"]) == 39 + len(rich.LOOP_USERS) * rich.SEED_LOOP_CONCEPTS
     assert len(local_database.rows["rooms"]) == 6
 
 
@@ -424,6 +470,31 @@ def test_owner_seed_existence_probes_select_only_key_columns(local_database):
     assert chunk_probes == {"id"}
 
 
+def test_default_seed_retains_learning_loop_assets(local_database):
+    """The owner-aware CLI must still supply the full function-mode E2E bank."""
+    rich.main([])
+    expected_nodes = {
+        rich.loop_node_id(user_id, slug)
+        for user_id in rich.LOOP_USERS
+        for slug, _name, _text in rich.LOOP_NODES
+    }
+    nodes = [row for row in local_database.rows["graph_nodes"] if row["user_id"] in rich.LOOP_USERS]
+    assert {row["id"] for row in nodes} == expected_nodes
+    assert len(local_database.rows["check_items"]) == rich.SEED_LOOP_CONCEPTS * rich.SEED_LOOP_ITEMS_PER_CONCEPT
+    assert {row["user_id"] for row in local_database.rows["llm_usage"]} == {rich.USER_CAPPED}
+    assert any(row["id"] == rich.LOOP_DOC_ID for row in local_database.rows["documents"])
+
+
+def test_owner_seed_does_not_copy_loop_qa_identity_or_budget(local_database):
+    """Automatic owner samples cannot seed unrelated QA learning/billing state."""
+    _seed_personal()
+    assert not any(row["id"] in rich.LOOP_USERS for row in local_database.rows["users"])
+    assert not any(row["user_id"] in rich.LOOP_USERS for row in local_database.rows["graph_nodes"])
+    assert local_database.rows["check_items"] == []
+    assert local_database.rows["llm_usage"] == []
+    assert local_database.rows["feature_flags"] == []
+
+
 # ── the study dataset: an account's first seed only ─────────────────────────
 
 
@@ -529,7 +600,14 @@ def test_a_first_seed_that_stopped_before_the_study_dataset_gets_it_on_the_next_
 # ── the default dataset: the baseline every other lane asserts on ───────────
 
 #: sha256 of the default dataset, encrypted columns decrypted (see _digest).
-BASELINE_DIGEST = "8a9c6974d31c7c1790ed946084d5e354cbf5aeccb8fc4cf75b588df785d5ecef"  # M8: min_mistake_contributors on the stats rows
+#: Includes the learning loop's seed (the loop users, the check-item bank, the
+#: capped student's spend and due card) and M8's min_mistake_contributors.
+BASELINE_DIGEST = "79fe6f898fd6ee7210095a41c44b2c5d8bf31046a9f84253e719e934b605c6e6"
+
+#: Stamped from the clock on every seed, by design (seed_learning_loop: the
+#: capped student's spend and due card must be "today" on every run), so the
+#: digest reads them as a marker.
+_CLOCK_COLUMNS = {("flashcards", "due_at"), ("llm_usage", "created_at")}
 
 
 _SEALED = {(spec.table, spec.column) for spec in ENCRYPTED_COLUMNS}
@@ -546,7 +624,12 @@ def _digest(db) -> str:
         except Exception:
             return value
 
-    rows = {name: [{key: plain(name, key, value, row) for key, value in row.items()}
+    def cell(name, key, value, row):
+        if (name, key) in _CLOCK_COLUMNS and value is not None:
+            return "<now>"
+        return plain(name, key, value, row)
+
+    rows = {name: [{key: cell(name, key, value, row) for key, value in row.items()}
                    for row in table_rows]
             for name, table_rows in sorted(db.rows.items())}
     return hashlib.sha256(json.dumps(rows, sort_keys=True).encode()).hexdigest()

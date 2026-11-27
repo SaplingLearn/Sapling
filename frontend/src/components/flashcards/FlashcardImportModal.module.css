@@ -12,6 +12,9 @@
    column with the footer pinned. */
 
 .frame {
+  /* The one-pixel ring a pressed segment or a focused field draws, matching
+     the hairline borders around it. */
+  --fim-hairline: 1px;
   display: flex;
   flex-direction: column;
   width: 100%;
@@ -30,20 +33,29 @@
 
 .header {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--sp-6);
   flex: none;
-  padding: 14px 14px 14px 20px;
+  padding: var(--sp-7) var(--sp-7) var(--sp-7) var(--sp-10);
   border-bottom: 1px solid var(--border);
 }
+
+.headerText { min-width: 0; flex: 1; }
 
 .title {
   margin: 0;
   min-width: 0;
   color: var(--text);
-  font-size: 22px;
+  font-size: var(--fs-2xl);
   font-weight: 500;
+}
+
+.lede {
+  margin: var(--sp-2) 0 0;
+  font-size: var(--fs-sm);
+  line-height: 1.4;
+  color: var(--text-muted);
 }
 
 /* Quiet at rest; the ring on keyboard focus is the app-wide :focus-visible. */
@@ -93,9 +105,9 @@
   display: grid;
   grid-auto-flow: column;
   grid-auto-columns: minmax(0, 1fr);
-  gap: 2px;
+  gap: var(--sp-1);
   flex: none;
-  padding: 2px;
+  padding: var(--sp-1);
   border-radius: var(--r-sm);
   background: var(--bg-subtle);
 }
@@ -105,7 +117,7 @@
 
 .segOpt {
   height: 28px;
-  padding: 0 8px;
+  padding: 0 var(--sp-4);
   overflow: hidden;
   border-radius: var(--r-xs);
   color: var(--text-dim);
@@ -113,14 +125,14 @@
   font-weight: 500;
   white-space: nowrap;
   text-overflow: ellipsis;
-  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
 }
 .segOpt:hover {
   color: var(--text);
 }
 .segOpt[aria-pressed="true"] {
   background: var(--bg-panel);
-  box-shadow: 0 0 0 1px var(--border);
+  box-shadow: 0 0 0 var(--fim-hairline) var(--border);
   color: var(--text);
   font-weight: 600;
 }
@@ -131,7 +143,7 @@
   width: 100%;
   min-width: 0;
   height: 32px;
-  padding: 0 10px;
+  padding: 0 var(--sp-5);
   border: 1px solid var(--border);
   border-radius: var(--r-sm);
   background: var(--bg-panel);
@@ -141,7 +153,7 @@
 }
 .inputLg {
   height: 36px;
-  padding: 0 11px;
+  padding: 0 var(--sp-6);
   font-size: var(--fs-md);
 }
 .input::placeholder,
@@ -156,7 +168,7 @@
 .textarea:focus {
   outline: none;
   border-color: var(--brand-forest);
-  box-shadow: 0 0 0 1px var(--brand-forest);
+  box-shadow: 0 0 0 var(--fim-hairline) var(--brand-forest);
 }
 
 /* CustomSelect takes a class on its wrapper only; its trigger is the button
@@ -177,14 +189,14 @@
   flex: none;
   width: 6px;
   height: 6px;
-  margin: -3px 2px 0 0;
+  margin: calc(-1 * var(--sp-2)) var(--sp-1) 0 0;
   border-right: 1.5px solid var(--text-muted);
   border-bottom: 1.5px solid var(--text-muted);
   transform: rotate(45deg);
   transition: transform var(--dur-fast) var(--ease), margin var(--dur-fast) var(--ease);
 }
 .select > button[aria-expanded="true"]::after {
-  margin-top: 3px;
+  margin-top: var(--sp-2);
   transform: rotate(225deg);
 }
 .selectFill {
@@ -204,7 +216,7 @@
 /* ── Left: where the cards come from ────────────────────────────────── */
 
 .sourcePicker {
-  margin: 16px 20px 0;
+  margin: var(--sp-8) var(--sp-10) 0;
 }
 
 /* The active source takes the rest of the column and scrolls inside it when
@@ -214,7 +226,7 @@
   flex-direction: column;
   flex: 1 1 auto;
   min-height: 0;
-  padding: 12px 20px 16px;
+  padding: var(--sp-6) var(--sp-10) var(--sp-8);
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -227,7 +239,7 @@
 .tab {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--sp-5);
   flex: 1 0 auto;
   min-width: 0;
 }
@@ -236,7 +248,7 @@
   flex: 1 1 auto;
   width: 100%;
   min-height: 120px;
-  padding: 10px 12px;
+  padding: var(--sp-5) var(--sp-6);
   border: 1px solid var(--border);
   border-radius: var(--r-sm);
   background: var(--bg-panel);
@@ -260,7 +272,7 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px 12px;
+  gap: var(--sp-4) var(--sp-6);
   flex: none;
   container-type: inline-size;
 }
@@ -272,7 +284,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px 12px;
+  gap: var(--sp-4) var(--sp-6);
   flex: 1 1 100%;
   min-width: 0;
 }
@@ -283,13 +295,13 @@
 .pairs {
   display: flex;
   align-items: baseline;
-  gap: 8px 12px;
+  gap: var(--sp-4) var(--sp-6);
   min-width: 0;
 }
 .pair {
   display: inline-flex;
   align-items: baseline;
-  gap: 6px;
+  gap: var(--sp-3);
   min-width: 0;
 }
 .pairLabel {
@@ -315,7 +327,7 @@
 /* A custom separator's own field, on the line under the selects. */
 .customs {
   display: flex;
-  gap: 8px;
+  gap: var(--sp-4);
   flex: none;
 }
 .customs > .input {
@@ -329,11 +341,11 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: var(--sp-3);
   flex: 1 1 auto;
   width: 100%;
   min-height: 140px;
-  padding: 24px;
+  padding: var(--sp-12);
   border: 1.5px dashed var(--border-strong);
   border-radius: var(--r-md);
   color: var(--text-muted);
@@ -367,13 +379,13 @@
 }
 .urlRow {
   display: flex;
-  gap: 8px;
+  gap: var(--sp-4);
 }
 .urlRow > .input {
   flex: 1 1 auto;
 }
 .notice {
-  padding: 10px 12px;
+  padding: var(--sp-5) var(--sp-6);
   border-radius: var(--r-sm);
   background: var(--warn-soft);
   color: var(--text-dim);
@@ -381,13 +393,13 @@
   line-height: 1.5;
 }
 .noticeTitle {
-  margin-bottom: 4px;
+  margin-bottom: var(--sp-2);
   color: var(--text);
   font-size: var(--fs-md);
   font-weight: 600;
 }
 .noticeDetail {
-  margin-top: 6px;
+  margin-top: var(--sp-3);
   font-size: var(--fs-xs);
 }
 
@@ -396,16 +408,16 @@
 .dest {
   display: flex;
   align-items: flex-end;
-  gap: 12px;
+  gap: var(--sp-6);
   flex: none;
-  padding: 14px 20px;
+  padding: var(--sp-7) var(--sp-10);
   border-bottom: 1px solid var(--border);
 }
 
 .field {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--sp-2);
   min-width: 0;
 }
 .fieldCourse {
@@ -426,9 +438,9 @@
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 8px 16px;
+  gap: var(--sp-4) var(--sp-8);
   flex: none;
-  padding: 10px 20px;
+  padding: var(--sp-5) var(--sp-10);
   border-bottom: 1px solid var(--border);
   container-type: inline-size;
 }
@@ -437,7 +449,7 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 2px 10px;
+  gap: var(--sp-1) var(--sp-5);
   min-height: 30px;
   margin: 0;
 }
@@ -454,7 +466,7 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px 14px;
+  gap: var(--sp-4) var(--sp-7);
 }
 
 /* In a column too narrow for count and actions side by side, the actions
@@ -470,7 +482,7 @@
 .reverse {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--sp-3);
   color: var(--text-dim);
   font-size: var(--fs-sm);
   cursor: pointer;
@@ -483,10 +495,10 @@
 .rows {
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: var(--sp-1);
   flex: 1 1 auto;
   min-height: 0;
-  padding: 8px;
+  padding: var(--sp-4);
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -496,9 +508,9 @@
   display: grid;
   grid-template-columns: 30px minmax(0, 1fr) minmax(0, 1.4fr) 28px;
   align-items: center;
-  column-gap: 2px;
+  column-gap: var(--sp-1);
   flex: none;
-  padding: 2px 4px 2px 8px;
+  padding: var(--sp-1) var(--sp-2) var(--sp-1) var(--sp-4);
   border-radius: var(--r-sm);
   transition: background var(--dur-fast) var(--ease);
 }
@@ -515,7 +527,7 @@
 }
 
 .rowNum {
-  padding-left: 4px;
+  padding-left: var(--sp-2);
   color: var(--text-muted);
   font-size: var(--fs-xs);
   font-variant-numeric: tabular-nums;
@@ -525,7 +537,7 @@
   width: 100%;
   min-width: 0;
   height: 28px;
-  padding: 0 6px;
+  padding: 0 var(--sp-3);
   border: 0;
   border-radius: var(--r-xs);
   background: transparent;
@@ -537,12 +549,12 @@
   color: var(--text-muted);
 }
 .cell:hover {
-  box-shadow: inset 0 0 0 1px var(--border-strong);
+  box-shadow: inset 0 0 0 var(--fim-hairline) var(--border-strong);
 }
 .cell:focus {
   outline: none;
   background: var(--bg-panel);
-  box-shadow: inset 0 0 0 1px var(--brand-forest);
+  box-shadow: inset 0 0 0 var(--fim-hairline) var(--brand-forest);
 }
 
 .rowRemove {
@@ -561,7 +573,7 @@
 
 .rowReason {
   grid-column: 2 / 4;
-  padding: 0 6px 4px;
+  padding: 0 var(--sp-3) var(--sp-2);
   color: var(--text-dim);
   font-size: var(--fs-xs);
 }
@@ -571,7 +583,7 @@
   place-items: center;
   flex: 1 1 auto;
   margin: 0;
-  padding: 24px;
+  padding: var(--sp-12);
   color: var(--text-muted);
   text-align: center;
 }
@@ -582,9 +594,9 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px 20px;
+  gap: var(--sp-4) var(--sp-10);
   flex: none;
-  padding: 11px 20px 12px;
+  padding: var(--sp-6) var(--sp-10) var(--sp-6);
   border-top: 1px solid var(--border);
 }
 
@@ -603,7 +615,7 @@
 .actions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-4);
   flex: none;
   margin-left: auto;
 }
@@ -643,7 +655,7 @@
   }
 
   .header {
-    padding: 12px 10px 12px 16px;
+    padding: var(--sp-6) var(--sp-5) var(--sp-6) var(--sp-8);
   }
 
   .body {
@@ -658,10 +670,10 @@
     border-bottom: 1px solid var(--border);
   }
   .sourcePicker {
-    margin: 14px 16px 0;
+    margin: var(--sp-7) var(--sp-8) 0;
   }
   .sourceBody {
-    padding: 12px 16px 16px;
+    padding: var(--sp-6) var(--sp-8) var(--sp-8);
     overflow: visible;
   }
   /* Nothing to fill here: the main inputs take a comfortable fixed height. */
@@ -676,7 +688,7 @@
   .dest {
     flex-direction: column;
     align-items: stretch;
-    padding: 14px 16px;
+    padding: var(--sp-7) var(--sp-8);
   }
   .fieldCourse,
   .fieldTopic {
@@ -684,10 +696,10 @@
   }
 
   .previewHead {
-    padding: 10px 16px;
+    padding: var(--sp-5) var(--sp-8);
   }
   .rows {
-    padding: 8px;
+    padding: var(--sp-4);
     overflow: visible;
   }
   .empty {
@@ -696,7 +708,7 @@
 
   .footer {
     flex-wrap: wrap;
-    padding: 10px 16px 12px;
+    padding: var(--sp-5) var(--sp-8) var(--sp-6);
   }
   .summary {
     flex-basis: 100%;

@@ -9,9 +9,9 @@ from __future__ import annotations
 
 from datetime import timedelta
 
-from config import get_mastery_tier
 from db.local_study_data import clock
 from db.local_study_data.placement import Placement
+from learning.bkt import tier_for
 
 #: A card's review state: (times reviewed, last rating, days since). Ratings
 #: are the review screen's: 1 forgot, 2 hard, 3 easy.
@@ -38,7 +38,7 @@ def _reviewed_at(place: Placement, days: int | None, number: int) -> str | None:
 
 def _deck(place: Placement, deck: int, concept_key: str) -> list[dict]:
     concept = place.data.concept(concept_key)
-    states = _STATES[get_mastery_tier(concept.score)]
+    states = _STATES[tier_for(concept.score)]
     made = clock.moment(place.now, _MADE_DAYS_AGO, 12) + timedelta(minutes=10 * deck)
     rows = []
     for number, (front, back) in enumerate(place.data.cards[concept_key]):

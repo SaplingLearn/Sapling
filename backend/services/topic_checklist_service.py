@@ -5,15 +5,26 @@ import asyncio
 import hashlib
 import json
 import logging
+import threading
+from typing import cast
+from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 
 from fastapi import HTTPException
+from pydantic_ai.settings import ModelSettings
+from pydantic_ai.usage import RunUsage
 
 from agents import WORKER_LIMITS
+from agents._resilience import SINGLE_ATTEMPT_SETTING
 from agents._run import run_agent_sync
-from agents.topic_checklist import PROMPT_VERSION, TopicOutline, normalized_name, topic_checklist_agent
+from agents.topic_checklist import (
+    CHECKLIST_LIMITS, PROMPT_VERSION, TopicOutline, checklist_model_names, normalized_name,
+    topic_checklist_agent,
+)
 from agents.usage import record_agent_usage
 from db.connection import page_all, table
+from learning.bkt import in_mastered_tier, is_weak, stored_score
 from services.academics import (
     current_term,
     term_for_offering,
@@ -24,6 +35,11 @@ from services.academics import (
 from services.encryption import bind, decrypt_if_present, decrypt_json, encrypt_json
 from services.exam_proximity import is_assessment
 from services.request_limits import check_rate_limit
+from services import ai_budget, checklist_budget, events_service
+from services.checklist_budget_run import ChecklistDispatches
+from services.checklist_receipt import prepare_checklist_receipt
+from services.request_context import current_request_id
+from services.usage_receipts import UsageReceiptUnavailable
 
 logger = logging.getLogger(__name__)
 REVIEW_AFTER_DAYS = 7
@@ -32,6 +48,38 @@ MAX_DOCUMENTS = 30
 MAX_ASSESSMENTS = 50
 MAX_SOURCE_CHARS = 60000
 EDGE_READ_BATCH = 100
+GENERATION_WAIT_SECONDS = 5.0
+# All counter/generation/validation attempts share this deadline. Cancellation
+# is cooperative and does not prove that remote provider work stopped billing.
+GENERATION_TIMEOUT_SECONDS = 60.0
+
+# Serialize a learning-loop student's paid cache misses within this process, across
+# enrollments too. Reference counts retain a lock for waiters and release idle
+# entries, so the registry does not grow with every student who ever refreshes.
+_generation_guard = threading.Lock()
+_generation_locks: dict[str, tuple[threading.Lock, int]] = {}
+
+
+@contextmanager
+def _generation_slot(user_id: str):
+    with _generation_guard:
+        lock, waiters = _generation_locks.get(user_id, (threading.Lock(), 0))
+        _generation_locks[user_id] = (lock, waiters + 1)
+    acquired = False
+    try:
+        acquired = lock.acquire(timeout=GENERATION_WAIT_SECONDS)
+        if not acquired:
+            raise HTTPException(503, "A checklist is already generating. Please try again.", headers={"Retry-After": "2"})
+        yield
+    finally:
+        if acquired:
+            lock.release()
+        with _generation_guard:
+            _, waiters = _generation_locks[user_id]
+            if waiters == 1:
+                del _generation_locks[user_id]
+            else:
+                _generation_locks[user_id] = (lock, waiters - 1)
 
 
 def topic_key(name: str) -> str:
@@ -281,13 +329,16 @@ def present(scope: dict, snapshot: dict, cache: dict | None, now: datetime) -> d
     for topic in outline.topics if outline else []:
         key = topic_key(topic.name)
         node = nodes.get(normalized_name(topic.name))
-        score = float(node["mastery_score"]) if node else None
+        score = stored_score(node["mastery_score"]) if node else None
         studied = key in reviewed or bool(node and node["times_studied"] > 0)
         timestamps = [_parse_timestamp(reviewed.get(key)), _parse_timestamp(node.get("last_studied_at")) if node else None]
         last = max((t for t in timestamps if t), default=None)
-        weak = studied and score is not None and score < 0.45
+        weak = studied and score is not None and is_weak(score)
         stale = studied and (last is None or now - last >= timedelta(days=REVIEW_AFTER_DAYS))
-        status = "not_started" if not studied else "needs_review" if weak or stale else "mastered" if score is not None and score >= 0.75 else "in_progress"
+        # Match the graph's presentation tier, not strict learning mastery
+        # (which also requires strong unassisted evidence). Checkmarks only
+        # record study/review dates and never supply mastery evidence.
+        status = "not_started" if not studied else "needs_review" if weak or stale else "mastered" if score is not None and in_mastered_tier(score) else "in_progress"
         linked = [assessments[a] for a in topic.assessment_ids if a in assessments]
         linked.sort(key=lambda a: (a["due_date"], a["id"]))
         urgent = bool(linked and date.fromisoformat(linked[0]["due_date"]) <= now.date() + timedelta(days=7))
@@ -296,7 +347,7 @@ def present(scope: dict, snapshot: dict, cache: dict | None, now: datetime) -> d
         # unknown, not a gap.
         prereq_gaps = [p for p in topic.prerequisites if (
             topic_key(p) not in reviewed and normalized_name(p) in nodes
-            and float(nodes[normalized_name(p)]["mastery_score"]) < 0.45
+            and is_weak(stored_score(nodes[normalized_name(p)]["mastery_score"]))
         )]
         topics.append({
             **topic.model_dump(exclude={"source_ids", "assessment_ids", "parent", "prerequisites"}),
@@ -335,10 +386,121 @@ def get_checklist(user_id: str, course_id: str, semester: str | None = None) -> 
     return present(scope, build_snapshot(user_id, scope, now.date()), _cache(scope), now)
 
 
-async def _generate(payload: dict, user_id: str) -> TopicOutline:
+@dataclass
+class ChecklistGeneration:
+    usage: RunUsage
+    dispatches: ChecklistDispatches
+    outline: TopicOutline | None = None
+    error: BaseException | None = None
+
+
+async def _generate(payload: dict, user_id: str, reservation: checklist_budget.Reservation) -> ChecklistGeneration:
+    usage = RunUsage()
+    dispatches = ChecklistDispatches(reservation=reservation)
+    try:
+        result = await asyncio.wait_for(topic_checklist_agent.run(
+            json.dumps(payload), deps=payload, usage=usage, usage_limits=CHECKLIST_LIMITS,
+            capabilities=[dispatches],
+            # #866 (b1-budget review): one HTTP attempt and no cross-provider
+            # fallback per dispatch, so every request this run sends is one the
+            # hold priced and the receipt counts; the run's own attempts
+            # (CHECKLIST_LIMITS) still apply
+            model_settings=cast(ModelSettings, {SINGLE_ATTEMPT_SETTING: True}),
+        ), timeout=GENERATION_TIMEOUT_SECONDS)
+        return ChecklistGeneration(usage, dispatches, result.output)
+    except BaseException as error:
+        # A response may be billed even when output validation fails. Preserve
+        # actual responses and an independent count of handlers entered. Never
+        # queue a duplicate analytics bill alongside the durable receipt.
+        return ChecklistGeneration(usage, dispatches, error=error)
+
+
+def _finish_generation(generation: ChecklistGeneration, payload: dict) -> None:
+    tracker = generation.dispatches
+    content = None
+    if generation.error is None:
+        try:
+            validate_evidence(generation.outline, payload)
+            # Sealed for topic_checklists.content (keyed on the enrollment, M13):
+            # the publish RPC stores it there as is.
+            content = encrypt_json(generation.outline.model_dump(), bind=bind(
+                "topic_checklists", "content", tracker.reservation.enrollment_id))
+        except Exception as error:
+            generation.error = error
+    receipt = None
+    no_dispatch = tracker.dispatched == 0 or tracker.nonbillable_test
+    if not no_dispatch:
+        try:
+            # Billed under the reserved model that served it (Claude, or the
+            # Gemini fallback), priced by llm_pricing.
+            receipt = prepare_checklist_receipt(
+                reservation=tracker.reservation,
+                responses=tuple(tracker.responses), dispatched_requests=tracker.dispatched,
+                usage=generation.usage,
+                # A semantic/validation failure does not erase complete bills.
+                completed=tracker.dispatched == len(tracker.responses),
+                request_id=current_request_id(),
+            )
+        except UsageReceiptUnavailable:
+            content = None
+            if generation.error is None:
+                generation.error = RuntimeError("Checklist bill is incomplete")
+    try:
+        checklist_budget.reconcile(tracker.reservation, receipt=receipt, content=content,
+                                   no_dispatch=no_dispatch)
+    except Exception:
+        if generation.error is not None and not isinstance(generation.error, Exception):
+            logger.warning("Checklist cancellation left usage pending reconciliation")
+            raise generation.error
+        raise
+    if receipt is not None:
+        # #866 Z54: the bill is now a committed llm_usage row; give it what every
+        # queued row gets (the llm_budget settle, the $ai_generation mirror)
+        events_service.note_written_llm_usage(receipt.to_row())
+    if generation.error is not None:
+        raise generation.error
+
+
+def _current_checklist(user_id: str, course_id: str, semester: str | None):
+    now = datetime.now(timezone.utc)
+    scope = resolve_scope(user_id, course_id, semester)
+    snapshot = build_snapshot(user_id, scope, now.date())
+    return now, scope, snapshot, _cache(scope)
+
+
+def _needs_generation(snapshot: dict, cache: dict | None) -> bool:
+    return bool(snapshot["payload"]["sources"]) and (cache is None or cache["input_hash"] != snapshot["hash"])
+
+
+#: Gemini's own output ceiling for the 2.5 models (what a request with no
+#: max_output_tokens gets), for a slot pointed back at a gemini-* model.
+_GEMINI_DEFAULT_MAX_OUTPUT_TOKENS = 65_536
+
+
+def _main_run_settings() -> ModelSettings:
+    """The bounds main's checklist run had (#866 review of b1-budget, defect 3).
+    Main's agent carried NO model_settings, so a request went out at the slot
+    model's own ceiling and the resilience layer's per-slot timeout. The loop's
+    agent adds a fixed 8192-token cap and a 60 s timeout for its spend hold;
+    those cannot be unset per run, so a loop-off run restates main's values on
+    top: Claude's ceiling (adaptive thinking counts against it, so 8192 could
+    cut a long outline and turn it into validation retries and a 503 main never
+    gave), Gemini's own default, and the slot timeout."""
+    from agents._providers import ANTHROPIC_MAX_TOKENS, slot_provider, timeout_for
+
+    ceiling = (
+        ANTHROPIC_MAX_TOKENS
+        if slot_provider("topic_checklist") == "anthropic"
+        else _GEMINI_DEFAULT_MAX_OUTPUT_TOKENS
+    )
+    return ModelSettings(max_tokens=ceiling, timeout=timeout_for("topic_checklist"))
+
+
+async def _generate_unbudgeted(payload: dict, user_id: str) -> TopicOutline:
     result = await asyncio.wait_for(topic_checklist_agent.run(
         json.dumps(payload), deps=payload, usage_limits=WORKER_LIMITS,
-    ), timeout=60)
+        model_settings=_main_run_settings(),
+    ), timeout=GENERATION_TIMEOUT_SECONDS)
     # Attribute the usage row to the student explicitly: the per-user cost
     # rollups and the $ai_generation mirror both key on it.
     return record_agent_usage(
@@ -346,19 +508,16 @@ async def _generate(payload: dict, user_id: str) -> TopicOutline:
     ).output
 
 
-def refresh_checklist(user_id: str, course_id: str, semester: str | None = None) -> dict:
-    now = datetime.now(timezone.utc)
-    scope = resolve_scope(user_id, course_id, semester)
-    snapshot = build_snapshot(user_id, scope, now.date())
-    cache = _cache(scope)
-    if not snapshot["payload"]["sources"] or cache and cache["input_hash"] == snapshot["hash"]:
-        return present(scope, snapshot, cache, now)
+def _refresh_unbudgeted(user_id: str, now: datetime, scope: dict, snapshot: dict, cache: dict | None) -> dict:
+    """A loop-off student's paid refresh, as before the learning loop: the
+    per-student rate limit, the run, its usage row, the cache write. No AI
+    budget and no spend hold (owner decision 2026-11-18)."""
     retry = check_rate_limit(f"topic-checklist:{user_id}", limit=6, window_sec=60)
     if retry is not None:
         raise HTTPException(429, "Please wait before generating another checklist.", headers={"Retry-After": str(retry)})
     try:
         prior = TopicOutline.model_validate(_outline_json(cache)) if cache else None
-        outline = run_agent_sync(_generate({**snapshot["payload"],
+        outline = run_agent_sync(_generate_unbudgeted({**snapshot["payload"],
             "existing_topic_names": [t.name for t in prior.topics] if prior else [],
         }, user_id))
         validate_evidence(outline, snapshot["payload"])
@@ -373,6 +532,71 @@ def refresh_checklist(user_id: str, course_id: str, semester: str | None = None)
     }
     table("topic_checklists").upsert(cache, on_conflict="enrollment_id")
     return present(scope, snapshot, cache, now)
+
+
+def refresh_checklist(
+    user_id: str, course_id: str, semester: str | None = None, *, learning_loop: bool = False,
+) -> dict:
+    """Regenerate the checklist when its evidence changed (a cache hit is free).
+
+    `learning_loop` is the route-entry gate's answer for this student
+    (learning/gate.py, owner decision 00: the route evaluates it once). Only a
+    learning-loop student's paid refresh reads the AI budget and takes a
+    durable spend hold (owner decision 2026-11-18: caps only when the loop is
+    on); with the loop off it is the refresh as it was before the loop.
+    """
+    now, scope, snapshot, cache = _current_checklist(user_id, course_id, semester)
+    if not _needs_generation(snapshot, cache):
+        return present(scope, snapshot, cache, now)
+    if not learning_loop:
+        return _refresh_unbudgeted(user_id, now, scope, snapshot, cache)
+    with _generation_slot(user_id):
+        # Another request may have filled this cache or changed the evidence
+        # while we waited. Recheck owned scope, material and cache before any
+        # rate/spend check or paid generation; a coalesced cache hit stays free.
+        now, scope, snapshot, cache = _current_checklist(user_id, course_id, semester)
+        if not _needs_generation(snapshot, cache):
+            return present(scope, snapshot, cache, now)
+        # SQL coalesces an already-committed same-hash cache before its atomic
+        # capacity check. Do not deny a now-free cross-worker hit via a stale
+        # Python budget preflight first.
+        reservation = checklist_budget.admit(
+            user_id, scope["enrollment_id"], snapshot["hash"], checklist_model_names(with_fallback=False))
+        if reservation is None:
+            return present(scope, snapshot, _cache(scope), now)
+        try:
+            try:
+                decision = ai_budget.check(user_id, "generation")
+            except ai_budget.AIBudgetUnavailable:
+                raise HTTPException(503, "AI usage is temporarily unavailable. Please try again.") from None
+            if decision.level == "hard":
+                raise ai_budget.AIBudgetExceeded(decision)
+            retry = check_rate_limit(f"topic-checklist:{user_id}", limit=6, window_sec=60)
+            if retry is not None:
+                raise HTTPException(429, "Please wait before generating another checklist.", headers={"Retry-After": str(retry)})
+            prior = TopicOutline.model_validate(_outline_json(cache)) if cache else None
+        except BaseException:
+            # No model handler/coroutine has been entered. A failed ACK here
+            # leaves only a reclaimable prepared lease, never a possible bill.
+            try:
+                checklist_budget.reconcile(reservation, no_dispatch=True)
+            except Exception:
+                logger.warning("Could not release an unused checklist reservation")
+            raise
+        try:
+            generation = run_agent_sync(_generate({**snapshot["payload"],
+                "existing_topic_names": [t.name for t in prior.topics] if prior else [],
+            }, user_id, reservation))
+            _finish_generation(generation, snapshot["payload"])
+        except HTTPException:
+            raise
+        except Exception:
+            logger.exception("Topic checklist generation failed")
+            raise HTTPException(503, "Topic generation is temporarily unavailable. Please retry; any unconfirmed usage remains reserved.",
+                                headers={"Retry-After": "120"}) from None
+        # Cache publication and the stable bill were one database transaction.
+        # A newer operation/ownership change can fence this result out safely.
+        return present(scope, snapshot, _cache(scope), now)
 
 
 def set_reviewed(user_id: str, course_id: str, key: str, checked: bool, semester: str | None = None) -> dict:

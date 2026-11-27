@@ -1,0 +1,51 @@
+@layer components {
+/* Today's plan card (PlanPanel). */
+
+.scroll {
+  flex: 1;
+  overflow-y: auto;
+}
+
+/* The loading, failed and empty lines. */
+.status {
+  font-size: var(--fs-base);
+  color: var(--text-muted);
+}
+
+.failed {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-5);
+}
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+/* The concept's name, and under it why it is planned. */
+.name {
+  /* Basis before the kind chip wraps under it. */
+  --plan-name-basis: 100px;
+  flex: 1 1 var(--plan-name-basis);
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: var(--fs-base);
+  font-weight: 500;
+}
+
+.reason {
+  display: block;
+  margin-top: var(--sp-1);
+  font-weight: 400;
+}
+
+.approve {
+  align-self: flex-start;
+}
+
+}

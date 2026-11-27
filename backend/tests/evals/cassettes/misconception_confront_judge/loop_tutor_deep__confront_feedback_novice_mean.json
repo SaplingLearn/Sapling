@@ -1,0 +1,11 @@
+{
+  "judge_model": "claude-opus-5-5",
+  "judge_prompt_hash": "319990a6d7767961429f61ca42d9b9fb1af2c02e2e64a3e51ac8d3a67b945101",
+  "output": {
+    "affirms_misconception": false,
+    "confronts": true,
+    "evidence": "How many coins would each pile hold after you level them out, and does that number match the 4 you picked as the middle one?",
+    "only_states_correction": false
+  },
+  "served_sha256": "d21b05313d55ae4153a9236a99cb7a7c4e8f18b2f772d5808401235b017c5df7"
+}

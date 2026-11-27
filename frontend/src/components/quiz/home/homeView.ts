@@ -7,13 +7,19 @@
  * (`homeView.test.ts`); `useHomeCard` wires them to state.
  */
 
+import { plural } from "@/lib/learningCopy";
 import type { EnrolledCourse } from "@/lib/api";
 import type { SessionConfig, StartRequest } from "@/lib/quiz/machine";
 import {
   colorFor,
   latestCompletedAttempt,
   metaLine,
+  planReasonCopy,
+  planStateLine,
+  plannedCourseQueue,
+  queueFor,
   rationaleFor,
+  skillPercent,
   type Candidate,
 } from "@/lib/quiz/proposals";
 import { QUEUE_COUNT, QUEUE_MAX } from "@/lib/quiz/session";
@@ -56,7 +62,8 @@ export interface TopicPick {
 }
 
 export function entryKeyFor(entry: EntryRequest): string {
-  return `${entry.concept ?? ""}|${entry.topic ?? ""}|${entry.course ?? ""}|${entry.scope ?? ""}`;
+  const queue = entry.queue?.length ? entry.queue.join(",") : "";
+  return `${entry.concept ?? ""}|${entry.topic ?? ""}|${entry.course ?? ""}|${entry.scope ?? ""}|${queue}`;
 }
 
 /** The pick, while it still belongs to this arrival and names a real concept. */
@@ -69,6 +76,26 @@ export function cardModeFor(pickedId: string | null, arrival: Arrival): CardMode
   if (arrival.course && arrival.courseQueue.length > 0) return "course";
   if (arrival.scope === "due" && arrival.dueQueue.length > 0) return "due";
   return "concept";
+}
+
+/**
+ * A `?course=` arrival's queue: the tier ranking's, or with
+ * `quiz_concept_plan` the learner model's order for that course (spec §13
+ * A143), falling back to the tier ranking when the plan proposes none of the
+ * course's concepts (`plannedCourseQueue`). The due queue needs no such choice
+ * here: the hook decides it, so the card and the queue agree.
+ */
+export function courseQueueFor(
+  home: Pick<QuizHomeData, "planned" | "candidates" | "nodes" | "courseCandidates">,
+  course: string | undefined,
+): string[] {
+  if (!course) return [];
+  // `planned` covers the all-courses plan; `courseCandidates` covers a
+  // course-scoped plan that survived when the global read failed.
+  const usePlan = home.planned || (home.courseCandidates != null && home.courseCandidates.length > 0);
+  return usePlan
+    ? plannedCourseQueue(home.candidates, home.courseCandidates, home.nodes, course)
+    : queueFor("course", home.nodes, course);
 }
 
 /**
@@ -123,17 +150,29 @@ export function cardTitle(mode: CardMode, courseCode: string, conceptName: strin
   return conceptName;
 }
 
+/**
+ * The line under the card's title. A concept card states ONE measure
+ * (`metaLine`): the plan's skill meter for a concept the plan proposes, else
+ * the graph's mastery. `planLineShown`: the plan's reason line below already
+ * says the skill meter, so this line keeps the band and drops the number.
+ */
 export function cardMeta(
   mode: CardMode,
   courseQueueLength: number,
   due: QuizHomeData["due"],
   card: Candidate | null,
+  planned = false,
+  planLineShown = false,
 ): string {
-  if (mode === "course") return `${courseQueueLength} concepts due`;
+  // "due" is an FSRS review only (lib/learningCopy.ts): the course queue is
+  // "to practice" either way.
+  if (mode === "course") return `${plural(courseQueueLength, "concept")} to practice`;
   if (mode === "due") {
-    return `${due.count} concepts across ${due.courseCount} courses · starting with the ${Math.min(due.count, QUEUE_MAX)} weakest`;
+    const order = planned ? "most overdue" : "weakest";
+    return `${plural(due.count, "concept")} across ${plural(due.courseCount, "course")}, starting with the ${Math.min(due.count, QUEUE_MAX)} ${order}`;
   }
-  return card ? metaLine(card.node) : "";
+  if (!card) return "";
+  return card.plan && planLineShown ? planStateLine(card.node, card.plan) : metaLine(card.node, undefined, card.plan);
 }
 
 /** Only a deep link explains itself on the card: it is the one arrival whose
@@ -147,6 +186,19 @@ export function cardRationale(
 ): string | null {
   if (mode !== "concept" || pickedId || !conceptId || !card) return null;
   return DEEP_LINK_RATIONALE[sourceKind] ?? DEFAULT_DEEP_LINK_RATIONALE;
+}
+
+/** Spec §13 A143: why the learner model proposes the card's concept, and its
+ *  skill meter — on the plan's own suggestion only (a pick or a deep link is
+ *  the student's choice, explained by `cardRationale` or not at all). */
+export function cardPlanLine(
+  mode: CardMode,
+  pickedId: string | null,
+  conceptId: string | null,
+  card: Candidate | null,
+): string | null {
+  if (mode !== "concept" || pickedId || conceptId || !card?.plan) return null;
+  return `${planReasonCopy(card.plan.reason)} Skill meter: ${skillPercent(card.plan.pKnown)}.`;
 }
 
 /** The `n` in "{Course} · {tier} · {n} connected concepts" (R-8's fallback). */
@@ -211,6 +263,7 @@ export function prefsFor(cfg: SessionConfig): QuizPrefs {
     count: cfg.count,
     difficulty: cfg.difficulty,
     feedback: cfg.feedback,
+    sessionMode: cfg.sessionMode ?? "practice",
     ...(cfg.questionFormat ? { questionFormat: cfg.questionFormat } : {}),
   };
 }

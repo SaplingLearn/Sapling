@@ -32,6 +32,16 @@ vi.mock("@/lib/useIsMobile", () => ({
   useIsMobile: () => false,
 }));
 
+vi.mock("@/context/FlagsContext", () => ({
+  useFlagMap: () => ({ flags: {}, ready: true }),
+}));
+
+vi.mock("next/link", () => ({
+  default: ({ children, href, ...rest }: { children: React.ReactNode; href: string }) => (
+    <a href={href} {...rest}>{children}</a>
+  ),
+}));
+
 // Pulls in the whole import-tab tree (and more @/lib/api names) — out of
 // scope here.
 vi.mock("@/components/flashcards/FlashcardImportModal", () => ({

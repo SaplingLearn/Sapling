@@ -94,8 +94,8 @@ Body base: 14px, line-height 1.5, color `--text`.
 | `--border-strong`  | `rgba(42,39,31,0.18)`        | Stronger divider                      |
 | `--text`           | `--ink-800`                  | Primary copy                          |
 | `--text-dim`       | `--ink-600`                  | Secondary copy                        |
-| `--text-muted`     | `--ink-400`                  | Muted / labels                        |
-| `--accent`         | `#8a9a5b`                    | Sage accent (CTAs, focus, selection)  |
+| `--text-muted`     | `#696252`                    | Muted / labels (AA on every surface)  |
+| `--accent`         | `#4e6a2d`                    | Accent (links, focus, selection)      |
 | `--accent-fg`      | `#ffffff`                    | Foreground on accent                  |
 | `--accent-soft`    | `--sap-50`                   | Soft accent fill                      |
 | `--accent-border`  | `--sap-200`                  | Accent border                         |
@@ -104,9 +104,9 @@ Status colors:
 
 | Token         | Hex       | Soft variant     |
 |---------------|-----------|------------------|
-| `--warn`      | `#b4562c` | `--warn-soft` `#f7e6d8` |
+| `--warn`      | `#a34c26` | `--warn-soft` `#f7e6d8` |
 | `--err`       | `#a83a3a` | `--err-soft`  `#f5d8d3` |
-| `--info`      | `#3e6f8a` | `--info-soft` `#dfe9ef` |
+| `--info`      | `#3a6984` | `--info-soft` `#dfe9ef` |
 
 Mastery palette (for the knowledge graph):
 

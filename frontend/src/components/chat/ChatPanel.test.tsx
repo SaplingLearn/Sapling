@@ -16,8 +16,10 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, cleanup, fireEvent } from "@testing-library/react";
 
 import { ChatPanel, tutorStepLabel, type ChatMsg } from "./ChatPanel";
+import styles from "./ChatPanel.module.css";
 import crisisFixture from "@/test-utils/crisisSupport.json";
 import { crisisSupportOf } from "@/lib/crisisSupport";
+import { MATERIALS_GROUNDED_HINT, MATERIALS_GROUNDED_LABEL } from "@/lib/loopTrustChrome";
 
 vi.mock("../Icon", () => ({ Icon: () => null }));
 // MarkdownChat is lazy-loaded via next/dynamic (heavy markdown stack); render
@@ -93,6 +95,29 @@ describe("ChatPanel interrupted-turn treatment (ADR 0020)", () => {
     );
     expect(screen.queryByTestId("tutor-interrupted")).toBeNull();
     expect(screen.queryByTestId("tutor-retry")).toBeNull();
+  });
+
+  it("W4.3: materialsGrounded paints calm chrome without a cite list", () => {
+    render(
+      <ChatPanel
+        messages={[{ id: "m-g", role: "assistant", content: "From lecture 3.", materialsGrounded: true }]}
+        onSend={noop}
+      />,
+    );
+    const chrome = screen.getByTestId("loop-materials-grounded");
+    expect(chrome.textContent).toBe(MATERIALS_GROUNDED_LABEL);
+    expect(chrome).toHaveAttribute("title", MATERIALS_GROUNDED_HINT);
+    expect(chrome.getAttribute("aria-label")).toContain(MATERIALS_GROUNDED_HINT);
+  });
+
+  it("W4.3: no grounded chrome unless materialsGrounded is set", () => {
+    render(
+      <ChatPanel
+        messages={[{ id: "m-plain", role: "assistant", content: "A general reply." }]}
+        onSend={noop}
+      />,
+    );
+    expect(screen.queryByTestId("loop-materials-grounded")).toBeNull();
   });
 
   it("omits Retry when no handler is wired (marker still shows)", () => {
@@ -176,5 +201,68 @@ describe("ChatPanel crisis-support turn (docs/safety/crisis-support.md)", () => 
     fireEvent.change(input, { target: { value: "ok, back to hash tables" } });
     fireEvent.click(screen.getByTestId("tutor-send"));
     expect(onSend).toHaveBeenCalledWith("ok, back to hash tables");
+  });
+});
+
+describe("ChatPanel — keyboard and screen reader (spec §13 A135)", () => {
+  const msg = (id: string, content: string, over: Partial<ChatMsg> = {}): ChatMsg => ({ id, role: "assistant", content, ...over });
+
+  it("the log is a polite live region a keyboard can reach and scroll", () => {
+    render(<ChatPanel messages={[msg("a", "hello")]} onSend={noop} />);
+    const log = screen.getByRole("log", { name: "Conversation" });
+    expect(log).toHaveAttribute("aria-live", "polite");
+    expect(log.tabIndex).toBe(0);
+  });
+
+  it("a visually hidden row stays in the log; clearing the flag paints the same node", () => {
+    const { rerender } = render(<ChatPanel messages={[msg("p", "Why does it stop?", { visuallyHidden: true })]} onSend={noop} />);
+    const row = screen.getByText("Why does it stop?");
+    const wrapper = row.closest("[data-visually-hidden]") as HTMLElement;
+    expect(wrapper).not.toBeNull();
+    expect(wrapper.className).toContain(styles.visuallyHidden);
+    expect(screen.getByRole("log")).toContainElement(row);
+    rerender(<ChatPanel messages={[msg("p", "Why does it stop?")]} onSend={noop} />);
+    expect(screen.getByText("Why does it stop?")).toBe(row);
+    expect(row.closest("[data-visually-hidden]")).toBeNull();
+  });
+
+  it("a message sent from the composer gives it focus back when the reply has ended", () => {
+    const { rerender } = render(<ChatPanel messages={[]} onSend={noop} streamingText={null} />);
+    const input = screen.getByTestId("tutor-input") as HTMLTextAreaElement;
+    input.focus();
+    fireEvent.change(input, { target: { value: "why?" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    rerender(<ChatPanel messages={[]} onSend={noop} streamingText="" />);
+    expect(input.disabled).toBe(true);
+    input.blur(); // a browser drops focus from a control that becomes disabled
+    rerender(<ChatPanel messages={[msg("r", "Because n reaches zero.")]} onSend={noop} streamingText={null} />);
+    expect(input).toHaveFocus();
+  });
+
+  it("does not take focus back when something else has it by the time the reply ends", () => {
+    const { rerender } = render(
+      <>
+        <button data-testid="elsewhere">elsewhere</button>
+        <ChatPanel messages={[]} onSend={noop} streamingText={null} />
+      </>,
+    );
+    const input = screen.getByTestId("tutor-input") as HTMLTextAreaElement;
+    input.focus();
+    fireEvent.change(input, { target: { value: "why?" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    rerender(
+      <>
+        <button data-testid="elsewhere">elsewhere</button>
+        <ChatPanel messages={[]} onSend={noop} streamingText="" />
+      </>,
+    );
+    screen.getByTestId("elsewhere").focus();
+    rerender(
+      <>
+        <button data-testid="elsewhere">elsewhere</button>
+        <ChatPanel messages={[]} onSend={noop} streamingText={null} />
+      </>,
+    );
+    expect(screen.getByTestId("elsewhere")).toHaveFocus();
   });
 });

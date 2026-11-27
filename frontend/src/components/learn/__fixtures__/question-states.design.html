@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Question card, hint ladder and verdict states</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Aleo:ital,wght@0,400;0,600;0,700;1,400&amp;family=SUSE:wght@400;500;600;700&amp;display=swap">
+<style>
+body{margin:0}
+</style>
+</helmet>
+<div style="width: 1440px; height: 1240px; box-sizing: border-box; padding: 48px; background: #f4f1ea; font-family: 'SUSE', system-ui, sans-serif; color: #1a1814; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); grid-auto-rows: min-content; gap: 32px 28px;">
+
+  <div style="display: flex; flex-direction: column; gap: 10px;">
+    <h2 style="margin: 0; font-size: 14px; font-weight: 600; color: #3f3b31;">1. Hint locked, with the reason</h2>
+    <div style="display: flex; flex-direction: column; gap: 14px; padding: 22px; border-radius: 16px; background: #fdfcf9; border: 2px solid #445D22;">
+      <h3 style="margin: 0; font-family: 'Aleo', Georgia, serif; font-size: 18px; font-weight: 600;">Why does linear probing create clusters?</h3>
+      <div style="height: 64px; border-radius: 10px; border: 1px solid rgba(42,39,31,0.18); background: #ffffff;"></div>
+      <div style="display: flex; gap: 10px; align-items: center;">
+        <button type="button" style="height: 42px; padding: 0 18px; border-radius: 10px; border: 0; background: #445D22; color: #fff; font: inherit; font-weight: 600;">Check answer</button>
+        <button type="button" aria-disabled="true" style="height: 42px; padding: 0 14px; border-radius: 10px; border: 1px dashed #b9b1a0; background: transparent; font: inherit; color: #3f3b31;">Hint in 0:32</button>
+      </div>
+      <p style="margin: 0; font-size: 14px; color: #3f3b31;">Write what you think first. Hints open after a real try.</p>
+    </div>
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 10px;">
+    <h2 style="margin: 0; font-size: 14px; font-weight: 600; color: #3f3b31;">2. A hint taken, the ladder visible</h2>
+    <div style="display: flex; flex-direction: column; gap: 14px; padding: 22px; border-radius: 16px; background: #fdfcf9; border: 2px solid #445D22;">
+      <h3 style="margin: 0; font-family: 'Aleo', Georgia, serif; font-size: 18px; font-weight: 600;">Why does linear probing create clusters?</h3>
+      <div style="padding: 12px 14px; border-radius: 10px; background: #f2f6ee; font-size: 15px; line-height: 1.5;"><b style="font-weight: 600;">Hint 1.</b> Where does the next key go if it hashes into the middle of a run?</div>
+      <div aria-label="Help used: 1 of 6" style="display: flex; flex-direction: column; gap: 6px;">
+        <div style="display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 4px;">
+          <span style="height: 6px; border-radius: 3px; background: #c89b5e;"></span><span style="height: 6px; border-radius: 3px; background: #ebe6dc;"></span><span style="height: 6px; border-radius: 3px; background: #ebe6dc;"></span>
+          <span style="height: 6px; border-radius: 3px; background: #ebe6dc;"></span><span style="height: 6px; border-radius: 3px; background: #ebe6dc;"></span><span style="height: 6px; border-radius: 3px; background: #ebe6dc;"></span>
+        </div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; font-size: 13px; color: #3f3b31;"><span>Hints: half credit</span><span>Worked steps: no credit</span></div>
+      </div>
+      <div style="display: flex; gap: 10px; align-items: center;">
+        <button type="button" style="height: 42px; padding: 0 18px; border-radius: 10px; border: 0; background: #445D22; color: #fff; font: inherit; font-weight: 600;">Check answer</button>
+        <button type="button" style="height: 42px; padding: 0 14px; border-radius: 10px; border: 1px solid rgba(42,39,31,0.18); background: #fdfcf9; font: inherit;">Hint 2</button>
+      </div>
+    </div>
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 10px;">
+    <h2 style="margin: 0; font-size: 14px; font-weight: 600; color: #3f3b31;">3. Worked steps, revealed one at a time</h2>
+    <div style="display: flex; flex-direction: column; gap: 12px; padding: 22px; border-radius: 16px; background: #fdfcf9; border: 2px solid #445D22;">
+      <h3 style="margin: 0; font-family: 'Aleo', Georgia, serif; font-size: 18px; font-weight: 600;">Insert 10, 18, 26 into 8 buckets with linear probing.</h3>
+      <p style="margin: 0; font-size: 14px; color: #3f3b31;">Showing steps means this question won't raise your skill level.</p>
+      <ol style="margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; font-size: 15px;">
+        <li style="padding: 10px 12px; border-radius: 10px; background: #f4f1ea;"><b style="font-weight: 600;">Step 1.</b> 10 mod 8 = 2, so 10 goes in bucket 2.</li>
+        <li style="padding: 10px 12px; border-radius: 10px; background: #f4f1ea;"><b style="font-weight: 600;">Step 2.</b> 18 mod 8 = 2 is taken; probe to bucket 3.</li>
+        <li><button type="button" style="width: 100%; height: 42px; border-radius: 10px; border: 1px dashed #b9b1a0; background: transparent; font: inherit; color: #1a1814; text-align: left; padding: 0 12px;">Show step 3</button></li>
+      </ol>
+    </div>
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 10px;">
+    <h2 style="margin: 0; font-size: 14px; font-weight: 600; color: #3f3b31;">4. Correct, full credit</h2>
+    <div style="display: flex; flex-direction: column; gap: 14px; padding: 22px; border-radius: 16px; background: #fdfcf9; border: 2px solid #3a7d4e;">
+      <h3 style="margin: 0; display: flex; align-items: center; gap: 8px; font-family: 'Aleo', Georgia, serif; font-size: 20px; font-weight: 600; color: #2f6640;"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5L20 7"></path></svg>Correct</h3>
+      <p style="margin: 0; font-size: 15px; line-height: 1.5;">Each collision lengthens the run, and lookups walk the same run, so they slow down as the table fills.</p>
+      <div style="display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-radius: 10px; background: #f2f6ee; font-size: 15px;"><span style="flex: 1;">Hash tables</span><span style="color: #3f3b31;">Getting started</span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#445D22" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"></path></svg><span style="font-weight: 600;">Developing</span></div>
+      <button type="button" style="align-self: flex-start; height: 42px; padding: 0 18px; border-radius: 10px; border: 0; background: #445D22; color: #fff; font: inherit; font-weight: 600;">Next: Collision resolution</button>
+    </div>
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 10px;">
+    <h2 style="margin: 0; font-size: 14px; font-weight: 600; color: #3f3b31;">5. Correct, half credit</h2>
+    <div style="display: flex; flex-direction: column; gap: 14px; padding: 22px; border-radius: 16px; background: #fdfcf9; border: 2px solid #3a7d4e;">
+      <h3 style="margin: 0; display: flex; align-items: center; gap: 8px; font-family: 'Aleo', Georgia, serif; font-size: 20px; font-weight: 600; color: #2f6640;"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5L20 7"></path></svg>Correct, half credit</h3>
+      <p style="margin: 0; font-size: 15px; line-height: 1.5;">You used a hint, so this counts half toward Hash tables. Try the next one on your own.</p>
+      <div style="display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-radius: 10px; background: #f2f6ee; font-size: 15px;"><span style="flex: 1;">Hash tables</span><span style="font-weight: 600;">Getting started</span><span style="color: #3f3b31;">a little higher</span></div>
+      <button type="button" style="align-self: flex-start; height: 42px; padding: 0 18px; border-radius: 10px; border: 0; background: #445D22; color: #fff; font: inherit; font-weight: 600;">Next question</button>
+    </div>
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 10px;">
+    <h2 style="margin: 0; font-size: 14px; font-weight: 600; color: #3f3b31;">6. Not quite, after "Sure"</h2>
+    <div style="display: flex; flex-direction: column; gap: 14px; padding: 22px; border-radius: 16px; background: #fdfcf9; border: 2px solid #a34c26;">
+      <h3 style="margin: 0; font-family: 'Aleo', Georgia, serif; font-size: 20px; font-weight: 600; color: #8a3f1f;">Not quite</h3>
+      <p style="margin: 0; font-size: 15px; line-height: 1.5;">10 and 11 land in buckets 2 and 3. The pair that collides is <b>10 and 18</b>: both leave remainder 2. Compare remainders, not the numbers.</p>
+      <p style="margin: 0; font-size: 14px; color: #3f3b31;">You were sure about this one, so take a moment with it.</p>
+      <button type="button" aria-disabled="true" style="align-self: flex-start; height: 42px; padding: 0 18px; border-radius: 10px; border: 0; background: #a1bc83; color: #fff; font: inherit; font-weight: 600;">Next question in 0:06</button>
+    </div>
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 10px;">
+    <h2 style="margin: 0; font-size: 14px; font-weight: 600; color: #3f3b31;">7. Check-in: answers count, no hints</h2>
+    <div style="display: flex; flex-direction: column; gap: 14px; padding: 22px; border-radius: 16px; background: #fdfcf9; border: 1px solid rgba(42,39,31,0.14);">
+      <p style="margin: 0; font-size: 13px; color: #3f3b31;">Check-in, question 3 of 6</p>
+      <h3 style="margin: 0; font-family: 'Aleo', Georgia, serif; font-size: 18px; font-weight: 600;">What does pop() return on an empty stack in our course's Stack class?</h3>
+      <div style="display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-radius: 10px; background: #edf5ef; font-size: 15px;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#3a7d4e" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5L20 7"></path></svg><span><b style="font-weight: 600;">Right.</b> It throws EmptyStackException.</span></div>
+      <button type="button" style="align-self: flex-start; height: 42px; padding: 0 18px; border-radius: 10px; border: 0; background: #445D22; color: #fff; font: inherit; font-weight: 600;">Next</button>
+    </div>
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 10px;">
+    <h2 style="margin: 0; font-size: 14px; font-weight: 600; color: #3f3b31;">8. Quick guess before a new concept</h2>
+    <div style="display: flex; flex-direction: column; gap: 14px; padding: 22px; border-radius: 16px; background: #fdfcf9; border: 1px dashed #b9b1a0;">
+      <p style="margin: 0; font-size: 13px; color: #3f3b31;">Collision resolution, a quick guess, not graded</p>
+      <h3 style="margin: 0; font-family: 'Aleo', Georgia, serif; font-size: 18px; font-weight: 600;">If two keys share a bucket, what could the table do?</h3>
+      <div style="display: flex; flex-direction: column; gap: 8px; font-size: 15px;">
+        <label style="display: flex; gap: 10px; align-items: center; padding: 10px 12px; border-radius: 10px; border: 1px solid rgba(42,39,31,0.18);"><input type="radio" name="g" style="accent-color: #445D22;">Keep a list in the bucket</label>
+        <label style="display: flex; gap: 10px; align-items: center; padding: 10px 12px; border-radius: 10px; border: 1px solid rgba(42,39,31,0.18);"><input type="radio" name="g" style="accent-color: #445D22;">Reject the second key</label>
+      </div>
+      <div style="display: flex; gap: 10px;"><button type="button" style="height: 42px; padding: 0 18px; border-radius: 10px; border: 0; background: #445D22; color: #fff; font: inherit; font-weight: 600;">Save guess</button><button type="button" style="height: 42px; padding: 0 12px; border: 0; background: transparent; font: inherit; color: #3f3b31;">I don't know</button></div>
+    </div>
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 10px;">
+    <h2 style="margin: 0; font-size: 14px; font-weight: 600; color: #3f3b31;">9. Explain it back, after the check closes</h2>
+    <div style="display: flex; flex-direction: column; gap: 14px; padding: 22px; border-radius: 16px; background: #fdfcf9; border: 1px dashed #b9b1a0;">
+      <p style="margin: 0; font-size: 13px; color: #3f3b31;">Not graded</p>
+      <h3 style="margin: 0; font-family: 'Aleo', Georgia, serif; font-size: 18px; font-weight: 600;">Why does a fuller table make clusters worse?</h3>
+      <label for="why" style="font-size: 14px; font-weight: 600;">In a sentence or two</label>
+      <textarea id="why" rows="2" style="padding: 10px; border-radius: 10px; border: 1px solid rgba(42,39,31,0.18); background: #fff; font: inherit; font-size: 15px;"></textarea>
+      <div style="display: flex; gap: 10px;"><button type="button" style="height: 42px; padding: 0 18px; border-radius: 10px; border: 0; background: #445D22; color: #fff; font: inherit; font-weight: 600;">Save</button><button type="button" style="height: 42px; padding: 0 12px; border: 0; background: transparent; font: inherit; color: #3f3b31;">Skip</button></div>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1240}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

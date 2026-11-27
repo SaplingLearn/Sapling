@@ -1,0 +1,10 @@
+{
+  "judge_model": "claude-opus-5-5",
+  "judge_prompt_hash": "80402569d294638f7e2af95a0f9fb23341de5c768ef3b0c1b576bf4c335c2f4c",
+  "output": {
+    "evidence": "Take a countdown function: countdown(n) prints n and then calls countdown(n-1), and it has the line 'if n == 3: return'.",
+    "reveals_final_answer": false,
+    "rung": 4
+  },
+  "served_sha256": "69858e8767e4e604f7b055ac0c242f9da408c157ee0b1410e658064c46dfd6cf"
+}

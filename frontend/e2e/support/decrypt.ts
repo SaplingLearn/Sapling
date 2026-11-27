@@ -87,3 +87,66 @@ export async function decryptText(value: EncryptedCell): Promise<string> {
   const [plain] = await decryptTexts([value]);
   return plain;
 }
+
+// Nested ciphertexts (encryption.NESTED_CIPHERTEXTS) bind with nested_bind —
+// table|column|path|row — e.g. sessions.loop_state#reasoning_encrypted (W2.3).
+const PY_DECRYPT_NESTED = `
+import json, sys
+from dotenv import load_dotenv
+load_dotenv()
+from services.encryption import decrypt_if_present, nested_bind
+items = json.load(sys.stdin)
+sys.stdout.write(json.dumps([
+    decrypt_if_present(
+        i["value"],
+        bind=nested_bind(
+            i["table"], i["column"], i["path"],
+            tuple(i["row"]) if isinstance(i["row"], list) else i["row"],
+        ),
+    )
+    for i in items
+]))
+`;
+
+/** One nested ciphertext cell: column JSON path + the row key nested_bind uses. */
+export type NestedEncryptedCell = EncryptedCell & { path: string };
+
+/** Decrypt a batch of nested ciphertext values via the backend's nested_bind. */
+export function decryptNestedTexts(values: NestedEncryptedCell[]): Promise<string[]> {
+  const repoRoot = path.resolve(__dirname, "..", "..", "..");
+  const backendDir = path.join(repoRoot, "backend");
+  const python =
+    process.env.E2E_SEED_PYTHON?.trim() ||
+    path.join(backendDir, "venv", "bin", "python");
+
+  return new Promise((resolve, reject) => {
+    const child = spawn(python, ["-c", PY_DECRYPT_NESTED], {
+      cwd: backendDir,
+      timeout: 30_000,
+    });
+    let out = "";
+    let err = "";
+    child.stdout.on("data", (d) => (out += d));
+    child.stderr.on("data", (d) => (err += d));
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code !== 0) {
+        reject(new Error(`nested decrypt helper exited ${code} (${python}):\n${err}`));
+        return;
+      }
+      try {
+        resolve(JSON.parse(out) as string[]);
+      } catch (e) {
+        reject(new Error(`nested decrypt helper returned non-JSON: ${out}\n${e}`));
+      }
+    });
+    child.stdin.write(JSON.stringify(values));
+    child.stdin.end();
+  });
+}
+
+/** Decrypt one nested ciphertext value. */
+export async function decryptNestedText(value: NestedEncryptedCell): Promise<string> {
+  const [plain] = await decryptNestedTexts([value]);
+  return plain;
+}

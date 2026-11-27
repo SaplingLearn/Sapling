@@ -30,7 +30,8 @@ class Concept:
     #: One sentence. Used as the document concept note, the key term and the
     #: outline description.
     definition: str
-    #: Mastery, 0 to 1.
+    #: Mastery, 0 to 1, read through learning.bkt.tier_for (spec §3.1 cuts:
+    #: mastered from 0.95, struggling below 0.30, unexplored below 0.10).
     score: float
     times_studied: int = 0
     #: Days since it was last studied; None when it never was.

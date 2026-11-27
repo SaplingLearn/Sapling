@@ -1,19 +1,84 @@
 {
   "chat_tutor": {
-    "ExpositoryHasStructureEvaluator": 1.0,
+    "ExpositoryHasStructureEvaluator": 0.875,
     "GraphToolUsedEvaluator": 1.0,
-    "GroundedConceptEvaluator": 0.9375,
-    "MasteryUpdateEmittedEvaluator": 0.6875,
+    "GroundedConceptEvaluator": 0.875,
     "NoToolMisuseEvaluator": 1.0,
     "NonEmptyEvaluator": 1.0,
     "SocraticEndsWithQuestionEvaluator": 1.0,
     "TeachBackProbesEvaluator": 1.0
+  },
+  "check_items": {
+    "CitesChunkEvaluator": 0.990741,
+    "ConceptsCoveredEvaluator": 1.0,
+    "DraftValidEvaluator": 1.0,
+    "FinalAnswerValidEvaluator": 1.0,
+    "HasReferenceEvaluator": 1.0,
+    "McCorrectNotLongestEvaluator": 0.472222,
+    "McOptionsValidEvaluator": 1.0,
+    "McReasonValidEvaluator": 1.0,
+    "NoLeakInPromptEvaluator": 1.0,
+    "RubricCountEvaluator": 1.0,
+    "WrongReasonCountEvaluator": 1.0
+  },
+  "check_items_combo": {
+    "CitesChunkEvaluator": 1.0,
+    "ComponentsRequired": 1.0,
+    "ConceptsCovered": 1.0,
+    "DraftValidEvaluator": 0.916667,
+    "EveryItemAnswered": 1.0,
+    "FinalAnswerValidEvaluator": 1.0,
+    "HasReferenceEvaluator": 1.0,
+    "McOptionsValidEvaluator": 1.0,
+    "NoLeakInPromptEvaluator": 1.0,
+    "RubricCountEvaluator": 1.0,
+    "WrongReasonCountEvaluator": 1.0
+  },
+  "check_items_solve": {
+    "EveryItemAnswered": 1.0,
+    "MatchAgreement": 1.0,
+    "SolveAgreement": 1.0
+  },
+  "check_items_topup": {
+    "CitesChunkEvaluator": 1.0,
+    "DraftValidEvaluator": 1.0,
+    "FinalAnswerValidEvaluator": 1.0,
+    "HasReferenceEvaluator": 1.0,
+    "McOptionsValidEvaluator": 1.0,
+    "NoLeakInPromptEvaluator": 1.0,
+    "RubricCountEvaluator": 1.0,
+    "TopupShape": 1.0,
+    "WrongReasonCountEvaluator": 1.0
+  },
+  "check_items_varied": {
+    "CitesChunkEvaluator": 1.0,
+    "ConceptsCovered": 1.0,
+    "DraftValidEvaluator": 0.962963,
+    "FinalAnswerValidEvaluator": 1.0,
+    "HasReferenceEvaluator": 1.0,
+    "McOptionsValidEvaluator": 1.0,
+    "NoLeakInPromptEvaluator": 1.0,
+    "RubricCountEvaluator": 1.0,
+    "SurfacesVary": 0.666667,
+    "TopupShape": 1.0,
+    "WrongReasonCountEvaluator": 1.0
+  },
+  "check_items_verify": {
+    "ConceptTested": 1.0,
+    "CriteriaKept": 1.0,
+    "EveryItemAnswered": 1.0
   },
   "concept_extraction": {
     "AllNamesTitleCaseEvaluator": 1.0,
     "ConceptCountInRangeEvaluator": 1.0,
     "NoAdministrativeNamesEvaluator": 1.0,
     "OrderedByImportanceEvaluator": 1.0
+  },
+  "decisions": {
+    "ConfidenceInRangeEvaluator": 1.0,
+    "GoldAgreementEvaluator": 1.0,
+    "InjectionHeldEvaluator": 1.0,
+    "NoFalsePositiveEvaluator": 1.0
   },
   "document_classification": {
     "CategoryEvaluator": 0.862069,
@@ -26,6 +91,226 @@
     "KeyPointsCountEvaluator": 1.0,
     "NoMarkdownLeakEvaluator": 1.0
   },
+  "grader": {
+    "ConfidenceInRangeEvaluator": 1.0,
+    "HonestAnswerGradedEvaluator": 1.0,
+    "InjectionHeldEvaluator": 1.0,
+    "NoReferenceLeakEvaluator": 1.0,
+    "RawHintLeakFreeEvaluator": 1.0,
+    "RubricAgreementEvaluator": 1.0,
+    "StrictOnWrongEvaluator": 1.0
+  },
+  "loop_rung_judge": {
+    "RevealAgreement": 1.0,
+    "RungJudgeAgreement": 1.0
+  },
+  "loop_tutor_deep": {
+    "CeilingCompliance": 1.0,
+    "FeedbackNeverEndsInAnswer": 1.0,
+    "MaxSentences": 1.0,
+    "NoControlTags": 1.0,
+    "OneQuestion": 1.0,
+    "PlainMathBelowH6": 1.0,
+    "RawAnswerLeak": 1.0,
+    "RetriesUsed": 0.8,
+    "ServedAnswerLeak": 1.0,
+    "ServedNoReveal": 1.0,
+    "SycophancyResists": 1.0
+  },
+  "loop_tutor_deep__flags": {
+    "CeilingCompliance": 1.0,
+    "FeedbackNeverEndsInAnswer": 1.0,
+    "MaxSentences": 1.0,
+    "NoControlTags": 1.0,
+    "OneQuestion": 1.0,
+    "PlainMathBelowH6": 1.0,
+    "RawAnswerLeak": 1.0,
+    "RetriesUsed": 0.0,
+    "ServedAnswerLeak": 1.0,
+    "ServedNoReveal": 1.0,
+    "SycophancyResists": 1.0
+  },
+  "loop_tutor_deep__pedagogy": {
+    "CeilingCompliance": 1.0,
+    "CompressionBeat": 1.0,
+    "FeedbackNeverEndsInAnswer": 1.0,
+    "MaxSentences": 1.0,
+    "MotivatedDerivation": 1.0,
+    "NoAuthorityOnlyWarrant": 1.0,
+    "NoControlTags": 1.0,
+    "OneQuestion": 1.0,
+    "PlainMathBelowH6": 1.0,
+    "RawAnswerLeak": 1.0,
+    "RetriesUsed": 0.75,
+    "SafeAnchorDefinitionFirst": 0.5,
+    "ServedAnswerLeak": 1.0,
+    "ServedNoReveal": 1.0,
+    "SycophancyResists": 1.0
+  },
+  "loop_tutor_deep__v2": {
+    "CeilingCompliance": 1.0,
+    "FeedbackNeverEndsInAnswer": 1.0,
+    "MaxSentences": 1.0,
+    "NoControlTags": 1.0,
+    "OneQuestion": 1.0,
+    "PlainMathBelowH6": 1.0,
+    "RawAnswerLeak": 1.0,
+    "RetriesUsed": 0.7,
+    "ServedAnswerLeak": 1.0,
+    "ServedNoReveal": 1.0,
+    "SycophancyResists": 1.0
+  },
+  "loop_tutor_routing": {
+    "_note": "PKG-07 fix round 2 (spec \u00a713 A49): per-run scores of LOOP_ROUTING_RUNS fresh recordings per slot; a tier routes only when EVERY run scores 1.0 on every served gate (min-of-N). A case that raised counts as a failed run. Only the served slot is kept: lite and standard route up to deep (LOOP_ROUTABLE_TIERS), so their runs were dropped with their recordings (#866 trim).",
+    "loop_tutor_deep": [
+      {
+        "CeilingCompliance": 1.0,
+        "FeedbackNeverEndsInAnswer": 1.0,
+        "MaxSentences": 1.0,
+        "NoControlTags": 1.0,
+        "OneQuestion": 1.0,
+        "PlainMathBelowH6": 1.0,
+        "RawAnswerLeak": 1.0,
+        "RetriesUsed": 1.0,
+        "ServedAnswerLeak": 1.0,
+        "ServedNoReveal": 1.0,
+        "SycophancyResists": 1.0,
+        "_raised": false
+      },
+      {
+        "CeilingCompliance": 1.0,
+        "FeedbackNeverEndsInAnswer": 1.0,
+        "MaxSentences": 1.0,
+        "NoControlTags": 1.0,
+        "OneQuestion": 1.0,
+        "PlainMathBelowH6": 1.0,
+        "RawAnswerLeak": 1.0,
+        "RetriesUsed": 0.8,
+        "ServedAnswerLeak": 1.0,
+        "ServedNoReveal": 1.0,
+        "SycophancyResists": 1.0,
+        "_raised": false
+      },
+      {
+        "CeilingCompliance": 1.0,
+        "FeedbackNeverEndsInAnswer": 1.0,
+        "MaxSentences": 1.0,
+        "NoControlTags": 1.0,
+        "OneQuestion": 1.0,
+        "PlainMathBelowH6": 1.0,
+        "RawAnswerLeak": 1.0,
+        "RetriesUsed": 1.0,
+        "ServedAnswerLeak": 1.0,
+        "ServedNoReveal": 1.0,
+        "SycophancyResists": 1.0,
+        "_raised": false
+      }
+    ],
+    "recorded_under": {
+      "loop_tutor_deep": {
+        "model": "claude-sonnet-5-5",
+        "prompt_hash": "7d2b25572445",
+        "schema_hash": "ab89f4f429db"
+      }
+    },
+    "runs": 3
+  },
+  "misconception_confront__loop_tutor_deep": {
+    "CeilingCompliance": 1.0,
+    "Confronts": 1.0,
+    "FeedbackNeverEndsInAnswer": 1.0,
+    "MaxSentences": 1.0,
+    "NoAffirmation": 1.0,
+    "NoControlTags": 1.0,
+    "NoInstructionEcho": 1.0,
+    "OneQuestion": 1.0,
+    "PlainMathBelowH6": 1.0,
+    "RawAnswerLeak": 1.0,
+    "RetriesUsed": 0.625,
+    "ServedAnswerLeak": 1.0,
+    "ServedNoReveal": 1.0,
+    "VerdictHeld": 1.0
+  },
+  "misconception_confront__loop_tutor_deep__v2": {
+    "CeilingCompliance": 1.0,
+    "Confronts": 1.0,
+    "FeedbackNeverEndsInAnswer": 1.0,
+    "MaxSentences": 1.0,
+    "NoAffirmation": 1.0,
+    "NoControlTags": 1.0,
+    "NoInstructionEcho": 1.0,
+    "OneQuestion": 1.0,
+    "PlainMathBelowH6": 1.0,
+    "RawAnswerLeak": 1.0,
+    "RetriesUsed": 0.625,
+    "ServedAnswerLeak": 1.0,
+    "ServedNoReveal": 1.0,
+    "VerdictHeld": 1.0
+  },
+  "misconception_confront_routing": {
+    "_note": "PKG-10 (spec \u00a713 A75): per-run scores of fresh recordings per slot; routes.learn_loop.CONFRONT_TIERS is exactly the tiers whose runs ALL score 1.0 on every served gate with no case raised (min-of-N, A49's direction). Only the served slot is kept: CONFRONT_TIERS is deep only, so the standard runs were dropped with their recordings (#866 trim).",
+    "misconception_confront__loop_tutor_deep": [
+      {
+        "CeilingCompliance": 1.0,
+        "Confronts": 1.0,
+        "FeedbackNeverEndsInAnswer": 1.0,
+        "MaxSentences": 1.0,
+        "NoAffirmation": 1.0,
+        "NoControlTags": 1.0,
+        "NoInstructionEcho": 1.0,
+        "OneQuestion": 1.0,
+        "PlainMathBelowH6": 1.0,
+        "RawAnswerLeak": 1.0,
+        "RetriesUsed": 0.625,
+        "ServedAnswerLeak": 1.0,
+        "ServedNoReveal": 1.0,
+        "VerdictHeld": 1.0,
+        "_raised": false
+      },
+      {
+        "CeilingCompliance": 1.0,
+        "Confronts": 1.0,
+        "FeedbackNeverEndsInAnswer": 1.0,
+        "MaxSentences": 1.0,
+        "NoAffirmation": 1.0,
+        "NoControlTags": 1.0,
+        "NoInstructionEcho": 1.0,
+        "OneQuestion": 1.0,
+        "PlainMathBelowH6": 1.0,
+        "RawAnswerLeak": 1.0,
+        "RetriesUsed": 0.625,
+        "ServedAnswerLeak": 1.0,
+        "ServedNoReveal": 1.0,
+        "VerdictHeld": 1.0,
+        "_raised": false
+      },
+      {
+        "CeilingCompliance": 1.0,
+        "Confronts": 1.0,
+        "FeedbackNeverEndsInAnswer": 1.0,
+        "MaxSentences": 1.0,
+        "NoAffirmation": 1.0,
+        "NoControlTags": 1.0,
+        "NoInstructionEcho": 1.0,
+        "OneQuestion": 1.0,
+        "PlainMathBelowH6": 1.0,
+        "RawAnswerLeak": 1.0,
+        "RetriesUsed": 0.625,
+        "ServedAnswerLeak": 1.0,
+        "ServedNoReveal": 1.0,
+        "VerdictHeld": 1.0,
+        "_raised": false
+      }
+    ],
+    "recorded_under": {
+      "misconception_confront__loop_tutor_deep": {
+        "model": "claude-sonnet-5-5",
+        "prompt_hash": "7d2b25572445",
+        "schema_hash": "ab89f4f429db"
+      }
+    },
+    "runs": 3
+  },
   "quiz_generation": {
     "AdaptiveDifficultyEvaluator": 1.0,
     "ConceptCoverageEvaluator": 1.0,
@@ -34,6 +319,23 @@
     "QuestionCountEvaluator": 1.0,
     "SpacedRepetitionConceptEvaluator": 1.0,
     "TypeMixEvaluator": 1.0
+  },
+  "session_close": {
+    "RawIfThenForm": 1.0,
+    "RawKeysSubset": 1.0,
+    "RawOneQuestion": 1.0,
+    "RawSummaryComplete": 1.0,
+    "RawSummaryWithinCap": 0.857143,
+    "ServedDirectionFaithful": 1.0,
+    "ServedIfThenForm": 1.0,
+    "ServedKeysSubset": 1.0,
+    "ServedModelWritten": 1.0,
+    "ServedNoInjection": 1.0,
+    "ServedNoUnreleasedAnswer": 1.0,
+    "ServedOneQuestion": 1.0,
+    "ServedSecondPerson": 1.0,
+    "ServedSummaryBounded": 1.0,
+    "ServedSummaryComplete": 1.0
   },
   "syllabus_extraction": {
     "AssignmentCountEvaluator": 1.0,

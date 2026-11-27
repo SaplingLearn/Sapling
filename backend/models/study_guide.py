@@ -40,7 +40,7 @@ Depth = Literal["cram", "standard", "deep"]
 ScopeKind = Literal["exam", "assignment", "course"]
 GuideStatus = Literal["generating", "ready", "failed"]
 SectionStatus = Literal["queued", "written", "failed"]
-#: `config.get_mastery_tier`'s vocabulary, unchanged.
+#: `learning.bkt.tier_for`'s vocabulary, unchanged.
 Tier = Literal["mastered", "learning", "struggling", "unexplored"]
 Feedback = Literal["yes", "no"]
 

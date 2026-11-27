@@ -6,6 +6,7 @@ turn and the hint/confused/skip action turn. `start_session`, `chat` and
 from __future__ import annotations
 
 import asyncio
+from typing import cast
 import logging
 import uuid
 
@@ -14,8 +15,9 @@ from starlette.concurrency import run_in_threadpool
 from starlette.requests import Request
 
 from agents.usage import record_agent_usage
+from db.connection import table
 from models import ActionBody, ChatBody, StartSessionBody
-from services import events_service
+from services import ai_budget, events_service
 from services.auth_guard import guard_off_loop, require_self
 from services import abuse_limits
 from services.request_limits import aenforce_abuse_limit
@@ -31,15 +33,17 @@ from services.tutor.messages import (
     _turn_row_ids,
     save_message,
 )
-from services.tutor.pending import _open_turn_session
+from services.quiz_ask import open_quiz_ask
+from services.tutor.pending import _open_turn_session, _require_turn_session
 from services.tutor.run import (
     _continuation_text,
     _new_run_text,
     _observe_persisted_turn,
     _prepare_chat_run,
     _ran_on,
+    _usage_session_id,
 )
-from services.tutor_sessions import astash_pending
+from services.tutor_sessions import astash_pending, session_ended_error
 
 # Log records keep the name they had in routes/learn.py before the #118 split:
 # the move must not change what an operator (or a caplog test) filters on.
@@ -54,10 +58,12 @@ logger = logging.getLogger("routes.learn")
 # transient upstream trouble (→ 502, retry-friendly detail; a WARNING, not
 # an exception log — pages should fire on the bare-Exception 502 below,
 # which IS a bug).
+# At most 160 characters: the frontend shows a server detail only up to that
+# length (lib/errorMessage.ts MAX_DETAIL_LENGTH), so a longer one never
+# reaches the student (K48).
 _USAGE_LIMIT_DETAIL = (
-    "This turn exceeded the tutor's processing budget — the conversation or "
-    "message is too long to answer in one turn. Retrying the same message "
-    "will hit the same limit; try a shorter message or a fresh session."
+    "That message or conversation is too long for the tutor's processing "
+    "budget. Send a shorter message or start a fresh session."
 )
 _MODEL_TROUBLE_DETAIL = "The tutor had trouble answering that. Please try again."
 
@@ -155,6 +161,7 @@ async def _start_session_agent(
         result = record_agent_usage(
             await agent.run(assembled, **run_kwargs),
             feature="chat_tutor", task="chat_tutor", user_id=body.user_id,
+            session_id=session_id,
             request_id=request_id,
         )
         # str — chat_tutor agents return plain Markdown. Read every text
@@ -176,7 +183,10 @@ async def _start_session_agent(
             # opener's tool results are in its messages just like a chat
             # turn's.
             try:
-                rescued = await _continuation_text(agent, result, run_kwargs, request_id=request_id)
+                rescued = await _continuation_text(
+                    agent, result, run_kwargs, request_id=request_id,
+                    usage_session_id=session_id,  # the opener's server-minted id
+                )
             except Exception:
                 logger.warning(
                     "Continuation after a textless session greeting failed",
@@ -224,17 +234,40 @@ async def _start_session_agent(
     }
 
 
-async def start_session(body: StartSessionBody, request: Request):
+async def start_session(body: StartSessionBody, request: Request, loop_handler=None):
     await guard_off_loop(require_self, body.user_id, request)
     await aenforce_abuse_limit(abuse_limits.TUTOR_SESSION_START, body.user_id)
+    # Learning loop (spec §7): `loop_handler` is the loop's handler when the
+    # route-entry gate is on for this student (routes/learn.py evaluates it,
+    # owner decision 00; the `learning_loop` flag defaults off). Only the loop
+    # path reads the AI budget (owner decision 2026-11-18: caps only when the
+    # loop is on); below is the legacy tutor exactly as before the loop, under
+    # main's own limits (the abuse limit above, the flagged llm_budget).
+    if loop_handler is not None:
+        # A20: the loop's rate-limit read, after the ownership check (A93
+        # review). #117: off the event loop (it reads llm_usage).
+        await asyncio.to_thread(ai_budget.enforce_rate_limit_for, body.user_id)
+        request.state.learning_loop = True  # A38 00: the loop handler reads no second gate
+        return await loop_handler(body, request)
+    session_id = str(uuid.uuid4())
+    # PKG-14 (spec §13 A99): a quiz-ask session's help row, before any tutor text;
+    # A106 (review m2): it runs on the quiz node's course, never the client's
+    target = await asyncio.to_thread(open_quiz_ask, body, session_id=session_id)
+    if target is not None:
+        body = body.model_copy(update={"course_id": target.course_id})
     result = await _agent_turn_or_http_error(
-        _start_session_agent(body), what="start-session agent"
+        _start_session_agent(body, session_id), what="start-session agent"
     )
     return {
         "session_id": result["session_id"],
         "initial_message": result["reply"],
         "graph_state": result["graph_state"],
     }
+
+
+#: "Resolve the llm_usage session here" (the caller did not pass one it
+#: already resolved); None is a real value (no owned session).
+_RESOLVE = object()
 
 
 async def _chat_via_agent(
@@ -248,18 +281,23 @@ async def _chat_via_agent(
     use_shared_context: bool,
     request_id: str,
     model_pref: str | None = None,
+    usage_session_id: str | None | object = _RESOLVE,
 ) -> tuple[dict, tuple[str, str | None]]:
     """Run chat_tutor_agent and return the wire response shape.
+
+    ``usage_session_id``: the llm_usage session the streamed route already
+    resolved for this turn (its Rung-1 fallback runs here), so the turn makes
+    ONE ownership read; resolved here when not passed (the JSON /chat route).
 
     Returns ``({"reply": str, "graph_update": dict, "mastery_changes": list},
     (model_tier, tutor_model))`` — the wire dict, and what the run actually
     ran on (see `_ran_on`), kept out of the dict so it can never leak.
     Graph changes are persisted in-band during the agent run by
-    `apply_graph_update_tool` / `update_mastery_tool` (registered on
-    chat_tutor); the tools also accumulate their payloads on `deps` so the
-    route can echo `graph_update` (for graph_update_json / concepts_covered)
-    and the real `mastery_changes` deltas back to the client. Both are
-    empty when nothing changed this turn.
+    `apply_graph_update_tool` (registered on chat_tutor); the tool also
+    accumulates its payload on `deps` so the route can echo `graph_update`
+    (for graph_update_json / concepts_covered). `mastery_changes` is always
+    empty since PKG-14b (no tutor tool moves mastery; spec §11.6) and stays
+    in the wire shape.
 
     `use_shared_context=False` flips the model into "no class-aggregate"
     mode by appending a constraint instruction to the user message —
@@ -281,10 +319,19 @@ async def _chat_via_agent(
         model_pref=model_pref,
     )
 
+    # A92: the llm_usage session id, resolved ONCE for the turn (the run and a
+    # continuation both record against it). #117: off the event loop.
+    usage_session_id = (
+        await asyncio.to_thread(_usage_session_id, session_id, deps.user_id)
+        if usage_session_id is _RESOLVE
+        else cast("str | None", usage_session_id)
+    )
     try:
+        run = await agent.run(user_message, **run_kwargs)
         result = record_agent_usage(
-            await agent.run(user_message, **run_kwargs),
+            run,
             feature="chat_tutor", task="chat_tutor", user_id=deps.user_id,
+            session_id=usage_session_id,
             request_id=request_id,
         )
         # `.output` alone is a HISTORY read on this path: `_prepare_chat_run`
@@ -314,7 +361,10 @@ async def _chat_via_agent(
             # have already run. Fire regardless of whether writes landed:
             # nothing else will re-run, so there is no better answer waiting.
             try:
-                rescued = await _continuation_text(agent, result, run_kwargs, request_id=request_id)
+                rescued = await _continuation_text(
+                    agent, result, run_kwargs, request_id=request_id,
+                    usage_session_id=usage_session_id,
+                )
             except Exception:
                 # Second model call; a failure here must degrade to the
                 # pre-#646 behaviour, never surface as its own error.
@@ -352,8 +402,7 @@ async def _chat_via_agent(
     response = {
         "reply": reply,
         "graph_update": merged_graph_update,
-        # Real before/after deltas accumulated by update_mastery_tool.
-        # Empty when no mastery moved this turn.
+        # Always empty since PKG-14b (update_mastery_tool is gone, spec §11.6).
         "mastery_changes": deps.mastery_changes,
     }
     # Out of band, never in the wire dict: what this run actually ran on, for
@@ -366,6 +415,7 @@ async def _chat_turn_json(
     request: Request,
     *,
     model_pref: str | None = None,
+    usage_session_id: str | None | object = _RESOLVE,
 ) -> dict:
     """One full non-streaming chat turn: agent run, persistence, and the
     #117 `chat.message_sent` emission — the SINGLE emission site for
@@ -404,6 +454,7 @@ async def _chat_turn_json(
     )
 
     response, ran_on = await _chat_via_agent(
+        usage_session_id=usage_session_id,
         user_id=body.user_id,
         session_id=body.session_id,
         course_id=course_id,
@@ -438,9 +489,52 @@ async def _chat_turn_json(
     return response
 
 
-async def chat(body: ChatBody, request: Request):
+async def _refuse_ended_session(session_id: str) -> None:
+    """The ended-session 409 (SESSION_ENDED) for a session that has a row.
+    A session with no row yet is still pending: it cannot have ended, since
+    ending a pending session leaves a tombstone `_require_turn_session`
+    already answered. One `sessions` read; writes nothing."""
+    rows = await table("sessions").aselect(
+        "ended_at", filters={"id": f"eq.{session_id}"}, limit=1
+    )
+    if rows and rows[0].get("ended_at"):
+        raise session_ended_error()
+
+
+async def _loop_turn_entry(session_id: str, user_id: str, turn_id: str | None) -> dict | None:
+    """A learning-loop turn's checks before the hand-off (spec §7), in #761's
+    order: not discarded and owned (404); the stored reply of a turn already
+    persisted under this `turn_id` (the client's JSON fallback re-sends its
+    stream's), which the caller returns instead of handing the turn off again;
+    the ended-session 409; and only then the loop's rate-limit read (A20,
+    after the ownership check, A93 review), so a resend at the cap gets its
+    saved reply, not a 429. None: hand the turn off.
+
+    The replay finds the rows `_turn_message_id` names: a turn the loop wrote
+    under random ids is not found and runs again. The loop handler
+    materialises the session and checks its phase itself."""
+    await _require_turn_session(session_id, user_id)
+    replay = await _persisted_turn(session_id, turn_id)
+    if replay is not None:
+        return replay
+    await _refuse_ended_session(session_id)
+    # #117: off the event loop (it reads llm_usage).
+    await asyncio.to_thread(ai_budget.enforce_rate_limit_for, user_id)
+    return None
+
+
+async def chat(body: ChatBody, request: Request, loop_handler=None):
     await guard_off_loop(require_self, body.user_id, request)
     await aenforce_abuse_limit(abuse_limits.TUTOR_TURN, body.user_id)
+    # Learning loop (spec §7): the loop's handler when the route-entry gate is
+    # on for this student; only that path reads the AI budget (owner decision
+    # 2026-11-18). Below it, the legacy tutor exactly as before the loop.
+    if loop_handler is not None:
+        replay = await _loop_turn_entry(body.session_id, body.user_id, body.turn_id)
+        if replay is not None:
+            return replay
+        request.state.learning_loop = True  # A38 00: the loop handler reads no second gate
+        return await loop_handler(body, request)
     await _open_turn_session(body.session_id, body.user_id)
     # #761: the client's fallback for a stream whose `done` it never saw. If
     # that turn already persisted, answer with it instead of running it again.
@@ -494,9 +588,13 @@ async def _action_turn(body: ActionBody, request: Request) -> dict:
         model_pref=body.model_pref,
     )
 
+    # A92: resolved once for the turn and its continuation; #117: off the loop.
+    usage_session_id = await asyncio.to_thread(_usage_session_id, body.session_id, body.user_id)
+    run = await agent.run(assembled, **run_kwargs)
     result = record_agent_usage(
-        await agent.run(assembled, **run_kwargs),
+        run,
         feature="chat_tutor", task="chat_tutor", user_id=body.user_id,
+        session_id=usage_session_id,
         request_id=request_id,
     )
     # History-bearing run (`_load_message_history` above), so `.output` alone
@@ -511,7 +609,10 @@ async def _action_turn(body: ActionBody, request: Request) -> dict:
         # (#646) — an action turn has no fallback rung at all, so the
         # alternative is failing work the tools already did.
         try:
-            rescued = await _continuation_text(agent, result, run_kwargs, request_id=request_id)
+            rescued = await _continuation_text(
+                agent, result, run_kwargs, request_id=request_id,
+                usage_session_id=usage_session_id,
+            )
         except Exception:
             logger.warning(
                 "Continuation after a textless action turn failed", exc_info=True
@@ -532,9 +633,15 @@ async def _action_turn(body: ActionBody, request: Request) -> dict:
     return {"reply": reply, "graph_update": graph_update}
 
 
-async def action(body: ActionBody, request: Request):
+async def action(body: ActionBody, request: Request, loop_handler=None):
     await guard_off_loop(require_self, body.user_id, request)
     await aenforce_abuse_limit(abuse_limits.TUTOR_TURN, body.user_id)
+    # Learning loop (spec §7): as /chat. An action carries no turn_id, so
+    # there is no stored turn to replay.
+    if loop_handler is not None:
+        await _loop_turn_entry(body.session_id, body.user_id, None)
+        request.state.learning_loop = True  # A38 00: the loop handler reads no second gate
+        return await loop_handler(body, request)
     await _open_turn_session(body.session_id, body.user_id)
     return await _agent_turn_or_http_error(
         _action_turn(body, request), what="action agent"

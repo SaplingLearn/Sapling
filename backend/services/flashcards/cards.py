@@ -1,13 +1,18 @@
 """Flashcard rows (#118, moved from ``routes/flashcards.py``): the list, rate
 and delete handlers' bodies, the row a new card is stored as, and the
-library-document read behind the import flow."""
+library-document read behind the import flow. The list is in FSRS review
+order and a rating is an FSRS review (learning-loop PKG-11 / PKG-14b: for
+every student, no gate)."""
 from __future__ import annotations
 
 import logging
 import uuid
 from datetime import datetime, timezone
 
-from db.connection import table
+from db.connection import is_missing_relation, table
+from learning.flashcard_fsrs import flashcard_fsrs_update
+from learning.fsrs import order_due
+from learning.params import FLASHCARD_RATING_TO_FSRS
 from services import events_service
 from services.academics import offering_course_id, term_id_for_label
 from services.achievement_service import check_achievements
@@ -18,21 +23,56 @@ from services.encryption import (
     decrypt_json,
     encrypt_if_present,
 )
-from services.flashcards.errors import NotFound, StorageError
+from services.flashcards.errors import NotFound, StorageError, Unprocessable
+from services.timestamps import parse_ts
 
 logger = logging.getLogger(__name__)
 
 CARD_NOT_FOUND_DETAIL = "Flashcard not found"
 
-#: What a failed read says when the database has no ``flashcards`` table yet.
-_MISSING_TABLE_MARKERS = ("not found", "does not exist", "42p01")
-
-#: The stored columns a listed card carries. The list adds two derived keys:
-#: `course_id`, and `due_at` (always None today; see `list_flashcards`).
-_CARD_FIELDS = (
-    "id", "user_id", "topic", "offering_id", "front", "back", "times_reviewed",
-    "last_rating", "last_reviewed_at", "created_at",
+#: The stored columns a listed card carries (the list adds the derived
+#: `course_id`): the card, then its FSRS state (PKG-11, migration
+#: 20260927035346_learning_flashcards_fsrs; `rate_card` writes it).
+_LEGACY_LIST_COLS = (
+    "id,user_id,topic,offering_id,front,back,times_reviewed,last_rating,"
+    "last_reviewed_at,created_at"
 )
+_FSRS_LIST_COLS = ",fsrs_d,fsrs_s,due_at,reps,lapses"
+#: What `rate_card` reads of the card it updates (with the loop on, its
+#: offering too: the course whose retention target it is scheduled at).
+_RATE_COLS = "id,times_reviewed,last_reviewed_at,fsrs_d,fsrs_s,reps,lapses"
+_RATE_COLS_LOOP = _RATE_COLS + ",offering_id"
+RATING_INVALID_DETAIL = "rating must be one of 1, 2, 3"
+
+
+def _order_due_rows(rows: list[dict], now: datetime) -> list[dict]:
+    """PKG-11: due cards in learning.fsrs.order_due's order (|R − threshold|
+    ascending, spec §3.2). ADAPTER (HANDOFF-02: `order_due(items, now, *,
+    stability_key="fsrs_s", last_review_key=...)`): a flashcard's stability
+    is `fsrs_s` and its last review is `last_reviewed_at`. If PKG-02's
+    signature changes, change THIS function only."""
+    if not rows:
+        return []
+    return list(order_due(rows, now, last_review_key="last_reviewed_at"))
+
+
+def _loop_order(rows: list[dict], now: datetime) -> tuple[list[dict], list[dict]]:
+    """PKG-11: (ordered rows, due rows). Due first (`due_at` <= now, in
+    _order_due_rows order), then never rated on the loop path (`fsrs_s` null,
+    query order), then not yet due by `due_at` ascending. A null `due_at` is
+    never due."""
+    due, fresh, later = [], [], []
+    for r in rows:
+        due_at = parse_ts(r.get("due_at"))
+        if due_at is not None and due_at <= now:
+            due.append(r)
+        elif r.get("fsrs_s") is None:
+            fresh.append(r)
+        else:
+            later.append(r)
+    later.sort(key=lambda r: parse_ts(r.get("due_at")) or now)
+    ordered_due = _order_due_rows(due, now)
+    return ordered_due + fresh + later, ordered_due
 
 
 def list_flashcards(
@@ -45,25 +85,10 @@ def list_flashcards(
     if topic:
         filters["topic"] = f"eq.{topic}"
 
-    # `*`, then projected to _CARD_FIELDS, so the list never names a column a
-    # database may lack and never returns one it should not.
-    #
-    # `due_at` is the case in point. No migration in this repository adds
-    # `flashcards.due_at`: it came with the reverted learning-loop series
-    # (20260927035346_learning_flashcards_fsrs, with fsrs_s/fsrs_d/reps/lapses),
-    # which some databases still carry and others never had. Naming it in
-    # `select=` would be a PostgREST 400 on the second kind and take the whole
-    # list down. And nothing writes it (`rate_card` records only the review
-    # count, rating and time), so on the first kind a value left behind by that
-    # series would be a card frozen "due" forever. So the stored column is not
-    # read at all: every card answers `due_at: None` (the key stays, for the
-    # client's type) until a scheduler owns the column.
-    rows = [
-        {**{field: r.get(field) for field in _CARD_FIELDS}, "due_at": None}
-        for r in table("flashcards").select(
-            "*", filters=filters, order="created_at.desc"
-        ) or []
-    ]
+    rows = table("flashcards").select(
+        _LEGACY_LIST_COLS + _FSRS_LIST_COLS,
+        filters=filters, order="created_at.desc"
+    ) or []
     for r in rows:
         r["front"] = decrypt_if_present(r.get("front"), bind=bind("flashcards", "front", r))
         r["back"] = decrypt_if_present(r.get("back"), bind=bind("flashcards", "back", r))
@@ -118,19 +143,26 @@ def _offerings_in_term(offering_ids: set[str], term_id: str) -> set[str]:
 
 
 def get_flashcards(
-    user_id: str, topic: str | None = None, semester: str | None = None
-) -> list[dict]:
-    """:func:`list_flashcards` as the list route answers it: no user, or a
-    database with no ``flashcards`` table yet, is no cards; any other failure
-    is a ``StorageError``."""
+    user_id: str, topic: str | None = None, semester: str | None = None,
+    *, due_only: bool = False,
+) -> dict:
+    """:func:`list_flashcards` as the list route answers it, in FSRS review
+    order (:func:`_loop_order`): ``{flashcards, due_count}``, only the due
+    cards when ``due_only``. No user, or a database with no ``flashcards``
+    table yet, is no cards; any other failure is a ``StorageError``."""
     if not user_id:
-        return []
+        return {"flashcards": [], "due_count": 0}
     try:
-        return list_flashcards(user_id, topic, semester)
+        rows, due = _loop_order(
+            list_flashcards(user_id, topic, semester), datetime.now(timezone.utc),
+        )
     except Exception as e:
-        if any(marker in str(e).lower() for marker in _MISSING_TABLE_MARKERS):
-            return []
+        # Only the exactly-known "no such table" (PostgREST's error code, not
+        # the message text, which any 404 or missing-column error can share).
+        if is_missing_relation(e):
+            return {"flashcards": [], "due_count": 0}  # one shape on every path
         raise StorageError(str(e)) from e
+    return {"flashcards": due if due_only else rows, "due_count": len(due)}
 
 
 # ── New cards ────────────────────────────────────────────────────────────────
@@ -187,16 +219,33 @@ def _own_card(user_id: str, card_id: str, columns: str) -> dict:
     return rows[0]
 
 
-def rate_card(user_id: str, card_id: str, rating: int) -> None:
-    """Record one review of the user's card (count, rating, time)."""
-    card = _own_card(user_id, card_id, "id,times_reviewed")
+def rate_card(user_id: str, card_id: str, rating: int, *, loop_on: bool = False) -> dict:
+    """Record one review of the user's card: the count, rating and time, plus
+    its FSRS state (PKG-11 / PKG-14b: every rating is an FSRS review, 1/2/3 ->
+    Again/Hard/Good via ``FLASHCARD_RATING_TO_FSRS``; any other value is
+    ``Unprocessable``). Answers the card's next ``due_at`` and the FSRS
+    rating.
+
+    ``loop_on`` (the route's learning-loop gate, #866 K54): the card is
+    scheduled at its course's retention target — the one Study's review
+    schedules the same card at (``learning.review.card_retention``: an exam
+    window's 0.95, a large set's 0.85). Off, the default as before: there is
+    no review queue to agree with."""
+    fsrs_rating = FLASHCARD_RATING_TO_FSRS.get(rating)
+    if fsrs_rating is None:
+        raise Unprocessable(RATING_INVALID_DETAIL)
+    card = _own_card(user_id, card_id, _RATE_COLS_LOOP if loop_on else _RATE_COLS)
+    now = datetime.now(timezone.utc)
+    payload = {
+        "times_reviewed": (card["times_reviewed"] or 0) + 1,
+        "last_rating": rating,
+        "last_reviewed_at": now.isoformat(),
+    }
+    # PKG-12 reopen: the pure helper learning/review.py shares; it returns
+    # the three columns above (same values) plus the FSRS five.
+    payload.update(flashcard_fsrs_update(card, rating, now=now, **_retention_kw(user_id, card, loop_on)))
     table("flashcards").update(
-        {
-            "times_reviewed": (card["times_reviewed"] or 0) + 1,
-            "last_rating": rating,
-            "last_reviewed_at": datetime.now(timezone.utc).isoformat(),
-        },
-        filters={"id": f"eq.{card_id}", "user_id": f"eq.{user_id}"},
+        payload, filters={"id": f"eq.{card_id}", "user_id": f"eq.{user_id}"},
     )
     events_service.log_event(
         "flashcard.reviewed",
@@ -216,6 +265,17 @@ def rate_card(user_id: str, card_id: str, rating: int) -> None:
             "achievement dispatch failed after card rating user=%s card=%s",
             user_id, card_id,
         )
+    return {"due_at": payload["due_at"], "fsrs_rating": fsrs_rating}
+
+
+def _retention_kw(user_id: str, card: dict, loop_on: bool) -> dict:
+    """`flashcard_fsrs_update`'s retention for `rate_card` (#866 K54): the
+    card's course's target with the loop on; none (the default) off."""
+    if not loop_on:
+        return {}
+    from learning.review import card_retention  # the loop's module, only on its path
+
+    return {"retention": card_retention(user_id, card)}
 
 
 def delete_card(user_id: str, card_id: str) -> None:

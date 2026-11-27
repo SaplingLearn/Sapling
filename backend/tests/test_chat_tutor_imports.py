@@ -35,14 +35,14 @@ def test_unknown_mode_falls_back_to_socratic():
 
 
 def test_all_tools_registered():
-    """Chat tutor: three context tools + two graph writers + the two #149
-    graph readers (neighborhood expansion + weakest-first concept list)."""
+    """Chat tutor: three context tools + one graph writer (PKG-14b removed
+    update_mastery_tool, spec §11.2) + the two #149 graph readers
+    (neighborhood expansion + weakest-first concept list)."""
     expected = {
         "search_course_materials",
         "read_session_history_tool",
         "read_user_progress_tool",
         "apply_graph_update_tool",
-        "update_mastery_tool",
         "read_graph_neighborhood",
         "read_concepts_for_user",
     }

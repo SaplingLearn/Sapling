@@ -55,7 +55,7 @@ function LoadError({
 }) {
   if (hasDocuments) {
     return (
-      <div data-testid="library-load-error" role="alert" className="flex items-center gap-2 mb-3 text-base text-text-muted">
+      <div data-testid="library-load-error" role="alert" className="flex items-center gap-2 mb-3 text-base text-[#6F6857]">
         Couldn&apos;t refresh your library — showing what was last loaded.
         <button
           data-testid="library-load-retry"
@@ -75,7 +75,7 @@ function LoadError({
       </div>
       <button
         data-testid="library-load-retry"
-        className="sapHoverForest mt-1.5 h-9.5 py-0 px-4 border-0 [background:#445D22] text-accent-fg rounded-md [font-family:inherit] [font-style:inherit] [font-variant:inherit] [font-stretch:inherit] [line-height:inherit] text-base font-bold cursor-pointer"
+        className="sapHoverForest mt-1.5 h-9.5 py-0 px-4 border-0 [background:#445D22] text-sidenav-fg rounded-md [font-family:inherit] [font-style:inherit] [font-variant:inherit] [font-stretch:inherit] [line-height:inherit] text-base font-bold cursor-pointer"
         onClick={onRetry}
       >Try again</button>
     </div>
@@ -136,7 +136,13 @@ export function LibraryBody(props: LibraryBodyProps) {
 
   const renderView = (which: "list" | "panel", dir: "in" | "out") =>
     which === "list" ? (
-      <div key={`list-${dir}`} style={slide("list", dir)} aria-hidden={dir === "out"}>
+      <div
+        key={`list-${dir}`}
+        role="grid"
+        aria-label="Documents"
+        style={slide("list", dir)}
+        aria-hidden={dir === "out"}
+      >
         <ListHeader
           columns={columns}
           showCourse={showCourse}

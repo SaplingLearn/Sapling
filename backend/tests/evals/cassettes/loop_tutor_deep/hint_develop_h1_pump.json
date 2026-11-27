@@ -1,0 +1,19 @@
+{
+  "attempts": [
+    "{\"key_idea\": \"Start by pinning down what the question is asking you to do.\", \"body\": \"Before reaching for any method, it helps to put the task in your own words.\", \"question\": \"What is the first thing you need to figure out to get started on this item?\"}"
+  ],
+  "input_sha256": "a223d9787536083e662accb290741c8dedf27ba661214abdbca0142b8f3dd1d0",
+  "model": "claude-sonnet-5-5",
+  "output": {
+    "body": "Before reaching for any method, it helps to put the task in your own words.",
+    "key_idea": "Start by pinning down what the question is asking you to do.",
+    "question": "What is the first thing you need to figure out to get started on this item?"
+  },
+  "prompt_hash": "7d2b25572445",
+  "requests": 1,
+  "rescued": false,
+  "retries": 0,
+  "schema_hash": "ab89f4f429db",
+  "slot": "loop_tutor_deep",
+  "tool_calls": []
+}

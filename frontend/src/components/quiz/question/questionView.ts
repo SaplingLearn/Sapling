@@ -8,6 +8,60 @@
 
 import type { AnswerState } from "@/components/ui";
 import { isUnanswered } from "@/lib/quiz/machine";
+import {
+  asBuildInteraction,
+  decodeBuildAnswer,
+  isBuildComplete,
+} from "@/lib/quiz/buildInteraction";
+import {
+  asCompareInteraction,
+  isCompareComplete,
+} from "@/lib/quiz/compareInteraction";
+import {
+  asDialogueInteraction,
+  isDialogueComplete,
+} from "@/lib/quiz/dialogueInteraction";
+import {
+  asExplainInteraction,
+  isExplainComplete,
+} from "@/lib/quiz/explainInteraction";
+import {
+  asHighlightInteraction,
+  isHighlightComplete,
+} from "@/lib/quiz/highlightInteraction";
+import {
+  asCalculateInteraction,
+  isCalculateComplete,
+} from "@/lib/quiz/calculateInteraction";
+import {
+  asPositionInteraction,
+  decodePositionAnswer,
+  isPositionComplete,
+} from "@/lib/quiz/positionInteraction";
+import {
+  asRankInteraction,
+  isRankComplete,
+} from "@/lib/quiz/rankInteraction";
+import {
+  asConnectInteraction,
+  decodeConnectAnswer,
+  isConnectComplete,
+} from "@/lib/quiz/connectInteraction";
+import {
+  asLabelInteraction,
+  decodeLabelAnswer,
+  isLabelComplete,
+} from "@/lib/quiz/labelInteraction";
+import {
+  asSequenceInteraction,
+  decodeSequenceAnswer,
+  isSequenceComplete,
+} from "@/lib/quiz/sequenceInteraction";
+import {
+  asSortInteraction,
+  decodeSortAnswer,
+  isSortComplete,
+} from "@/lib/quiz/sortInteraction";
 import type { Phase, QuestionType, QuizItem, QuizSession, WireOption } from "@/lib/quiz/types";
 import { isWrittenType } from "@/lib/quiz/types";
 import type { AskSeed } from "./AskPanel";
@@ -29,16 +83,75 @@ export interface ItemView {
   verdict: Verdict | null;
 }
 
+type KitInteraction = NonNullable<QuizItem["question"]["interaction"]>;
+/** One kit's completeness check: null when the interaction is not that kit. */
+type KitCheck = (interaction: KitInteraction | undefined, text: string | undefined) => boolean | null;
+
+/** Each kit's check, in the order the kinds are tried. */
+const KIT_CHECKS: KitCheck[] = [
+  (i, t) => { const k = asSortInteraction(i); return k ? isSortComplete(k, decodeSortAnswer(k, t)) : null; },
+  (i, t) => { const k = asSequenceInteraction(i); return k ? isSequenceComplete(k, decodeSequenceAnswer(k, t)) : null; },
+  (i, t) => { const k = asLabelInteraction(i); return k ? isLabelComplete(k, decodeLabelAnswer(k, t)) : null; },
+  (i, t) => { const k = asBuildInteraction(i); return k ? isBuildComplete(k, decodeBuildAnswer(k, t)) : null; },
+  (i, t) => { const k = asCompareInteraction(i); return k ? isCompareComplete(k, t) : null; },
+  (i, t) => { const k = asDialogueInteraction(i); return k ? isDialogueComplete(k, t) : null; },
+  (i, t) => (asExplainInteraction(i) ? isExplainComplete(t) : null),
+  (i, t) => { const k = asHighlightInteraction(i); return k ? isHighlightComplete(k, t) : null; },
+  (i, t) => (asCalculateInteraction(i) ? isCalculateComplete(t) : null),
+  (i, t) => { const k = asPositionInteraction(i); return k ? isPositionComplete(k, decodePositionAnswer(k, t)) : null; },
+  (i, t) => { const k = asRankInteraction(i); return k ? isRankComplete(k, t) : null; },
+  (i, t) => { const k = asConnectInteraction(i); return k ? isConnectComplete(k, decodeConnectAnswer(k, t)) : null; },
+];
+
+/** The kit kinds a short_answer can carry, in the order they are tried. */
+export const KIT_KINDS = [
+  "sort", "sequence", "label", "build", "compare", "dialogue",
+  "explain", "highlight", "calculate", "position", "rank", "connect",
+] as const;
+export type KitKind = (typeof KIT_KINDS)[number];
+
+const KIT_GUARDS: Record<KitKind, (interaction: KitInteraction | undefined) => unknown> = {
+  sort: asSortInteraction,
+  sequence: asSequenceInteraction,
+  label: asLabelInteraction,
+  build: asBuildInteraction,
+  compare: asCompareInteraction,
+  dialogue: asDialogueInteraction,
+  explain: asExplainInteraction,
+  highlight: asHighlightInteraction,
+  calculate: asCalculateInteraction,
+  position: asPositionInteraction,
+  rank: asRankInteraction,
+  connect: asConnectInteraction,
+};
+
+/** Which kit an interaction is (a usable payload of that kind), or null. */
+export function kitKindOf(interaction: KitInteraction | undefined): KitKind | null {
+  return KIT_KINDS.find(kind => KIT_GUARDS[kind](interaction) != null) ?? null;
+}
+
+/** Kit placements that gate Check the same way a non-blank written answer does. */
+function kitHasAnswer(item: QuizItem | undefined): boolean | null {
+  const interaction = item?.question.interaction;
+  for (const check of KIT_CHECKS) {
+    const complete = check(interaction, item?.answerText);
+    if (complete !== null) return complete;
+  }
+  return null;
+}
+
 export function itemView(item: QuizItem | undefined): ItemView {
   const written = isWrittenType(item?.question.type);
   const selectedIndex = item?.selectedIndex ?? null;
+  const kit = written ? kitHasAnswer(item) : null;
+  const hasWritten = kit ?? Boolean(item?.answerText?.trim());
   return {
     item,
     options: item?.question.options ?? [],
     selectedIndex,
     written,
     format: written ? (item?.question.type as QuestionType) : "multiple_choice",
-    hasAnswer: written ? Boolean(item?.answerText?.trim()) : selectedIndex !== null,
+    hasAnswer: written ? hasWritten : selectedIndex !== null,
     verdict: item?.verdict ?? null,
   };
 }
@@ -78,7 +191,180 @@ export function canGoTo(index: number, cursor: number, total: number, navigable:
   return navigable && index !== cursor && index >= 0 && index < total;
 }
 
+/**
+ * W7.5 client-side Hint (option b): surface rubric-safe scaffolding already
+ * on the question — concept focus + answer-format rules. No LLM, no answer
+ * key, no Ask seed, no loop `/hint` session.
+ *
+ * Full Bastani H-ladder (loop `POST /hint` + leak-cut `/action`) stays
+ * deferred: that API requires a learning-loop session and `learning_loop`,
+ * and the quiz Ask panel seeds the correct answer so it cannot be the pre-
+ * check Hint. See `docs/learning-loop/w7-5-hint-scaffold.md`.
+ */
+export type ScaffoldHint = {
+  /** Concept the item is already tagged with (meta / `concept_tested`). */
+  focus: string;
+  /** Grader acceptance rules already shown for written/Sort; null on MC. */
+  rubric: string | null;
+  /** Fixed copy: never names the answer. */
+  note: string;
+};
+
+export type HintRung = {
+  /** Bastani-lite client rung id (H0–H2). Never includes the key. */
+  id: "H0" | "H1" | "H2";
+  title: string;
+  body: string;
+};
+
+export function scaffoldHint({
+  conceptName,
+  conceptTested,
+  format,
+  sort,
+  sequence,
+  label,
+  build,
+  compare,
+  dialogue,
+  explain,
+  highlight,
+  calculate,
+  position,
+  rank,
+  connect,
+}: {
+  conceptName: string;
+  conceptTested?: string | null;
+  format: QuestionType | undefined;
+  sort?: boolean;
+  sequence?: boolean;
+  label?: boolean;
+  build?: boolean;
+  compare?: boolean;
+  dialogue?: boolean;
+  explain?: boolean;
+  highlight?: boolean;
+  calculate?: boolean;
+  position?: boolean;
+  rank?: boolean;
+  connect?: boolean;
+}): ScaffoldHint {
+  const focus = (conceptTested?.trim() || conceptName.trim() || "this concept");
+  const showRubric =
+    Boolean(sort) ||
+    Boolean(sequence) ||
+    Boolean(label) ||
+    Boolean(build) ||
+    Boolean(compare) ||
+    Boolean(dialogue) ||
+    Boolean(explain) ||
+    Boolean(highlight) ||
+    Boolean(calculate) ||
+    Boolean(position) ||
+    Boolean(rank) ||
+    Boolean(connect) ||
+    (format != null && format !== "multiple_choice");
+  const rubric = showRubric
+    ? formatHint(format, { sort, sequence, label, build, compare, dialogue, explain, highlight, calculate, position, rank, connect })
+    : null;
+  return {
+    focus,
+    rubric,
+    note: "Scaffolding only — never the answer. Open study guides for course cards (keys stay hidden).",
+  };
+}
+
+/**
+ * Client Bastani-lite ladder (H0–H2). Each Hint click reveals one more rung.
+ * Never names options, explanations, or keys. Loop POST /hint stays deferred
+ * (docs/learning-loop/w7-5-hint-scaffold.md).
+ */
+export function hintLadder(scaffold: ScaffoldHint): HintRung[] {
+  const rungs: HintRung[] = [
+    {
+      id: "H0",
+      title: "Focus",
+      body: `Stay with ${scaffold.focus}.`,
+    },
+  ];
+  if (scaffold.rubric) {
+    rungs.push({
+      id: "H1",
+      title: "How to answer",
+      body: scaffold.rubric,
+    });
+  }
+  rungs.push({
+    id: "H2",
+    title: "Next support",
+    body: scaffold.note,
+  });
+  return rungs;
+}
+
+/** Hint is on in Practice when a live item is open; Exam Twin stays tool-light. */
+export function hintSlotState({
+  phase,
+  busy,
+  sessionMode,
+  hasItem,
+}: {
+  phase: Phase;
+  busy: boolean;
+  sessionMode?: "practice" | "exam_twin" | null;
+  hasItem: boolean;
+}): { enabled: boolean; title: string } {
+  if ((sessionMode ?? "practice") === "exam_twin") {
+    return { enabled: false, title: "Hints are off in Exam Twin" };
+  }
+  if (!hasItem || busy || (phase !== "active" && phase !== "answered")) {
+    return { enabled: false, title: "Can't show a hint right now" };
+  }
+  return {
+    enabled: true,
+    title: "Show scaffolding already on this question (not the answer)",
+  };
+}
+
+/**
+ * W7.5 Skip: advance via `GO_TO` without recording an answer. Unanswered items
+ * earn no mastery (payout is on submit of graded answers only). Disabled when
+ * there is nowhere ahead, the item is already graded, or navigation is locked.
+ */
+export function skipSlotState({
+  phase,
+  busy,
+  cursor,
+  total,
+  hasVerdict,
+}: {
+  phase: Phase;
+  busy: boolean;
+  cursor: number;
+  total: number;
+  hasVerdict: boolean;
+}): { enabled: boolean; title: string; targetIndex: number | null } {
+  if (!canNavigate(phase, busy, total)) {
+    return { enabled: false, title: "Can't skip right now", targetIndex: null };
+  }
+  if (hasVerdict) {
+    return { enabled: false, title: "Already answered — use Next", targetIndex: null };
+  }
+  if (cursor >= total - 1) {
+    return { enabled: false, title: "Already on the last question", targetIndex: null };
+  }
+  return {
+    enabled: true,
+    title: "Skip this question for now (no mastery credit until you answer it)",
+    targetIndex: cursor + 1,
+  };
+}
+
 export type PrimaryAction = "none" | "next" | "submit";
+
+/** The footer button with its press bound to the session. */
+export type Primary = PrimaryButton & { activate: () => void };
 
 export interface PrimaryButton {
   label: string;
@@ -113,7 +399,9 @@ export function primaryButton({
   if (showVerdict || phase === "answered") {
     return { label: allAnswered ? "See results" : "Next", testid: "quiz-next", enabled: phase === "answered", action: "next" };
   }
-  return { label: "Submit", testid: "quiz-submit-answer", enabled: phase === "active" && !busy && hasAnswer, action: "submit" };
+  // W7.1 session chrome: the design's primary is "Check"; testid stays
+  // `quiz-submit-answer` so Playwright journeys keep working.
+  return { label: "Check", testid: "quiz-submit-answer", enabled: phase === "active" && !busy && hasAnswer, action: "submit" };
 }
 
 /** Nothing is left to answer, in any order. */
@@ -154,8 +442,29 @@ export function nextOptionIndex(selectedIndex: number | null, step: 1 | -1, coun
   return (from + step + count) % count;
 }
 
+/** The kit flags `formatHint` takes, each naming the kit on screen. */
+export type KitHintFlags = Partial<Record<KitKind, boolean>>;
+
+/** Each kit's rules, in the order the flags are tried. */
+const KIT_HINTS: [keyof KitHintFlags, string][] = [
+  ["sort", "Select an item, then tap a bucket to place it. Tap a placed item to return it to the tray. Check unlocks once every item is sorted."],
+  ["sequence", "Select a step, then tap a numbered slot to place it. Tap a placed step to return it to the tray. Check unlocks once every slot is filled."],
+  ["label", "Select a label, then tap a numbered region to place it. Tap a placed label to return it to the tray. Check unlocks once every region is labelled."],
+  ["build", "Select a part, then tap a slot to place it. Tap a placed part to return it to the tray. Check unlocks once every slot is filled."],
+  ["compare", "Read both sides, then tap one relation. Tap again to clear. Check unlocks once a relation is selected."],
+  ["dialogue", "Reply to your partner. After your first message they follow up. Check unlocks once you have sent enough replies."],
+  ["explain", "Write a short explanation in your own words. Check unlocks once the box is not empty."],
+  ["highlight", "Tap passages to highlight them. Tap again to clear. Check unlocks once enough passages are selected."],
+  ["calculate", "Enter the number and its unit. Check unlocks once both fields are filled."],
+  ["position", "Select a marker, then tap a stop on the scale. Tap a placed marker to return it. Check unlocks once every marker is placed."],
+  ["rank", "Select an item, then tap a numbered slot. Add a short reason for your top choice. Check unlocks once the order is full and a why is written."],
+  ["connect", "Select a left item, then tap its match on the right. Tap a paired left item to clear. Check unlocks once every left item is paired."],
+];
+
 /** The grading rules shown under a written answer, per format. */
-export function formatHint(type: QuestionType | undefined): string {
+export function formatHint(type: QuestionType | undefined, opts?: KitHintFlags): string {
+  const kit = KIT_HINTS.find(([flag]) => opts?.[flag]);
+  if (kit) return kit[1];
   if (type === "symbolic") {
     return "Enter an expression using single-letter variables, + − * / ^ and parentheses, with whole-number powers from −8 to 8. For example, 2(x + 1) and 2x + 2 are equivalent wherever both are defined. Functions and equations are not supported.";
   }

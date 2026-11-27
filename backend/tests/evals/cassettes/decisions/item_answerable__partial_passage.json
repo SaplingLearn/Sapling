@@ -1,0 +1,12 @@
+{
+  "output": {
+    "answer": "no",
+    "confidence": 0.85
+  },
+  "recorded_under": {
+    "input_sha256": "0fbf5f88a872dba517718422a070d0fd7bc950babefdd82924333defd14b5223",
+    "model": "claude-haiku-5-5",
+    "prompt_hash": "17f6dbd632ff",
+    "schema_hash": "b791bbe9feaa"
+  }
+}

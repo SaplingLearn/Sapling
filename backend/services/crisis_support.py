@@ -11,6 +11,13 @@ first. The call is one line at the top of the handler:
 
 (`screen` is the same for a sync `def` route).
 
+A route whose limiters are ROUTE DEPENDENCIES (the learning loop's
+`_RATE_LIMITED`) cannot screen in its handler, which runs after them: it
+lists `screened(...)` as a dependency right after its kill switch and before
+the rate limit. On a match the dependency authenticates the caller and raises
+`CrisisAnswered`, whose response main.py's `answered_handler` returns as-is,
+so neither a later dependency nor the handler runs.
+
 The one exception is text the student STORED rather than typed: a note's
 title and body, read by the notes agent actions. A match there never
 blocks. The notes routes screen the note right after they read it (still
@@ -31,10 +38,11 @@ concepts (course material): then the cards are made with the card beside
 them.
 
 A crisis turn (a blocking screen) makes no model call, consumes no
-rate-limit, budget or quota unit (the per-user LLM budget is checked at the
-model chokepoint, which a crisis turn never reaches), and writes nothing a
-turn writes: no message row, lazy session, summary, concept, card or graph
-change. The triggering text is
+rate-limit, budget, quota or tutor-call unit (the per-user LLM budget is
+checked at the model chokepoint, which a crisis turn never reaches), and
+writes nothing a turn writes: no message row, lazy session, summary,
+concept, card or graph change, and on the learning loop no learning
+evidence, grade, hint, help-ledger row, XP or streak. The triggering text is
 never stored, logged, fingerprinted or sent anywhere (no `content=` on the
 event either).
 
@@ -63,6 +71,7 @@ import hashlib
 import inspect
 import json
 import logging
+import re
 import threading
 import time
 import uuid
@@ -70,7 +79,8 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Literal, get_args
 
-from fastapi import Request
+from fastapi import Depends, Request
+from fastapi.responses import JSONResponse, Response
 from sse_starlette.sse import EventSourceResponse
 
 from db.connection import table
@@ -95,6 +105,18 @@ Surface = Literal[
     # /api/learn/* (the tutor; the quiz's "Ask about this" panel rides it too)
     "tutor_chat",
     "tutor_start",
+    # /api/learn/loop/* (the learning loop)
+    "loop_chat",
+    "loop_start",
+    "loop_goal",
+    "loop_check_answer",
+    "loop_step_attempt",
+    "loop_probe_answer",
+    "loop_review_answer",
+    "loop_posttest_answer",
+    # learning-loop spec §13 A138 / A139: a prequestion guess, a self-explanation reply
+    "loop_prequestion_answer",
+    "loop_self_explain",
     # /api/notes/*
     "note_chat",
     "note_send_to_tutor",
@@ -231,8 +253,10 @@ async def screen_content_async(
 async def screen_tutor_start_async(
     request: Request, user_id: str | None, topic: str | None,
     *, note_version: Callable[[], Awaitable[tuple[Any, ...] | None]],
+    surface: Surface = "tutor_start",
 ) -> CrisisSupport | ContentScreen | None:
-    """The `tutor_start` screen of a session start's topic: None to carry on
+    """The `surface` screen (the legacy start's `tutor_start`, or the loop's
+    `loop_start`) of a session start's topic: None to carry on
     as before, a `CrisisSupport` to answer with the card INSTEAD of a session
     (`start_json`, `sse_response`), or a `ContentScreen` to start the session
     with the card beside it (`alongside`).
@@ -244,18 +268,72 @@ async def screen_tutor_start_async(
     once a day per student and note version, sharing the key Send to tutor
     remembered (`hands_off_note`), so the start right after it records no
     second card. A typed topic (`note_version()` answers None) records
-    every match and blocks, as before."""
-    _check_surface("tutor_start")
+    every match and blocks, as before. The hand-over key ignores `surface`, so
+    a loop start after Send to tutor records no second card either."""
+    _check_surface(surface)
     match = await _match_async(request, user_id, (topic,))
     if match is None:
         return None
-    support = await asyncio.to_thread(_support, user_id, "tutor_start", match)
+    support = await asyncio.to_thread(_support, user_id, surface, match)
     if support is None:
         return None
     version = await note_version()
     once = None if version is None else _handoff_key(user_id, version)
-    await asyncio.to_thread(_record, user_id, "tutor_start", match, once_a_day_key=once)
+    await asyncio.to_thread(_record, user_id, surface, match, once_a_day_key=once)
     return support if version is None else ContentScreen(request, support)
+
+
+async def screen_quoting_async(
+    request: Request, user_id: str | None, surface: Surface, message: str | None,
+    *, quoted: Callable[[], Awaitable[list[str]]], once_a_day: tuple[Any, ...] | None = None,
+) -> CrisisSupport | ContentScreen | None:
+    """`screen_async` for a typed message that may QUOTE the student's stored
+    material (#866 K12: the quiz Ask panel's first message quotes the quiz
+    question, its options, key and explanation): None to
+    carry on as before, a `CrisisSupport` to answer INSTEAD of the turn, or a
+    `ContentScreen` to run it with the card beside it (`alongside`).
+
+    `quoted()` — awaited on a match only, after the caller is authenticated
+    and the flag is on — answers the stored texts the message may quote, read
+    by the caller off the student's own records, never taken from the client.
+    Each one that fills a whole field of the message (`_quote_spans`) is stored
+    material, screened as such (the card beside the answer); the rest of the
+    message, with a sentence break where each quote was so no phrase spans
+    one, is typed and blocks like any typed message. A stored text found only
+    INSIDE typed words (a one-word key in the student's own sentence) is not a
+    quote: removing it would cut the typed phrase apart. A quote found nowhere
+    leaves the message typed, as before.
+    The whole message's match decides nothing alone: a first-person frame
+    around a quoted word ("I chose B: suicide") is not the student speaking.
+    `once_a_day` names the material, for a client that re-sends it (Retry):
+    the card goes beside every answer and its event is recorded once a day."""
+    _check_surface(surface)
+    if await _match_async(request, user_id, (message,)) is None:
+        return None
+    if not await asyncio.to_thread(flag_on, FLAG, user_id):
+        return None
+    typed, stored = _quote_spans(message or "", await quoted())
+    if crisis := await _screen_async(request, user_id, surface, (typed,)):
+        return crisis
+    return ContentScreen(
+        request, await _screen_async(request, user_id, surface, tuple(stored), once_a_day=once_a_day),
+    )
+
+
+def _quote_spans(message: str, quoted: list[str]) -> tuple[str, list[str]]:
+    """(the typed remainder, the stored texts quoted) of `message` (#866 K12).
+    A stored text is a quote only where it fills a whole field: it starts the
+    message or a line, or follows a label's ": " ("Question: …", "I chose B:
+    …"), and it runs to the end of its line (or of the message). Each such
+    span becomes a sentence break, longest text first, so a quote inside a
+    longer one goes with it."""
+    typed, stored = message, []
+    for text in sorted({t for t in quoted if t}, key=len, reverse=True):
+        field = re.compile(r"(?:^|(?<=\n)|(?<=: ))" + re.escape(text) + r"(?=\n|$)")
+        typed, found = field.subn("\n.\n", typed)
+        if found:
+            stored.append(text)
+    return typed, stored
 
 
 def _check_surface(surface: str) -> None:
@@ -463,7 +541,8 @@ async def alongside(
     """Await `action` (the route's own work, limits included) and attach the
     card `screen` found to whatever answer goes back: its result
     (`crisis_support` plus `ALONGSIDE`; for a stream, in its `done` event's
-    data), or the error it raises (a 429, a 413, a 500). An error is NOT
+    data, or in the `error` event the stream ends with instead), or the error
+    it raises (a 429, a 413, a 500). An error is NOT
     answered here: the card is left on the request's state and the exception
     re-raised, so it reaches the app's own handler (and, for an unexpected
     one, ServerErrorMiddleware, the server's error log and the trace) exactly
@@ -492,14 +571,24 @@ async def alongside(
     return {**result, "crisis_support": support.payload, ALONGSIDE: True}
 
 
+#: What `_stream_with_card` adds to a stream's terminal event: beside the turn
+#: on `done` (what consumeChatStream resolves the turn from); on an `error`
+#: the stream itself ends with, the key a JSON error answer carries it under
+#: (ErrorCardMiddleware), so a streamed refusal is never without the card
+#: either (#866 K38).
+_STREAM_CARD_KEYS = {"done": {ALONGSIDE: True}, "error": {}}
+
+
 async def _stream_with_card(events: Any, payload: dict[str, Any]):
-    """A tutor stream's events, its terminal `done` event's data carrying the
-    card beside the turn (what consumeChatStream resolves the turn from)."""
+    """A tutor stream's events, its terminal `done` or `error` event's data
+    carrying the card (`_STREAM_CARD_KEYS`); every other event as it came."""
     try:
         async for item in events:
-            if isinstance(item, dict) and item.get("event") == "done":
+            event_type = item.get("event") if isinstance(item, dict) else None
+            extra = _STREAM_CARD_KEYS.get(event_type) if isinstance(event_type, str) else None
+            if extra is not None:
                 event = json.loads(item["data"])
-                event["data"] = {**(event.get("data") or {}), "crisis_support": payload, ALONGSIDE: True}
+                event["data"] = {**(event.get("data") or {}), "crisis_support": payload, **extra}
                 item = {**item, "data": json.dumps(event)}
             yield item
     finally:
@@ -641,3 +730,118 @@ def sse_response(support: CrisisSupport, request: Request, **neutral: Any) -> Ev
         events(),
         headers={"X-Request-ID": _request_id(request), "Cache-Control": SSE_CACHE_CONTROL},
     )
+
+
+# ── The route-dependency form (routes with limiter dependencies) ───────────
+
+#: Builds a route's crisis response: `turn_response` / `turn_stream` /
+#: `start_response` / `start_stream`, or `plain_response(**neutral_keys)`.
+Responder = Callable[[CrisisSupport, Request], Response]
+
+
+class CrisisAnswered(Exception):
+    """Raised by a `screened` dependency on a match with the flag on. It carries
+    the finished response, which main.py's `answered_handler` returns as-is.
+    Raising is how a dependency ends a request early (as HTTPException does), so
+    no later dependency (the rate limit) and not the handler run. It is not an
+    error: the status is 200, and it carries no student text."""
+
+    def __init__(self, response: Response) -> None:
+        super().__init__("crisis support answered the request")
+        self.response = response
+
+
+async def answered_handler(_request: Request, exc: CrisisAnswered) -> Response:
+    return exc.response
+
+
+def turn_response(support: CrisisSupport, _request: Request) -> Response:
+    return JSONResponse(turn_json(support))
+
+
+def turn_stream(support: CrisisSupport, request: Request) -> Response:
+    return sse_response(support, request)
+
+
+def start_response(support: CrisisSupport, _request: Request) -> Response:
+    """No session is opened: `session_id` is null and the copy is the opener."""
+    return JSONResponse(start_json(support))
+
+
+def start_stream(support: CrisisSupport, request: Request) -> Response:
+    return sse_response(support, request, session_id=None)
+
+
+def plain_response(**neutral: Any) -> Responder:
+    def respond(support: CrisisSupport, _request: Request) -> Response:
+        return JSONResponse(json_body(support, **neutral))
+
+    return respond
+
+
+def screened(surface: Surface, *fields: str, respond: Responder):
+    """The crisis screen as a ROUTE DEPENDENCY. List it before any rate-limit,
+    budget or quota dependency; the learning loop places it right after its
+    kill switch.
+
+    `fields` name the request body's student-written text, dotted when nested
+    ("goal.text"). Detection runs first and is pure, so an ordinary request pays
+    nothing more and reads no flag. On a match, the caller is authenticated
+    first (`require_self` on the body's `user_id`, else the session user), then
+    the flag is read. With the flag on, `CrisisAnswered(respond(...))` is raised
+    and the request ends there. With no match, or the flag off, the dependency
+    returns and the route carries on exactly as before.
+
+    The body is the one FastAPI already parsed (Starlette caches it); it has not
+    been validated yet, so only string values are read."""
+    _check_surface(surface)
+
+    async def crisis_screen(request: Request) -> None:
+        body = await _json_object(request)
+        texts = [_text_at(body, field) for field in fields]
+        if sum(len(t or "") for t in texts) > _INLINE_DETECT_CHARS:
+            match = await asyncio.to_thread(detect_any, texts)
+        else:
+            match = detect_any(texts)
+        if match is None:
+            return
+        user_id = await _authenticated(request, body)
+        support = await asyncio.to_thread(_resolve, user_id, surface, match)
+        if support is not None:
+            raise CrisisAnswered(respond(support, request))
+
+    crisis_screen.surface = surface  # type: ignore[attr-defined]  # read by the ordering tests
+    return Depends(crisis_screen)
+
+
+def is_screen(dependency_call: Any) -> bool:
+    """Whether a route dependency's callable is a `screened` crisis screen."""
+    return getattr(dependency_call, "__name__", "") == "crisis_screen" and hasattr(
+        dependency_call, "surface"
+    )
+
+
+async def _json_object(request: Request) -> dict[str, Any]:
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001 — no JSON object: nothing to screen
+        return {}
+    return body if isinstance(body, dict) else {}
+
+
+def _text_at(body: dict[str, Any], dotted: str) -> str | None:
+    node: Any = body
+    for key in dotted.split("."):
+        node = node.get(key) if isinstance(node, dict) else None
+    return node if isinstance(node, str) else None
+
+
+async def _authenticated(request: Request, body: dict[str, Any]) -> str:
+    """The caller, checked as the handler would check it, before the flag read
+    and the event: the body's `user_id` must be the session's (403/401
+    otherwise), and a body that names nobody means the session user."""
+    claimed = body.get("user_id")
+    if isinstance(claimed, str) and claimed:
+        await auth_guard.guard_off_loop(auth_guard.require_self, claimed, request)
+        return claimed
+    return await auth_guard.guard_off_loop(auth_guard.get_session_user_id, request)

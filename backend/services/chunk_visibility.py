@@ -65,8 +65,9 @@ from services.share_screen import ShareScreen
 logger = logging.getLogger(__name__)
 
 #: `course_chunks.visibility`. Mirrors the CHECK constraint in the migration.
-SHARED = "shared"
-PRIVATE = "private"
+#: Defined beside the table's row-id scheme (db/chunk_ids.py), so the rich
+#: seed can write chunk rows without importing services.
+from db.chunk_ids import PRIVATE, SHARED  # noqa: E402,F401
 
 #: `documents.shareability` / the classifier's `shareability` field (#630).
 #: Whose document this is, which is a different question from whether its owner

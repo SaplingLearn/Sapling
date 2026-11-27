@@ -3,6 +3,7 @@
 import React, { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ChevronLeft } from "lucide-react";
+import { AnimatePresence, motion } from "framer-motion";
 import { TopBar } from "../TopBar";
 import { Icon } from "../Icon";
 import { CustomSelect } from "../CustomSelect";
@@ -22,6 +23,9 @@ import { useConfirm } from "@/lib/useConfirm";
 import { useIsMobile } from "@/lib/useIsMobile";
 import { useActiveSemester, courseInTerm } from "@/lib/useActiveSemester";
 import { useUser } from "@/context/UserContext";
+import { LoopLearn } from "../learn/LoopLearn";
+import { useLoopStatus } from "../learn/useLoopStatus";
+import { readResumeParam } from "../learn/resumeParam";
 import {
   startSession,
   startSessionStream,
@@ -48,11 +52,15 @@ import {
   type GraphDelta,
 } from "@/lib/api";
 import { dropOptimisticConcept, reconcileNodes, retargetEdges } from "@/lib/graphOptimistic";
-import { humanizeError, isNotFound, readableError, statusOf } from "@/lib/errorMessage";
+import { humanizeError, isNotFound, readableError } from "@/lib/errorMessage";
+import { forgetEndedSession, noteLearningSession, rememberEndedSession, useFeedbackHold } from "@/lib/feedbackPacing";
 import type { GraphNode as ApiNode, GraphEdge as ApiEdge } from "@/lib/types";
 import { apiToGraphNode, type GraphNode, type GraphEdge } from "@/lib/data";
 import { focusCardDescription, focusCardTitle, sessionSubtitle } from "./learn/view";
-import { cn } from "@/lib/cn";
+import { resumedTranscript, type MarkdownProfile } from "./learn/resumedTranscript";
+import { answeredByTheLoop, isSessionEndedError, pauseCopyOr, removeInterruptedTurn } from "./learn/turns";
+import { useMotionPresets } from "@/lib/motion";
+import styles from "./Learn.module.css";
 
 function apiToGraphEdge(e: ApiEdge): GraphEdge {
   return {
@@ -72,22 +80,49 @@ const MODES: { id: Mode; name: string; tip: string }[] = [
 ];
 
 const VALID_MODES: Mode[] = ["socratic", "expository", "teachback"];
-// Read by SessionFeedbackGlobal when the student navigates away from /learn.
-const LAST_SESSION_CTX_KEY = "sapling_last_session_context";
 const RAIL_OPEN_KEY = "sapling_learn_rail_open";
 const RAIL_WIDTH = 400;
+// The knowledge graph's drawing height inside the rail (px; a canvas size).
+const RAIL_GRAPH_HEIGHT = 280;
+// How long a session row's Delete stays armed for its confirming second click.
+const DELETE_CONFIRM_MS = 3000;
+// A second click on the same map node within this window switches to it.
+const DOUBLE_CLICK_MS = 350;
+// The longest session name a rename accepts.
+const SESSION_NAME_MAX = 120;
+// How many concepts the rail's "In this branch" and "Elsewhere" lists show,
+// and how many the topic picker lists before its search narrows them.
+const BRANCH_ITEM_LIMIT = 6;
+const ELSEWHERE_ITEM_LIMIT = 4;
+const TOPIC_PICKER_LIMIT = 80;
 
-// Mastery-tier vocabulary for the knowledge-map rail. Colors reuse the shared
-// --state-* tokens (same palette as Tree/Dashboard); labels follow the map's
-// student-facing wording. Note: the graph itself colors nodes by course, not
-// tier — these swatches document the branch list + focus badge.
-const TIER_META: Record<GraphNode["mastery_tier"], { label: string; color: string }> = {
-  mastered: { label: "Mastered", color: "var(--state-mastery)" },
-  learning: { label: "In progress", color: "var(--state-progress)" },
-  struggling: { label: "Needs work", color: "var(--state-struggle)" },
-  unexplored: { label: "Not started", color: "var(--state-neutral)" },
+// Mastery-tier vocabulary for the knowledge-map rail. Each tier's class sets
+// --tier-color from the shared --state-* tokens (same palette as
+// Tree/Dashboard; Learn.module.css); labels follow the map's student-facing
+// wording. Note: the graph itself colors nodes by course, not tier — these
+// swatches document the branch list + focus badge.
+const TIER_META: Record<GraphNode["mastery_tier"], { label: string; tone: string }> = {
+  mastered: { label: "Mastered", tone: styles.tierMastered },
+  learning: { label: "In progress", tone: styles.tierLearning },
+  struggling: { label: "Needs work", tone: styles.tierStruggling },
+  unexplored: { label: "Not started", tone: styles.tierUnexplored },
 };
 const TIER_ORDER: GraphNode["mastery_tier"][] = ["mastered", "learning", "struggling", "unexplored"];
+
+// Joins the class names that apply; a falsy entry is skipped.
+function cx(...names: (string | false | null | undefined)[]): string {
+  return names.filter(Boolean).join(" ");
+}
+
+// False on first render; true once `value` has changed since. Lets an element
+// animate a change (a new focus, a new tier) without animating the page's
+// first paint. The derived-state-during-render pattern React documents.
+function useHasChanged<T>(value: T): boolean {
+  const [first] = useState(value);
+  const [changed, setChanged] = useState(false);
+  if (!changed && !Object.is(first, value)) setChanged(true);
+  return changed;
+}
 
 // The display name of a tutor mode ("Socratic"); an unknown id shows as-is.
 function modeLabel(mode: Mode): string {
@@ -99,11 +134,13 @@ function normalizeMode(input: string | null): Mode {
   return (VALID_MODES as string[]).includes(input) ? (input as Mode) : "socratic";
 }
 
-// Mirrors backend/config.py::get_mastery_tier so a streamed delta classifies
-// mastery the same way a full graph refetch would.
+// Mirrors backend/learning/bkt.py::tier_for (learning/params.py BKT_PROFICIENT /
+// BAND_NOVICE_MAX / TIER_UNEXPLORED_MAX, PKG-14b) so a streamed delta classifies
+// mastery the same way a full graph refetch would. Pinned by
+// backend/tests/test_mastery_tier_unification.py.
 function tierForScore(score: number): GraphNode["mastery_tier"] {
-  if (score >= 0.75) return "mastered";
-  if (score >= 0.45) return "learning";
+  if (score >= 0.95) return "mastered";
+  if (score >= 0.3) return "learning";
   if (score >= 0.1) return "struggling";
   return "unexplored";
 }
@@ -130,11 +167,10 @@ function rawNodeIdentity(raw: Record<string, unknown>): { id?: string; name?: st
 // spec sketches. It's a dict keyed by which graph tool wrote
 // (backend/agents/tools/graph.py via services/chat_stream.py
 // merge_graph_updates): `new_nodes` entries are {concept_name,
-// initial_mastery}; `updated_nodes` entries are {concept_name,
-// mastery_delta, reason, event_type}. Neither carries an `id` or an
-// absolute post-update score. `delta.mastery_changes` ({concept, before,
-// after}) IS authoritative for an existing node's new score, so it drives
-// merges for updates; `nodes` entries are read defensively via
+// initial_mastery} (PKG-14b: the tutor's mastery-write tool is gone, so no
+// other key is produced). They carry no `id` and no absolute post-update
+// score. `delta.mastery_changes` ({concept, before, after}) IS authoritative
+// for an existing node's new score, so it drives merges for updates; `nodes` entries are read defensively via
 // `rawNodeIdentity` — and any fields we don't recognize are ignored rather
 // than crashing.
 //
@@ -315,48 +351,45 @@ export function applyGraphDeltaAssembly(
   setGraphEdges(prev => mergeGraphEdges(prev, edges));
 }
 
-// #164: Dashboard's "Where you left off" cards push /learn?resume=<id>; Tree's
-// session rows used ?session=<id> before both callers unified on ?resume=.
-// Accept both so any bookmarked/legacy link keeps working.
-export function readResumeParam(params: { get(name: string): string | null }): string | null {
-  return params.get("resume") ?? params.get("session");
-}
+// #164: ?resume=<id> (and the legacy ?session=<id>). Moved to
+// components/learn/resumeParam.ts so LoopLearn reads the same deep link
+// without importing this screen (PKG-13); re-exported for its callers.
+export { readResumeParam };
 
-// ADR 0020 Retry: drop the interrupted assistant bubble and — when it sits
-// directly before it — the user bubble of the same turn, so the re-send
-// (which appends a fresh user bubble) doesn't duplicate either. Pure and
-// exported for Learn.resume.test.ts.
-export function removeInterruptedTurn(
-  messages: ChatMsg[],
-  interruptedId: string,
-  retryText: string,
-): ChatMsg[] {
-  const i = messages.findIndex(m => m.id === interruptedId);
-  if (i === -1) return messages;
-  const next = [...messages.slice(0, i), ...messages.slice(i + 1)];
-  if (i > 0 && next[i - 1]?.role === "user" && next[i - 1].content === retryText) {
-    next.splice(i - 1, 1);
-  }
-  return next;
-}
-
-// A turn the server refused because the session is already over (#761 /
-// #762): a 409 whose envelope carries `error.code: "SESSION_ENDED"` —
-// `ApiError.code` off fetchJSON, the same `code` streamSSE attaches. A coded
-// error decides it by its code (a 409 with any OTHER code is an ordinary
-// error); only an error with no code at all — an older backend — falls back
-// to the bare 409.
-export const SESSION_ENDED_CODE = "SESSION_ENDED";
-export function isSessionEndedError(err: unknown): boolean {
-  const code = err !== null && typeof err === "object" ? (err as { code?: unknown }).code : undefined;
-  if (typeof code === "string") return code === SESSION_ENDED_CODE;
-  return statusOf(err) === 409;
-}
+// The ADR 0020 Retry's bubble surgery, the ended-session 409 (#761/#762) and
+// an answer only the learning loop gives (#866 K49): ./learn/turns.ts.
 
 export function Learn() {
+  const { userId, userReady } = useUser();
+  // Learning loop (PKG-13; post-launch PKG-14b, spec §11.2): one GET decides the
+  // tree — the loop status probe is the only input (never learning_loop_beta; the
+  // server gate decides, spec §7). null → the loading fallback; true → the loop;
+  // false (the kill switch: {active: false} / the gate's 404) → legacy; any other
+  // failure → a retry state, NEVER the legacy tree (the backend delegates the
+  // legacy calls to the loop, so failing open would give a hybrid).
+  // #866 K49: the legacy tree asks for `recheck` when an answer can only be the loop's.
+  const { status: loop, retry, recheck } = useLoopStatus(userId, userReady);
+  if (loop === null) return <div className={styles.statusMessage}>Loading…</div>;
+  if (loop === "error") {
+    return (
+      <div data-testid="loop-status-error" role="alert" className={cx(styles.statusMessage, "fade-in")}>
+        <p className={styles.statusMessageText}>Couldn&apos;t reach the tutor. Try again.</p>
+        <button type="button" className="btn btn--primary" data-testid="loop-status-retry" onClick={retry}>
+          Try again
+        </button>
+      </div>
+    );
+  }
+  if (loop) {
+    return (
+      <Suspense fallback={<div className={styles.statusMessage}>Loading…</div>}>
+        <LoopLearn />
+      </Suspense>
+    );
+  }
   return (
-    <Suspense fallback={<div className="p-10 text-text-dim">Loading…</div>}>
-      <LearnInner />
+    <Suspense fallback={<div className={styles.statusMessage}>Loading…</div>}>
+      <LearnInner onLoopAnswer={recheck} />
     </Suspense>
   );
 }
@@ -366,7 +399,7 @@ type SearchParams = ReturnType<typeof useSearchParams>;
 type Router = ReturnType<typeof useRouter>;
 type Toast = ReturnType<typeof useToast>;
 
-function LearnInner() {
+function LearnInner({ onLoopAnswer }: { onLoopAnswer: () => void }) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { userId, userReady } = useUser();
@@ -386,7 +419,7 @@ function LearnInner() {
   const rail = useRailCollapse(isMobile);
   const session = useTutorSession({
     router, searchParams, userId, userReady, toast, prefs, sharedCtx, modelPref,
-    applyGraphDelta: data.applyGraphDelta, setFocusedNodeId,
+    applyGraphDelta: data.applyGraphDelta, setFocusedNodeId, onLoopAnswer,
   });
   const { sessionId, starting, summary, beginSession, handleResume } = session;
 
@@ -420,7 +453,7 @@ function LearnInner() {
     const now = Date.now();
     const last = lastNodeClickRef.current;
     lastNodeClickRef.current = { id: n.id, t: now };
-    if (last && last.id === n.id && now - last.t < 350) {
+    if (last && last.id === n.id && now - last.t < DOUBLE_CLICK_MS) {
       switchToConcept(n.name);
     } else {
       setFocusedNodeId(n.id);
@@ -441,7 +474,7 @@ function LearnInner() {
     return (
       <FullHeightScreen>
         <DisclaimerModal />
-        <div data-testid="tutor-resume-loading" className="p-10 text-text-dim">
+        <div data-testid="tutor-resume-loading" className={styles.statusMessage}>
           Loading…
         </div>
       </FullHeightScreen>
@@ -458,9 +491,7 @@ function LearnInner() {
           subtitle="Pick a topic. Sapling will adapt to your chosen mode."
           actions={<AIDisclaimerChip />}
         />
-        <div
-          className={cn("p-8 grid gap-6 flex-1 overflow-y-auto", isMobile ? "grid-cols-[1fr]" : "grid-cols-[minmax(0,_1fr)_320px]")}
-        >
+        <div className={cx(styles.entryGrid, isMobile && styles.entryGridStacked)}>
           <EntryStartCard
             selectedCourseId={selectedCourseId}
             setSelectedCourseId={setSelectedCourseId}
@@ -495,12 +526,13 @@ function LearnInner() {
       {session.crisisDialog}
 
       {isMobile && (
-        <div className="flex border-b border-b-border">
+        <div className={styles.mobileTabs}>
           {(["chat", "graph"] as const).map(t => (
             <button
               key={t}
               onClick={() => setMobileTab(t)}
-              className={cn("flex-1 py-2.5 px-0 text-sm font-medium capitalize", mobileTab === t ? "text-accent" : "text-text-dim", mobileTab === t ? "border-b-2 border-b-accent" : "border-b-2 border-b-transparent")}
+              aria-pressed={mobileTab === t}
+              className={styles.mobileTab}
             >
               {t}
             </button>
@@ -508,7 +540,10 @@ function LearnInner() {
         </div>
       )}
 
-      <div className="flex flex-1 min-h-0 relative">
+      {/* Arriving from the picker or a resume's loading state: the short fade
+          the entry screen uses (the class lands on a reused element, so the
+          animation starts on the switch, not on every render). */}
+      <div className={cx(styles.sessionBody, "fade-in")}>
         {(!isMobile || mobileTab === "chat") && (
           <ChatColumn
             session={session}
@@ -545,7 +580,6 @@ function LearnInner() {
         <SessionSummary
           summary={summary}
           onClose={session.closeSummary}
-          onStartNext={session.startNextFromSummary}
         />
       )}
     </FullHeightScreen>
@@ -721,7 +755,7 @@ function useLearnData({ searchParams, userId, userReady, semesterHydrated, activ
   const handleRenameSession = useCallback(async (s: Session, newTopic: string) => {
     if (!userId) return;
     const trimmed = newTopic.trim();
-    if (!trimmed || trimmed.length > 120 || trimmed === s.topic) return;
+    if (!trimmed || trimmed.length > SESSION_NAME_MAX || trimmed === s.topic) return;
     setRecentSessions(prev => prev.map(p => (p.id === s.id ? { ...p, topic: trimmed } : p)));
     try {
       await renameSession(s.id, userId, trimmed);
@@ -848,6 +882,14 @@ type RailCollapse = ReturnType<typeof useRailCollapse>;
 
 // The tutor session on screen and every async path that changes it or talks
 // to it: start, resume, send, retry, hint/confused/skip, mode switch, end.
+/** Feedback pacing (lib/feedbackPacing.ts) for the legacy tutor: the session
+ *  on screen counts against prompts, and none opens while a call runs or the
+ *  session is live. */
+function useLearnFeedbackPacing({ sessionId, busy, live }: { sessionId: string | null; busy: boolean; live: boolean }) {
+  useEffect(() => { if (sessionId) noteLearningSession(sessionId); }, [sessionId]);
+  useFeedbackHold(busy || live);
+}
+
 // docs/safety/crisis-support.md: what a session start does with the card its
 // answer may carry. The card INSTEAD of a greeting (no session was opened)
 // always shows and stops the start (`blockedByCard`); the card BESIDE one
@@ -868,7 +910,7 @@ function startCards(intercept: (response: unknown) => boolean, fromNoteId: strin
   };
 }
 
-function useTutorSession({ router, searchParams, userId, userReady, toast, prefs, sharedCtx, modelPref, applyGraphDelta, setFocusedNodeId }: {
+function useTutorSession({ router, searchParams, userId, userReady, toast, prefs, sharedCtx, modelPref, applyGraphDelta, setFocusedNodeId, onLoopAnswer }: {
   router: Router;
   searchParams: SearchParams;
   userId: string;
@@ -879,8 +921,10 @@ function useTutorSession({ router, searchParams, userId, userReady, toast, prefs
   modelPref: ModelPref;
   applyGraphDelta: (delta: GraphDelta) => void;
   setFocusedNodeId: (id: string | null) => void;
+  onLoopAnswer: () => void;
 }) {
   const { mode, setMode, topic, setTopic, topicDraft, setTopicDraft, selectedCourseId, setSelectedCourseId, fromNote } = prefs;
+  const loopSignal = useCallback((err: unknown) => { if (answeredByTheLoop(err)) onLoopAnswer(); }, [onLoopAnswer]); // #866 K49
   // docs/safety/crisis-support.md: a session start the crisis screen answered
   // (no session was opened) shows the card as a dialog over the picker; on a
   // note's title the card shows over the session that did start.
@@ -920,6 +964,9 @@ function useTutorSession({ router, searchParams, userId, userReady, toast, prefs
   // The server answered 409 to a turn: this session is over (backend E1).
   // Cleared by `enterSession`, so it never follows the student elsewhere.
   const [sessionEnded, setSessionEnded] = useState(false);
+  // "inert" only while a resumed learning-loop session is on screen (Z08,
+  // learn/resumedTranscript.ts); `enterSession` puts it back to "rich".
+  const [transcriptMarkdown, setTranscriptMarkdown] = useState<MarkdownProfile>("rich");
   // Latest mode switch issued; an older one's failure must not roll back a
   // newer one.
   const modeSwitchSeqRef = useRef(0);
@@ -947,6 +994,7 @@ function useTutorSession({ router, searchParams, userId, userReady, toast, prefs
     setResuming(false);
     setActionPending(false);
     setSessionEnded(false);
+    setTranscriptMarkdown("rich");
     setStreamingText(null);
     setStreamingStatus(null);
     return epoch;
@@ -959,11 +1007,19 @@ function useTutorSession({ router, searchParams, userId, userReady, toast, prefs
   };
   // The feedback context belongs to the last session the student ENDED; once
   // they move into another one it would attribute feedback to the wrong one.
-  const clearLastSessionContext = () => {
-    try { sessionStorage.removeItem(LAST_SESSION_CTX_KEY); } catch {}
-  };
+  const clearLastSessionContext = forgetEndedSession;
 
   const [summary, setSummary] = useState<SessionSummaryData | null>(null);
+  // Feedback pacing (lib/feedbackPacing.ts), as in LoopLearn: a prompt counts
+  // against the session on screen, and no survey opens while a session is live
+  // or a tutor turn streams. Ending it is the natural break — End session here
+  // (summary or not), or the server's 409.
+  const [endedHere, setEndedHere] = useState<string | null>(null);
+  useLearnFeedbackPacing({
+    sessionId,
+    busy: starting || resuming || sending || actionPending || streamingText !== null,
+    live: !!sessionId && !sessionEnded && sessionId !== endedHere,
+  });
   const idCounter = useRef(0);
   const msgId = () => `m-${++idCounter.current}`;
 
@@ -1038,12 +1094,13 @@ function useTutorSession({ router, searchParams, userId, userReady, toast, prefs
             if (isCurrent()) setStreamingText(prev => (prev ?? "") + delta);
           },
           onGraphUpdate: applyGraphDelta,
+          onPhase: onLoopAnswer, // only the loop's streams send a phase (#866 K49)
           onProgress: (step) => {
             const label = tutorStepLabel(step);
             if (label && isCurrent()) setStreamingStatus(label);
           },
           signal: controller.signal,
-        }, fromNoteId);
+        }, undefined, fromNoteId);
         if (blockedByCard(res)) { if (isCurrent()) setMessages([]); return; }
         if (!res.session_id) throw new Error("Session stream completed without a session_id.");
         newSessionId = res.session_id;
@@ -1065,7 +1122,7 @@ function useTutorSession({ router, searchParams, userId, userReady, toast, prefs
         // ChatPanel drops the Stop affordance for this leg (mirrors `send`).
         if (!isCurrent()) return;
         setStreamingText(null);
-        const res = await startSession(userId, topicName, mode, selectedCourseId || undefined, sharedCtx, modelPref, fromNoteId);
+        const res = await startSession(userId, topicName, mode, selectedCourseId || undefined, sharedCtx, modelPref, undefined, fromNoteId);
         if (blockedByCard(res)) { if (isCurrent()) setMessages([]); return; }
         newSessionId = res.session_id;
         replyText = res.initial_message || "Let's begin.";
@@ -1077,8 +1134,9 @@ function useTutorSession({ router, searchParams, userId, userReady, toast, prefs
       setMessages([{ id: msgId(), role: "assistant", content: replyText }]);
     } catch (err) {
       if (!isCurrent()) return;
+      loopSignal(err);
       showErrorCard(err); // a refusal can carry the card
-      toast.error(readableError(err, "Couldn't start session."));
+      toast.error(pauseCopyOr(err, readableError(err, "Couldn't start session.")));
       setMessages([]);
     } finally {
       if (isCurrent()) {
@@ -1117,13 +1175,9 @@ function useTutorSession({ router, searchParams, userId, userReady, toast, prefs
       setTopic(res.session.topic);
       setMode(normalizeMode(res.session.mode));
       setSelectedCourseId(res.session.course_id || "");
-      setMessages(
-        (res.messages ?? []).map(m => ({
-          id: msgId(),
-          role: m.role === "user" ? "user" : "assistant",
-          content: m.content,
-        })),
-      );
+      const transcript = resumedTranscript(res, msgId);
+      setMessages(transcript.messages);
+      setTranscriptMarkdown(transcript.markdown);
     } catch (err) {
       if (!isCurrent()) return;
       toast.error(readableError(err, "Resume failed."));
@@ -1234,6 +1288,7 @@ function useTutorSession({ router, searchParams, userId, userReady, toast, prefs
             if (isCurrent()) setStreamingText(t => (t ?? "") + delta);
           },
           onGraphUpdate: applyGraphDelta,
+          onPhase: onLoopAnswer, // only the loop's streams send a phase (#866 K49)
           onProgress: (step) => {
             const label = tutorStepLabel(step);
             if (label && isCurrent()) setStreamingStatus(label);
@@ -1247,6 +1302,7 @@ function useTutorSession({ router, searchParams, userId, userReady, toast, prefs
           appendInterrupted();
           return;
         }
+        loopSignal(err);
         if (isSessionEndedError(err)) {
           // 409: the session is over. Not a failure to retry — no JSON rung
           // (it would 409 too), no interrupted bubble.
@@ -1257,7 +1313,7 @@ function useTutorSession({ router, searchParams, userId, userReady, toast, prefs
           // Rung 2: interrupted after producing text — surface it, never
           // silently re-run (the user already saw partial text). The error
           // detail goes to a toast; the transcript keeps the partial.
-          toast.error(readableError(err, "The tutor was interrupted."));
+          toast.error(pauseCopyOr(err, readableError(err, "The tutor was interrupted.")));
           appendInterrupted();
           return;
         }
@@ -1269,7 +1325,7 @@ function useTutorSession({ router, searchParams, userId, userReady, toast, prefs
           // stays as an interrupted bubble, error detail in a toast, and
           // Retry is a deliberate user decision rather than a silent
           // re-run.
-          toast.error(readableError(err, "The tutor was interrupted."));
+          toast.error(pauseCopyOr(err, readableError(err, "The tutor was interrupted.")));
           appendInterrupted();
           return;
         }
@@ -1302,11 +1358,12 @@ function useTutorSession({ router, searchParams, userId, userReady, toast, prefs
         setMessages(m => [...m, { id: msgId(), role: "assistant", content: res.reply || "", crisisSupport }]);
       }
     } catch (err) {
+      loopSignal(err);
       if (isSessionEndedError(err)) { endedTurn(); return; }
       // The Rung-3 JSON fallback itself failed — the ladder is exhausted.
       // ADR 0020 treats this like any mid-stream failure: interrupted bubble
       // + Retry, error detail in a toast rather than a fake assistant reply.
-      toast.error(readableError(err, "The tutor is unavailable."));
+      toast.error(pauseCopyOr(err, readableError(err, "The tutor is unavailable.")));
       appendInterrupted();
     } finally {
       // A superseded turn leaves `sending` alone: `enterSession` already
@@ -1322,7 +1379,7 @@ function useTutorSession({ router, searchParams, userId, userReady, toast, prefs
         streamAbort.current = null;
       }
     }
-  }, [sessionId, userId, mode, sharedCtx, modelPref, applyGraphDelta, toast]);
+  }, [sessionId, userId, mode, sharedCtx, modelPref, applyGraphDelta, toast, loopSignal, onLoopAnswer]);
 
   // ADR 0020 Retry: re-dispatch the interrupted turn's original text. Drop
   // the failed pair first (removeInterruptedTurn) so `send`'s own user-bubble
@@ -1370,8 +1427,9 @@ function useTutorSession({ router, searchParams, userId, userReady, toast, prefs
     } catch (err) {
       if (!isCurrent()) return;
       setMessages(m => m.filter(x => x.id !== labelId));
+      loopSignal(err);
       if (isSessionEndedError(err)) { setSessionEnded(true); return; }
-      toast.error(humanizeError(err, "Action failed."));
+      toast.error(pauseCopyOr(err, humanizeError(err, "Action failed.")));
     } finally {
       if (isCurrent()) {
         setSending(false);
@@ -1423,9 +1481,8 @@ function useTutorSession({ router, searchParams, userId, userReady, toast, prefs
       const res = await endSession(sessionId, userId);
       // Write session context for navigate-away feedback — even if the
       // student has already moved on, this IS the session they ended.
-      try {
-        sessionStorage.setItem(LAST_SESSION_CTX_KEY, JSON.stringify({ sessionId, topic }));
-      } catch {}
+      rememberEndedSession({ sessionId, topic });
+      setEndedHere(sessionId);
       // …but its summary only belongs on screen while they're still in it.
       if (sessionEpochRef.current === epoch) setSummary(res.summary ?? null);
     } catch (err) {
@@ -1451,21 +1508,12 @@ function useTutorSession({ router, searchParams, userId, userReady, toast, prefs
     router.replace(`/learn?mode=${mode}`, { scroll: false });
   };
 
-  const startNextFromSummary = (concept: string) => {
-    setSummary(null);
-    enterSession(null);
-    setMessages([]);
-    setTopicDraft(concept);
-    setTopic(concept);
-    router.replace(`/learn?topic=${encodeURIComponent(concept)}&mode=${mode}`, { scroll: false });
-  };
-
   const stopStream = () => streamAbort.current?.abort();
 
   return {
     sessionId, messages, sending, starting, resuming, streamingText, streamingStatus, actionPending,
-    sessionEnded, summary, beginSession, handleStart, handleResume, send, handleRetry, handleAction,
-    handleModeSwitch, endConfirm, closeSummary, handleBackToLearn, startNextFromSummary, stopStream,
+    sessionEnded, transcriptMarkdown, summary, beginSession, handleStart, handleResume, send, handleRetry, handleAction,
+    handleModeSwitch, endConfirm, closeSummary, handleBackToLearn, stopStream,
     crisisDialog: crisis.dialog,
   };
 }
@@ -1509,14 +1557,14 @@ function useRailModel({ userId, graphNodes, graphEdges, topicNode, cardCourseId,
     if (topicNode && neighborIds.size > 0) {
       return graphNodes
         .filter(n => neighborIds.has(n.id) && !n.is_subject_root)
-        .slice(0, 6)
+        .slice(0, BRANCH_ITEM_LIMIT)
         .map(n => ({ id: n.id, name: n.name, tier: n.mastery_tier }));
     }
     if (cardCourseId) {
       return graphNodes
         .filter(n => n.course_id === cardCourseId && !n.is_subject_root)
         .sort((a, b) => (b.mastery_score ?? 0) - (a.mastery_score ?? 0))
-        .slice(0, 6)
+        .slice(0, BRANCH_ITEM_LIMIT)
         .map(n => ({ id: n.id, name: n.name, tier: n.mastery_tier }));
     }
     return [];
@@ -1532,7 +1580,7 @@ function useRailModel({ userId, graphNodes, graphEdges, topicNode, cardCourseId,
           n.course_id === topicNode.course_id,
         )
         .sort((a, b) => (b.mastery_score ?? 0) - (a.mastery_score ?? 0))
-        .slice(0, 4)
+        .slice(0, ELSEWHERE_ITEM_LIMIT)
         .map(n => ({ id: n.id, name: n.name }));
     }
     if (cardCourseId) {
@@ -1544,7 +1592,7 @@ function useRailModel({ userId, graphNodes, graphEdges, topicNode, cardCourseId,
           n.name.toLowerCase() !== topicLower,
         )
         .sort((a, b) => (b.mastery_score ?? 0) - (a.mastery_score ?? 0))
-        .slice(0, 4)
+        .slice(0, ELSEWHERE_ITEM_LIMIT)
         .map(n => ({ id: n.id, name: n.name }));
     }
     return [];
@@ -1757,18 +1805,19 @@ function EntryStartCard({
   userId: string;
 }) {
   return (
-    <div className="card p-(--pad-xl)">
-      <div className="label-micro mb-2">Course (optional)</div>
+    <div className={cx("card", styles.entryCard)}>
+      <div className={cx("label-micro", styles.fieldLabel)}>Course (optional)</div>
       <CustomSelect<string>
+        ariaLabel="Course (optional)"
         value={selectedCourseId}
         options={[
           { value: "", label: "No course" },
           ...scopedCourses.map(c => ({ value: c.course_id, label: `${c.course_code} — ${c.course_name}` })),
         ]}
         onChange={setSelectedCourseId}
-        style={{ width: "100%", marginBottom: 16 }}
+        className={styles.courseSelect}
       />
-      <div className="label-micro mb-2">Topic</div>
+      <div className={cx("label-micro", styles.fieldLabel)}>Topic</div>
       <TopicPicker
         value={topicDraft}
         onChange={setTopicDraft}
@@ -1778,15 +1827,15 @@ function EntryStartCard({
         selectedCourseId={selectedCourseId}
         activeSemester={activeSemester}
       />
-      <div className="label-micro mb-2">Mode</div>
-      <div className="mb-5">
+      <div className={cx("label-micro", styles.fieldLabel)}>Mode</div>
+      <div className={styles.modeField}>
         <Toggle
           options={MODES.map(m => ({ value: m.id, label: m.name, title: m.tip }))}
           value={mode}
           onChange={setMode}
         />
       </div>
-      <div className="flex justify-between items-center">
+      <div className={styles.entryActions}>
         <SharedContextToggle enabled={sharedCtx} onChange={setSharedCtx} align="left" />
         <button data-testid="tutor-start" className="btn btn--primary" onClick={onStart} disabled={!topicDraft.trim() || !userId}>
           <Icon name="sparkle" size={13} /> Start learning
@@ -1803,14 +1852,18 @@ function RecentSessionsCard({ recentSessions, onResume, onDelete, onRename }: {
   onRename: (s: Session, newTopic: string) => void;
 }) {
   return (
-    <div className="card p-(--pad-lg)">
-      <div className="label-micro mb-2.5">Recent sessions</div>
+    <div className={cx("card", styles.recentCard)}>
+      <div className={cx("label-micro", styles.recentLabel)}>Recent sessions</div>
       {recentSessions.length === 0 && (
-        <div className="text-sm text-text-muted">No recent sessions yet.</div>
+        <div className={styles.emptyNote}>No recent sessions yet.</div>
       )}
-      {recentSessions.map(s => (
-        <SessionRow key={s.id} s={s} onResume={onResume} onDelete={onDelete} onRename={onRename} />
-      ))}
+      {/* Rows that arrive after the card is up rise in; a deleted row folds
+          away. Rows present on the card's first render do not animate. */}
+      <AnimatePresence initial={false}>
+        {recentSessions.map(s => (
+          <SessionRow key={s.id} s={s} onResume={onResume} onDelete={onDelete} onRename={onRename} />
+        ))}
+      </AnimatePresence>
     </div>
   );
 }
@@ -1826,8 +1879,9 @@ function ChatColumn({ session, topic, mode, courseCode, sharedCtx, setSharedCtx,
   setModelPref: (v: ModelPref) => void;
 }) {
   const { messages, sessionEnded, endConfirm } = session;
+  const m = useMotionPresets();
   return (
-    <div className="flex-1 flex flex-col min-w-0">
+    <div className={styles.chatColumn}>
       <TopBar
         breadcrumb={<BackToLearnLink onClick={session.handleBackToLearn} />}
         title={topic}
@@ -1845,29 +1899,34 @@ function ChatColumn({ session, topic, mode, courseCode, sharedCtx, setSharedCtx,
           </>
         }
       />
-      <div className="flex gap-1.5 py-2.5 px-8 border-b border-b-border flex-wrap">
-        {MODES.map(m => (
+      <div className={styles.modeBar}>
+        {MODES.map(md => (
           <button
-            key={m.id}
-            onClick={() => session.handleModeSwitch(m.id)}
+            key={md.id}
+            onClick={() => session.handleModeSwitch(md.id)}
             disabled={sessionEnded}
-            className={cn("py-1.5 px-3.5 rounded-[var(--r-full)] text-sm font-medium", mode === m.id ? "bg-accent" : "bg-bg-subtle", mode === m.id ? "text-accent-fg" : "text-text-dim", mode === m.id ? "border border-accent" : "border border-border")}
+            aria-pressed={mode === md.id}
+            className={styles.modeChip}
           >
-            {m.name}
+            {md.name}
           </button>
         ))}
-        <div className="flex-1" />
+        <div className={styles.modeBarSpacer} />
         <AIDisclaimerChip />
         <ModelToggle pref={modelPref} onChange={setModelPref} />
       </div>
+      <AnimatePresence initial={false}>
       {sessionEnded && (
         // The server refused a turn with 409 (#762): this session is
         // over. Say so and offer a fresh one on the same topic, instead
-        // of an error toast on every further message.
-        <div
+        // of an error toast on every further message. It unfolds above
+        // the chat so the change reads as news, not a jump.
+        <motion.div
+          key="ended"
           data-testid="tutor-session-ended"
           role="status"
-          className="flex items-center justify-between gap-3 py-2.5 px-8 border-b border-b-border bg-bg-subtle text-md text-text-dim"
+          className={styles.endedNotice}
+          {...m.collapse}
         >
           <span>This session has ended. Start a new one to keep going.</span>
           <button
@@ -1877,8 +1936,9 @@ function ChatColumn({ session, topic, mode, courseCode, sharedCtx, setSharedCtx,
           >
             Start a new session
           </button>
-        </div>
+        </motion.div>
       )}
+      </AnimatePresence>
       <ChatPanel
         messages={messages}
         onSend={session.send}
@@ -1890,6 +1950,7 @@ function ChatColumn({ session, topic, mode, courseCode, sharedCtx, setSharedCtx,
         // the waiting bubble but no Stop.
         onStop={session.actionPending ? undefined : session.stopStream}
         onRetry={session.handleRetry}
+        markdown={session.transcriptMarkdown}
       />
     </div>
   );
@@ -1911,16 +1972,20 @@ function KnowledgeMapRail({
   onSwitch: (name: string) => void;
 }) {
   const { cardCourse, railGraph, focusConcept, progressItems, relatedItems } = model;
+  // The focus card re-keys on what it shows, so a new focus swaps in.
+  const focusKey = focusConcept?.id ?? cardCourse?.course_id ?? "";
+  const focusChanged = useHasChanged(focusKey);
   return (
     <aside
-      className={cn("shrink-0 overflow-hidden", isMobile || railDragging ? "[transition:none]" : "[transition:width_var(--dur)_var(--ease),_min-width_var(--dur)_var(--ease)]")} style={{ width: isMobile ? "100%" : railW, minWidth: isMobile ? undefined : railW }}
+      className={cx(styles.mapRail, isMobile && styles.mapRailMobile, (isMobile || railDragging) && styles.mapRailStill)}
+      // Runtime widths: the dragged/animated width, and the open width the
+      // inner panel holds while the aside clips it.
+      style={{ "--rail-w": `${railW}px`, "--rail-open-w": `${RAIL_WIDTH}px` } as React.CSSProperties}
     >
-      {/* Inner content keeps a fixed 400px width so it stays laid out
+      {/* Inner content keeps the fixed open width so it stays laid out
           (and the graph's measured bounds stay stable) while the outer
           <aside> clips it during the slide. */}
-      <div
-        className={cn("learn-map-rail", "h-full box-border [background:var(--bg-subtle)] overflow-y-auto overflow-x-hidden flex flex-col", isMobile ? "border-l-0" : "border-l border-l-border")} style={{ width: isMobile ? "100%" : RAIL_WIDTH }}
-      >
+      <div className={cx("learn-map-rail", styles.mapRailInner, isMobile && styles.mapRailInnerMobile)}>
         {/* Header */}
         <RailHeader cardCourse={cardCourse} topic={topic} />
 
@@ -1931,7 +1996,7 @@ function KnowledgeMapRail({
 
         {/* Focused concept (or course anchor when no concept is focused) */}
         {(focusConcept || cardCourse) && (
-          <FocusCard model={model} topic={topic} onSwitch={onSwitch} onRemove={editing.removeConcept} />
+          <FocusCard key={focusKey} animateIn={focusChanged} model={model} topic={topic} onSwitch={onSwitch} onRemove={editing.removeConcept} />
         )}
 
         {/* In this branch */}
@@ -1953,14 +2018,14 @@ function KnowledgeMapRail({
 
 function RailHeader({ cardCourse, topic }: { cardCourse: EnrolledCourse | null; topic: string }) {
   return (
-    <div className="pt-5 px-5.5 pb-4 border-b border-b-border">
+    <div className={styles.railHeader}>
       <div className="label-micro">Knowledge map</div>
       {cardCourse && (
-        <div className="mt-2 font-sans text-sm font-medium text-brand-forest">
+        <div className={styles.railCourseCode}>
           {cardCourse.course_code}
         </div>
       )}
-      <div className="font-serif text-[15px] text-text-dim mt-0.5 leading-[1.35]">
+      <div className={styles.railCourseName}>
         {cardCourse?.course_name ?? topic}
       </div>
     </div>
@@ -1973,19 +2038,17 @@ function RailGraphSection({ railGraph, activeFocusId, onNodeClick }: {
   onNodeClick: (n: GraphNode) => void;
 }) {
   return (
-    <div
-      className="pt-3.5 px-3.5 pb-2 [background:radial-gradient(ellipse_80%_70%_at_55%_42%,_color-mix(in_srgb,_var(--brand-forest-bright)_6%,_transparent),_transparent_70%)]"
-    >
+    <div className={styles.railGraph}>
       <SidebarKnowledgeGraph
         nodes={railGraph.nodes}
         edges={railGraph.edges}
         highlightId={activeFocusId}
         onNodeClick={onNodeClick}
       />
-      <div className="flex gap-3.5 justify-center pt-1.5 px-0 pb-1 flex-wrap">
+      <div className={styles.legend}>
         {TIER_ORDER.map(tier => (
-          <span key={tier} className="inline-flex items-center gap-[5px] text-[10.5px] text-text-muted">
-            <span className="w-2 h-2 rounded-[50%]" style={{ background: TIER_META[tier].color }} />
+          <span key={tier} className={styles.legendItem}>
+            <span className={cx(styles.legendDot, TIER_META[tier].tone)} />
             {TIER_META[tier].label}
           </span>
         ))}
@@ -1994,42 +2057,65 @@ function RailGraphSection({ railGraph, activeFocusId, onNodeClick }: {
   );
 }
 
-function FocusCard({ model, topic, onSwitch, onRemove }: {
+// A tier only moves up by learning: a rise pulses the badge, a fall just
+// recolours it.
+const TIER_RANK: Record<GraphNode["mastery_tier"], number> = { unexplored: 0, struggling: 1, learning: 2, mastered: 3 };
+
+function TierBadge({ tier }: { tier: GraphNode["mastery_tier"] }) {
+  const m = useMotionPresets();
+  const [shown, setShown] = useState(tier);
+  const [rose, setRose] = useState(false);
+  if (shown !== tier) {
+    setRose(TIER_RANK[tier] > TIER_RANK[shown]);
+    setShown(tier);
+  }
+  return (
+    <motion.span
+      key={tier}
+      className={cx(styles.tierBadge, TIER_META[tier].tone)}
+      {...(rose ? m.pulse("correct") : {})}
+    >
+      {TIER_META[tier].label}
+    </motion.span>
+  );
+}
+
+function FocusCard({ animateIn, model, topic, onSwitch, onRemove }: {
+  /** Swap in (a new focus after the first); false on the rail's first paint. */
+  animateIn: boolean;
   model: RailModel;
   topic: string;
   onSwitch: (name: string) => void;
   onRemove: (nodeId: string) => void;
 }) {
   const { focusConcept, cardCourse, focusIsCurrent, focusHasSession } = model;
+  const m = useMotionPresets();
   return (
-    <div
-      className="mt-1.5 mx-4.5 mb-0 py-[15px] px-4 bg-bg-panel border border-border rounded-[14px] shadow-sm"
+    <motion.div
+      className={styles.focusCard}
+      initial={animateIn ? m.fadeUp.initial : false}
+      animate={m.fadeUp.animate}
+      transition={m.fadeUp.transition}
     >
-      <div className="flex items-center justify-between gap-2">
+      <div className={styles.focusHead}>
         <div className="label-micro">{focusConcept ? "Focused concept" : "Focused course"}</div>
-        {focusConcept && (
-          <span
-            className="text-[10.5px] font-semibold py-0.5 px-[9px] rounded-[var(--r-full)] text-accent-fg" style={{ background: TIER_META[focusConcept.mastery_tier].color }}
-          >
-            {TIER_META[focusConcept.mastery_tier].label}
-          </span>
-        )}
+        {focusConcept && <TierBadge tier={focusConcept.mastery_tier} />}
       </div>
-      <div className="font-display text-[19px] font-medium text-text mt-[7px] leading-[1.2]">
+      <div className={styles.focusTitle}>
         {focusCardTitle(focusConcept, cardCourse, topic)}
       </div>
       <div
         data-testid="tutor-focus-concept-description"
-        className="text-[12.5px] text-text-muted mt-1.5 leading-[1.5]"
+        className={styles.focusDesc}
       >
         {focusCardDescription(focusConcept, model.descCache, model.neighborIds.size, model.courseConceptCount)}
       </div>
       {focusConcept && (
-        <div className="flex gap-2 mt-3">
+        <div className={styles.focusActions}>
           {!focusIsCurrent && (
             <button
               onClick={() => onSwitch(focusConcept.name)}
-              className="flex-1 inline-flex items-center justify-center gap-1.5 py-2 px-3 rounded-sm text-[12.5px] font-semibold border-0 bg-brand-forest text-accent-fg cursor-pointer"
+              className={cx(styles.focusAction, styles.focusActionPrimary)}
             >
               <Icon name="sparkle" size={12} />
               {focusHasSession ? "Resume session" : "Start session"}
@@ -2038,13 +2124,13 @@ function FocusCard({ model, topic, onSwitch, onRemove }: {
           <button
             onClick={() => onRemove(focusConcept.id)}
             title="Remove concept"
-            className={cn("inline-flex items-center justify-center gap-1.5 py-2 px-3 rounded-sm text-[12.5px] font-medium border border-border bg-bg-panel text-state-struggle cursor-pointer", focusIsCurrent ? "flex-1" : "")}
+            className={cx(styles.focusAction, styles.focusActionRemove, focusIsCurrent && styles.focusActionFill)}
           >
             Remove
           </button>
         </div>
       )}
-    </div>
+    </motion.div>
   );
 }
 
@@ -2054,19 +2140,19 @@ function BranchList({ items, activeFocusId, onFocus }: {
   onFocus: (id: string) => void;
 }) {
   return (
-    <div className="pt-4.5 px-5.5 pb-1.5">
-      <div className="label-micro mb-2.5">In this branch</div>
-      <div className="flex flex-col gap-[9px]">
+    <div className={styles.branchSection}>
+      <div className={cx("label-micro", styles.sectionLabel)}>In this branch</div>
+      <div className={styles.branchList}>
         {items.map(p => (
           <button
             key={p.id}
             onClick={() => onFocus(p.id)}
             title={`Focus ${p.name}`}
-            className={cn("flex items-center gap-2.5 text-left w-full my-0 mx-[-7px] py-[5px] px-[7px] rounded-[8px] border-0 cursor-pointer", p.id === activeFocusId ? "bg-bg-soft" : "bg-transparent")}
+            className={cx(styles.branchItem, p.id === activeFocusId && styles.branchItemActive)}
           >
-            <span className="w-[11px] h-[11px] rounded-[50%] shrink-0" style={{ background: TIER_META[p.tier].color }} />
-            <span className={cn("flex-1 text-md text-text leading-[1.3]", p.id === activeFocusId ? "font-semibold" : "font-normal")}>{p.name}</span>
-            <span className="text-[10.5px] text-text-muted">{TIER_META[p.tier].label}</span>
+            <span className={cx(styles.branchDot, TIER_META[p.tier].tone)} />
+            <span className={styles.branchName}>{p.name}</span>
+            <span className={styles.branchTier}>{TIER_META[p.tier].label}</span>
           </button>
         ))}
       </div>
@@ -2080,9 +2166,9 @@ function ElsewhereList({ items, activeFocusId, onFocus }: {
   onFocus: (id: string) => void;
 }) {
   return (
-    <div className="pt-4 px-5.5 pb-6">
-      <div className="label-micro mb-2.5">Elsewhere in course</div>
-      <div className="flex flex-wrap gap-[7px]">
+    <div className={styles.elsewhereSection}>
+      <div className={cx("label-micro", styles.sectionLabel)}>Elsewhere in course</div>
+      <div className={styles.chipRow}>
         {items.map(r => {
           const active = r.id === activeFocusId;
           return (
@@ -2090,7 +2176,7 @@ function ElsewhereList({ items, activeFocusId, onFocus }: {
               key={r.id}
               onClick={() => onFocus(r.id)}
               title={`Focus ${r.name}`}
-              className={cn("py-1.5 px-3 rounded-[var(--r-full)] text-[12.5px] font-medium cursor-pointer", active ? "border border-brand-forest" : "border border-border", active ? "bg-accent-soft" : "bg-bg-panel", active ? "text-text" : "text-text-dim")}
+              className={cx(styles.chip, active && styles.chipActive)}
             >
               {r.name}
             </button>
@@ -2103,10 +2189,18 @@ function ElsewhereList({ items, activeFocusId, onFocus }: {
 
 function AddConceptComposer({ editing }: { editing: ConceptEditing }) {
   const { addingConcept, setAddingConcept, newConceptName, setNewConceptName, addConcept } = editing;
+  const m = useMotionPresets();
+  // The field fades in when opened (never on the rail's first paint).
+  const toggled = useHasChanged(addingConcept);
   return (
-    <div className="pt-1 px-5.5 pb-6">
+    <div className={styles.composer}>
       {addingConcept ? (
-        <div className="flex gap-1.5">
+        <motion.div
+          className={styles.composerRow}
+          initial={toggled ? m.fade.initial : false}
+          animate={m.fade.animate}
+          transition={m.fade.transition}
+        >
           <input
             autoFocus
             value={newConceptName}
@@ -2116,20 +2210,20 @@ function AddConceptComposer({ editing }: { editing: ConceptEditing }) {
               if (e.key === "Escape") { setAddingConcept(false); setNewConceptName(""); }
             }}
             placeholder="New concept name…"
-            className="flex-1 min-w-0 py-[7px] px-2.5 text-[12.5px] border border-border-strong rounded-sm bg-bg-panel text-text outline-none"
+            className={styles.composerInput}
           />
           <button
             onClick={() => addConcept(newConceptName)}
             disabled={!newConceptName.trim()}
-            className={cn("py-[7px] px-3 text-[12.5px] font-semibold rounded-sm border-0", newConceptName.trim() ? "bg-brand-forest" : "bg-bg-soft", newConceptName.trim() ? "text-accent-fg" : "text-text-muted", newConceptName.trim() ? "cursor-pointer" : "cursor-not-allowed")}
+            className={styles.composerAdd}
           >
             Add
           </button>
-        </div>
+        </motion.div>
       ) : (
         <button
           onClick={() => setAddingConcept(true)}
-          className="w-full py-2 px-3 text-[12.5px] font-medium rounded-sm border border-dashed border-border-strong bg-transparent text-text-muted cursor-pointer"
+          className={styles.composerOpen}
         >
           ＋ Add concept
         </button>
@@ -2151,7 +2245,9 @@ function RailToggleTab({ rail }: { rail: RailCollapse }) {
       onPointerUp={rail.onRailTabPointerUp}
       onPointerCancel={rail.onRailTabPointerCancel}
       onKeyDown={rail.onRailTabKeyDown}
-      className={cn("absolute top-1/2 [transform:translateY(-50%)] w-6 h-17 p-0 flex flex-col items-center justify-center gap-1 touch-none bg-bg-panel border border-border border-r-0 [border-radius:10px_0_0_10px] [box-shadow:-3px_0_8px_rgba(25,_37,_11,_0.06)] z-20", railDragging ? "cursor-grabbing" : "cursor-pointer", railOpen ? "text-brand-forest" : "text-text-muted", railDragging ? "[transition:none]" : "[transition:right_var(--dur)_var(--ease),_color_var(--dur)_var(--ease)]")} style={{ right: railW }}
+      className={cx(styles.railTab, railOpen && styles.railTabOpen, railDragging && styles.railTabDragging)}
+      // Rides the rail's edge: its live width.
+      style={{ "--rail-w": `${railW}px` } as React.CSSProperties}
     >
       {/* Knowledge-graph glyph: three nodes joined in a triangle. */}
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -2170,7 +2266,7 @@ function RailToggleTab({ rail }: { rail: RailCollapse }) {
         strokeLinecap="round"
         strokeLinejoin="round"
         aria-hidden="true"
-        className={cn(railOpen ? "[transform:rotate(0deg)]" : "[transform:rotate(180deg)]", railDragging ? "[transition:none]" : "[transition:transform_var(--dur)_var(--ease)]")}
+        className={cx(styles.railChevron, !railOpen && styles.railChevronClosed)}
       >
         <polyline points="9 18 15 12 9 6" />
       </svg>
@@ -2199,13 +2295,13 @@ function SidebarKnowledgeGraph({
     return () => ro.disconnect();
   }, []);
   return (
-    <div ref={ref} className="w-full">
+    <div ref={ref} className={styles.graphMeasure}>
       {width > 0 && (
         <KnowledgeGraph
           nodes={nodes}
           edges={edges}
           width={width}
-          height={280}
+          height={RAIL_GRAPH_HEIGHT}
           highlightId={highlightId}
           onNodeClick={onNodeClick}
         />
@@ -2214,23 +2310,15 @@ function SidebarKnowledgeGraph({
   );
 }
 
+// Hover tints the link and nudges the chevron back (CSS, Learn.module.css).
 function BackToLearnLink({ onClick }: { onClick: () => void }) {
-  const [hover, setHover] = useState(false);
   return (
     <button
       data-testid="tutor-back-to-learn"
       onClick={onClick}
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
-      className={cn("inline-flex items-center gap-1 pt-0 px-0 pb-1 bg-transparent border-0 cursor-pointer font-sans text-md font-normal [letter-spacing:normal] normal-case [transition:color_var(--dur-fast)_var(--ease)]", hover ? "text-accent" : "text-text-muted")}
+      className={styles.backLink}
     >
-      <ChevronLeft
-        size={14}
-        style={{
-          transform: hover ? "translateX(-2px)" : "translateX(0)",
-          transition: "transform var(--dur-fast) var(--ease)",
-        }}
-      />
+      <ChevronLeft size={14} className={styles.backChevron} />
       Back to Learn
     </button>
   );
@@ -2242,7 +2330,8 @@ function SessionRow({ s, onResume, onDelete, onRename }: {
   onDelete: (s: Session) => void;
   onRename: (s: Session, newTopic: string) => void;
 }) {
-  const del = useConfirm(() => onDelete(s), 3000);
+  const del = useConfirm(() => onDelete(s), DELETE_CONFIRM_MS);
+  const m = useMotionPresets();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(s.topic);
   // Esc unmounts the input, which fires blur → commitEdit. The blur closure
@@ -2272,16 +2361,21 @@ function SessionRow({ s, onResume, onDelete, onRename }: {
   };
 
   return (
-    <div
-      className="flex items-center gap-1.5 py-2 px-2.5 rounded-md bg-bg-subtle mb-1.5"
+    <motion.div
+      className={styles.sessionRow}
+      initial={m.fadeUp.initial}
+      animate={m.fadeUp.animate}
+      transition={m.fadeUp.transition}
+      // A deleted row folds its height (and its gap below) away.
+      exit={{ ...m.collapse.exit, marginBottom: 0 }}
     >
       {editing ? (
-        <div className="flex-1 flex flex-col gap-0.5">
+        <div className={styles.sessionEdit}>
           <input
             autoFocus
             aria-label="Session name"
             value={draft}
-            maxLength={120}
+            maxLength={SESSION_NAME_MAX}
             onChange={e => setDraft(e.target.value)}
             onKeyDown={e => {
               if (e.key === "Enter") {
@@ -2293,9 +2387,9 @@ function SessionRow({ s, onResume, onDelete, onRename }: {
               }
             }}
             onBlur={commitEdit}
-            className="text-md font-semibold py-0.5 px-1 border border-border rounded-sm bg-bg text-text"
+            className={styles.sessionNameInput}
           />
-          <span className="text-xs text-text-muted">
+          <span className={styles.sessionMeta}>
             {s.mode} · {s.message_count} msg{s.message_count === 1 ? "" : "s"}
           </span>
         </div>
@@ -2307,10 +2401,10 @@ function SessionRow({ s, onResume, onDelete, onRename }: {
           // LLM-backed start-session call.
           data-testid={`tutor-session-resume-${s.id}`}
           onClick={() => onResume(s)}
-          className="flex-1 text-left flex flex-col gap-0.5"
+          className={styles.sessionResume}
         >
-          <span className="text-md font-semibold">{s.topic}</span>
-          <span className="text-xs text-text-muted">
+          <span className={styles.sessionTopic}>{s.topic}</span>
+          <span className={styles.sessionMeta}>
             {s.mode} · {s.message_count} msg{s.message_count === 1 ? "" : "s"}
           </span>
         </button>
@@ -2334,7 +2428,7 @@ function SessionRow({ s, onResume, onDelete, onRename }: {
       >
         {del.armed ? "Confirm" : <Icon name="x" size={12} />}
       </button>
-    </div>
+    </motion.div>
   );
 }
 
@@ -2354,6 +2448,7 @@ function TopicPicker({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const wrapRef = useRef<HTMLDivElement>(null);
+  const m = useMotionPresets();
 
   useEffect(() => {
     const onDoc = (e: MouseEvent) => {
@@ -2374,7 +2469,7 @@ function TopicPicker({
       .filter(c => !selectedCourseId || c.course_id === selectedCourseId)
       .filter(c => courseInTerm(c, activeSemester))
       .filter(c => !q || c.name.toLowerCase().includes(q))
-      .slice(0, 80);
+      .slice(0, TOPIC_PICKER_LIMIT);
   }, [concepts, query, selectedCourseId, activeSemester]);
 
   const isGeneral = value === GENERAL_TOPIC;
@@ -2403,23 +2498,23 @@ function TopicPicker({
   const displayLabel = isGeneral ? generalLabel : (value || "Pick or type a topic…");
 
   return (
-    <div ref={wrapRef} className="relative mb-4">
+    <div ref={wrapRef} className={styles.topicPicker}>
       <button
         data-testid="tutor-topic-picker"
         onClick={() => setOpen(o => !o)}
         onKeyDown={e => { if (e.key === "Enter" && !open && value.trim()) onSubmit(); }}
-        className={cn("w-full py-3 px-3.5 border border-border rounded-sm text-[15px] bg-bg-input text-left flex items-center justify-between gap-2", value ? "text-text" : "text-text-muted")}
+        className={cx(styles.topicTrigger, value && styles.topicTriggerFilled)}
       >
-        <span className="overflow-hidden text-ellipsis whitespace-nowrap">
+        <span className={styles.ellipsis}>
           {displayLabel}
         </span>
         <Icon name="chev" size={12} />
       </button>
 
+      <AnimatePresence>
       {open && (
-        <div
-          className="absolute top-[calc(100%_+_4px)] left-0 right-0 bg-bg-panel border border-border-strong rounded-sm shadow-md z-30 max-h-90 flex flex-col"
-        >
+        // Drops open from the trigger; closes quickly (the preset's short exit).
+        <motion.div key="menu" className={styles.topicMenu} {...m.scaleIn}>
           <input
             data-testid="tutor-topic-search"
             autoFocus
@@ -2433,28 +2528,28 @@ function TopicPicker({
               }
             }}
             placeholder="Search concepts or type a custom topic…"
-            className="w-full py-2.5 px-3 text-md border-0 border-b border-b-border bg-transparent"
+            className={styles.topicSearch}
           />
-          <div className="overflow-y-auto flex-1">
+          <div className={styles.topicOptions}>
             <button
               onClick={pickGeneral}
-              className={cn("w-full py-2.5 px-3 text-left border-0 cursor-pointer text-md flex flex-col gap-0.5 border-b border-b-border", isGeneral ? "bg-accent-soft" : "bg-transparent")}
+              className={cx(styles.topicOption, styles.topicGeneral, isGeneral && styles.topicOptionSelected)}
             >
-              <span className="font-semibold text-text">{generalLabel}</span>
-              <span className="text-xs text-text-muted">
+              <span className={styles.topicGeneralLabel}>{generalLabel}</span>
+              <span className={styles.topicHint}>
                 Tutor scans your graph and chooses the next concept.
               </span>
             </button>
             {filtered.length === 0 && query.trim() && (
               <button
                 onClick={pickCustom}
-                className="w-full py-2.5 px-3 text-left bg-transparent border-0 cursor-pointer text-md text-text"
+                className={styles.topicOption}
               >
                 Use custom topic: <strong>“{query.trim()}”</strong>
               </button>
             )}
             {filtered.length === 0 && !query.trim() && (
-              <div className="py-4 px-3 text-sm text-text-muted">
+              <div className={styles.topicEmpty}>
                 {selectedCourseId
                   ? "No concepts in this course yet — upload a syllabus or scan to populate the graph."
                   : "No concepts in your graph yet."}
@@ -2466,13 +2561,13 @@ function TopicPicker({
                 <button
                   key={c.id}
                   onClick={() => pickConcept(c.name)}
-                  className={cn("w-full py-2 px-3 text-left border-0 cursor-pointer text-md flex justify-between items-center gap-2", isSel ? "bg-accent-soft" : "bg-transparent")}
+                  className={cx(styles.topicOption, styles.topicConcept, isSel && styles.topicOptionSelected)}
                 >
-                  <span className="overflow-hidden text-ellipsis whitespace-nowrap text-text">
+                  <span className={styles.ellipsis}>
                     {c.name}
                   </span>
                   {c.course_code && (
-                    <span className="mono text-2xs text-text-muted shrink-0">
+                    <span className={cx("mono", styles.topicConceptCode)}>
                       {c.course_code}
                     </span>
                   )}
@@ -2480,8 +2575,9 @@ function TopicPicker({
               );
             })}
           </div>
-        </div>
+        </motion.div>
       )}
+      </AnimatePresence>
     </div>
   );
 }

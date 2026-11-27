@@ -7,7 +7,7 @@ danger?). Both are defeated by the same cheap tricks, so they share the same
 folds:
 
 - ``strip_invisible``: zero-width and other format characters threaded
-  through a word ("ig​nore") read identically and dodge every pattern.
+  through a word ("ig\u200bnore") read identically and dodge every pattern.
 - ``fold_confusables``: Latin look-alikes from Cyrillic and Greek
   ("Ignоre" with a Cyrillic o). NFKC folds fullwidth and mathematical
   letters already; it leaves these alone because they are real letters of
@@ -29,7 +29,7 @@ import re
 #: zero-width space/non-joiner/joiner, LRM/RLM, bidi embeddings and isolates,
 #: word joiner and the invisible operators, BOM.
 INVISIBLE_RE = re.compile(
-    "[­᠎​-‏‪-‮⁠-⁤⁦-⁩﻿]"
+    "[\u00ad\u180e\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]"
 )
 
 # Cyrillic and Greek letters that pass for Latin ones in common fonts. Not

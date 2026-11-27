@@ -1,0 +1,228 @@
+{
+  "output": {
+    "items": [
+      {
+        "answer_kind": "free",
+        "canonical_answer": "",
+        "chunk_ids": [
+          "eval-doc-1:c2",
+          "eval-doc-1:c3"
+        ],
+        "concept": "Chain Rule + Derivatives",
+        "difficulty": 3,
+        "final_answer": "The factor g'(x) is missing, so h'(x) = f'(g(x)) * g'(x)",
+        "format": "free",
+        "options": [],
+        "prompt": "A student must differentiate h(x) = f(g(x)) and writes only f'(g(x)) as the answer, reasoning that the derivative is the slope of the tangent line of the outer function. Explain what is missing and why it is needed.",
+        "reference_answer": "The derivative is an instantaneous rate of change, and h is a composite function, so its rate of change depends on how fast g changes the input as well as how fast f changes with its input. The chain rule gives d/dx f(g(x)) = f'(g(x)) * g'(x), so the factor g'(x) is missing. Final answer: The factor g'(x) is missing, so h'(x) = f'(g(x)) * g'(x).",
+        "rubric": [
+          "States that the factor g'(x) is missing",
+          "Explains that h is a composite whose rate of change depends on the inner function's rate of change too",
+          "Gives the full form f'(g(x)) * g'(x)"
+        ],
+        "stepwise": false,
+        "tolerance": "",
+        "wrong_keys": [
+          "ignores_inner_derivative",
+          "outer_only_slope"
+        ],
+        "wrong_texts": [
+          "Differentiates only the outer function and drops the inner function's derivative.",
+          "Treats the tangent slope of the outer function alone as the slope of the composite."
+        ]
+      },
+      {
+        "answer_kind": "free",
+        "canonical_answer": "",
+        "chunk_ids": [
+          "eval-doc-1:c2",
+          "eval-doc-1:c3"
+        ],
+        "concept": "Chain Rule + Derivatives",
+        "difficulty": 3,
+        "final_answer": "The derivative of f(g(x)) is f'(g(x)) * g'(x), the outer rate evaluated at g(x) times the inner rate",
+        "format": "teachback",
+        "options": [],
+        "prompt": "Explain to a classmate who missed the lecture how the chain rule extends the idea of a derivative as an instantaneous rate of change to composite functions f(g(x)).",
+        "reference_answer": "A derivative is the instantaneous rate of change, the slope of the tangent line. For a composite f(g(x)), the input x first changes g, and that change then feeds into f. So the two rates of change multiply: f' is evaluated at the inner function value g(x), and it is multiplied by g'(x). Final answer: The derivative of f(g(x)) is f'(g(x)) * g'(x), the outer rate evaluated at g(x) times the inner rate.",
+        "rubric": [
+          "Describes the derivative as an instantaneous rate of change or tangent slope",
+          "States the formula f'(g(x)) * g'(x)",
+          "Notes that f' is evaluated at g(x), not at x",
+          "Explains the two rates combine through composition"
+        ],
+        "stepwise": false,
+        "tolerance": "",
+        "wrong_keys": [
+          "evaluates_outer_at_x",
+          "adds_rates"
+        ],
+        "wrong_texts": [
+          "Evaluates f' at x instead of at g(x).",
+          "Adds the two derivatives instead of multiplying them."
+        ]
+      },
+      {
+        "answer_kind": "free",
+        "canonical_answer": "",
+        "chunk_ids": [
+          "eval-doc-1:c3"
+        ],
+        "concept": "Chain Rule + Derivatives",
+        "difficulty": 3,
+        "final_answer": "f'(g(x)) * g'(x)",
+        "format": "mc_reason",
+        "options": [
+          {
+            "is_correct": true,
+            "misconception_key": null,
+            "misconception_text": null,
+            "text": "f'(g(x)) * g'(x)"
+          },
+          {
+            "is_correct": false,
+            "misconception_key": "outer_at_x",
+            "misconception_text": "Evaluates the outer derivative at x rather than at g(x).",
+            "text": "f'(x) * g'(x)"
+          },
+          {
+            "is_correct": false,
+            "misconception_key": "drops_inner",
+            "misconception_text": "Forgets the inner function's derivative.",
+            "text": "f'(g(x))"
+          },
+          {
+            "is_correct": false,
+            "misconception_key": "adds_instead_of_multiplies",
+            "misconception_text": "Adds the two rates of change instead of multiplying.",
+            "text": "f'(g(x)) + g'(x)"
+          }
+        ],
+        "prompt": "Which expression gives the derivative of f(g(x)) at a point x? Pick one option and give the reason.",
+        "reference_answer": "The composite's rate of change combines the outer function's rate, evaluated at the inner value g(x), with the inner function's rate g'(x), as the chain rule d/dx f(g(x)) = f'(g(x)) * g'(x) states. Final answer: f'(g(x)) * g'(x).",
+        "rubric": [
+          "Cites the chain rule for composite functions",
+          "Explains f' is evaluated at g(x) and multiplied by g'(x)"
+        ],
+        "stepwise": false,
+        "tolerance": "",
+        "wrong_keys": [],
+        "wrong_texts": []
+      },
+      {
+        "answer_kind": "free",
+        "canonical_answer": "",
+        "chunk_ids": [
+          "eval-doc-1:c1",
+          "eval-doc-1:c2"
+        ],
+        "concept": "Derivatives + Limits",
+        "difficulty": 3,
+        "final_answer": "The limit of the difference quotients as the step approaches zero gives the tangent slope",
+        "format": "free",
+        "options": [],
+        "prompt": "A classmate says a derivative can be found just by plugging the point into the difference quotient. Using the definition of the derivative, explain why a limit is needed and what it produces.",
+        "reference_answer": "The difference quotient gives the slope of a secant line between two points over an interval. Plugging in the point itself would give a zero-over-zero form. Taking the limit as the input difference approaches zero gives the value the quotient approaches, which is the instantaneous rate of change, the slope of the tangent line. Final answer: The limit of the difference quotients as the step approaches zero gives the tangent slope.",
+        "rubric": [
+          "States that the derivative is defined as a limit of difference quotients",
+          "Explains that the limit takes the quotient to the instantaneous rate or tangent slope",
+          "Notes that substituting directly gives no meaningful value"
+        ],
+        "stepwise": false,
+        "tolerance": "",
+        "wrong_keys": [
+          "secant_equals_tangent",
+          "limit_just_substitution"
+        ],
+        "wrong_texts": [
+          "Treats the average rate over an interval as the instantaneous rate.",
+          "Thinks the limit is just direct substitution of the point."
+        ]
+      },
+      {
+        "answer_kind": "free",
+        "canonical_answer": "",
+        "chunk_ids": [
+          "eval-doc-1:c1",
+          "eval-doc-1:c2"
+        ],
+        "concept": "Derivatives + Limits",
+        "difficulty": 3,
+        "final_answer": "The derivative is defined as the limit of difference quotients, so limits give the instantaneous rate",
+        "format": "teachback",
+        "options": [],
+        "prompt": "Explain to a classmate who missed the lecture why limits are the foundation of the derivative.",
+        "reference_answer": "A limit is the value a function approaches as the input approaches a point. The derivative is the instantaneous rate of change, the slope of the tangent line, and it is defined as the limit of difference quotients. Without limits there would be no way to turn average slopes into one instantaneous slope. Final answer: The derivative is defined as the limit of difference quotients, so limits give the instantaneous rate.",
+        "rubric": [
+          "Defines a limit as the value approached as the input approaches a point",
+          "States the derivative is the limit of difference quotients",
+          "Links this to instantaneous rate of change or tangent slope"
+        ],
+        "stepwise": false,
+        "tolerance": "",
+        "wrong_keys": [
+          "derivative_is_average_rate",
+          "limits_unrelated"
+        ],
+        "wrong_texts": [
+          "Describes the derivative as an average rate of change.",
+          "Treats limits as a separate topic unrelated to the derivative's definition."
+        ]
+      },
+      {
+        "answer_kind": "free",
+        "canonical_answer": "",
+        "chunk_ids": [
+          "eval-doc-1:c1",
+          "eval-doc-1:c2"
+        ],
+        "concept": "Derivatives + Limits",
+        "difficulty": 3,
+        "final_answer": "Limit of the difference quotients",
+        "format": "mc_reason",
+        "options": [
+          {
+            "is_correct": true,
+            "misconception_key": null,
+            "misconception_text": null,
+            "text": "Limit of the difference quotients"
+          },
+          {
+            "is_correct": false,
+            "misconception_key": "function_value",
+            "misconception_text": "Confuses the derivative with the function's value.",
+            "text": "Value of the function at the point"
+          },
+          {
+            "is_correct": false,
+            "misconception_key": "average_rate",
+            "misconception_text": "Confuses a fixed-interval average rate with the instantaneous rate.",
+            "text": "One difference quotient over a fixed interval"
+          },
+          {
+            "is_correct": false,
+            "misconception_key": "area_confusion",
+            "misconception_text": "Confuses the derivative with accumulated area.",
+            "text": "Area under the curve at the point"
+          }
+        ],
+        "prompt": "The derivative of a function at a point is defined as which of the following? Pick one option and give the reason.",
+        "reference_answer": "The derivative is the instantaneous rate of change, the slope of the tangent line. It is obtained as the value the difference quotients approach as the input change approaches zero, which is a limit. Final answer: Limit of the difference quotients.",
+        "rubric": [
+          "Says the derivative is the instantaneous rate or tangent slope",
+          "Explains it comes from a limit of difference quotients rather than a single quotient"
+        ],
+        "stepwise": false,
+        "tolerance": "",
+        "wrong_keys": [],
+        "wrong_texts": []
+      }
+    ]
+  },
+  "recorded_under": {
+    "input_sha256": "2add2de5bd3d5e6b508ae1ec19dbca11023ae9031f76362d276ef5c90acb89bc",
+    "model": "claude-sonnet-5-5",
+    "prompt_hash": "cea42041066e",
+    "schema_hash": "d4d6bdaf562d"
+  }
+}

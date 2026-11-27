@@ -30,6 +30,7 @@ vi.mock("@/lib/api", () => {
     updateDocumentCategory: vi.fn(),
     addCourse: vi.fn(),
     onboardingCoursesSearch: vi.fn(async () => ({ courses: [] })),
+    getGraph: vi.fn(async () => ({ nodes: [], edges: [], stats: {} })),
   };
 });
 
@@ -39,6 +40,7 @@ import {
   uploadDocumentStream,
   addCourse,
   onboardingCoursesSearch,
+  getGraph,
   type UploadOutcome,
   type EnrolledCourse,
   type OnboardingCourse,
@@ -47,6 +49,7 @@ import {
 const mockedUpload = vi.mocked(uploadDocumentStream);
 const mockedAddCourse = vi.mocked(addCourse);
 const mockedSearch = vi.mocked(onboardingCoursesSearch);
+const mockedGraph = vi.mocked(getGraph);
 
 const COURSE: EnrolledCourse = {
   enrollment_id: "e1",
@@ -91,6 +94,8 @@ let clipboardWrite: ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
   mockedUpload.mockReset();
+  mockedGraph.mockReset();
+  mockedGraph.mockResolvedValue({ nodes: [], edges: [], stats: {} });
   // jsdom 29 only exposes navigator.clipboard in secure contexts, so it's
   // undefined here by default. Inject a fresh stub via the Navigator
   // prototype (assigning to navigator.clipboard directly hits a getter-only
@@ -229,6 +234,27 @@ describe("DocumentUploadModal SSE error UX", () => {
     expect(row).not.toHaveTextContent("Fresh abstract.");
     expect(row).not.toHaveTextContent("Backprop");
     expect(pending.signal?.aborted).toBe(false);
+  });
+
+  it("Quiz CTA is concept-scoped when getGraph resolves uploaded names (W8.1c)", async () => {
+    mockedGraph.mockResolvedValue({
+      nodes: [{ id: "node-bp", concept_name: "Backprop", course_id: "c-1" }],
+      edges: [],
+      stats: {},
+    });
+    mockedUpload.mockResolvedValue(PROCESSED);
+
+    const user = userEvent.setup();
+    renderModal();
+    await addFile(user);
+    await user.click(screen.getByRole("button", { name: /start upload/i }));
+
+    const quiz = await screen.findByTestId("upload-next-0-quiz");
+    expect(quiz).toHaveAttribute(
+      "href",
+      "/quiz?concept=node-bp&from=link&return=%2Flibrary&start=1",
+    );
+    expect(mockedGraph).toHaveBeenCalledWith("u1");
   });
 
   it("surfaces request_id with a copy button on failed rows", async () => {
@@ -443,7 +469,7 @@ describe("DocumentUploadModal inline course add (#186)", () => {
     await inlineAddCourse(user);
     await addFile(user);
 
-    await user.click(screen.getByRole("button", { name: "Course" }));
+    await user.click(screen.getByRole("button", { name: /^Course\b/ }));
     // Both the enrolled course and the just-added one are options.
     expect(screen.getByRole("option", { name: /CS101/ })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: /MATH200/ })).toBeInTheDocument();
@@ -469,7 +495,7 @@ describe("DocumentUploadModal inline course add (#186)", () => {
     // The row's course select defaults to the just-added course, not the
     // "Pick a course" placeholder (pre-#186 the default was courses[0] of
     // the stale prop, i.e. empty).
-    expect(screen.getByRole("button", { name: "Course" })).toHaveTextContent("MATH200");
+    expect(screen.getByRole("button", { name: /^Course\b/ })).toHaveTextContent("MATH200");
   });
 
   it("resets inline-added courses when the modal is closed and reopened", async () => {
@@ -489,7 +515,7 @@ describe("DocumentUploadModal inline course add (#186)", () => {
 
     await inlineAddCourse(user);
     await addFile(user);
-    await user.click(screen.getByRole("button", { name: "Course" }));
+    await user.click(screen.getByRole("button", { name: /^Course\b/ }));
     expect(screen.getByRole("option", { name: /MATH200/ })).toBeInTheDocument();
 
     // Close (parent refreshes `courses` via onComplete in the real flow)
@@ -498,7 +524,7 @@ describe("DocumentUploadModal inline course add (#186)", () => {
     rerender(modal(true));
 
     await addFile(user);
-    await user.click(screen.getByRole("button", { name: "Course" }));
+    await user.click(screen.getByRole("button", { name: /^Course\b/ }));
     expect(screen.getByRole("option", { name: /CS101/ })).toBeInTheDocument();
     expect(screen.queryByRole("option", { name: /MATH200/ })).not.toBeInTheDocument();
   });

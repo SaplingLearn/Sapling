@@ -36,6 +36,8 @@ BUCKETS: dict[str, frozenset[str]] = {
         "friend_requests", "friendships",
         "flashcard_sets",  # 20261112060028_flashcard_sets.sql
         "document_folders",  # 20261125062932_library_folders.sql
+        "tutor_saved_items",  # 20261126055016_tutor_saved_items.sql
+        "course_concept_exclusions",  # 20261126060659_course_concept_exclusions.sql
     }),
     "B_via_parent": frozenset({
         "messages", "node_mastery_events", "note_concepts", "quiz_responses",
@@ -64,6 +66,13 @@ BUCKETS: dict[str, frozenset[str]] = {
         "tutor_pending_sessions",  # #117 stateless_tutor_sessions
         "legal_acceptances",  # onboarding: Terms / Privacy versions accepted
         "email_alert_suppressions",  # #890 ops-alert unsubscribes
+        # The learning loop (spec §13 A148, 20261109032302_learning_loop_rls.sql):
+        "learner_state", "check_items", "check_item_draft_failures", "ai_tutor_daily_calls",
+        "misconceptions", "posttest_poses", "learning_reveals", "quiz_evidence_claims",
+        "checklist_budget_accounts", "checklist_budget_reservations",
+        "learning_evidence_operations", "check_item_reports", "check_item_reviews",
+        "learning_evidence_voids", "misconception_attempts", "check_item_audits",
+        "posttest_skips", "learning_prequestions", "learning_self_explanations",
         "auth_handoff_consumptions",  # sec2 M2: single-use OAuth handoffs
     }),
 }
@@ -112,6 +121,10 @@ _SEED = [
     f"INSERT INTO document_folders (id, user_id, course_id, name) "
     f"VALUES ('rlsp-folder-a', '{A}', 'rlsp-course', 'folder')",
     "INSERT INTO messages (id, session_id, role, content) VALUES ('rlsp-msg-a', 'rlsp-sess-a', 'user', 'hi')",
+    f"INSERT INTO tutor_saved_items (id, user_id, session_id, course_id, title, content) "
+    f"VALUES ('rlsp-saved-a', '{A}', 'rlsp-sess-a', 'rlsp-course', 't', 'c')",
+    f"INSERT INTO course_concept_exclusions (id, user_id, course_id, concept_key) "
+    f"VALUES ('rlsp-cx-a', '{A}', 'rlsp-course', 'limits')",
     f"INSERT INTO graph_nodes (id, user_id, course_id, concept_name, mastery_score) "
     f"VALUES ('rlsp-node-a', '{A}', 'rlsp-course', 'limits', 0.5)",
     f"INSERT INTO documents (id, user_id, offering_id, file_name, category) VALUES "
@@ -223,6 +236,8 @@ A_ROWS = {
     "sessions": "id = 'rlsp-sess-a'",
     "flashcard_sets": "id = 'rlsp-fset-a'",
     "document_folders": "id = 'rlsp-folder-a'",
+    "tutor_saved_items": "id = 'rlsp-saved-a'",
+    "course_concept_exclusions": "id = 'rlsp-cx-a'",
     "graph_nodes": "id = 'rlsp-node-a'",
     "enrollments": "id = 'rlsp-enr-a'",
     "messages": "id = 'rlsp-msg-a'",

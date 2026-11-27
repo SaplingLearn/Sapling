@@ -2,7 +2,7 @@
 /**
  * Characterization of the notetaker screen's top-level wiring, pinned before
  * `NotetakerScreen` was split for the complexity budget: the loading and
- * empty states, the four-rail layout (styles + aria-hidden per fullscreen
+ * empty states, the four-rail layout (styles + inert per fullscreen
  * mode), Escape handling, the course / concept pickers, tags, the agent
  * actions not already covered by page.stateMachines.test.tsx, the list
  * filters, and that switching notes reuses the editor's DOM (no remount)
@@ -13,6 +13,7 @@ import React from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, cleanup, fireEvent, waitFor, within } from "@testing-library/react";
 import type { EnrolledCourse } from "@/lib/api";
+import styles from "./notetaker.module.css";
 import type { Note as ApiNote, LinkedConcept as ApiLinkedConcept } from "@/lib/types";
 
 const { push, toastError } = vi.hoisted(() => ({ push: vi.fn(), toastError: vi.fn() }));
@@ -65,7 +66,6 @@ import {
   unlinkNoteConcept,
   getGraph,
 } from "@/lib/api";
-import { twStyle } from "@/test-utils/twStyle";
 
 const COURSE: EnrolledCourse = {
   enrollment_id: "e-cs",
@@ -167,9 +167,10 @@ describe("loading and empty states", () => {
     vi.mocked(getCourses).mockReturnValue(new Promise(() => {}));
     const { container } = render(<NotetakerPage />);
     expect(screen.getByText("Loading notes…")).toBeInTheDocument();
-    expect(container.firstElementChild as HTMLElement).toHaveTwStyle({
-      display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "var(--text-muted)", fontSize: "13px",
-    });
+    // Styled by the screen's CSS module (#866), not inline.
+    const loading = container.firstElementChild as HTMLElement;
+    expect(loading.className).toBe(styles.loading);
+    expect(loading.getAttribute("style")).toBeNull();
     expect(screen.queryByPlaceholderText("Untitled note")).toBeNull();
   });
 
@@ -222,7 +223,8 @@ describe("loading and empty states", () => {
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(screen.queryByRole("dialog")).toBeNull();
     fireEvent.click(create);
-    fireEvent.click(screen.getByRole("dialog"));
+    // The backdrop is the dialog's parent: the panel itself carries the role.
+    fireEvent.click(screen.getByRole("dialog").parentElement!);
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 });
@@ -239,7 +241,8 @@ describe("four-rail layout", () => {
       "false",
     ],
     editor: [
-      "flex: 1 1 0%; min-width: 0px; display: flex; justify-content: center;",
+      // The editor slot is styled by the CSS module (#866); its frame stays inline.
+      null,
       "width: 100%; max-width: none; display: flex; transition: max-width var(--dur-slow) var(--ease);",
     ],
     detail: [
@@ -258,7 +261,8 @@ describe("four-rail layout", () => {
       "true",
     ],
     editor: [
-      "flex: 1 1 0%; min-width: 0px; display: flex; justify-content: center;",
+      // The editor slot is styled by the CSS module (#866); its frame stays inline.
+      null,
       "width: 100%; max-width: min(1200px, 96%); display: flex; transition: max-width var(--dur-slow) var(--ease);",
     ],
     detail: [
@@ -271,17 +275,17 @@ describe("four-rail layout", () => {
     ],
   };
 
-  it("pins rail styles and aria-hidden in normal and fullscreen modes, toggled by the button and Escape", async () => {
+  it("pins rail styles and inert in normal and fullscreen modes, toggled by the button and Escape", async () => {
     const { container } = await renderPage();
     const snapshot = (l: ReturnType<typeof layout>) => ({
-      row: twStyle(l.row).cssText,
-      list: [twStyle(l.list).cssText, l.list.getAttribute("aria-hidden")],
+      row: l.row.getAttribute("style"),
+      list: [l.list.getAttribute("style"), String(l.list.hasAttribute("inert"))],
       editor: [
-        twStyle(l.editor).cssText,
+        l.editor.getAttribute("style"),
         (l.editor.firstElementChild as HTMLElement).getAttribute("style"),
       ],
-      detail: [twStyle(l.detail).cssText, l.detail.getAttribute("aria-hidden")],
-      chat: [twStyle(l.chat).cssText, l.chat.getAttribute("aria-hidden")],
+      detail: [l.detail.getAttribute("style"), String(l.detail.hasAttribute("inert"))],
+      chat: [l.chat.getAttribute("style"), String(l.chat.hasAttribute("inert"))],
     });
     const normal = layout(container);
     expect(snapshot(normal)).toEqual(NORMAL);

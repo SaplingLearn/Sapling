@@ -1,72 +1,158 @@
 "use client";
 /**
  * Quick Reviews: the studied concepts that are slipping (stale, struggling or
- * under 70%), as one row that starts their flashcards. Hovering or focusing it
- * lists them first.
+ * under 70%), as one row that opens their list, with Review (their
+ * flashcards) under it.
  *
  * One line: the glyph, the title in blue beside it, and a solid blue button
- * carrying the estimate and chevron. What the row is for is spelled out in the hover list.
+ * carrying the estimate and chevron. What the row is for is spelled out in the list.
+ *
+ * W8.3b / W3.3b: when the list is the FSRS-due set (`fsrsDue`), the pop-up also
+ * offers a Practice secondary CTA (same due concept ids → Quiz) beside
+ * Flashcards — cue stream, not Teach.
  */
 import React from "react";
+import { HandoffLink } from "@/components/ui/HandoffLink";
+import { LEARNING_COPY } from "@/lib/learningCopy";
 import { Icon } from "../Icon";
 import { quickReviewEstimate } from "./hubModel";
 import { CardsIcon, StatusDot } from "./hubUi";
+import q from "./QuickReviews.module.css";
 import s from "./StudyHub.module.css";
 import type { Concept } from "./studyModel";
-import { cn } from "@/lib/cn";
 
 export type QuickReview = { t: Concept; ago: number };
 
-const reviewsLabel = (n: number) => `${n} Quick ${n === 1 ? "Review" : "Reviews"}`;
-/** Why a concept is on the list: not seen for a week, or simply weak. */
-const reason = (x: QuickReview) => (x.ago >= 7 ? `Last seen ${x.ago} days ago` : `Slipping · ${x.t.m}%`);
+const reviewsLabel = (n: number, fsrsDue: boolean) =>
+  fsrsDue
+    ? `${n} ${n === 1 ? "review" : "reviews"} due`
+    : `${n} quick ${n === 1 ? "review" : "reviews"}`;
+/** Why a concept is on the list: FSRS-due, not seen for a week, or simply weak. */
+const reason = (x: QuickReview, fsrsDue: boolean) =>
+  fsrsDue
+    ? "Due for review"
+    : (x.ago >= 7 ? `Last seen ${x.ago} days ago` : `Slipping · ${x.t.m}%`);
 
-function ReviewList({ reviews, courseLabel, onStart }: { reviews: QuickReview[]; courseLabel: string; onStart: () => void }) {
+function ReviewList({ id, reviews, courseLabel, reviewHref, quizHref, onNavigate, fsrsDue }: {
+  id: string;
+  reviews: QuickReview[];
+  courseLabel: string;
+  reviewHref: string;
+  /** W8.3b / W3.3b: Practice (Quiz) secondary when Due Reviews + quiz is shown. */
+  quizHref: string | null;
+  onNavigate: (href: string) => void;
+  fsrsDue: boolean;
+}) {
   return (
-    <div className="absolute left-0 right-0 top-full pt-2 z-31">
-      <div role="dialog" aria-label="Quick reviews" className={cn(s.pop, "w-full box-border [background:var(--bg-panel)] border border-border rounded-md shadow-lg py-3.5 px-4 flex flex-col gap-2.5")}>
-        <span className="flex flex-col gap-0.5">
-          <span className="text-base font-semibold text-text">{reviewsLabel(reviews.length)}</span>
-          <span className="text-sm text-text-muted">{quickReviewEstimate(reviews.length)} · {courseLabel}</span>
+    <div className={q.listAnchor}>
+      <div id={id} role="region" aria-label={fsrsDue ? "Due reviews" : "Quick reviews"} className={`${s.pop} ${s.popover} ${q.list}`}>
+        <span className={q.head}>
+          <span className={q.headTitle}>{reviewsLabel(reviews.length, fsrsDue)}</span>
+          <span className={q.headMeta}>{quickReviewEstimate(reviews.length)} · {courseLabel}</span>
         </span>
-        <span className={cn(s.catScroll, "flex flex-col max-h-50 overflow-y-auto pr-1")}>
-          {reviews.map(x => (
-            <span key={x.t.id} className="flex items-center gap-2.5 py-[7px] px-0 border-t border-t-border">
+        <span className={`${s.catScroll} ${q.scroll}`}>
+          {reviews.map((x, i) => (
+            // The stagger stops growing after ten rows, so a long list is not
+            // still arriving seconds later.
+            <span key={x.t.id} className={q.item} style={{ "--i": Math.min(i, 10) } as React.CSSProperties}>
               <StatusDot st={x.t.st} size={8} fixed />
-              <span className="flex-1 min-w-0 text-md font-semibold whitespace-nowrap overflow-hidden text-ellipsis">{x.t.name}</span>
-              <span className="text-xs text-text-muted whitespace-nowrap">{reason(x)}</span>
+              <span className={`${q.itemName} ${s.ellipsis}`}>{x.t.name}</span>
+              <span className={q.itemReason}>{reason(x, fsrsDue)}</span>
             </span>
           ))}
         </span>
-        <button type="button" className="btn btn--primary h-9 justify-center" onClick={onStart}>Start Review</button>
+        <span className={q.actions}>
+          <HandoffLink variant="primary" href={reviewHref} onNavigate={onNavigate} testId="due-reviews-flashcards"
+            className={`${q.action}${quizHref ? ` ${q.actionShare}` : ""}`}>
+            {LEARNING_COPY.review}
+          </HandoffLink>
+          {quizHref && (
+            <HandoffLink href={quizHref} onNavigate={onNavigate} testId="due-reviews-quiz" className={`${q.action} ${q.actionShare}`}>
+              {LEARNING_COPY.practiceDue}
+            </HandoffLink>
+          )}
+        </span>
       </div>
     </div>
   );
 }
 
-export function QuickReviews({ reviews, courseLabel, onStart }: {
+/**
+ * The row is a disclosure (audit: the hover-only pop-up kept keyboard and
+ * touch from its buttons): a click or Enter opens the list in place, and
+ * Escape, a click outside or the row again closes it. Its actions are real
+ * links (`HandoffLink`) that leave through the hub's fade.
+ */
+export function QuickReviews({ reviews, courseLabel, reviewHref, quizHref = null, onNavigate, fsrsDue = false }: {
   /** Picked over the whole course, whichever exam tab is selected. */
   reviews: QuickReview[];
   /** So the list is named for what it is over: the course, not the exam. */
   courseLabel: string;
-  /** Starts flashcards on these concepts. */
-  onStart: () => void;
+  /** Flashcards on these concepts. */
+  reviewHref: string;
+  /**
+   * W8.3b / W3.3b: Practice secondary for Due Reviews (learner-next due[] →
+   * Quiz). Null while flags off, quiz hidden, or the due bucket is empty —
+   * flag-off UI unchanged.
+   */
+  quizHref?: string | null;
+  /** A plain click on an action: the hub's leave (fade, then navigate). */
+  onNavigate: (href: string) => void;
+  /** W8.3: list is the FSRS-due set from learner-next. */
+  fsrsDue?: boolean;
 }) {
   const [open, setOpen] = React.useState(false);
+  const anchor = React.useRef<HTMLDivElement>(null);
+  const rowRef = React.useRef<HTMLButtonElement>(null);
+  const listId = React.useId();
+  React.useEffect(() => {
+    if (!open) return;
+    const outside = (e: PointerEvent) => {
+      if (anchor.current && !anchor.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("pointerdown", outside);
+    return () => document.removeEventListener("pointerdown", outside);
+  }, [open]);
   if (reviews.length === 0) return null;
+  const leave = (href: string) => { setOpen(false); onNavigate(href); };
   return (
-    <div onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)} className="relative">
-      <button className={cn(s.hoverQr, "w-full flex items-center gap-2 py-3 px-3.5 border-0 rounded-md [background:var(--info-soft)] text-text [font-family:inherit] [font-size:inherit] [font-weight:inherit] [font-style:inherit] [line-height:inherit] text-left cursor-pointer")} onClick={onStart} onFocus={() => setOpen(true)} onBlur={() => setOpen(false)} aria-expanded={open}>
-        <span aria-hidden="true" className="w-6 grid place-items-center shrink-0 text-info"><CardsIcon size={21} /></span>
-        <span className="flex-1 min-w-0 text-md font-semibold text-info whitespace-nowrap overflow-hidden text-ellipsis">{reviewsLabel(reviews.length)}</span>
-        {/* The original action: the estimate and the chevron in ONE solid blue
-            button, not a pale chip sitting beside a loose chevron. */}
-        <span className="chip shrink-0 h-7.5 py-0 px-3 rounded-sm bg-info text-accent-fg border-transparent text-sm font-bold">
+    <div
+      ref={anchor}
+      className={q.anchor}
+      onKeyDown={(e) => {
+        if (e.key === "Escape" && open) {
+          setOpen(false);
+          rowRef.current?.focus();
+        }
+      }}
+    >
+      <button
+        ref={rowRef}
+        type="button"
+        className={q.row}
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        aria-controls={open ? listId : undefined}
+      >
+        <span aria-hidden="true" className={q.glyph}><CardsIcon size={21} /></span>
+        <span className={`${q.title} ${s.ellipsis}`}>{reviewsLabel(reviews.length, fsrsDue)}</span>
+        {/* The estimate and the chevron in ONE solid blue button. */}
+        <span className={`chip ${q.estimate}`}>
           {quickReviewEstimate(reviews.length)}
           <Icon name="chev" size={12} />
         </span>
       </button>
-      {open && <ReviewList reviews={reviews} courseLabel={courseLabel} onStart={() => { setOpen(false); onStart(); }} />}
+      {open && (
+        <ReviewList
+          id={listId}
+          reviews={reviews}
+          courseLabel={courseLabel}
+          fsrsDue={fsrsDue}
+          reviewHref={reviewHref}
+          quizHref={quizHref}
+          onNavigate={leave}
+        />
+      )}
     </div>
   );
 }

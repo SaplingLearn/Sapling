@@ -16,19 +16,23 @@
  */
 import React from "react";
 import { useRouter } from "next/navigation";
+import { handoffLearnHref } from "@/lib/learningHandoffs";
 import { buildQuizHref } from "@/lib/quiz/source";
+import { MOTION } from "@/lib/designTokens";
 import { flashcardsHref, studyGuideHref, studyHref } from "@/lib/toolHrefs";
 
 export type ToolKey = "quiz" | "cards" | "guide";
 
 const TOOL_HOME: Record<ToolKey, (courseId: string) => string> = {
+  // W7.D2: header Quiz → course home/launcher (no start=1); see docs/learning-loop/w7-d2-hub-guide-settings.md
   quiz: cid => buildQuizHref({ course: cid }, { kind: "link", returnTo: studyHref(cid) }),
   cards: cid => flashcardsHref(cid),
   guide: () => studyGuideHref(),
 };
 
-/** How long the hub's fade-out runs before the route changes (`.leaving`). */
-const LEAVE_MS = 180;
+/** How long the hub's fade-out runs before the route changes: `.leaving`'s
+ *  --dur-fast, an exit's duration (MOTION mirrors the CSS token). */
+const LEAVE_MS = Math.round(MOTION.duration.fast * 1000);
 
 export interface ToolNav {
   /** True while the hub fades out on its way to a tool. */
@@ -41,6 +45,8 @@ export interface ToolNav {
   quizHref: (conceptId: string) => string;
   /** Flashcards started on these concepts' decks. */
   cardsHref: (conceptNames: string[]) => string;
+  /** Tutor session on one concept (W3.4 Continue learning). */
+  learnHref: (conceptId: string, conceptName: string) => string;
 }
 
 export function useToolNav(courseId: string): ToolNav {
@@ -62,15 +68,10 @@ export function useToolNav(courseId: string): ToolNav {
     quizHref: conceptId =>
       buildQuizHref({ concept: conceptId }, { kind: "link", returnTo: studyHref(courseId) }, { start: true }),
     cardsHref: names => flashcardsHref(courseId, names, { start: true }),
+    learnHref: (conceptId, conceptName) =>
+      handoffLearnHref({ conceptId, conceptName, courseId }),
   }), [leaving, leaveTo, courseId]);
 }
 
-/**
- * onClick for a real link that should leave through the hub's fade: a plain
- * click fades and navigates, a Cmd/Ctrl-click is left to the browser (new tab).
- */
-export const leaveOnClick = (leaveTo: (href: string) => void, href: string) => (e: React.MouseEvent) => {
-  if (e.metaKey || e.ctrlKey) return;
-  e.preventDefault();
-  leaveTo(href);
-};
+// A real link that leaves through the hub's fade is a HandoffLink with
+// `onNavigate={nav.leaveTo}` (components/ui/HandoffLink.tsx).

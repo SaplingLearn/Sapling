@@ -16,6 +16,17 @@
    nav collapses and expands, and a viewport query is wrong in one of the two. */
 
 .home {
+  /* Sizes with no step on the type / radius scales, named so they are not
+     anonymous: the hero's title and figures, the deck's faint count numeral,
+     and the mix bar's corner. */
+  --fc-hero-title-size: 24px;
+  --fc-stat-size: 28px;
+  --fc-motif-size: 104px;
+  --fc-mix-radius: 12px;
+  /* The floating mix bar's lift: deeper than --shadow-lg, in its ink. */
+  --fc-mix-shadow: 0 12px 30px color-mix(in srgb, var(--sap-900) 30%, transparent);
+  /* A hairline on the olive hero. */
+  --fc-hero-rule: color-mix(in srgb, var(--sidenav-fg) 22%, transparent);
   container-type: inline-size;
   container-name: fchome;
   display: flex;
@@ -28,58 +39,71 @@
 /* The side nav's olive (--sidenav-bg), the same green as the hub's Up Next
    block. The prompt on the left, three figures on the right of a hairline. */
 .hero {
-  display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 26px; align-items: center;
-  padding: 22px 24px; border-radius: var(--r-lg);
-  background: var(--sidenav-bg); color: #fff;
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--sp-13); align-items: center;
+  padding: var(--sp-11) var(--sp-12); border-radius: var(--r-lg);
+  background: var(--sidenav-bg); color: var(--sidenav-fg);
 }
 .heroMain { min-width: 0; }
-.hero .heroTitle { margin: 0 0 12px; font-size: 24px; line-height: 1.2; letter-spacing: -0.01em; color: #fff; }
-.prompt { display: flex; gap: 8px; }
+.hero .heroTitle { margin: 0 0 var(--sp-3); font-size: var(--fc-hero-title-size); line-height: 1.2; letter-spacing: -0.01em; color: var(--sidenav-fg); }
+.heroLede {
+  margin: 0 0 var(--sp-6); max-width: 36rem; font-size: var(--fs-sm); line-height: 1.4;
+  /* Full white: 72% white on the olive hero was 3.4:1 (axe color-contrast,
+     WCAG AA needs 4.5:1 at 12px); white is 4.85:1. */
+  color: var(--sidenav-fg);
+}
+.prompt { display: flex; gap: var(--sp-4); }
 .promptField {
-  flex: 1; min-width: 0; height: 46px; padding: 0 14px;
+  flex: 1; min-width: 0; height: 46px; padding: 0 var(--sp-7);
   border: 0; border-radius: var(--r-md); background: var(--bg-panel);
-  font: inherit; font-size: 15px; color: var(--text);
+  font: inherit; font-size: var(--fs-base); color: var(--text);
 }
 .promptField::placeholder { color: color-mix(in srgb, var(--text-muted) 70%, var(--bg-panel)); }
 .promptField:disabled { opacity: 0.7; }
 /* On olive the app's forest focus ring disappears: a paper ring instead. */
-.hero :focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+.hero :focus-visible { outline: 2px solid var(--sidenav-fg); outline-offset: 2px; }
 .promptGo {
-  height: 46px; padding: 0 18px; flex-shrink: 0;
-  display: inline-flex; align-items: center; gap: 7px;
-  border: 0; border-radius: var(--r-md); background: var(--brand-forest); color: #fff;
+  height: 46px; padding: 0 var(--sp-9); flex-shrink: 0;
+  display: inline-flex; align-items: center; gap: var(--sp-4);
+  border: 0; border-radius: var(--r-md); background: var(--brand-forest); color: var(--text-on-fill);
   font: inherit; font-size: var(--fs-base); font-weight: 600; white-space: nowrap; cursor: pointer;
   transition: filter var(--dur-fast) var(--ease), opacity var(--dur-fast) var(--ease);
 }
 .promptGo:hover:not(:disabled) { filter: brightness(1.08); }
+@media (prefers-reduced-motion: no-preference) {
+  .promptGo, .idea, .mixBtn { transition-property: filter, opacity, background-color, transform; }
+  .promptGo:active:not(:disabled), .idea:active, .mixBtn:active:not(:disabled) { transform: scale(0.97); }
+}
 .promptGo:disabled { opacity: 0.6; cursor: not-allowed; }
-.ideas { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 12px; }
+.ideas { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-3); margin-top: var(--sp-6); }
 .idea {
-  height: 26px; padding: 0 11px; max-width: 100%;
-  border: 0; border-radius: var(--r-full); background: rgba(255, 255, 255, 0.15); color: #fff;
+  height: 26px; padding: 0 var(--sp-6); max-width: 100%;
+  border: 0; border-radius: var(--r-full); background: var(--sidenav-wash); color: var(--sidenav-fg);
   font: inherit; font-size: var(--fs-sm); font-weight: 500; cursor: pointer;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   transition: background-color var(--dur-fast) var(--ease);
 }
-.idea:hover { background: rgba(255, 255, 255, 0.26); }
+.idea:hover { background: var(--sidenav-wash-strong); }
 /* Only there when a sort found nothing. */
 .heroNote:empty { display: none; }
-.heroNote { margin: 10px 0 0; min-height: 17px; font-size: var(--fs-sm); line-height: 17px; color: rgba(255, 255, 255, 0.92); }
-.stats { display: flex; gap: 22px; margin: 0; padding-left: 26px; border-left: 1px solid rgba(255, 255, 255, 0.22); }
+.heroNote { margin: var(--sp-5) 0 0; min-height: 17px; font-size: var(--fs-sm); line-height: 17px; color: var(--sidenav-fg); }
+.stats { display: flex; gap: var(--sp-11); margin: 0; padding-left: var(--sp-13); border-left: 1px solid var(--fc-hero-rule); }
 .stat { display: flex; flex-direction: column-reverse; }
-.stat .statFigure { margin: 0; font-size: 28px; font-weight: 600; line-height: 1; color: #fff; font-variant-numeric: tabular-nums; }
-.statLabel { margin-top: 3px; font-size: var(--fs-xs); opacity: 0.85; }
+.stat .statFigure { margin: 0; font-size: var(--fc-stat-size); font-weight: 600; line-height: 1; color: var(--sidenav-fg); font-variant-numeric: tabular-nums; }
+.statLabel { margin-top: var(--sp-2); font-size: var(--fs-xs); color: var(--sidenav-fg); }
+
+/* Text on the olive hero is the rail's white (4.85:1 on --sidenav-bg); a chip
+   darkens the olive (6.11:1, 7.05:1 hovered) rather than lightening it (A135). */
 
 /* ── your sets: the deck grid ────────────────────────────────────────────── */
 
 /* The bottom padding is the mix bar's room: always there, so the bar lays
    over the page instead of pushing it. */
-.sets { padding-bottom: 64px; }
-.setsHead { display: flex; align-items: center; gap: 10px; margin: 24px 0 12px; }
+.sets { padding-bottom: var(--sp-32); }
+.setsHead { display: flex; align-items: center; gap: var(--sp-5); margin: var(--sp-12) 0 var(--sp-6); }
 .setsHint { margin-left: auto; font-size: var(--fs-sm); color: var(--text-dim); }
 .decks {
   list-style: none; margin: 0; padding: 0;
-  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 28px 16px;
+  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--sp-14) var(--sp-8);
 }
 
 /* A deck: a paper card with a band of its own colour across the top, on two
@@ -98,8 +122,8 @@
 /* The builder's columns (and the tray's bar of them) wear the same palettes. */
 .deck, .column, .trayMixSeg {
   --deck: color-mix(in srgb, var(--sidenav-bg) 75%, var(--brand-forest));
-  --deck-on: #fff;
-  --deck-pill: rgba(0, 0, 0, 0.2);
+  --deck-on: var(--text-on-fill);
+  --deck-pill: color-mix(in srgb, var(--ink-900) 20%, transparent);
   --deck-soft: var(--sap-100);
   --deck-ink: var(--brand-forest);
 }
@@ -108,18 +132,19 @@
   --deck-soft: var(--info-soft);
   --deck-ink: color-mix(in srgb, var(--info) 75%, var(--text));
 }
-/* A deep ochre, not the pale --state-progress tan: every band carries white
-   text and white controls (4.6:1 here), so no palette is the odd one out. */
+/* A deep ochre (amber deepened with brown), not the pale --state-progress
+   tan: every band carries white text and white controls (4.8:1 here), so no
+   palette is the odd one out. */
 .deck[data-palette="amber"], .column[data-palette="amber"], .trayMixSeg[data-palette="amber"] {
-  --deck: #9F6916;
+  --deck: color-mix(in srgb, var(--c-amber) 60%, var(--c-brown));
   --deck-soft: color-mix(in srgb, var(--state-progress) 28%, var(--bg-panel));
-  --deck-ink: color-mix(in srgb, #9F6916 80%, var(--text));
+  --deck-ink: color-mix(in srgb, var(--deck) 80%, var(--text));
 }
 /* The plum pair the Study hub uses for its quiz tool. */
 .deck[data-palette="plum"], .column[data-palette="plum"], .trayMixSeg[data-palette="plum"] {
-  --deck: #7A4A78;
-  --deck-soft: #EBDDEE;
-  --deck-ink: color-mix(in srgb, #7A4A78 85%, var(--text));
+  --deck: var(--tool-quiz);
+  --deck-soft: var(--tool-quiz-soft);
+  --deck-ink: color-mix(in srgb, var(--tool-quiz) 85%, var(--text));
 }
 .deck[data-palette="clay"], .column[data-palette="clay"], .trayMixSeg[data-palette="clay"] {
   --deck: color-mix(in srgb, var(--err) 65%, var(--warn));
@@ -149,9 +174,10 @@
 .deck:hover .face, .deck:focus-within .face { transform: translateY(-2px); }
 .deck:hover .layer, .deck:focus-within .layer { transform: translateY(15px) rotate(1.2deg); }
 .deck:hover .layerTwo, .deck:focus-within .layerTwo { transform: translateY(8px) rotate(-0.8deg); }
-.deckSel .face { box-shadow: 0 0 0 2px var(--deck-ink); }
-/* The deck that owns the open menu sits above the decks after it. */
-.deckMenuOpen { z-index: 3; }
+.deckSel .face { box-shadow: 0 0 0 var(--sp-1) var(--deck-ink); }
+/* The deck that owns the open menu sits above the decks after it, whose
+   corners and rename fields are raised (--z-raised) in the same context. */
+.deckMenuOpen { z-index: calc(var(--z-raised) + 1); }
 .deck[data-busy] .face { opacity: 0.85; }
 /* The body is one button under everything else on the face. */
 .deckOpen {
@@ -163,22 +189,24 @@
 /* The band: about 42% of the deck. */
 .band {
   position: relative; flex: 0 0 104px; min-height: 0; overflow: hidden; pointer-events: none;
-  display: flex; flex-direction: column; padding: 11px 14px 12px;
-  border-radius: calc(var(--r-lg) - 1px) calc(var(--r-lg) - 1px) 0 0;
+  display: flex; flex-direction: column; padding: var(--sp-6) var(--sp-7) var(--sp-6);
+  /* The face's corner less its 1px border, so the band fills it. */
+  --band-radius: calc(var(--r-lg) - 1px);
+  border-radius: var(--band-radius) var(--band-radius) 0 0;
   background: var(--deck); color: var(--deck-on);
 }
 /* The card count as a big faint numeral bleeding off the bottom right. */
 .band .motif {
   position: absolute; right: -4px; bottom: -30px;
-  font-size: 104px; font-weight: 600; line-height: 1; letter-spacing: -0.04em;
+  font-size: var(--fc-motif-size); font-weight: 600; line-height: 1; letter-spacing: -0.04em;
   color: var(--deck-on); opacity: 0.12; user-select: none;
 }
 /* The tag's row; its right end is the corner's (menu, tick). */
-.bandTop { position: relative; display: flex; align-items: center; min-height: 22px; padding-right: 56px; }
+.bandTop { position: relative; display: flex; align-items: center; min-height: 22px; padding-right: var(--sp-28); }
 .deckTag {
-  min-width: 0; padding: 2px 8px; border-radius: var(--r-full);
+  min-width: 0; padding: var(--sp-1) var(--sp-4); border-radius: var(--r-full);
   background: var(--deck-pill); color: var(--deck-on);
-  font-family: var(--font-sans); font-size: 12px; letter-spacing: 0.01em;
+  font-family: var(--font-sans); font-size: var(--fs-sm); letter-spacing: 0.01em;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .band .deckName {
@@ -188,21 +216,21 @@
 }
 
 /* Top right of the band: the "..." menu and the tick. */
-.corner { position: absolute; top: 11px; right: 12px; z-index: 1; display: flex; align-items: center; gap: 6px; }
+.corner { position: absolute; top: 11px; right: 12px; z-index: var(--z-raised); display: flex; align-items: center; gap: var(--sp-3); }
 .deckMenuOwner { position: relative; display: flex; flex-shrink: 0; }
 .deckMore {
   width: 22px; height: 22px; padding: 0; display: grid; place-items: center;
-  border: 0; border-radius: 6px; background: var(--deck-pill); color: var(--deck-on); cursor: pointer;
+  border: 0; border-radius: var(--r-sm); background: var(--deck-pill); color: var(--deck-on); cursor: pointer;
 }
 .deckTick {
   appearance: none; -webkit-appearance: none;
   width: 20px; height: 20px; margin: 0; flex-shrink: 0; display: grid; place-items: center;
-  border: 1.5px solid var(--deck-on); border-radius: 6px; background: var(--deck-pill); cursor: pointer;
+  border: 1.5px solid var(--deck-on); border-radius: var(--r-sm); background: var(--deck-pill); cursor: pointer;
 }
 /* Ticked: filled, with the band's colour for the mark. */
 .deckTick:checked { background: var(--deck-on); }
 .deckTick:checked::after {
-  content: ""; width: 4px; height: 9px; margin-top: -2px;
+  content: ""; width: 4px; height: 9px; margin-top: calc(-1 * var(--sp-1));
   border: solid var(--deck); border-width: 0 2px 2px 0; transform: rotate(45deg);
 }
 .deckMore:focus-visible, .deckTick:focus-visible { outline: 2px solid var(--deck-on); outline-offset: 2px; }
@@ -219,32 +247,38 @@
    anything to put in it, so the decks of a row line up. */
 .deckBody {
   position: relative; flex: 1; min-height: 0; pointer-events: none;
-  display: flex; flex-direction: column; padding: 10px 14px 12px;
+  display: flex; flex-direction: column; padding: var(--sp-5) var(--sp-7) var(--sp-6);
 }
 .deckMeta { font-size: var(--fs-xs); line-height: 16px; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* One line of chips. The model picks names that should fit; on a narrow deck
    a chip shortens with an ellipsis and the "+N" keeps its place. */
-.peek { display: flex; gap: 4px; height: 20px; margin-top: 7px; overflow: hidden; }
+.peek { display: flex; gap: var(--sp-2); height: 20px; margin-top: var(--sp-4); overflow: hidden; }
 .peekChip, .peekMore {
-  height: 20px; padding: 0 8px; border-radius: var(--r-full); flex-shrink: 0;
+  height: 20px; padding: 0 var(--sp-4); border-radius: var(--r-full); flex-shrink: 0;
   background: var(--deck-soft); color: var(--deck-ink);
   font-size: var(--fs-xs); font-weight: 600; line-height: 20px; white-space: nowrap;
 }
 .peekChip { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.peekMore { padding: 0 6px; background: transparent; }
-.masteryBlock { margin-top: 10px; }
+.peekMore { padding: 0 var(--sp-3); background: transparent; }
+.masteryBlock { margin-top: var(--sp-5); }
 .mastery { display: flex; height: 6px; overflow: hidden; border-radius: var(--r-full); background: var(--deck-soft); }
-.mastery i { display: block; height: 100%; }
+/* Each tier's share comes from the deck (--share); a change of tier tweens. */
+.mastery i { display: block; width: var(--share, 0); height: 100%; transition: width var(--dur-slow) var(--ease-out); }
 .mastery i[data-kind="mastered"], .legendDot[data-kind="mastered"] { background: var(--state-mastery); }
 .mastery i[data-kind="learning"], .legendDot[data-kind="learning"] { background: var(--state-progress); }
 .mastery i[data-kind="struggling"], .legendDot[data-kind="struggling"] { background: var(--state-struggle); }
 .legend {
-  display: flex; gap: 10px; height: 15px; margin-top: 5px; overflow: hidden;
-  font-size: 10.5px; line-height: 15px; color: var(--text-muted); white-space: nowrap;
+  display: flex; gap: var(--sp-5); height: 15px; margin-top: var(--sp-2); overflow: hidden;
+  font-size: var(--fs-2xs); line-height: 15px; color: var(--text-muted); white-space: nowrap;
 }
-.legendItem { display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0; }
+.legendItem { display: inline-flex; align-items: center; gap: var(--sp-2); flex-shrink: 0; }
 .legendDot { width: 6px; height: 6px; border-radius: 50%; }
-.deckFoot { margin-top: auto; display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 34px; }
+/* W8.4: bar = map tiers, not card-session mastery. */
+.mapHint {
+  margin: var(--sp-2) 0 0; font-size: var(--fs-2xs); line-height: 1.3; color: var(--text-dim);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.deckFoot { margin-top: auto; display: flex; align-items: center; justify-content: space-between; gap: var(--sp-4); min-height: 34px; }
 .deckFact { min-width: 0; font-size: var(--fs-xs); font-weight: 600; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .deckFactUrgent { color: var(--warn); }
 .play {
@@ -252,14 +286,15 @@
   border: 0; border-radius: 50%; background: var(--deck-ink); color: var(--bg-panel); cursor: pointer;
   transition: transform var(--dur-fast) var(--ease), opacity var(--dur-fast) var(--ease);
 }
-.play svg { margin-left: 2px; }
+.play svg { margin-left: var(--sp-1); }
 .play:hover:not(:disabled) { transform: scale(1.08); }
+.play:active:not(:disabled) { transform: scale(0.96); transition-duration: var(--dur-instant); }
 .play:disabled { opacity: 0.5; cursor: not-allowed; }
 .play:focus-visible { outline: 2px solid var(--deck-ink); outline-offset: 2px; }
 
 /* The last cell: build a set by hand. */
 .deckNew {
-  position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+  position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--sp-2);
   border: 1.5px dashed var(--border-strong); border-radius: var(--r-lg); background: transparent;
   font: inherit; font-size: var(--fs-md); font-weight: 600; color: var(--text-dim); text-align: center; cursor: pointer;
   transition: border-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease), background-color var(--dur-fast) var(--ease);
@@ -269,14 +304,14 @@
 .deckGhost { border-radius: var(--r-lg); }
 
 /* Which concept is being made, or why nothing started. */
-.deckStatus { margin: 16px 0 0; min-height: 17px; font-size: var(--fs-sm); line-height: 17px; color: var(--text-dim); }
+.deckStatus { margin: var(--sp-8) 0 0; min-height: 17px; font-size: var(--fs-sm); line-height: 17px; color: var(--text-dim); }
 
 /* ── the mix bar ─────────────────────────────────────────────────────────── */
 
 /* A zero-height anchor stuck to the bottom of the scrolling page: the bar
    hangs above it, over the content, and takes no room of its own. */
 .mixAnchor {
-  position: sticky; bottom: 0; z-index: 20; height: 0;
+  position: sticky; bottom: 0; z-index: var(--z-sticky); height: 0;
   display: flex; justify-content: center; pointer-events: none;
 }
 @keyframes fcMixIn {
@@ -285,48 +320,49 @@
 }
 .mix {
   position: absolute; bottom: 18px; max-width: 100%; pointer-events: auto;
-  display: flex; align-items: center; flex-wrap: wrap; justify-content: center; gap: 8px 10px;
-  padding: 8px 8px 8px 16px; border-radius: 12px;
-  background: var(--text); color: #fff; font-size: var(--fs-md);
-  box-shadow: 0 12px 30px rgba(25, 37, 11, 0.3);
-  animation: fcMixIn var(--dur) var(--ease) both;
+  display: flex; align-items: center; flex-wrap: wrap; justify-content: center; gap: var(--sp-4) var(--sp-5);
+  padding: var(--sp-4) var(--sp-4) var(--sp-4) var(--sp-8); border-radius: var(--fc-mix-radius);
+  background: var(--text); color: var(--text-on-fill); font-size: var(--fs-md);
+  box-shadow: var(--fc-mix-shadow);
+  animation: fcMixIn var(--dur) var(--ease-out) both;
 }
 .mixCount { white-space: nowrap; font-variant-numeric: tabular-nums; }
 .mixBtn {
-  height: 30px; padding: 0 12px; border: 0; border-radius: var(--r-sm);
-  background: rgba(255, 255, 255, 0.14); color: #fff;
+  height: 30px; padding: 0 var(--sp-6); border: 0; border-radius: var(--r-sm);
+  background: color-mix(in srgb, var(--text-on-fill) 14%, transparent); color: var(--text-on-fill);
   font: inherit; font-size: var(--fs-md); font-weight: 500; white-space: nowrap; cursor: pointer;
   transition: background-color var(--dur-fast) var(--ease), opacity var(--dur-fast) var(--ease);
 }
-.mixBtn:hover:not(:disabled) { background: rgba(255, 255, 255, 0.24); }
+.mixBtn:hover:not(:disabled) { background: color-mix(in srgb, var(--text-on-fill) 24%, transparent); }
 .mixBtn:disabled { opacity: 0.6; cursor: not-allowed; }
-.mixBtn:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
-.mixPrimary, .mixPrimary:hover:not(:disabled) { background: #fff; color: var(--text); font-weight: 600; }
+.mixBtn:focus-visible { outline: 2px solid var(--text-on-fill); outline-offset: 2px; }
+.mixPrimary, .mixPrimary:hover:not(:disabled) { background: var(--text-on-fill); color: var(--text); font-weight: 600; }
 
 @keyframes fcPop {
   from { opacity: 0; transform: translateY(-6px) scale(0.98); }
   to   { opacity: 1; transform: none; }
 }
 .menu {
-  position: absolute; right: 0; top: calc(100% + 4px); z-index: 21;
-  min-width: 180px; padding: 4px; display: flex; flex-direction: column; gap: 2px;
+  position: absolute; right: 0; top: calc(100% + 4px); z-index: var(--z-popover);
+  min-width: 180px; padding: var(--sp-2); display: flex; flex-direction: column; gap: var(--sp-1);
   background: var(--bg-panel); border: 1px solid var(--border); border-radius: var(--r-md);
   box-shadow: var(--shadow-lg);
-  animation: fcPop var(--dur-fast) var(--ease) both; transform-origin: top right;
+  animation: fcPop var(--dur-fast) var(--ease-out) both; transform-origin: top right;
 }
 .menuItem {
-  height: 32px; padding: 0 8px; border: 0; border-radius: var(--r-sm); background: transparent;
+  height: 32px; padding: 0 var(--sp-4); border: 0; border-radius: var(--r-sm); background: transparent;
   font: inherit; font-size: var(--fs-md); font-weight: 600; color: var(--text);
   text-align: left; white-space: nowrap; cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease);
 }
 .menuItem:hover { background: var(--bg-subtle); }
 .menuDanger { color: var(--err); }
 .menuArmed, .menuArmed:hover { background: var(--err-soft); }
 
 /* Renaming a deck in place: the field takes the name's spot on the band. */
-.rename { position: relative; z-index: 1; display: flex; margin-top: auto; pointer-events: auto; }
+.rename { position: relative; z-index: var(--z-raised); display: flex; margin-top: auto; pointer-events: auto; }
 .field {
-  width: 100%; min-width: 0; box-sizing: border-box; height: 36px; padding: 0 10px;
+  width: 100%; min-width: 0; box-sizing: border-box; height: 36px; padding: 0 var(--sp-5);
   border: 1px solid var(--border-strong); border-radius: var(--r-sm); background: var(--bg-input);
   font: inherit; font-size: var(--fs-md); color: var(--text);
 }
@@ -337,14 +373,14 @@
 .quiet a { color: var(--brand-forest); font-weight: 600; }
 
 /* The tray's head: its label and Clear on one line. */
-.trayHead { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 24px; }
-.trayClear { height: 24px; padding: 0 8px; margin-right: -8px; font-size: var(--fs-sm); color: var(--text-dim); }
+.trayHead { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-4); min-height: 24px; }
+.trayClear { height: 24px; padding: 0 var(--sp-4); margin-right: calc(-1 * var(--sp-4)); font-size: var(--fs-sm); color: var(--text-dim); }
 
 /* ── BUILD: the map and the tray ─────────────────────────────────────────── */
 
 /* What "Sort it" did, said at the top of the builder it opened. */
 .buildNote {
-  margin: 0 0 14px; padding: 10px 14px; border-radius: var(--r-md);
+  margin: 0 0 var(--sp-7); padding: var(--sp-5) var(--sp-7); border-radius: var(--r-md);
   background: var(--sap-50); color: var(--text-dim); font-size: var(--fs-md);
 }
 
@@ -353,18 +389,18 @@
   /* The tray is the hub's rail, narrower: it holds five short lines. Clamped,
      so it gives ground as the container narrows. */
   grid-template-columns: minmax(0, 1fr) clamp(240px, 26cqi, 300px);
-  column-gap: 32px; align-items: start;
-  padding-top: 16px; border-top: 1px solid var(--border);
+  column-gap: var(--sp-16); align-items: start;
+  padding-top: var(--sp-8); border-top: 1px solid var(--border);
 }
 .map { min-width: 0; }
-.mapHead { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 12px; }
+.mapHead { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: var(--sp-6); }
 /* The hub's roadmap grid: columns share the row, at most four across (a track
    is never narrower than a quarter of the row less the three 16px gaps), and
    200px is the floor below which they wrap. */
 .columns {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(max(200px, calc((100% - 48px) / 4 - 0.1px)), 1fr));
-  gap: 20px 16px; align-items: start;
+  gap: var(--sp-10) var(--sp-8); align-items: start;
 }
 /* A column is one block: the unit's band on top and its concepts as rows
    under it, inside the same rounded shape and divided by hairlines, so they
@@ -376,12 +412,12 @@
 /* A column's head is a band of its colour, like a deck's: the unit's name,
    how much of it is ticked, and the box that ticks all of it. */
 .colHead {
-  display: flex; align-items: center; gap: 10px; height: 42px; padding: 0 14px;
+  display: flex; align-items: center; gap: var(--sp-5); height: 42px; padding: 0 var(--sp-7);
   background: var(--deck); color: var(--deck-on); cursor: pointer;
 }
 .colLabel { flex: 1; min-width: 0; font-size: var(--fs-md); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .colCount {
-  flex-shrink: 0; padding: 1px 7px; border-radius: var(--r-full);
+  flex-shrink: 0; padding: var(--sp-1) var(--sp-4); border-radius: var(--r-full);
   background: var(--deck-pill); font-size: var(--fs-xs); color: var(--deck-on);
 }
 .colHead:has(.check:focus-visible) { outline: 2px solid var(--deck-on); outline-offset: -3px; }
@@ -394,7 +430,7 @@
 .column .check {
   appearance: none; -webkit-appearance: none;
   width: 16px; height: 16px; display: grid; place-items: center;
-  border: 1.5px solid var(--border-strong); border-radius: 4px; background: var(--bg-panel);
+  border: 1.5px solid var(--border-strong); border-radius: var(--r-xs); background: var(--bg-panel);
   transition: background-color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
 }
 /* Filled with the band's own colour, so a ticked box matches its unit. */
@@ -402,7 +438,7 @@
 /* On the band the box is drawn in the band's text colour. */
 .column .colHead .check { border-color: var(--deck-on); background: transparent; }
 .column .colHead .check:checked { background: var(--deck-on); }
-.column .colHead .check:indeterminate::after { content: ""; width: 8px; height: 8px; border-radius: 2px; background: var(--deck-on); }
+.column .colHead .check:indeterminate::after { content: ""; width: 8px; height: 8px; border-radius: calc(var(--r-xs) / 2); background: var(--deck-on); }
 /* A concept: a row of the unit, with no fill, edge or radius of its own and
    a hairline above it. Two lines tall (the name, its cards under it). Hover
    is a wash of the column's colour. */
@@ -417,20 +453,20 @@
 .column .tileOn { background: transparent; }
 .column .tileOn:hover { background: color-mix(in srgb, var(--deck-soft) 50%, transparent); }
 /* The band's inset, so every box sits in one line under the unit's own. */
-.column .tileHit { align-items: center; padding: 12px 14px; gap: 10px; }
+.column .tileHit { align-items: center; padding: var(--sp-6) var(--sp-7); gap: var(--sp-5); }
 .column .tile .check { margin-top: 0; }
 .column .tileName { font-size: var(--fs-base); }
-.column .tileMeta { margin-top: 1px; }
+.column .tileMeta { margin-top: var(--sp-1); }
 .column .dot { margin-top: 0; }
 .column .tile:has(.check:focus-visible) { outline-offset: -2px; }
 
 /* Laid over the hub's .tile (fill, hover, selected ring). */
 .tile { display: flex; align-items: stretch; min-width: 0; border-radius: var(--r-md); }
-.tileHit { flex: 1; min-width: 0; display: flex; align-items: flex-start; gap: 9px; padding: 9px 11px; cursor: pointer; }
-.tile .check { margin-top: 1px; }
+.tileHit { flex: 1; min-width: 0; display: flex; align-items: flex-start; gap: var(--sp-4); padding: var(--sp-4) var(--sp-6); cursor: pointer; }
+.tile .check { margin-top: var(--sp-1); }
 /* Taking one of your own concepts off the map again. */
 .tileRemove {
-  width: 26px; margin: 5px 5px 5px 0; flex-shrink: 0; display: grid; place-items: center;
+  width: 26px; margin: var(--sp-2) var(--sp-2) var(--sp-2) 0; flex-shrink: 0; display: grid; place-items: center;
   border: 0; border-radius: var(--r-sm); background: transparent; color: var(--text-muted); cursor: pointer;
   transition: background-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
 }
@@ -441,46 +477,46 @@
 .tileText { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .tileName { font-size: var(--fs-md); font-weight: 600; line-height: 1.25; text-wrap: pretty; overflow-wrap: anywhere; }
 .tileMeta { font-size: var(--fs-xs); color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.dot { width: 8px; height: 8px; margin-top: 4px; border-radius: 50%; flex-shrink: 0; }
+.dot { width: 8px; height: 8px; margin-top: var(--sp-2); border-radius: 50%; flex-shrink: 0; }
 
 
 .tray {
   position: sticky; top: 12px; min-width: 0;
   display: flex; flex-direction: column;
-  padding-left: 24px; border-left: 1px solid var(--border);
+  padding-left: var(--sp-12); border-left: 1px solid var(--border);
 }
-.tray .trayCount { margin-top: 6px; font-size: var(--fs-xl); line-height: 1.3; color: var(--text); }
+.tray .trayCount { margin-top: var(--sp-3); font-size: var(--fs-xl); line-height: 1.3; color: var(--text); }
 /* The selection as a bar of the columns' colours, each as wide as its share. */
-.trayMix { display: flex; gap: 2px; height: 6px; margin-top: 8px; overflow: hidden; border-radius: var(--r-full); background: var(--bg-subtle); }
+.trayMix { display: flex; gap: var(--sp-1); height: 6px; margin-top: var(--sp-4); overflow: hidden; border-radius: var(--r-full); background: var(--bg-subtle); }
 .trayMixSeg { display: block; flex: 1 0 0; height: 100%; background: var(--deck); transition: flex-grow var(--dur) var(--ease); }
 /* Two lines are always reserved for each of the tray's changing lines, so a
    tick never moves the options or the buttons under it. */
-.trayLine { min-height: 34px; margin-top: 6px; font-size: var(--fs-sm); line-height: 17px; color: var(--text-muted); }
-.opts { display: flex; flex-direction: column; margin-top: 8px; border-top: 1px solid var(--border); }
+.trayLine { min-height: 34px; margin-top: var(--sp-3); font-size: var(--fs-sm); line-height: 17px; color: var(--text-muted); }
+.opts { display: flex; flex-direction: column; margin-top: var(--sp-4); border-top: 1px solid var(--border); }
 .opt {
-  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  display: flex; align-items: center; justify-content: space-between; gap: var(--sp-6);
   min-height: 42px; border-bottom: 1px solid var(--border); font-size: var(--fs-md);
 }
 /* The label gives way (it wraps); the control keeps its width. */
 .opt > :last-child { flex-shrink: 0; }
 .optOff > span:first-child { color: var(--text-muted); }
-.nameRow { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; min-height: 18px; margin: 14px 0 6px; }
+.nameRow { display: flex; align-items: baseline; justify-content: space-between; gap: var(--sp-4); min-height: 18px; margin: var(--sp-7) 0 var(--sp-3); }
 .linkBtn {
   padding: 0; border: 0; background: transparent;
   font: inherit; font-size: var(--fs-sm); font-weight: 600; color: var(--brand-forest);
   text-decoration: underline; text-underline-offset: 2px; cursor: pointer;
 }
-.trayActions { display: flex; gap: 8px; margin-top: 10px; }
+.trayActions { display: flex; gap: var(--sp-4); margin-top: var(--sp-5); }
 .start { flex: 1; min-width: 0; height: 38px; justify-content: center; font-weight: 600; }
 .save { height: 38px; white-space: nowrap; }
 .save:disabled { opacity: 0.5; cursor: not-allowed; }
-.status { min-height: 34px; margin-top: 8px; font-size: var(--fs-sm); line-height: 17px; color: var(--text-dim); }
+.status { min-height: 34px; margin-top: var(--sp-4); font-size: var(--fs-sm); line-height: 17px; color: var(--text-dim); }
 
 /* Below this the tray no longer leaves the map a usable column, so it goes
    under it and both take the full width. */
 @container fchome (max-width: 860px) {
-  .body { grid-template-columns: minmax(0, 1fr); row-gap: 24px; }
-  .tray { position: static; padding: 16px 0 0; border-left: 0; border-top: 1px solid var(--border); }
+  .body { grid-template-columns: minmax(0, 1fr); row-gap: var(--sp-12); }
+  .tray { position: static; padding: var(--sp-8) 0 0; border-left: 0; border-top: 1px solid var(--border); }
 }
 
 /* The decks: four across on a wide page, fewer as it narrows. */
@@ -489,8 +525,8 @@
 }
 /* The figures drop under the prompt, across a hairline. */
 @container fchome (max-width: 760px) {
-  .hero { grid-template-columns: minmax(0, 1fr); gap: 14px; padding: 18px 18px 16px; }
-  .stats { padding: 14px 0 0; border-left: 0; border-top: 1px solid rgba(255, 255, 255, 0.22); }
+  .hero { grid-template-columns: minmax(0, 1fr); gap: var(--sp-7); padding: var(--sp-9) var(--sp-9) var(--sp-8); }
+  .stats { padding: var(--sp-7) 0 0; border-left: 0; border-top: 1px solid var(--fc-hero-rule); }
   .decks { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .setsHint { display: none; }
 }
@@ -502,9 +538,10 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .mix { animation: none; }
+  .mix, .menu { animation: none; }
+  .mastery i { transition: none; }
   .face, .layer, .play, .deckTick, .deckMore { transition: none; }
-  .deck:hover .face, .deck:focus-within .face, .play:hover:not(:disabled) { transform: none; }
+  .deck:hover .face, .deck:focus-within .face, .play:hover:not(:disabled), .play:active:not(:disabled) { transform: none; }
   .deck:hover .layer, .deck:focus-within .layer { transform: translateY(12px); }
   .deck:hover .layerTwo, .deck:focus-within .layerTwo { transform: translateY(6px); }
 }

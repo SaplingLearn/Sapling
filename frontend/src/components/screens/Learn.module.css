@@ -1,0 +1,824 @@
+@layer components {
+/* The legacy tutor screen (Learn.tsx): the entry picker, the chat column and
+   the knowledge-map rail. Every value is a token from app/globals.css; the few
+   layout dimensions that are not design tokens are named local properties.
+   Runtime values (the rail's dragged width) arrive as custom properties set
+   inline by the component: --rail-w and --rail-open-w. */
+
+/* ── Loading and error states ─────────────────────────────────────────── */
+
+.statusMessage {
+  padding: var(--sp-20);
+  color: var(--text-dim);
+}
+
+.statusMessageText {
+  margin-bottom: var(--sp-6);
+}
+
+/* ── Entry screen ─────────────────────────────────────────────────────── */
+
+.entryGrid {
+  /* The recent-sessions column beside the start card. */
+  --learn-recent-col: 320px;
+  padding: var(--sp-16);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--learn-recent-col);
+  gap: var(--sp-12);
+  flex: 1;
+  overflow-y: auto;
+}
+
+.entryGridStacked {
+  grid-template-columns: 1fr;
+}
+
+.entryCard {
+  padding: var(--pad-xl);
+}
+
+.fieldLabel {
+  margin-bottom: var(--sp-4);
+}
+
+.courseSelect {
+  width: 100%;
+  margin-bottom: var(--sp-8);
+}
+
+.modeField {
+  margin-bottom: var(--sp-10);
+}
+
+.entryActions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.recentCard {
+  padding: var(--pad-lg);
+}
+
+.recentLabel {
+  margin-bottom: var(--sp-5);
+}
+
+.emptyNote {
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+
+/* ── Recent session row ───────────────────────────────────────────────── */
+
+.sessionRow {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-4) var(--sp-5);
+  border-radius: var(--r-md);
+  background: var(--bg-subtle);
+  margin-bottom: var(--sp-3);
+}
+
+.sessionEdit {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+
+.sessionNameInput {
+  font-size: var(--fs-md);
+  font-weight: 600;
+  padding: var(--sp-1) var(--sp-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--bg);
+  color: var(--text);
+}
+
+.sessionResume {
+  flex: 1;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+
+.sessionTopic {
+  font-size: var(--fs-md);
+  font-weight: 600;
+  transition: color var(--dur-fast) var(--ease);
+}
+
+.sessionResume:hover .sessionTopic {
+  color: var(--accent);
+}
+
+.sessionMeta {
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+}
+
+/* ── Topic picker ─────────────────────────────────────────────────────── */
+
+.topicPicker {
+  position: relative;
+  margin-bottom: var(--sp-8);
+}
+
+.topicTrigger {
+  width: 100%;
+  padding: var(--sp-6) var(--sp-7);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  font-size: var(--fs-lg);
+  background: var(--bg-input);
+  text-align: left;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-4);
+  color: var(--text-muted);
+  transition: border-color var(--dur-fast) var(--ease);
+}
+
+.topicTrigger:hover {
+  border-color: var(--border-strong);
+}
+
+.topicTriggerFilled {
+  color: var(--text);
+}
+
+.ellipsis {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.topicMenu {
+  /* Tall enough for ~8 concepts before the list scrolls. */
+  --topic-menu-max-height: 360px;
+  position: absolute;
+  top: calc(100% + var(--sp-2));
+  left: 0;
+  right: 0;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  box-shadow: var(--shadow-md);
+  z-index: var(--z-popover);
+  max-height: var(--topic-menu-max-height);
+  display: flex;
+  flex-direction: column;
+  transform-origin: top center;
+}
+
+.topicSearch {
+  width: 100%;
+  padding: var(--sp-5) var(--sp-6);
+  font-size: var(--fs-md);
+  border: none;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+}
+
+.topicOptions {
+  overflow-y: auto;
+  flex: 1;
+}
+
+.topicOption {
+  width: 100%;
+  padding: var(--sp-5) var(--sp-6);
+  text-align: left;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-size: var(--fs-md);
+  color: var(--text);
+  transition: background-color var(--dur-fast) var(--ease);
+}
+
+.topicOption:hover {
+  background: var(--bg-subtle);
+}
+
+.topicOptionSelected,
+.topicOptionSelected:hover {
+  background: var(--accent-soft);
+}
+
+.topicGeneral {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  border-bottom: 1px solid var(--border);
+}
+
+.topicGeneralLabel {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.topicHint {
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+}
+
+.topicEmpty {
+  padding: var(--sp-8) var(--sp-6);
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+
+.topicConcept {
+  padding: var(--sp-4) var(--sp-6);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--sp-4);
+}
+
+.topicConceptCode {
+  font-size: var(--fs-2xs);
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+/* ── Active session: mobile tabs and layout ───────────────────────────── */
+
+.mobileTabs {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+}
+
+.mobileTab {
+  flex: 1;
+  padding: var(--sp-5) 0;
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  text-transform: capitalize;
+  color: var(--text-dim);
+  border-bottom: 2px solid transparent;
+  transition:
+    color var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease);
+}
+
+.mobileTab[aria-pressed="true"] {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+.sessionBody {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  position: relative;
+}
+
+/* ── Chat column ──────────────────────────────────────────────────────── */
+
+.chatColumn {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.modeBar {
+  display: flex;
+  gap: var(--sp-3);
+  padding: var(--sp-5) var(--sp-16);
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+
+.modeChip {
+  padding: var(--sp-3) var(--sp-7);
+  border-radius: var(--r-full);
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  background: var(--bg-subtle);
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  transition:
+    background-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease),
+    transform var(--dur-instant) var(--ease);
+}
+
+.modeChip:hover:not(:disabled):not([aria-pressed="true"]) {
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+.modeChip[aria-pressed="true"] {
+  background: var(--accent);
+  color: var(--accent-fg);
+  border-color: var(--accent);
+}
+
+.modeBarSpacer {
+  flex: 1;
+}
+
+.endedNotice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-6);
+  padding: var(--sp-5) var(--sp-16);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-subtle);
+  font-size: var(--fs-md);
+  color: var(--text-dim);
+}
+
+.backLink {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 0 0 var(--sp-2);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-family: var(--font-sans);
+  font-size: var(--fs-md);
+  font-weight: 400;
+  letter-spacing: normal;
+  text-transform: none;
+  color: var(--text-muted);
+  transition: color var(--dur-fast) var(--ease);
+}
+
+.backLink:hover {
+  color: var(--accent);
+}
+
+.backChevron {
+  transition: transform var(--dur-fast) var(--ease);
+}
+
+.backLink:hover .backChevron {
+  transform: translateX(calc(-1 * var(--sp-1)));
+}
+
+/* ── Knowledge-map rail ───────────────────────────────────────────────── */
+
+/* The outer <aside> clips; its width (--rail-w) tweens while the inner
+   panel keeps the open width so the graph's measured bounds stay put. */
+.mapRail {
+  width: var(--rail-w);
+  min-width: var(--rail-w);
+  flex-shrink: 0;
+  overflow: hidden;
+  transition:
+    width var(--dur) var(--ease),
+    min-width var(--dur) var(--ease);
+}
+
+.mapRailMobile {
+  width: 100%;
+  min-width: auto;
+}
+
+.mapRailStill {
+  transition: none;
+}
+
+.mapRailInner {
+  width: var(--rail-open-w);
+  height: 100%;
+  box-sizing: border-box;
+  border-left: 1px solid var(--border);
+  background: var(--bg-subtle);
+  overflow-y: auto;
+  overflow-x: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.mapRailInnerMobile {
+  width: 100%;
+  border-left: none;
+}
+
+.railHeader {
+  padding: var(--sp-10) var(--sp-11) var(--sp-8);
+  border-bottom: 1px solid var(--border);
+}
+
+.railCourseCode {
+  margin-top: var(--sp-4);
+  font-family: var(--font-sans);
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  color: var(--brand-forest);
+}
+
+.railCourseName {
+  font-family: var(--font-serif);
+  font-size: var(--fs-lg);
+  color: var(--text-dim);
+  margin-top: var(--sp-1);
+  line-height: 1.35;
+}
+
+.railGraph {
+  padding: var(--sp-7) var(--sp-7) var(--sp-4);
+  background: radial-gradient(
+    ellipse 80% 70% at 55% 42%,
+    color-mix(in srgb, var(--brand-forest-bright) 6%, transparent),
+    transparent 70%
+  );
+}
+
+.graphMeasure {
+  width: 100%;
+}
+
+.legend {
+  display: flex;
+  gap: var(--sp-7);
+  justify-content: center;
+  padding: var(--sp-3) 0 var(--sp-2);
+  flex-wrap: wrap;
+}
+
+.legendItem {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-3);
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+}
+
+/* Mastery tiers: one class per tier sets the colour every mark of it uses. */
+.tierMastered {
+  --tier-color: var(--state-mastery);
+}
+
+.tierLearning {
+  --tier-color: var(--state-progress);
+}
+
+.tierStruggling {
+  --tier-color: var(--state-struggle);
+}
+
+.tierUnexplored {
+  --tier-color: var(--state-neutral);
+}
+
+.legendDot {
+  /* A legend swatch: smaller than a branch row's dot. */
+  --legend-dot-size: 8px;
+  width: var(--legend-dot-size);
+  height: var(--legend-dot-size);
+  border-radius: var(--r-full);
+  background: var(--tier-color);
+}
+
+/* Focus card */
+.focusCard {
+  /* Between --r-md and --r-lg: the card nests inside the rail's inset. */
+  --focus-card-corner: 14px;
+  margin: var(--sp-3) var(--sp-9) 0;
+  padding: var(--sp-8);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--focus-card-corner);
+  box-shadow: var(--shadow-sm);
+}
+
+.focusHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-4);
+}
+
+.tierBadge {
+  display: inline-block;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  padding: var(--sp-1) var(--sp-5);
+  border-radius: var(--r-full);
+  color: var(--text-on-fill);
+  background: var(--tier-color);
+  transition: background-color var(--dur) var(--ease);
+}
+
+.focusTitle {
+  font-family: var(--font-display);
+  font-size: var(--fs-xl);
+  font-weight: 500;
+  color: var(--text);
+  margin-top: var(--sp-4);
+  line-height: 1.2;
+}
+
+.focusDesc {
+  font-size: var(--fs-md);
+  color: var(--text-muted);
+  margin-top: var(--sp-3);
+  line-height: 1.5;
+}
+
+.focusActions {
+  display: flex;
+  gap: var(--sp-4);
+  margin-top: var(--sp-6);
+}
+
+.focusAction {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-3);
+  padding: var(--sp-4) var(--sp-6);
+  border-radius: var(--r-sm);
+  font-size: var(--fs-md);
+  cursor: pointer;
+  transition:
+    background-color var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease),
+    filter var(--dur-fast) var(--ease),
+    transform var(--dur-instant) var(--ease);
+}
+
+.focusActionPrimary {
+  flex: 1;
+  font-weight: 600;
+  border: none;
+  background: var(--brand-forest);
+  color: var(--accent-fg);
+}
+
+.focusActionPrimary:hover {
+  filter: brightness(1.05);
+}
+
+.focusActionRemove {
+  font-weight: 500;
+  border: 1px solid var(--border);
+  background: var(--bg-panel);
+  color: var(--state-struggle);
+}
+
+.focusActionRemove:hover {
+  border-color: var(--border-strong);
+  background: var(--bg-subtle);
+}
+
+.focusActionFill {
+  flex: 1;
+}
+
+/* Rail sections */
+.sectionLabel {
+  margin-bottom: var(--sp-5);
+}
+
+.branchSection {
+  padding: var(--sp-9) var(--sp-11) var(--sp-3);
+}
+
+.branchList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-5);
+}
+
+.branchItem {
+  /* Between --r-sm and --r-md: a row's hover wash, tighter than a card. */
+  --branch-item-corner: 8px;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-5);
+  text-align: left;
+  width: 100%;
+  /* Bleed the hover wash past the column edge; the padding puts the text back. */
+  margin: 0 calc(-1 * var(--sp-4));
+  padding: var(--sp-3) var(--sp-4);
+  border-radius: var(--branch-item-corner);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease);
+}
+
+.branchItem:hover {
+  background: color-mix(in srgb, var(--bg-soft) 60%, transparent);
+}
+
+.branchItemActive,
+.branchItemActive:hover {
+  background: var(--bg-soft);
+}
+
+.branchDot {
+  /* A branch row's tier dot: larger than the legend's swatch. */
+  --branch-dot-size: 11px;
+  width: var(--branch-dot-size);
+  height: var(--branch-dot-size);
+  border-radius: var(--r-full);
+  flex-shrink: 0;
+  background: var(--tier-color);
+}
+
+.branchName {
+  flex: 1;
+  font-size: var(--fs-md);
+  color: var(--text);
+  font-weight: 400;
+  line-height: 1.3;
+}
+
+.branchItemActive .branchName {
+  font-weight: 600;
+}
+
+.branchTier {
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+}
+
+.elsewhereSection {
+  padding: var(--sp-8) var(--sp-11) var(--sp-12);
+}
+
+.chipRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-4);
+}
+
+.chip {
+  padding: var(--sp-3) var(--sp-6);
+  border-radius: var(--r-full);
+  font-size: var(--fs-md);
+  font-weight: 500;
+  border: 1px solid var(--border);
+  background: var(--bg-panel);
+  color: var(--text-dim);
+  cursor: pointer;
+  transition:
+    background-color var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease),
+    transform var(--dur-instant) var(--ease);
+}
+
+.chip:hover {
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+.chipActive,
+.chipActive:hover {
+  border-color: var(--brand-forest);
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
+/* Add-concept composer */
+.composer {
+  padding: var(--sp-2) var(--sp-11) var(--sp-12);
+}
+
+.composerRow {
+  display: flex;
+  gap: var(--sp-3);
+}
+
+.composerInput {
+  flex: 1;
+  min-width: 0;
+  padding: var(--sp-4) var(--sp-5);
+  font-size: var(--fs-md);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  background: var(--bg-panel);
+  color: var(--text);
+  outline: none;
+  transition: border-color var(--dur-fast) var(--ease);
+}
+
+.composerInput:focus-visible {
+  border-color: var(--accent);
+}
+
+.composerAdd {
+  padding: var(--sp-4) var(--sp-6);
+  font-size: var(--fs-md);
+  font-weight: 600;
+  border-radius: var(--r-sm);
+  border: none;
+  background: var(--brand-forest);
+  color: var(--accent-fg);
+  cursor: pointer;
+  transition:
+    background-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease),
+    transform var(--dur-instant) var(--ease);
+}
+
+.composerAdd:disabled {
+  background: var(--bg-soft);
+  color: var(--text-muted);
+  cursor: not-allowed;
+}
+
+.composerOpen {
+  width: 100%;
+  padding: var(--sp-4) var(--sp-6);
+  font-size: var(--fs-md);
+  font-weight: 500;
+  border-radius: var(--r-sm);
+  border: 1px dashed var(--border-strong);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition:
+    background-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
+}
+
+.composerOpen:hover {
+  background: var(--bg-soft);
+  color: var(--text);
+}
+
+/* Press feedback on the rail's and chat bar's own buttons. The global
+   prefers-reduced-motion reset would only shorten it, so it is opted in. */
+@media (prefers-reduced-motion: no-preference) {
+  .modeChip:active:not(:disabled),
+  .chip:active,
+  .focusAction:active,
+  .composerAdd:active:not(:disabled) {
+    transform: scale(0.97);
+  }
+}
+
+/* Collapse tab on the rail's left edge */
+.railTab {
+  --rail-tab-width: 24px;
+  --rail-tab-height: 68px;
+  /* A soft shadow cast leftward, onto the chat, in the --shadow-* base colour. */
+  --rail-tab-shadow: calc(-1 * var(--sp-2)) 0 var(--sp-4)
+    color-mix(in srgb, var(--sap-900) 6%, transparent);
+  position: absolute;
+  top: 50%;
+  right: var(--rail-w);
+  transform: translateY(-50%);
+  width: var(--rail-tab-width);
+  height: var(--rail-tab-height);
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+  cursor: pointer;
+  touch-action: none;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-right: none;
+  border-radius: var(--r-md) 0 0 var(--r-md);
+  box-shadow: var(--rail-tab-shadow);
+  color: var(--text-muted);
+  z-index: var(--z-sticky);
+  transition:
+    right var(--dur) var(--ease),
+    color var(--dur) var(--ease);
+}
+
+.railTab:hover,
+.railTabOpen {
+  color: var(--brand-forest);
+}
+
+.railTabDragging {
+  cursor: grabbing;
+  transition: none;
+}
+
+.railChevron {
+  transition: transform var(--dur) var(--ease);
+}
+
+.railChevronClosed {
+  transform: rotate(180deg);
+}
+
+.railTabDragging .railChevron {
+  transition: none;
+}
+
+}

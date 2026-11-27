@@ -1,5 +1,5 @@
 "use client";
-import Dialog from "@/components/Dialog";
+import { useOverlayBehaviour } from "@/components/Dialog";
 import React, { Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Icon } from "@/components/Icon";
@@ -26,9 +26,14 @@ import type {
   GraphNode,
 } from "@/lib/types";
 import { now } from "@/lib/testMode";
+import { motion } from "framer-motion";
+import { useMotionPresets } from "@/lib/motion";
+import styles from "./notetaker.module.css";
 import { useToast } from "@/components/ToastProvider";
 import { humanizeError } from "@/lib/errorMessage";
+import { withheldNotice } from "@/lib/integrityNotice";
 import { quizHrefForNote } from "@/lib/quiz/noteHref";
+import { noteTutorHref } from "@/lib/data";
 import { useNoteAutosave, type AutosaveStatus } from "@/lib/notes/useNoteAutosave";
 import { CHAT_MESSAGE_MAX, NOTE_BODY_MAX, NOTE_TITLE_MAX } from "@/lib/inputLimits";
 import { CrisisSupportCard, useCrisisSupport } from "@/components/safety/CrisisSupportCard";
@@ -41,7 +46,6 @@ import {
   chatRailStyle,
 } from "@/lib/notes/notetakerLayout";
 import { sentenceCase } from "@/lib/sentenceCase";
-import { cn } from "@/lib/cn";
 
 type Mastery = "mastered" | "learning" | "struggling" | "unexplored";
 
@@ -54,12 +58,8 @@ type Course = {
   color: string;
 };
 
-type Concept = {
-  id: string;
-  name: string;
-  course: string;
-  mastery: Mastery;
-};
+// `courseId`: the concept's own course (#866 K05: Send to tutor's goal names only its note's course's)
+type Concept = { id: string; name: string; course: string; courseId: string | null; mastery: Mastery };
 
 type Note = {
   id: string;
@@ -71,6 +71,15 @@ type Note = {
   linkedConcepts: Concept[];
   lastSummary: string | null;
 };
+
+/** A course with no colour of its own: the brand green. */
+const COURSE_FALLBACK_COLOR = "var(--sap-400)";
+
+/** A modal card's click stays inside it (the backdrop's click closes). */
+const stopClick = (e: React.MouseEvent) => e.stopPropagation();
+
+/** A dot's colour, as the `--dot-color` the module's `.dot` reads. */
+const dotColor = (color: string) => ({ "--dot-color": color }) as React.CSSProperties;
 
 const MASTERY_COLOR: Record<Mastery, string> = {
   mastered: "var(--state-mastery)",
@@ -102,7 +111,7 @@ function enrolledToCourse(e: EnrolledCourse): Course {
     id: e.course_id,
     name: e.nickname || e.course_name,
     code: e.course_code,
-    color: e.color || "#74a25d",
+    color: e.color || COURSE_FALLBACK_COLOR,
   };
 }
 
@@ -124,6 +133,7 @@ function apiConceptToConcept(c: ApiLinkedConcept, courseCode: string): Concept {
     id: c.id,
     name: c.concept_name,
     course: courseCode,
+    courseId: c.course_id ?? null,
     mastery: normalizeMastery(c.mastery_tier),
   };
 }
@@ -407,6 +417,8 @@ function NotetakerScreen() {
       try {
         const res = await extractNoteConcepts(noteId, userId);
         if (crisis.intercept(res) && !res.crisis_support_alongside) return; // nothing was linked
+        // spec §13 A125: names held back for giving away an open check's answer
+        if (res?.withheld) toast.warn(withheldNotice(res.withheld, "concept"));
         await refreshActiveConcepts();
       } catch (e) {
         console.error("Extract failed", e);
@@ -441,10 +453,7 @@ function NotetakerScreen() {
         // `note` names the note, so a start on its title unchanged is screened
         // as the student's stored material, not as a topic they typed
         // (docs/safety/crisis-support.md): the card shows beside the session.
-        const open = () => router.push(
-          `/learn?topic=${encodeURIComponent(res.topic ?? "")}&course=${encodeURIComponent(res.course_id ?? "")}`
-            + `&note=${encodeURIComponent(noteId)}`,
-        );
+        const open = () => router.push(noteTutorHref(res, noteId, active.linkedConcepts)); // K05
         // Beside a result, the tutor opens once the card is closed, told the
         // card was shown so its start does not pop the same one up again; a
         // card that stands in for the result opens nothing.
@@ -501,8 +510,6 @@ function NotetakerScreen() {
     return () => document.removeEventListener("keydown", onKey);
   }, [fullscreen]);
 
-  // Escape anywhere on the page closes an open picker, even with focus
-  // outside it (the Dialog itself handles Escape from inside).
   React.useEffect(() => {
     if (!pickerOpen && !conceptPickerOpen) return;
     const onKey = (e: KeyboardEvent) => {
@@ -515,12 +522,9 @@ function NotetakerScreen() {
     return () => document.removeEventListener("keydown", onKey);
   }, [pickerOpen, conceptPickerOpen]);
 
-
   if (!userReady || loading) {
     return (
-      <div
-        className="flex items-center justify-center h-full text-text-muted text-md"
-      >
+      <div className={styles.loading}>
         Loading notes…
       </div>
     );
@@ -537,9 +541,13 @@ function NotetakerScreen() {
   }
 
   return (
-    <div className="flex flex-col h-full">
+    <div className={styles.screen}>
       <div style={layoutRowStyle(fullscreen)}>
-        <div style={notesListRailStyle(fullscreen)} aria-hidden={fullscreen}>
+        {/* A collapsed pane is `inert`, not just aria-hidden: its controls stay
+            in the DOM for the width transition, and inert also takes them out
+            of the tab order (aria-hidden alone left them focusable; spec §13
+            A135). */}
+        <div style={notesListRailStyle(fullscreen)} inert={fullscreen}>
           <NotesList
             notes={filtered}
             totalCount={notes.length}
@@ -555,9 +563,7 @@ function NotetakerScreen() {
           />
         </div>
 
-        <div
-          className="flex-1 min-w-0 flex justify-center"
-        >
+        <div className={styles.editorSlot}>
           <div style={editorFrameStyle(fullscreen)}>
             <NoteEditor
               note={active}
@@ -570,7 +576,7 @@ function NotetakerScreen() {
           </div>
         </div>
 
-        <div style={noteDetailRailStyle(fullscreen)} aria-hidden={fullscreen}>
+        <div style={noteDetailRailStyle(fullscreen)} inert={fullscreen}>
           <NoteDetail
             note={active}
             course={courseFor(active.courseId)}
@@ -587,7 +593,7 @@ function NotetakerScreen() {
           />
         </div>
 
-        <div style={chatRailStyle(fullscreen)} aria-hidden={!fullscreen}>
+        <div style={chatRailStyle(fullscreen)} inert={!fullscreen}>
           {/* Keyed per note: switching notes starts a fresh thread + composer. */}
           <AIChatPanel key={active.id} noteId={active.id} userId={userId} />
         </div>
@@ -634,32 +640,26 @@ function renderEmptyState({
 }) {
   return (
     <>
-      <div
-        className="flex flex-col h-full p-8 gap-3"
-      >
-        <div className="flex w-full items-center justify-between gap-4"><div className="label-micro">Notetaker</div></div>
-        <div className="flex-1 flex flex-col items-center justify-center text-center gap-3">
-        <h2
-          className="h-serif m-0 text-[28px] font-medium tracking-[-0.015em]"
-        >
+      <div className={styles.empty}>
+        <div className={styles.emptyHeader}><div className="label-micro">Notetaker</div></div>
+        <div className={styles.emptyBody}>
+        <h2 className={`h-serif ${styles.emptyTitle}`}>
           No notes yet
         </h2>
-        <p
-          className="m-0 max-w-105 text-text-dim text-base leading-[1.6]"
-        >
+        <p className={styles.emptyCopy}>
           Pick a course to start — Sapling will link the concepts you write to its
           knowledge graph.
         </p>
         <button
           type="button"
           onClick={onOpenPicker}
-          className="btn btn--primary mt-2"
           disabled={courses.length === 0}
+          className={`btn btn--primary ${styles.emptyCta}`}
         >
           <Icon name="plus" size={13} /> Create your first note
         </button>
         {courses.length === 0 && (
-          <p className="m-0 text-sm text-text-muted">
+          <p className={styles.hint}>
             Add a course first to start taking notes.
           </p>
         )}
@@ -702,23 +702,17 @@ function NotesList({
   onCreate: () => void;
 }) {
   return (
-    <aside
-      className="card p-0 flex flex-col min-h-0 overflow-hidden"
-    >
-      <div className="pt-3.5 px-4 pb-2.5 border-b border-b-border">
-        <div
-          className="flex items-center justify-between mb-2.5"
-        >
+    <aside className={`card ${styles.listCard}`}>
+      <div className={styles.listHead}>
+        <div className={styles.listTitleRow}>
           <div className="label-micro">All notes</div>
-          <span className="mono text-xs text-text-muted">
+          <span className={`mono ${styles.count}`}>
             {notes.length}
             {courseFilter ? ` / ${totalCount}` : ""}
           </span>
         </div>
-        <div className="relative mb-2.5">
-          <span
-            className="absolute left-2.5 top-1/2 [transform:translateY(-50%)] text-text-muted inline-flex pointer-events-none"
-          >
+        <div className={styles.searchWrap}>
+          <span className={styles.searchIcon}>
             <Icon name="search" size={13} />
           </span>
           <input
@@ -726,11 +720,11 @@ function NotesList({
             value={query}
             onChange={(e) => onQueryChange(e.target.value)}
             placeholder="Search notes…"
-            className="w-full pt-2 pr-2.5 pb-2 pl-7.5 text-md font-sans bg-bg-input border border-border rounded-sm text-text"
+            className={`${styles.field} ${styles.fieldWithIcon}`}
           />
         </div>
         {courses.length > 0 && (
-          <div className="flex flex-wrap gap-1">
+          <div className={styles.chips}>
             <CourseFilterChip
               active={courseFilter === null}
               label="All"
@@ -751,11 +745,9 @@ function NotesList({
         )}
       </div>
 
-      <div className="flex-1 overflow-y-auto p-1.5">
+      <div className={styles.listScroll}>
         {notes.length === 0 ? (
-          <div
-            className="py-5 px-3 text-sm text-text-muted text-center"
-          >
+          <div className={styles.listEmpty}>
             No notes match the current filters.
           </div>
         ) : (
@@ -767,19 +759,13 @@ function NotesList({
                 key={n.id}
                 type="button"
                 onClick={() => onSelect(n.id)}
-                className={cn("block w-full text-left py-2.5 px-3 mb-0.5 rounded-sm border-0 cursor-pointer [transition:background_var(--dur-fast)_var(--ease)]", isActive ? "bg-bg-soft" : "bg-transparent", isActive ? "text-text" : "text-text-dim", isActive ? "font-semibold" : "font-normal")}
+                className={`${styles.noteRow} ${isActive ? styles.noteRowActive : ""}`}
               >
-                <div
-                  className="text-md overflow-hidden text-ellipsis whitespace-nowrap mb-1"
-                >
+                <div className={styles.noteTitle}>
                   {n.title || "Untitled note"}
                 </div>
-                <div
-                  className="flex items-center gap-1.5 text-xs text-text-muted font-normal"
-                >
-                  <span
-                    className="w-[7px] h-[7px] rounded-[50%] shrink-0" style={{ background: c.color }}
-                  />
+                <div className={styles.noteMeta}>
+                  <span className={styles.dot} style={dotColor(c.color)} />
                   <span>{c.code}</span>
                   <span aria-hidden>·</span>
                   <span>{relTime(n.updatedAt)}</span>
@@ -790,11 +776,11 @@ function NotesList({
         )}
       </div>
 
-      <div className="p-2.5 border-t border-t-border">
+      <div className={styles.listFoot}>
         <button
           type="button"
           onClick={onCreate}
-          className="btn btn--primary w-full justify-center inline-flex"
+          className={`btn btn--primary ${styles.blockBtn}`}
         >
           <Icon name="plus" size={13} /> New note
         </button>
@@ -818,13 +804,9 @@ function CourseFilterChip({
     <button
       type="button"
       onClick={onClick}
-      className={cn("chip", "cursor-pointer border border-transparent inline-flex items-center gap-[5px]", active ? "bg-accent-soft" : "bg-bg-soft", active ? "text-accent" : "text-text-dim", active ? "border-accent-border" : "border-transparent")}
+      className={`chip ${styles.filterChip} ${active ? styles.filterChipActive : ""}`}
     >
-      {color && (
-        <span
-          className="w-[7px] h-[7px] rounded-[50%] inline-block" style={{ background: color }}
-        />
-      )}
+      {color && <span className={`${styles.dot} ${styles.dotInline}`} style={dotColor(color)} />}
       {label}
     </button>
   );
@@ -845,63 +827,53 @@ function NoteEditor({
   fullscreen: boolean;
   onToggleFullscreen: () => void;
 }) {
-
+  // Fullscreen is one modifier class: every size, inset and surface change
+  // below tweens through the module's --dur-slow transitions.
   return (
-    <section
-      className={cn("p-0 flex flex-col min-h-0 overflow-hidden w-full border border-current [transition:background_var(--dur-slow)_var(--ease),_border-color_var(--dur-slow)_var(--ease),_box-shadow_var(--dur-slow)_var(--ease),_border-radius_var(--dur-slow)_var(--ease)]", fullscreen ? "bg-transparent" : "bg-bg-panel", fullscreen ? "border-transparent" : "border-border", fullscreen ? "rounded-none" : "rounded-lg", fullscreen ? "shadow-none" : "shadow-sm")}
-    >
-      <div
-        className={cn("border-b border-b-current flex items-start gap-3 [transition:padding_var(--dur-slow)_var(--ease),_border-color_var(--dur-slow)_var(--ease)]", fullscreen ? "pt-12 px-14 pb-5" : "pt-5 px-7 pb-4", fullscreen ? "border-transparent" : "border-border")}
-      >
+    <section className={`${styles.editor} ${fullscreen ? styles.editorFull : ""}`}>
+      <div className={styles.editorHead}>
         <input
           value={note.title}
           maxLength={NOTE_TITLE_MAX}
           onChange={(e) => onChange({ title: e.target.value })}
           placeholder="Untitled note"
-          className={cn("h-serif", "flex-1 min-w-0 font-medium tracking-[-0.015em] leading-[1.2] text-text bg-transparent border-0 p-0 [transition:font-size_var(--dur-slow)_var(--ease)]", fullscreen ? "text-[42px]" : "text-4xl")}
+          className={`h-serif ${styles.titleInput}`}
         />
         <button
           type="button"
-          className="btn btn--ghost btn--sm shrink-0"
           onClick={onToggleFullscreen}
           title={fullscreen ? "Exit fullscreen (Esc)" : "Fullscreen editor"}
+          className={`btn btn--ghost btn--sm ${styles.noShrink}`}
         >
           <Icon name={fullscreen ? "x" : "max"} size={12} />
         </button>
       </div>
 
-      <div
-        className={cn("flex-1 min-h-0 overflow-y-auto [transition:padding_var(--dur-slow)_var(--ease)]", fullscreen ? "py-6 px-14" : "py-5 px-7")}
-      >
+      <div className={styles.editorBody}>
         <textarea
           value={note.body}
           maxLength={NOTE_BODY_MAX}
           onChange={(e) => onChange({ body: e.target.value })}
           placeholder="Start writing — Sapling will pick up concepts as you go."
-          className={cn("body-serif", "w-full border-0 resize-none [background:transparent] leading-[1.7] text-text font-serif [transition:font-size_var(--dur-slow)_var(--ease)]", fullscreen ? "min-h-[calc(100vh_-_280px)]" : "min-h-80", fullscreen ? "text-base" : "text-[15px]")}
+          className={`body-serif ${styles.bodyInput}`}
         />
       </div>
 
-      <div
-        className={cn("border-t border-t-current flex items-center justify-between gap-3 text-xs text-text-muted font-sans tracking-[0.04em] [transition:padding_var(--dur-slow)_var(--ease),_background_var(--dur-slow)_var(--ease),_border-color_var(--dur-slow)_var(--ease)]", fullscreen ? "py-3.5 px-14" : "py-2.5 px-5.5", fullscreen ? "border-transparent" : "border-border", fullscreen ? "bg-transparent" : "bg-bg-inset")}
-      >
+      <div className={styles.editorFoot}>
         {saveStatus === "error" ? (
-          <span
-            role="status"
-            className="inline-flex items-center gap-1.5 text-state-struggle"
-          >
+          <span role="status" className={`${styles.inlineRow} ${styles.saveError}`}>
             <Icon name="x" size={11} />
             Couldn&apos;t save ·
             <button
               type="button"
-              className="btn btn--ghost btn--sm py-0 px-1.5 text-xs text-inherit"
+              className={`btn btn--ghost btn--sm ${styles.retryBtn}`}
               onClick={onRetrySave}
             >
               Retry
             </button>
           </span>
         ) : (
-          <span className="inline-flex items-center gap-1.5">
+          <span className={styles.inlineRow}>
             <Icon name={saveStatus === "saved" ? "check" : "pencil"} size={11} />
             {saveStatus === "saving"
               ? "Saving…"
@@ -910,7 +882,7 @@ function NoteEditor({
                 : `Saved · ${relTime(note.updatedAt)}`}
           </span>
         )}
-        <span className="inline-flex items-center gap-3">
+        <span className={`${styles.inlineRow} ${styles.inlineRowWide}`}>
           <span>{note.body.split(/\s+/).filter(Boolean).length} words</span>
           <span>{note.body.length} chars</span>
           {fullscreen && <span>Esc to exit</span>}
@@ -962,41 +934,30 @@ function NoteDetail({
   };
 
   return (
-    <aside
-      className="flex flex-col gap-4 min-h-0 overflow-y-auto"
-    >
-      <div className="card p-(--pad-lg)">
-        <div className="label-micro mb-2.5">
+    <aside className={styles.detail}>
+      <div className={`card ${styles.detailCard}`}>
+        <div className={`label-micro ${styles.cardLabel}`}>
           Linked concepts
         </div>
         {note.linkedConcepts.length === 0 ? (
-          <div className="text-sm text-text-muted">
+          <div className={styles.muted}>
             No concepts linked yet. Sapling will surface them as you write.
           </div>
         ) : (
-          <div className="flex flex-col gap-1">
+          <div className={styles.stack}>
             {note.linkedConcepts.map((c) => (
-              <div
-                key={c.id}
-                className="flex items-center gap-2.5 py-2 px-2.5 rounded-sm bg-bg-subtle w-full"
-              >
-                <span
-                  className="w-2 h-2 rounded-[50%] shrink-0" style={{ background: MASTERY_COLOR[c.mastery] }}
-                />
-                <span className="flex-1 text-md text-text">
+              <div key={c.id} className={styles.conceptRow}>
+                <span className={`${styles.dot} ${styles.dotMd}`} style={dotColor(MASTERY_COLOR[c.mastery])} />
+                <span className={styles.conceptName}>
                   {c.name}
                 </span>
-                <span
-                  className="mono text-sm text-text-muted"
-                >
-                  {sentenceCase(c.mastery)}
-                </span>
+                <span className={`mono ${styles.tier}`}>{sentenceCase(c.mastery)}</span>
                 <button
                   type="button"
                   onClick={() => onUnlinkConcept(c.id)}
                   title="Unlink concept"
                   aria-label={`Unlink ${c.name}`}
-                  className="bg-transparent border-0 cursor-pointer text-text-muted p-0.5 inline-flex"
+                  className={styles.iconBtn}
                 >
                   <Icon name="x" size={11} />
                 </button>
@@ -1006,20 +967,20 @@ function NoteDetail({
         )}
         <button
           type="button"
-          className="btn btn--ghost btn--sm mt-2.5 w-full justify-center inline-flex"
+          className={`btn btn--ghost btn--sm ${styles.blockBtn} ${styles.cardAction}`}
           onClick={onOpenConceptPicker}
         >
           <Icon name="plus" size={11} /> Link concept
         </button>
       </div>
 
-      <div className="card p-(--pad-lg)">
-        <div className="label-micro mb-2.5">
+      <div className={`card ${styles.detailCard}`}>
+        <div className={`label-micro ${styles.cardLabel}`}>
           Tags
         </div>
-        <div className="flex flex-wrap gap-1.5">
+        <div className={styles.tags}>
           {note.tags.length === 0 && !adding && (
-            <span className="text-sm text-text-muted">No tags.</span>
+            <span className={styles.muted}>No tags.</span>
           )}
           {note.tags.map((t) => (
             <button
@@ -1027,7 +988,7 @@ function NoteDetail({
               type="button"
               onClick={() => onRemoveTag(t)}
               title={`Remove ${t}`}
-              className="chip cursor-pointer inline-flex items-center gap-[5px] border border-transparent"
+              className={`chip ${styles.tagChip}`}
             >
               {t}
               <Icon name="x" size={9} />
@@ -1050,13 +1011,13 @@ function NoteDetail({
                 }
               }}
               placeholder="tag"
-              className="chip bg-bg-input border border-dashed border-border-strong text-text w-20"
+              className={`chip ${styles.tagInput}`}
             />
           ) : (
             <button
               type="button"
               onClick={() => setAdding(true)}
-              className="chip bg-transparent border border-dashed border-border-strong cursor-pointer"
+              className={`chip ${styles.tagAdd}`}
             >
               + Add
             </button>
@@ -1064,14 +1025,14 @@ function NoteDetail({
         </div>
       </div>
 
-      <div className="card p-(--pad-lg)">
-        <div className="label-micro mb-2.5">
+      <div className={`card ${styles.detailCard}`}>
+        <div className={`label-micro ${styles.cardLabel}`}>
           Sapling actions
         </div>
-        <div className="flex flex-col gap-1.5">
+        <div className={`${styles.stack} ${styles.stackLoose}`}>
           <button
             type="button"
-            className="btn btn--ghost justify-start text-left"
+            className={`btn btn--ghost ${styles.actionBtn}`}
             onClick={onSummarize}
             disabled={busy !== null}
           >
@@ -1080,7 +1041,7 @@ function NoteDetail({
           </button>
           <button
             type="button"
-            className="btn btn--ghost justify-start text-left"
+            className={`btn btn--ghost ${styles.actionBtn}`}
             onClick={onExtract}
             disabled={busy !== null}
           >
@@ -1089,7 +1050,7 @@ function NoteDetail({
           </button>
           <button
             type="button"
-            className="btn btn--ghost justify-start text-left"
+            className={`btn btn--ghost ${styles.actionBtn}`}
             onClick={onGenerateQuiz}
             disabled={busy !== null || note.linkedConcepts.length === 0}
           >
@@ -1098,7 +1059,7 @@ function NoteDetail({
           </button>
           <button
             type="button"
-            className="btn btn--ghost justify-start text-left"
+            className={`btn btn--ghost ${styles.actionBtn}`}
             onClick={onSendToTutor}
             disabled={busy !== null}
           >
@@ -1107,12 +1068,8 @@ function NoteDetail({
           </button>
         </div>
         {note.lastSummary && (
-          <div
-            className="mt-3 p-2.5 rounded-sm bg-bg-subtle text-sm leading-[1.6] text-text-dim"
-          >
-            <div
-              className="label-micro mb-1 text-2xs"
-            >
+          <div className={styles.summary}>
+            <div className={`label-micro ${styles.summaryLabel}`}>
               Last summary
             </div>
             {note.lastSummary}
@@ -1120,19 +1077,17 @@ function NoteDetail({
         )}
       </div>
 
-      <div className="card p-(--pad-lg)">
-        <div className="label-micro mb-2.5">
+      <div className={`card ${styles.detailCard}`}>
+        <div className={`label-micro ${styles.cardLabel}`}>
           Note info
         </div>
-        <dl
-          className="m-0 grid grid-cols-[auto_1fr] gap-y-1.5 gap-x-3 text-sm"
-        >
-          <dt className="text-text-muted">Course</dt>
-          <dd className="m-0 text-text">{course.name}</dd>
-          <dt className="text-text-muted">Updated</dt>
-          <dd className="m-0 text-text">{relTime(note.updatedAt)}</dd>
-          <dt className="text-text-muted">Concepts</dt>
-          <dd className="mono m-0 text-text">
+        <dl className={styles.info}>
+          <dt>Course</dt>
+          <dd>{course.name}</dd>
+          <dt>Updated</dt>
+          <dd>{relTime(note.updatedAt)}</dd>
+          <dt>Concepts</dt>
+          <dd className="mono">
             {note.linkedConcepts.length}
           </dd>
         </dl>
@@ -1140,7 +1095,7 @@ function NoteDetail({
           type="button"
           onClick={onDelete}
           disabled={busy !== null}
-          className="btn btn--danger btn--sm mt-3 w-full justify-center inline-flex"
+          className={`btn btn--danger btn--sm ${styles.blockBtn} ${styles.deleteBtn}`}
         >
           <Icon name="x" size={11} />{" "}
           {busy === "delete" ? "Deleting…" : "Delete note"}
@@ -1159,31 +1114,36 @@ function CoursePickerModal({
   onPick: (courseId: string) => void;
   onClose: () => void;
 }) {
+  const m = useMotionPresets();
+  // Dialog's modal engine: scroll lock, focus in and back out, Tab trap.
+  const { panelRef, onKeyDown } = useOverlayBehaviour({ open: true, onClose });
   return (
-    <Dialog open onClose={onClose} padding="0" width="520px" zIndex={200} showCloseButton={false} labelledBy="course-picker-title">
-      <div className="overflow-hidden">
-        <div
-          className="pt-5 px-6 pb-3 border-b border-b-border"
-        >
-          <div className="label-micro mb-1.5">
+    <motion.div
+      onClick={onClose} onKeyDown={onKeyDown}
+      className={styles.backdrop}
+      {...m.fade}
+    >
+      <motion.div
+        ref={panelRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="course-picker-title"
+        onClick={stopClick}
+        className={`card ${styles.modal}`}
+        {...m.scaleIn}
+      >
+        <div className={styles.modalHead}>
+          <div className={`label-micro ${styles.modalEyebrow}`}>
             New note
           </div>
-          <h2
-            id="course-picker-title"
-            className="h-serif m-0 text-2xl font-medium tracking-[-0.01em]"
-          >
+          <h2 id="course-picker-title" className={`h-serif ${styles.modalTitle}`}>
             Which course is this for?
           </h2>
-          <p className="mt-1.5 mx-0 mb-0 text-md text-text-dim">
+          <p className={styles.modalCopy}>
             Pick a course so Sapling can link concepts to the right knowledge graph.
           </p>
         </div>
 
-        <div className="p-2.5 flex flex-col gap-1">
+        <div className={styles.modalList}>
           {courses.length === 0 ? (
-            <div
-              className="py-5 px-3.5 text-sm text-text-muted text-center"
-            >
+            <div className={styles.modalEmpty}>
               No courses enrolled yet.
             </div>
           ) : (
@@ -1192,24 +1152,14 @@ function CoursePickerModal({
                 key={c.id}
                 type="button"
                 onClick={() => onPick(c.id)}
-                className="flex items-center gap-3 py-3 px-3.5 rounded-md border border-border bg-bg-panel cursor-pointer text-left [transition:background_var(--dur-fast)_var(--ease)]"
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.background = "var(--bg-soft)";
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = "var(--bg-panel)";
-                }}
+                className={styles.pickRow}
               >
-                <span
-                  className="w-3 h-3 rounded-[50%] shrink-0" style={{ background: c.color }}
-                />
-                <div className="flex-1 min-w-0">
-                  <div className="text-base font-semibold text-text">
+                <span className={`${styles.dot} ${styles.dotLg}`} style={dotColor(c.color)} />
+                <div className={styles.pickBody}>
+                  <div className={styles.pickName}>
                     {c.name}
                   </div>
-                  <div
-                    className="mono text-xs text-text-muted mt-0.5"
-                  >
+                  <div className={`mono ${styles.pickCode}`}>
                     {c.code}
                   </div>
                 </div>
@@ -1219,18 +1169,16 @@ function CoursePickerModal({
           )}
         </div>
 
-        <div
-          className="py-3 px-4 border-t border-t-border flex justify-between items-center bg-bg-subtle"
-        >
-          <span className="text-sm text-text-muted">
+        <div className={styles.modalFoot}>
+          <span className={styles.muted}>
             You can change this later.
           </span>
           <button type="button" className="btn btn--ghost btn--sm" onClick={onClose}>
             Cancel
           </button>
         </div>
-      </div>
-    </Dialog>
+      </motion.div>
+    </motion.div>
   );
 }
 
@@ -1279,76 +1227,71 @@ function ConceptPickerModal({
       return n.concept_name.toLowerCase().includes(q);
     });
   }, [nodes, query, alreadyLinkedIds]);
+  const m = useMotionPresets();
+  // Dialog's modal engine: scroll lock, focus in and back out, Tab trap.
+  const { panelRef, onKeyDown } = useOverlayBehaviour({ open: true, onClose });
 
   return (
-    <Dialog open onClose={onClose} padding="0" width="520px" zIndex={200} showCloseButton={false} labelledBy="concept-picker-title">
-      <div className="overflow-hidden flex flex-col max-h-[80vh]">
-        <div
-          className="pt-5 px-6 pb-3 border-b border-b-border"
-        >
-          <div className="label-micro mb-1.5">
+    <motion.div
+      onClick={onClose} onKeyDown={onKeyDown}
+      className={styles.backdrop}
+      {...m.fade}
+    >
+      <motion.div
+        ref={panelRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="concept-picker-title"
+        onClick={stopClick}
+        className={`card ${styles.modal} ${styles.modalTall}`}
+        {...m.scaleIn}
+      >
+        <div className={styles.modalHead}>
+          <div className={`label-micro ${styles.modalEyebrow}`}>
             Link concept
           </div>
-          <h2
-            id="concept-picker-title"
-            className="h-serif m-0 text-2xl font-medium tracking-[-0.01em]"
-          >
+          <h2 id="concept-picker-title" className={`h-serif ${styles.modalTitle}`}>
             Pick a concept to link
           </h2>
-          <p className="mt-1.5 mx-0 mb-0 text-md text-text-dim">
+          <p className={styles.modalCopy}>
             From your knowledge graph for this course.
           </p>
         </div>
 
-        <div className="py-2.5 px-3.5 border-b border-b-border">
+        <div className={styles.modalSearch}>
           <input
             type="search"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search concepts…"
             autoFocus
-            className="w-full py-2 px-2.5 text-md font-sans bg-bg-input border border-border rounded-sm text-text"
+            className={styles.field}
           />
         </div>
 
-        <div className="flex-1 overflow-y-auto p-2.5">
+        <div className={styles.modalScroll}>
           {nodes === null ? (
-            <div
-              className="py-5 px-3.5 text-sm text-text-muted text-center"
-            >
+            <div className={styles.modalEmpty}>
               Loading…
             </div>
           ) : visible.length === 0 ? (
-            <div
-              className="py-5 px-3.5 text-sm text-text-muted text-center"
-            >
+            <div className={styles.modalEmpty}>
               No matching concepts.
             </div>
           ) : (
-            <div className="flex flex-col gap-1">
+            <div className={styles.stack}>
               {visible.map((n) => (
                 <button
                   key={n.id}
                   type="button"
                   onClick={() => onPick(n.id)}
-                  className="flex items-center gap-2.5 py-2.5 px-3 rounded-md border border-border bg-bg-panel cursor-pointer text-left [transition:background_var(--dur-fast)_var(--ease)]"
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.background = "var(--bg-soft)";
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.background = "var(--bg-panel)";
-                  }}
+                  className={`${styles.pickRow} ${styles.pickRowTight}`}
                 >
                   <span
-                    className="w-2 h-2 rounded-[50%] shrink-0" style={{ background:
-                        MASTERY_COLOR[normalizeMastery(n.mastery_tier)] }}
+                    className={`${styles.dot} ${styles.dotMd}`}
+                    style={dotColor(MASTERY_COLOR[normalizeMastery(n.mastery_tier)])}
                   />
-                  <span className="flex-1 text-md text-text">
+                  <span className={styles.conceptName}>
                     {n.concept_name}
                   </span>
-                  <span
-                    className="mono text-sm text-text-muted"
-                  >
+                  <span className={`mono ${styles.tier}`}>
                     {sentenceCase(n.mastery_tier)}
                   </span>
                 </button>
@@ -1357,15 +1300,13 @@ function ConceptPickerModal({
           )}
         </div>
 
-        <div
-          className="py-3 px-4 border-t border-t-border flex justify-end bg-bg-subtle"
-        >
+        <div className={`${styles.modalFoot} ${styles.modalFootEnd}`}>
           <button type="button" className="btn btn--ghost btn--sm" onClick={onClose}>
             Cancel
           </button>
         </div>
-      </div>
-    </Dialog>
+      </motion.div>
+    </motion.div>
   );
 }
 
@@ -1377,6 +1318,7 @@ function AIChatPanel({ noteId, userId }: { noteId: string; userId: string }) {
   const [sending, setSending] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const scrollRef = React.useRef<HTMLDivElement>(null);
+  const m = useMotionPresets();
 
   // Stale-reply guard (#768). The parent keys this panel on the note id, so a
   // note switch mounts a fresh thread; this ref additionally pins which note a
@@ -1437,60 +1379,46 @@ function AIChatPanel({ noteId, userId }: { noteId: string; userId: string }) {
   };
 
   return (
-    <aside
-      className="flex flex-col h-full bg-bg-panel border border-border rounded-lg shadow-sm overflow-hidden"
-    >
-      <div
-        className="py-3.5 px-4 border-b border-b-border flex items-center gap-2"
-      >
+    <aside className={styles.chat}>
+      <div className={styles.chatHead}>
         <Icon name="sparkle" size={13} />
         <span className="label-micro">Quick questions</span>
       </div>
 
-      <div
-        ref={scrollRef}
-        className="flex-1 min-h-0 overflow-y-auto py-3.5 px-4 flex flex-col gap-2.5"
-      >
+      <div ref={scrollRef} className={styles.thread}>
         {messages.length === 0 ? (
-          <div
-            className="text-sm text-text-muted leading-[1.6]"
-          >
+          <div className={styles.chatHint}>
             Ask Sapling anything about what you&apos;re writing — clarify a concept,
             check a definition, or surface related ideas.
           </div>
         ) : (
-          messages.map((m, i) => m.crisis ? (
-            <CrisisSupportCard key={i} support={m.crisis} />
+          // Each message mounts once, when it is sent or answered: it rises in.
+          messages.map((msg, i) => msg.crisis ? (
+            <CrisisSupportCard key={i} support={msg.crisis} />
           ) : (
-            <div
+            <motion.div
               key={i}
-              className={cn("max-w-[85%] py-2 px-[11px] rounded-md text-md leading-[1.5] whitespace-pre-wrap", m.role === "user" ? "self-end" : "self-start", m.role === "user" ? "bg-accent-soft" : "bg-bg-subtle", m.role === "user" ? "text-accent" : "text-text")}
+              className={`${styles.bubble} ${msg.role === "user" ? styles.bubbleUser : ""}`}
+              {...m.fadeUp}
             >
-              {m.text}
-            </div>
+              {msg.text}
+            </motion.div>
           ))
         )}
         {sending && (
-          <div
-            className="self-start text-sm text-text-muted italic"
-          >
+          <motion.div className={styles.thinking} {...m.fade}>
             Sapling is thinking…
-          </div>
+          </motion.div>
         )}
         {error && (
-          <div
-            role="alert"
-            className="self-stretch flex items-center gap-1.5 py-2 px-[11px] rounded-md border border-state-struggle text-state-struggle text-sm leading-[1.5]"
-          >
+          <motion.div role="alert" className={styles.chatError} {...m.fadeUp}>
             <Icon name="x" size={11} />
             {error}
-          </div>
+          </motion.div>
         )}
       </div>
 
-      <div
-        className="p-2.5 border-t border-t-border flex gap-1.5"
-      >
+      <div className={styles.composer}>
         <input
           value={input}
           maxLength={CHAT_MESSAGE_MAX}
@@ -1503,12 +1431,12 @@ function AIChatPanel({ noteId, userId }: { noteId: string; userId: string }) {
           }}
           placeholder="Ask a quick question…"
           disabled={sending}
-          className="flex-1 min-w-0 py-2 px-2.5 text-md font-sans bg-bg-input border border-border rounded-sm text-text"
+          className={`${styles.field} ${styles.composerField}`}
         />
         <button
           type="button"
           onClick={send}
-          className="btn btn--sm btn--primary shrink-0"
+          className={`btn btn--sm btn--primary ${styles.noShrink}`}
           disabled={!input.trim() || sending}
         >
           <Icon name="bolt" size={12} />

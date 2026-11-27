@@ -7,9 +7,12 @@ import { Avatar } from "./Avatar";
 import { Icon } from "./Icon";
 import { SaplingWordmark } from "./SaplingWordmark";
 import { useUser } from "@/context/UserContext";
+import { useRetentionDue } from "@/context/RetentionDueContext";
 import type { NavItem } from "@/lib/navFeatures";
 import { useVisibleNavSections } from "@/lib/useNavSections";
+import { RETENTION_NAV_HREF, RetentionDueDot } from "./RetentionDueDot";
 import { STUDY_TOOL_PATHS } from "@/lib/toolHrefs";
+import styles from "./SideNav.module.css";
 import { cn } from "@/lib/cn";
 
 type Entry = NavItem;
@@ -44,17 +47,25 @@ const ROW = {
    space below it before the first row. Kept tight so the groups read as one
    list with light dividers, not as separate blocks. */
 const HEADER = { above: 12, line: 17, below: 6 };
+/* Narrow-rail header slot: room for the group hairline (drawn at --sp-9,
+   18px, in SideNav.module.css) with even space around it. */
+const RULE_SLOT_HEIGHT = 29;
+const ROW_PAD_Y = "var(--sp-3)";
+/* The profile block's avatar, px; the narrow rail centres it like an icon. */
+const AVATAR_SIZE = 30;
+/* A fade in waits this beat (see `fade`); a fade out never waits. */
+const FADE_IN_DELAY = "var(--dur-instant)";
+const NO_DELAY = "0s";
 
-const GEOMETRY_TRANSITION =
-  "margin var(--dur) var(--ease), padding var(--dur) var(--ease), height var(--dur) var(--ease)";
-
-function rowGeometry(collapsed: boolean): React.CSSProperties {
+function rowGeometry(collapsed: boolean, padX = (collapsed ? ROW.narrow : ROW.wide).padX): React.CSSProperties {
   const r = collapsed ? ROW.narrow : ROW.wide;
   return {
     marginLeft: r.inset,
     marginRight: r.inset,
-    padding: `6px ${r.padX}px`,
-    overflow: "hidden",
+    paddingTop: ROW_PAD_Y,
+    paddingBottom: ROW_PAD_Y,
+    paddingLeft: padX,
+    paddingRight: padX,
   };
 }
 
@@ -65,21 +76,9 @@ function fade(collapsed: boolean): React.CSSProperties {
   return {
     opacity: collapsed ? 0 : 1,
     whiteSpace: "nowrap",
-    transition: `opacity var(--dur-fast) var(--ease) ${collapsed ? "0ms" : "90ms"}`,
+    transition: `opacity var(--dur-fast) var(--ease) ${collapsed ? NO_DELAY : FADE_IN_DELAY}`,
   };
 }
-
-/* Active/hover surfaces.
- *
- * A plain neutral highlight. The selected row is a flat `--bg-soft` fill,
- * which inside the olive rail resolves to a translucent cream wash (see
- * [data-app-sidenav] in globals.css), with the label in bold cream.
- * No rail, no hue on the label: the fill IS the treatment.
- *
- * Hover is the same colour at half strength, so it is unmistakably the
- * weaker, transient state and never reads as a second selection. */
-const NAV_ACTIVE_BG = "var(--bg-soft)";
-const NAV_HOVER_BG = "color-mix(in srgb, var(--bg-soft) 50%, transparent)";
 
 function isActive(pathname: string, href: string): boolean {
   if (href === "/dashboard") return pathname === "/" || pathname.startsWith("/dashboard");
@@ -100,22 +99,51 @@ function useCollapsed(): [boolean, (v: boolean) => void] {
   return [collapsed, update];
 }
 
+/* On the Tutor the rail gives its width to the chat: it shows as the narrow
+   icon rail whatever the stored preference, and opens over the page (no
+   layout shift) while the pointer is on it or focus is inside it. Arriving
+   at the Tutor closes it at once, even with the pointer still on the rail. */
+function useTutorPeek(onTutor: boolean) {
+  const [peek, setPeek] = React.useState(false);
+  React.useEffect(() => { if (!onTutor) setPeek(false); }, [onTutor]);
+  const handlers = onTutor
+    ? {
+        onMouseEnter: () => setPeek(true),
+        onMouseLeave: () => setPeek(false),
+        onFocus: () => setPeek(true),
+        onBlur: (e: React.FocusEvent<HTMLElement>) => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setPeek(false);
+        },
+        onKeyDown: (e: React.KeyboardEvent<HTMLElement>) => {
+          if (e.key === "Escape") { setPeek(false); (document.activeElement as HTMLElement | null)?.blur(); }
+        },
+      }
+    : {};
+  return { peek: onTutor && peek, handlers, close: () => setPeek(false) };
+}
+
 export function SideNav() {
   const pathname = usePathname() || "/";
   const { userName, avatarUrl, isAdmin, isAuthenticated } = useUser();
-  const [collapsed, setCollapsed] = useCollapsed();
+  const [storedCollapsed, setCollapsed] = useCollapsed();
+  const onTutor = isActive(pathname, "/learn");
+  const { peek, handlers: peekHandlers } = useTutorPeek(onTutor);
+  const collapsed = onTutor ? !peek : storedCollapsed;
   const sections = useVisibleNavSections();
+  const { due: retentionDue } = useRetentionDue();
   const settingsActive = isActive(pathname, "/settings");
 
   const width = collapsed ? SIDE_NAV_COLLAPSED : SIDE_NAV_EXPANDED;
 
-  return (
+  const rail = (
     <aside
       role="navigation"
       aria-label="Primary"
       // Hook for the pre-hydration mobile guard in globals.css (#110).
       data-app-sidenav=""
-      className="h-full bg-sidenav-bg [border-radius:0_var(--r-lg)_var(--r-lg)_0] relative z-1 flex flex-col gap-px overflow-hidden [transition:width_var(--dur)_var(--ease),_min-width_var(--dur)_var(--ease),_padding_var(--dur)_var(--ease)]" style={{ width, minWidth: width, padding: `16px ${collapsed ? RAIL_PAD_X.narrow : RAIL_PAD_X.wide}px` }}
+      data-peek={peek}
+      className={cn(`${styles.rail} ${onTutor ? styles.railFloating : styles.railInFlow}`, "pt-(--sp-8) pb-(--sp-8)")}
+      style={{ width, minWidth: width, paddingLeft: collapsed ? RAIL_PAD_X.narrow : RAIL_PAD_X.wide, paddingRight: collapsed ? RAIL_PAD_X.narrow : RAIL_PAD_X.wide }}
     >
       {/* Wide: the wordmark. Narrow: the Sapling symbol, centred. The two
           cross-fade in one fixed-height slot so nothing below shifts, and the
@@ -124,13 +152,15 @@ export function SideNav() {
         href="/dashboard"
         aria-label="Sapling — home"
         data-sidenav-logo=""
-        className="relative block pb-3.5 box-content overflow-hidden border-b border-b-border mb-2 no-underline" style={{ height: LOGO_SLOT_HEIGHT }}
+        className={styles.logo}
+        style={{ height: LOGO_SLOT_HEIGHT }}
       >
         <SaplingWordmark
           width={112}
           decorative
           tone="light"
-          style={{ position: "absolute", left: 6, top: 0, ...fade(collapsed) }}
+          className={styles.wordmark}
+          style={fade(collapsed)}
         />
         <img
           src={SAPLING_SYMBOL_SRC}
@@ -140,20 +170,14 @@ export function SideNav() {
           width={SYMBOL_WIDTH}
           height={LOGO_SLOT_HEIGHT}
           draggable={false}
-          className={cn("absolute top-0 [filter:brightness(0)_invert(1)]", collapsed ? "opacity-100" : "opacity-0", collapsed ? "[transition:opacity_var(--dur-fast)_var(--ease)_90ms]" : "[transition:opacity_var(--dur-fast)_var(--ease)_0ms]")} style={{ left: (RAIL_INNER_NARROW - SYMBOL_WIDTH) / 2, width: SYMBOL_WIDTH, height: LOGO_SLOT_HEIGHT }}
+          className={cn(styles.symbol, collapsed ? "opacity-100" : "opacity-0")}
+          style={{ left: (RAIL_INNER_NARROW - SYMBOL_WIDTH) / 2, width: SYMBOL_WIDTH, height: LOGO_SLOT_HEIGHT, transition: `opacity var(--dur-fast) var(--ease) ${collapsed ? FADE_IN_DELAY : NO_DELAY}` }}
         />
       </Link>
 
       {/* The destinations scroll on their own when the viewport is too short
-          for them, with the scrollbar hidden (`scrollbarWidth` here, the
-          WebKit pseudo-element in globals.css) — a 10px gutter in a 200px
-          rail read as clutter, and wheel/trackpad/keyboard scrolling all
-          still work. `minHeight: 0` is what lets a flex child shrink below
-          its content and scroll at all. */}
-      <div
-        data-sidenav-scroll=""
-        className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden [scrollbar-width:none] flex flex-col gap-px"
-      >
+          for them, scrollbar hidden (SideNav.module.css `.scroll`). */}
+      <div data-sidenav-scroll="" className={styles.scroll}>
       {sections.map((section, i) => (
         <React.Fragment key={section.label}>
           {/* Header slot. Wide: the group label. Narrow: a hairline (none
@@ -163,10 +187,13 @@ export function SideNav() {
               Spacing lives in HEADER. */}
           <div
             aria-hidden={collapsed || undefined}
-            className="relative shrink-0 overflow-hidden [transition:margin_var(--dur)_var(--ease),_padding_var(--dur)_var(--ease),_height_var(--dur)_var(--ease)]" style={{ height: collapsed ? (i === 0 ? 0 : 29) : HEADER.above + HEADER.line + HEADER.below }}
+            className={styles.header}
+            style={{
+              height: collapsed ? (i === 0 ? 0 : RULE_SLOT_HEIGHT) : HEADER.above + HEADER.line + HEADER.below,
+            }}
           >
             <div
-              className="label-micro absolute left-2.5 bottom-1.5 leading-[17px]"
+              className={cn(`label-micro ${styles.groupLabel}`, "bottom-1.5 leading-[17px]")}
               style={{ ...fade(collapsed) }}
             >
               {section.label}
@@ -175,7 +202,7 @@ export function SideNav() {
               <div
                 data-sidenav-group-rule=""
                 aria-hidden
-                className={cn("absolute left-2 right-2 top-4.5 h-px bg-border [transition:opacity_var(--dur-fast)_var(--ease)]", collapsed ? "opacity-100" : "opacity-0")}
+                className={cn(styles.groupRule, collapsed ? "opacity-100" : "opacity-0")}
               />
             )}
           </div>
@@ -185,6 +212,7 @@ export function SideNav() {
               entry={item}
               active={isActive(pathname, item.href)}
               collapsed={collapsed}
+              retentionDue={retentionDue && item.href === RETENTION_NAV_HREF}
             />
           ))}
         </React.Fragment>
@@ -196,33 +224,23 @@ export function SideNav() {
           under one full-width rule, the same line as the logo's, so the pair
           frames the rail top and bottom and the account cluster reads as split
           off from the main nav. Pinned: it never scrolls with the list above. */}
-      <div
-        data-sidenav-footer=""
-        className="flex flex-col gap-px shrink-0 mt-1 pt-2.5 border-t border-t-border"
-      >
+      <div data-sidenav-footer="" className={styles.footer}>
       {/* Collapse/expand opens the footer, just under its rule and above the
           account block, and is built like a nav row: panel icon + "Collapse" in the wide rail, the
           bare icon in the narrow one — the usual sidebar toggle.
           Same insets, padding and row height as NavLink so it lines up with
           the destinations above it. */}
-      <button
+      {!onTutor && <button
         type="button"
         aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
         title={collapsed ? "Expand sidebar" : undefined}
         onClick={() => setCollapsed(!collapsed)}
-        className="flex items-center gap-2.5 shrink-0 min-h-9.5" style={{ ...rowGeometry(collapsed), borderRadius: "var(--r-xs)", color: "var(--text-dim)", fontSize: 13, textAlign: "left", transition: `background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease), ${GEOMETRY_TRANSITION}` }}
-        onMouseEnter={(e) => {
-          e.currentTarget.style.background = NAV_HOVER_BG;
-          e.currentTarget.style.color = "var(--text)";
-        }}
-        onMouseLeave={(e) => {
-          e.currentTarget.style.background = "transparent";
-          e.currentTarget.style.color = "var(--text-dim)";
-        }}
+        className={cn(styles.row, "min-h-9.5")}
+        style={{ ...rowGeometry(collapsed) }}
       >
         <PanelToggleIcon collapsed={collapsed} />
-        <span aria-hidden className="flex-1" style={{ ...fade(collapsed) }}>Collapse</span>
-      </button>
+        <span aria-hidden className={styles.label} style={fade(collapsed)}>Collapse</span>
+      </button>}
 
       {isAdmin && (
         <NavLink
@@ -237,38 +255,27 @@ export function SideNav() {
           avatar in. The whole block is the Settings button: avatar + name +
           a trailing gear, one link to /settings. */}
       {isAuthenticated && (
-        <div className="pt-2.5 px-0 pb-1">
-          <div
-            className="flex items-center w-full"
-          >
+        <div className={styles.profile}>
+          <div className={styles.profileRow}>
             <Link
               href="/settings"
               data-testid="nav-link-settings"
               aria-label="Settings"
               aria-current={settingsActive ? "page" : undefined}
               title={collapsed ? "Settings" : undefined}
-              className={cn("flex items-center gap-2.5 flex-1 min-w-0 rounded-sm text-left overflow-hidden no-underline [transition:background_var(--dur-fast)_var(--ease),_color_var(--dur-fast)_var(--ease),_margin_var(--dur)_var(--ease),_padding_var(--dur)_var(--ease),_height_var(--dur)_var(--ease)]", settingsActive ? "text-text" : "text-text-dim", settingsActive ? "bg-bg-soft" : "bg-transparent")} style={{ padding: `6px ${collapsed ? (RAIL_INNER_NARROW - 30) / 2 : 12}px` }}
-              onMouseEnter={(e) => {
-                if (settingsActive) return;
-                e.currentTarget.style.background = NAV_HOVER_BG;
-                e.currentTarget.style.color = "var(--text)";
-              }}
-              onMouseLeave={(e) => {
-                if (settingsActive) return;
-                e.currentTarget.style.background = "transparent";
-                e.currentTarget.style.color = "var(--text-dim)";
-              }}
+              data-active={settingsActive}
+              className={`${styles.row} ${styles.settings}`}
+              // Wide: 12px in. Narrow: centred (computed, so it tweens).
+              style={rowGeometry(collapsed, collapsed ? (RAIL_INNER_NARROW - AVATAR_SIZE) / 2 : ROW.wide.padX)}
             >
-              <Avatar name={userName || "?"} size={30} img={avatarUrl || undefined} />
-                <div aria-hidden={collapsed || undefined} className="min-w-0 flex-1" style={{ ...fade(collapsed) }}>
-                  <div
-                    className="text-md font-semibold text-text overflow-hidden text-ellipsis whitespace-nowrap"
-                  >
+              <Avatar name={userName || "?"} size={AVATAR_SIZE} img={avatarUrl || undefined} />
+                <div aria-hidden={collapsed || undefined} className={styles.who} style={fade(collapsed)}>
+                  <div className={styles.userName}>
                     {userName || "You"}
                   </div>
-                  <div className="text-xs text-text-muted">Account</div>
+                  <div className={styles.userSub}>Account</div>
                 </div>
-                <span aria-hidden className="inline-flex shrink-0" style={{ ...fade(collapsed) }}>
+                <span aria-hidden className={styles.gear} style={fade(collapsed)}>
                   <Icon name="setting" size={ICON_SIZE} />
                 </span>
             </Link>
@@ -278,31 +285,41 @@ export function SideNav() {
       </div>
     </aside>
   );
+
+  if (!onTutor) return rail;
+  // A fixed 64px slot keeps the page where it is while the rail opens over it.
+  return (
+    <div
+      data-app-sidenav-slot=""
+      {...peekHandlers}
+      className={styles.slot}
+      style={{ width: SIDE_NAV_COLLAPSED, minWidth: SIDE_NAV_COLLAPSED }}
+    >
+      {rail}
+    </div>
+  );
 }
 
-function NavLink({ entry, active, collapsed }: { entry: Entry; active: boolean; collapsed: boolean }) {
+function NavLink({ entry, active, collapsed, retentionDue = false }: {
+  entry: Entry; active: boolean; collapsed: boolean; retentionDue?: boolean;
+}) {
+  const label = retentionDue ? `${entry.label}, retention check due` : entry.label;
   return (
     <Link
       href={entry.href}
       data-testid={`nav-link-${entry.href.slice(1)}`}
-      title={collapsed ? entry.label : undefined}
-      aria-label={collapsed ? entry.label : undefined}
-      className="flex items-center gap-2.5 min-h-9.5" style={{ ...rowGeometry(collapsed), borderRadius: "var(--r-xs)", background: active ? NAV_ACTIVE_BG : "transparent", color: active ? "var(--text)" : "var(--text-dim)", fontWeight: active ? 600 : 400, fontSize: 13, transition: `background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease), ${GEOMETRY_TRANSITION}`, textDecoration: "none" }}
-      onMouseEnter={(e) => {
-        if (active) return;
-        e.currentTarget.style.background = NAV_HOVER_BG;
-        e.currentTarget.style.color = "var(--text)";
-      }}
-      onMouseLeave={(e) => {
-        if (active) return;
-        e.currentTarget.style.background = "transparent";
-        e.currentTarget.style.color = "var(--text-dim)";
-      }}
+      title={collapsed ? label : undefined}
+      aria-label={collapsed || retentionDue ? label : undefined}
+      data-active={active}
+      className={cn(styles.row, "min-h-9.5")}
+      style={{ ...rowGeometry(collapsed) }}
     >
-      <span className="inline-flex shrink-0">
+      {/* A126: the dot rides the icon, so the narrow rail shows it too. */}
+      <span className={styles.iconWrap}>
         <Icon name={entry.icon} size={ICON_SIZE} />
+        {retentionDue && <RetentionDueDot testid="nav-retention-due" overlay />}
       </span>
-      <span aria-hidden={collapsed || undefined} className="flex-1" style={{ ...fade(collapsed) }}>
+      <span aria-hidden={collapsed || undefined} className={styles.label} style={fade(collapsed)}>
         {entry.label}
       </span>
     </Link>
@@ -313,7 +330,7 @@ function NavLink({ entry, active, collapsed }: { entry: Entry; active: boolean; 
    chevron in the open area. Only the chevron moves — it points in (close)
    when the rail is wide and flips to point out (open) when narrow, turning
    about its own centre on the rail's duration so it animates with the
-   collapse. Stroke weight and caps match `Icon`. */
+   collapse (SideNav.module.css). Stroke weight and caps match `Icon`. */
 function PanelToggleIcon({ collapsed }: { collapsed: boolean }) {
   return (
     <svg
@@ -326,14 +343,12 @@ function PanelToggleIcon({ collapsed }: { collapsed: boolean }) {
       strokeLinecap="round"
       strokeLinejoin="round"
       aria-hidden
-      className="shrink-0"
+      data-collapsed={collapsed}
+      className={styles.toggleIcon}
     >
       <rect x="3" y="3" width="18" height="18" rx="2.5" />
       <path d="M9 3v18" />
-      <path
-        d="M16 9l-3 3 3 3"
-        className={cn("[transform-box:fill-box] origin-center [transition:transform_var(--dur)_var(--ease)]", collapsed ? "[transform:rotate(180deg)]" : "[transform:none]")}
-      />
+      <path d="M16 9l-3 3 3 3" className={styles.toggleChevron} />
     </svg>
   );
 }

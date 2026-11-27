@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { apiToGraphNode, hashSeed, learnHrefForNode, paletteFor } from "./data";
+import { apiToGraphNode, hashSeed, learnHrefForNode, noteTutorHref, paletteFor } from "./data";
 import type { GraphNode as ApiNode } from "./types";
 import type { EnrolledCourse } from "./api";
 import type { GraphNode } from "./data";
@@ -151,6 +151,13 @@ describe("learnHrefForNode", () => {
     expect(params.has("course_id")).toBe(false);
   });
 
+  it("names a concept node's id, so the loop's session is on it (#866 K05)", () => {
+    const params = new URLSearchParams(learnHrefForNode(makeGraphNode({ id: "n7", name: "Eigenvalues" })).split("?")[1]);
+    expect(params.get("concept")).toBe("n7");
+    const root = learnHrefForNode(makeGraphNode({ id: "r1", is_subject_root: true }));
+    expect(new URLSearchParams(root.split("?")[1]).has("concept")).toBe(false);
+  });
+
   it("omits the course param when the node has no course_id", () => {
     const href = learnHrefForNode(makeGraphNode({ course_id: "" }));
     const params = new URLSearchParams(href.split("?")[1]);
@@ -191,5 +198,35 @@ describe("hashSeed", () => {
     expect(h).toBe(2180301217);
     expect(paletteFor("overflow10")).toBeDefined();
     expect(paletteFor("overflow10")).toMatch(/^#[0-9a-f]{6}$/);
+  });
+});
+
+describe("noteTutorHref", () => {
+  const linked = (...ids: string[]) => ids.map((id) => ({ id, courseId: "c1" }));
+  const conceptOf = (href: string) => new URLSearchParams(href.split("?")[1]).get("concept");
+
+  it("names the note's linked concepts, so the loop's session is on them (#866 K05)", () => {
+    const params = new URLSearchParams(noteTutorHref({ topic: "Week 3", course_id: "c1" }, "n1", linked("k1", "k2")).split("?")[1]);
+    expect(params.get("concept")).toBe("k1,k2");
+    expect(params.get("note")).toBe("n1");
+    expect(params.get("course")).toBe("c1");
+  });
+
+  it("is main's link when the note has no linked concepts", () => {
+    expect(noteTutorHref({ topic: "Week 3", course_id: "c1" }, "n1", [])).toBe("/learn?topic=Week%203&course=c1&note=n1");
+  });
+
+  it("names only the concepts of the course it opens, which the loop's goal accepts (#866 K05 review)", () => {
+    const concepts = [{ id: "k1", courseId: "c1" }, { id: "x1", courseId: "c2" }, { id: "x2", courseId: null }, { id: "k2", courseId: "c1" }];
+    expect(conceptOf(noteTutorHref({ topic: "Week 3", course_id: "c1" }, "n1", concepts))).toBe("k1,k2");
+    // linked only to another course's concepts: main's link, a whole-course session
+    expect(noteTutorHref({ topic: "Week 3", course_id: "c1" }, "n1", concepts.slice(1, 3))).toBe("/learn?topic=Week%203&course=c1&note=n1");
+    // a note with no course names none (the loop names the course on screen)
+    expect(conceptOf(noteTutorHref({ topic: "Week 3", course_id: null }, "n1", concepts))).toBeNull();
+  });
+
+  it("names at most the goal's 12 targets, in linked order (#866 K05 review)", () => {
+    const ids = Array.from({ length: 15 }, (_, i) => `k${i}`);
+    expect(conceptOf(noteTutorHref({ topic: "Week 3", course_id: "c1" }, "n1", linked(...ids)))).toBe(ids.slice(0, 12).join(","));
   });
 });

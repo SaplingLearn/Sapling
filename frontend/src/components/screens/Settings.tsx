@@ -1,10 +1,11 @@
 "use client";
-import { PanelModal } from "@/components/ui/PanelModal";
 import React from "react";
 import Link from "next/link";
+import { AnimatePresence, motion, type Variants } from "framer-motion";
 import { TopBar } from "../TopBar";
 import { FullHeightScreen } from "../FullHeightScreen";
 import { Icon } from "../Icon";
+import { useOverlayBehaviour } from "@/components/Dialog";
 import { Avatar } from "../Avatar";
 import { CustomSelect } from "../CustomSelect";
 import { ProfileView } from "../ProfileView";
@@ -28,13 +29,7 @@ import type { UserSettings, UserProfile, UserCosmetic, CosmeticType, EquippedCos
 import { useLayoutPref, type LayoutPref } from "@/lib/useLayoutPref";
 import { useLatestRequest } from "@/lib/useLatestRequest";
 import { readAccountSettings } from "@/lib/accountSettings";
-import {
-  getAnalyticsState,
-  getServerAnalyticsState,
-  chooseAnalytics,
-  subscribeAnalytics,
-  type AnalyticsState,
-} from "@/lib/analytics";
+import { chooseAnalytics } from "@/lib/analytics";
 import {
   usernameBorderColor,
   usernameMessageColor,
@@ -43,51 +38,48 @@ import {
 } from "./settingsUsername";
 import { humanizeError } from "@/lib/errorMessage";
 import { sentenceCase } from "@/lib/sentenceCase";
-import { cn } from "@/lib/cn";
+import { QuizPrefsSection } from "./QuizPrefsSection";
+import { Toggle } from "./SettingsToggle";
+import { AnalyticsPreference } from "./AnalyticsPreference";
+import { useMotionPresets, type MotionPreset } from "@/lib/motion";
+import styles from "./Settings.module.css";
+
+/** A lib/motion preset as variants: spreading its target objects straight
+ *  onto a motion element fails framer 11's prop types (TS2590), variants do not. */
+function presetVariants(p: MotionPreset) {
+  const variants: Variants = { initial: p.initial, animate: p.animate, exit: p.exit };
+  return { variants, initial: "initial", animate: "animate", exit: "exit", transition: p.transition } as const;
+}
+
+/** Accent presets. These are stored values (`user_settings.accent_color`,
+ *  painted onto `--accent`), i.e. data a student picks, not design colours,
+ *  so they stay literal; the first is the default. */
+const ACCENT_SWATCHES = ["#2b5221", "#2b8c96", "#e8a33a", "#8a63d2", "#dc2626"] as const;
+const DEFAULT_ACCENT = ACCENT_SWATCHES[0];
+
+/** Image sizes handed to <Avatar>/<img> (px): the profile card's avatar, and a
+ *  frame preview with the avatar inside it. */
+const PROFILE_AVATAR_PX = 72;
+const FRAME_PX = 64;
+const FRAME_AVATAR_PX = 52;
+const BANNER_PREVIEW_W = 180;
+const BANNER_PREVIEW_H = 48;
+/** Username availability check debounce. */
+const USERNAME_CHECK_DEBOUNCE_MS = 400;
 
 type Tab = "profile" | "cosmetics" | "preferences" | "notifications" | "data";
-
-/**
- * The settings on/off switch: a real `<button role="switch">`, so it is
- * focusable, keyboard-operable and announces its state. Name it with
- * `ariaLabelledBy` (the id of its visible label).
- */
-function Toggle({
-  on,
-  onChange,
-  disabled = false,
-  ariaLabelledBy,
-  testId,
-}: {
-  on: boolean;
-  onChange: (v: boolean) => void;
-  disabled?: boolean;
-  ariaLabelledBy?: string;
-  testId?: string;
-}) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={on}
-      aria-labelledby={ariaLabelledBy}
-      data-testid={testId}
-      disabled={disabled}
-      onClick={() => onChange(!on)}
-      className={cn("shrink-0 w-9 h-5 p-0 border-0 rounded-[var(--r-full)] relative [transition:all_var(--dur)_var(--ease)]", on ? "bg-accent" : "bg-bg-soft", disabled ? "cursor-not-allowed" : "cursor-pointer", disabled ? "opacity-50" : "opacity-100")}
-    >
-      <span
-        aria-hidden
-        className={cn("absolute top-0.5 w-4 h-4 rounded-[50%] bg-accent-fg shadow-sm [transition:all_var(--dur)_var(--ease)]", on ? "left-4.5" : "left-0.5")}
-      />
-    </button>
-  );
-}
 
 export function Settings() {
   const toast = useToast();
   const { userId, userName, avatarUrl, userReady, signOut, setAvatarUrl } = useUser();
-  const [tab, setTab] = React.useState<Tab>("profile");
+  const [tab, setTabState] = React.useState<Tab>("profile");
+  // The open tab's panel fades in on a switch, never on the first paint.
+  const [tabSwitched, setTabSwitched] = React.useState(false);
+  const setTab = (t: Tab) => {
+    setTabSwitched(true);
+    setTabState(t);
+  };
+  const m = useMotionPresets();
   const [settings, setSettings] = React.useState<UserSettings | null>(null);
   const [layoutPref, setLayoutPref] = useLayoutPref();
   // Per-field in-flight saves (#769): a count per settings key, so the
@@ -302,7 +294,7 @@ export function Settings() {
       } catch {
         if (run.isCurrent()) setUsernameState({ status: "idle" });
       }
-    }, 400);
+    }, USERNAME_CHECK_DEBOUNCE_MS);
     return () => {
       if (usernameTimer.current) clearTimeout(usernameTimer.current);
       usernameReq.cancel();
@@ -346,7 +338,14 @@ export function Settings() {
         subtitle="Profile, preferences, and account"
         actions={
           <>
-            {saving && <span className="chip chip--accent">saving…</span>}
+            {saving && (
+              <motion.span
+                className="chip chip--accent"
+                {...presetVariants(m.fade)}
+              >
+                saving…
+              </motion.span>
+            )}
             <button className="btn btn--sm" onClick={openPreview} disabled={!userId}>
               <Icon name="search" size={12} /> Preview profile
             </button>
@@ -356,305 +355,303 @@ export function Settings() {
       {/* Fills whatever `<main>` leaves below TopBar. `minHeight: 0` lets this
           shrink past its content so the panes below scroll internally rather
           than pushing the screen taller than `<main>`. */}
-      <div className="flex flex-1 min-h-0">
-        <div className="flex-1 min-w-0 py-6 px-8 overflow-y-auto">
+      <div className={styles.screen}>
+        <div className={styles.main}>
           {!settings && tab !== "cosmetics" && <SettingsFormSkeleton />}
-          {tab === "profile" && settings && (
-            <div className="max-w-160 my-0 mx-auto">
-              <div className="h-serif text-2xl mb-5">Profile</div>
-              <div
-                className="card p-(--pad-lg) flex gap-5 items-center mb-4"
-              >
-                <Avatar name={userName || "?"} size={72} img={avatarUrl || undefined} />
-                <div className="flex-1">
-                  <div className="text-xl font-semibold font-display">
-                    {userName}
+          <motion.div
+            key={tab}
+            {...presetVariants(m.fade)}
+            initial={tabSwitched ? "initial" : false}
+          >
+            {tab === "profile" && settings && (
+              <div className={styles.section}>
+                <div className={`h-serif ${styles.sectionTitle}`}>Profile</div>
+                <div className={`card ${styles.avatarCard}`}>
+                  <Avatar name={userName || "?"} size={PROFILE_AVATAR_PX} img={avatarUrl || undefined} />
+                  <div className={styles.grow}>
+                    <div className={styles.userName}>
+                      {userName}
+                    </div>
+                    <div className={styles.hint}>PNG or JPG, up to 5 MB.</div>
                   </div>
-                  <div className="text-sm text-text-muted mt-0.5">PNG or JPG, up to 5 MB.</div>
+                  <input
+                    ref={avatarFileRef}
+                    type="file"
+                    accept="image/*"
+                    className={styles.fileInput}
+                    onChange={e => handleAvatarFile(e.target.files?.[0] ?? null)}
+                  />
+                  <button className="btn btn--sm" onClick={() => avatarFileRef.current?.click()} disabled={uploadingAvatar}>
+                    <Icon name="pencil" size={12} /> {uploadingAvatar ? "Uploading…" : "Change avatar"}
+                  </button>
                 </div>
-                <input
-                  ref={avatarFileRef}
-                  type="file"
-                  accept="image/*"
-                  className="hidden"
-                  onChange={e => handleAvatarFile(e.target.files?.[0] ?? null)}
-                />
-                <button className="btn btn--sm" onClick={() => avatarFileRef.current?.click()} disabled={uploadingAvatar}>
-                  <Icon name="pencil" size={12} /> {uploadingAvatar ? "Uploading…" : "Change avatar"}
-                </button>
-              </div>
-              <div className="settings-field-row">
-                <div className="label-micro">Username</div>
-                <div>
-                  <div className="relative">
-                    <span className="absolute left-2.5 top-[9px] text-md text-text-muted">@</span>
+                <div className="settings-field-row">
+                  <label className="label-micro" htmlFor="settings-field-username">Username</label>
+                  <div>
+                    <div className={styles.usernameWrap}>
+                      <span aria-hidden className={styles.at}>@</span>
+                      <input
+                        id="settings-field-username"
+                        value={usernameDraft}
+                        onChange={e => setUsernameDraft(e.target.value)}
+                        onBlur={async () => {
+                          const v = usernameDraft.trim().toLowerCase();
+                          // Save only the draft that was actually verified (#769).
+                          if (
+                            v && v !== (settings.username || "")
+                            && usernameState.status === "available" && usernameState.checked === v
+                          ) {
+                            await patchProfile({ username: v });
+                          } else if (!v && settings.username) {
+                            setUsernameDraft(settings.username || "");
+                          }
+                        }}
+                        placeholder="your-handle"
+                        className={`${styles.input} ${styles.usernameInput}`}
+                        style={{ "--username-border": usernameBorderColor(usernameState.status) } as React.CSSProperties}
+                      />
+                    </div>
+                    {usernameState.message && (
+                      <motion.div
+                        key={usernameState.status}
+                        {...presetVariants(m.fade)}
+                        className={styles.usernameMsg}
+                        style={{ "--username-msg": usernameMessageColor(usernameState.status) } as React.CSSProperties}
+                      >
+                        {usernameMessageText(usernameState)}
+                      </motion.div>
+                    )}
+                  </div>
+                </div>
+
+                {(
+                  [
+                    ["Display name", "display_name"],
+                    ["Bio", "bio"],
+                    ["Location", "location"],
+                    ["Website", "website"],
+                  ] as const
+                ).map(([label, key]) => (
+                  <div key={key} className="settings-field-row">
+                    <label className="label-micro" htmlFor={`settings-field-${key}`}>{label}</label>
                     <input
-                      value={usernameDraft}
-                      onChange={e => setUsernameDraft(e.target.value)}
-                      onBlur={async () => {
-                        const v = usernameDraft.trim().toLowerCase();
-                        // Save only the draft that was actually verified (#769).
-                        if (
-                          v && v !== (settings.username || "")
-                          && usernameState.status === "available" && usernameState.checked === v
-                        ) {
-                          await patchProfile({ username: v });
-                        } else if (!v && settings.username) {
-                          setUsernameDraft(settings.username || "");
+                      id={`settings-field-${key}`}
+                      defaultValue={settings[key] ?? ""}
+                      onBlur={(e) => {
+                        const v = e.target.value.trim();
+                        if (v !== (settings[key] ?? "")) {
+                          patchProfile({ [key]: v || undefined });
                         }
                       }}
-                      placeholder="your-handle"
-                      className="pt-2 pr-3 pb-2 pl-6.5 bg-bg-input rounded-sm text-md w-full" style={{ border: `1px solid ${usernameBorderColor(usernameState.status)}` }}
+                      className={styles.input}
                     />
                   </div>
-                  {usernameState.message && (
-                    <div className="text-xs mt-1" style={{ color: usernameMessageColor(usernameState.status) }}>
-                      {usernameMessageText(usernameState)}
+                ))}
+
+                <div className={`${styles.row} ${styles.signOutRow}`}>
+                  <div>
+                    <div className={styles.rowLabel}>Sign out</div>
+                    <div className={styles.rowHint}>
+                      End your session on this device.
                     </div>
-                  )}
+                  </div>
+                  <button
+                    className="btn btn--sm"
+                    onClick={async () => {
+                      await signOut();
+                      window.location.href = "/";
+                    }}
+                  >
+                    <Icon name="logout" size={12} /> Sign out
+                  </button>
                 </div>
               </div>
+            )}
 
-              {(
-                [
-                  ["Display name", "display_name"],
-                  ["Bio", "bio"],
-                  ["Location", "location"],
-                  ["Website", "website"],
-                ] as const
-              ).map(([label, key]) => (
-                <div key={key} className="settings-field-row">
-                  <div className="label-micro">{label}</div>
-                  <input
-                    defaultValue={settings[key] ?? ""}
-                    onBlur={(e) => {
-                      const v = e.target.value.trim();
-                      if (v !== (settings[key] ?? "")) {
-                        patchProfile({ [key]: v || undefined });
+            {tab === "cosmetics" && userId && (
+              <CosmeticsManager userId={userId} />
+            )}
+
+            {tab === "preferences" && settings && (
+              <div className={styles.section}>
+                <div className={`h-serif ${styles.sectionTitle}`}>Preferences</div>
+                <div className={`${styles.row} ${styles.ruled}`}>
+                  <div>
+                    <div className={styles.rowLabel}>Layout</div>
+                    <div className={styles.rowHint}>
+                      Choose between a top navigation bar or a full-height sidebar.
+                      Falls back to top nav on small screens.
+                    </div>
+                  </div>
+                  <div className={styles.select}>
+                    <CustomSelect
+                      ariaLabel="Layout"
+                      size="sm"
+                      value={layoutPref}
+                      onChange={(v) => setLayoutPref(v as LayoutPref)}
+                      options={[
+                        { value: "sidebar", label: "Sidebar (default)" },
+                        { value: "topnav",  label: "Top nav" },
+                      ]}
+                    />
+                  </div>
+                </div>
+                {(
+                  [
+                    ["Theme", "theme", ["light"]],
+                    ["Font size", "font_size", ["small", "medium", "large"]],
+                    ["Profile visibility", "profile_visibility", ["public", "school", "private"]],
+                  ] as const
+                ).map(([label, key, options]) => (
+                  <div key={key} className={`${styles.row} ${styles.ruled}`}>
+                    <div className={styles.rowLabel}>{label}</div>
+                    <div className={styles.select}>
+                      <CustomSelect
+                        ariaLabel={label}
+                        size="sm"
+                        value={(settings[key] as string) ?? options[0]}
+                        onChange={(v) => patch({ [key]: v } as Partial<UserSettings>)}
+                        options={options.map(o => ({ value: o, label: o[0].toUpperCase() + o.slice(1) }))}
+                      />
+                    </div>
+                  </div>
+                ))}
+                <div className={`${styles.row} ${styles.ruled}`}>
+                  <div>
+                    <div className={styles.rowLabel}>Accent color</div>
+                    <div className={styles.rowHint}>
+                      Hue used for highlights and active states.
+                    </div>
+                  </div>
+                  <div className={styles.swatches}>
+                    {ACCENT_SWATCHES.map(c => {
+                      const active = (settings.accent_color ?? DEFAULT_ACCENT) === c;
+                      return (
+                        <button
+                          key={c}
+                          onClick={() => {
+                            document.documentElement.style.setProperty("--accent", c);
+                            patch({ accent_color: c });
+                          }}
+                          aria-label={`Accent ${c}`}
+                          className={`${styles.swatch} ${active ? styles.swatchActive : ""}`}
+                          style={{ "--swatch": c } as React.CSSProperties}
+                        />
+                      );
+                    })}
+                    <label className={`${styles.swatch} ${styles.swatchCustom}`} title="Custom color">
+                      <input
+                        type="color"
+                        value={settings.accent_color ?? DEFAULT_ACCENT}
+                        onChange={e => {
+                          document.documentElement.style.setProperty("--accent", e.target.value);
+                          patch({ accent_color: e.target.value });
+                        }}
+                        className={styles.colorInput}
+                      />
+                    </label>
+                  </div>
+                </div>
+                <QuizPrefsSection />
+              </div>
+            )}
+
+            {tab === "notifications" && settings && (
+              <div className={styles.section}>
+                <div className={`h-serif ${styles.sectionTitle}`}>Notifications</div>
+                {(
+                  [
+                    ["Email", "notification_email"],
+                    ["Push", "notification_push"],
+                    ["In-app", "notification_in_app"],
+                    ["Activity status visible", "activity_status_visible"],
+                  ] as const
+                ).map(([label, key]) => (
+                  <div key={key} className={styles.toggleRow}>
+                    <div className={styles.toggleLabel} id={`settings-toggle-${key}-label`}>{label}</div>
+                    <Toggle
+                      on={Boolean(settings[key])}
+                      onChange={(v) => patch({ [key]: v } as Partial<UserSettings>)}
+                      disabled={Boolean(savingFields[key])}
+                      ariaLabelledBy={`settings-toggle-${key}-label`}
+                      testId={`settings-toggle-${key}`}
+                    />
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {tab === "data" && (
+              <div className={styles.section}>
+                <div className={`h-serif ${styles.sectionTitle}`}>Your Data</div>
+                <div className={`card ${styles.card}`}>
+                  <div className={styles.cardTitle}>Export your data</div>
+                  <div className={styles.cardBody}>
+                    Download a JSON bundle of your sessions, notes, and knowledge graph.
+                  </div>
+                  <button
+                    className="btn btn--sm"
+                    onClick={async () => {
+                      if (!userId) return;
+                      try {
+                        const data = await exportData(userId);
+                        const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement("a");
+                        a.href = url;
+                        a.download = `sapling-export.json`;
+                        a.click();
+                        URL.revokeObjectURL(url);
+                        toast.success("Data exported.");
+                      } catch (err) {
+                        toast.error(humanizeError(err, "Couldn't export your data. Try again."));
                       }
                     }}
-                    className="py-2 px-3 bg-bg-input border border-border rounded-sm text-md"
-                  />
-                </div>
-              ))}
-
-              <div
-                className="flex justify-between items-center py-4 px-0 gap-5 mt-2"
-              >
-                <div>
-                  <div className="text-md font-medium">Sign out</div>
-                  <div className="text-xs text-text-dim mt-0.5">
-                    End your session on this device.
-                  </div>
-                </div>
-                <button
-                  className="btn btn--sm"
-                  onClick={async () => {
-                    await signOut();
-                    window.location.href = "/";
-                  }}
-                >
-                  <Icon name="logout" size={12} /> Sign out
-                </button>
-              </div>
-            </div>
-          )}
-
-          {tab === "cosmetics" && userId && (
-            <CosmeticsManager userId={userId} />
-          )}
-
-          {tab === "preferences" && settings && (
-            <div className="max-w-160 my-0 mx-auto">
-              <div className="h-serif text-2xl mb-5">Preferences</div>
-              <div
-                className="flex justify-between items-center py-4 px-0 border-b border-b-border gap-5"
-              >
-                <div>
-                  <div className="text-md font-medium">Layout</div>
-                  <div className="text-xs text-text-dim mt-0.5">
-                    Choose between a top navigation bar or a full-height sidebar.
-                    Falls back to top nav on small screens.
-                  </div>
-                </div>
-                <div className="min-w-45">
-                  <CustomSelect
-                    size="sm"
-                    value={layoutPref}
-                    onChange={(v) => setLayoutPref(v as LayoutPref)}
-                    options={[
-                      { value: "sidebar", label: "Sidebar (default)" },
-                      { value: "topnav",  label: "Top nav" },
-                    ]}
-                  />
-                </div>
-              </div>
-              {(
-                [
-                  ["Theme", "theme", ["light"]],
-                  ["Font size", "font_size", ["small", "medium", "large"]],
-                  ["Profile visibility", "profile_visibility", ["public", "school", "private"]],
-                ] as const
-              ).map(([label, key, options]) => (
-                <div
-                  key={key}
-                  className="flex justify-between items-center py-4 px-0 border-b border-b-border gap-5"
-                >
-                  <div className="text-md font-medium">{label}</div>
-                  <div className="min-w-45">
-                    <CustomSelect
-                      size="sm"
-                      value={(settings[key] as string) ?? options[0]}
-                      onChange={(v) => patch({ [key]: v } as Partial<UserSettings>)}
-                      options={options.map(o => ({ value: o, label: o[0].toUpperCase() + o.slice(1) }))}
-                    />
-                  </div>
-                </div>
-              ))}
-              <div
-                className="flex justify-between items-center py-4 px-0 border-b border-b-border gap-5"
-              >
-                <div>
-                  <div className="text-md font-medium">Accent color</div>
-                  <div className="text-xs text-text-dim mt-0.5">
-                    Hue used for highlights and active states.
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  {["#2b5221", "#2b8c96", "#e8a33a", "#8a63d2", "#dc2626"].map(c => {
-                    const active = (settings.accent_color ?? "#2b5221") === c;
-                    return (
-                      <button
-                        key={c}
-                        onClick={() => {
-                          document.documentElement.style.setProperty("--accent", c);
-                          patch({ accent_color: c });
-                        }}
-                        aria-label={`Accent ${c}`}
-                        className={cn("w-6 h-6 rounded-[50%] cursor-pointer p-0 [transition:transform_var(--dur)_var(--ease)]", active ? "border-2 border-text" : "border-2 border-transparent")} style={{ background: c, outline: active ? `2px solid ${c}` : "none", outlineOffset: 2 }}
-                      />
-                    );
-                  })}
-                  <label
-                    className="relative w-6 h-6 rounded-[50%] [background:conic-gradient(from_0deg,_#ff6b6b,_#f9d423,_#6bcf7f,_#4dabf7,_#b197fc,_#ff6b6b)] cursor-pointer border-2 border-transparent"
-                    title="Custom color"
                   >
-                    <input
-                      type="color"
-                      value={settings.accent_color ?? "#2b5221"}
-                      onChange={e => {
-                        document.documentElement.style.setProperty("--accent", e.target.value);
-                        patch({ accent_color: e.target.value });
-                      }}
-                      className="absolute inset-0 opacity-0 cursor-pointer"
-                    />
-                  </label>
+                    Export
+                  </button>
                 </div>
-              </div>
-            </div>
-          )}
 
-          {tab === "notifications" && settings && (
-            <div className="max-w-160 my-0 mx-auto">
-              <div className="h-serif text-2xl mb-5">Notifications</div>
-              {(
-                [
-                  ["Email", "notification_email"],
-                  ["Push", "notification_push"],
-                  ["In-app", "notification_in_app"],
-                  ["Activity status visible", "activity_status_visible"],
-                ] as const
-              ).map(([label, key]) => (
-                <div
-                  key={key}
-                  className="flex justify-between items-center py-3.5 px-0 border-b border-b-border"
-                >
-                  <div className="text-md" id={`settings-toggle-${key}-label`}>{label}</div>
-                  <Toggle
-                    on={Boolean(settings[key])}
-                    onChange={(v) => patch({ [key]: v } as Partial<UserSettings>)}
-                    disabled={Boolean(savingFields[key])}
-                    ariaLabelledBy={`settings-toggle-${key}-label`}
-                    testId={`settings-toggle-${key}`}
-                  />
-                </div>
-              ))}
-            </div>
-          )}
-
-          {tab === "data" && (
-            <div className="max-w-160 my-0 mx-auto">
-              <div className="h-serif text-2xl mb-5">Your Data</div>
-              <div className="card p-(--pad-lg)">
-                <div className="font-semibold mb-1">Export your data</div>
-                <div className="text-sm text-text-dim mb-3">
-                  Download a JSON bundle of your sessions, notes, and knowledge graph.
-                </div>
-                <button
-                  className="btn btn--sm"
-                  onClick={async () => {
-                    if (!userId) return;
-                    try {
-                      const data = await exportData(userId);
-                      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
-                      const url = URL.createObjectURL(blob);
-                      const a = document.createElement("a");
-                      a.href = url;
-                      a.download = `sapling-export.json`;
-                      a.click();
-                      URL.revokeObjectURL(url);
-                      toast.success("Data exported.");
-                    } catch (err) {
-                      toast.error(humanizeError(err, "Couldn't export your data. Try again."));
-                    }
+                <AnalyticsPreference
+                  onChange={(enabled) => void setAnalyticsPreference(enabled)}
+                  onRetry={() => void setAnalyticsPreference(false)}
+                  onReload={() => {
+                    // Feeds the switch through lib/accountSettings.ts; a failure
+                    // shows as `unreadable` again, with this button.
+                    if (userId) readAccountSettings(userId).catch(() => {});
                   }}
-                >
-                  Export
-                </button>
-              </div>
+                  saving={analyticsSaving}
+                />
 
-              <AnalyticsPreference
-                onChange={(enabled) => void setAnalyticsPreference(enabled)}
-                onRetry={() => void setAnalyticsPreference(false)}
-                onReload={() => {
-                  // Feeds the switch through lib/accountSettings.ts; a failure
-                  // shows as `unreadable` again, with this button.
-                  if (userId) readAccountSettings(userId).catch(() => {});
-                }}
-                saving={analyticsSaving}
-              />
-
-              <div
-                className="h-serif text-xl mt-7 mx-0 mb-3 text-err"
-              >
-                Danger Zone
-              </div>
-              <div className="card p-(--pad-lg) border-err">
-                <div className="font-semibold mb-1">Delete account</div>
-                <div className="text-sm text-text-dim mb-3">
-                  Your account is hidden and you are signed out right away, and your Google and
-                  Gradescope connections are removed. Your personal data is permanently erased
-                  30 days later. Records without your content (AI usage and cost, usage
-                  telemetry) are kept; see section 5 of the{" "}
-                  <Link href="/privacy" className="text-accent">
-                    Privacy Policy
-                  </Link>
-                  .
+                <div className={`h-serif ${styles.dangerTitle}`}>
+                  Danger Zone
                 </div>
-                <button className="btn btn--sm btn--danger" onClick={handleDelete}>Delete my account</button>
+                <div className={`card ${styles.dangerCard}`}>
+                  <div className={styles.cardTitle}>Delete account</div>
+                  <div className={styles.cardBody}>
+                    Your account is hidden and you are signed out right away, and your Google and
+                    Gradescope connections are removed. Your personal data is permanently erased
+                    30 days later. Records without your content (AI usage and cost, usage
+                    telemetry) are kept; see section 5 of the{" "}
+                    <Link href="/privacy" className={styles.link}>
+                      Privacy Policy
+                    </Link>
+                    .
+                  </div>
+                  <button className="btn btn--sm btn--danger" onClick={handleDelete}>Delete my account</button>
+                </div>
               </div>
-            </div>
-          )}
+            )}
+          </motion.div>
         </div>
-        <div
-          className="w-50 shrink-0 border-l border-l-border py-4.5 px-3 bg-bg-subtle overflow-y-auto"
-        >
+        <div className={styles.rail}>
           {tabs.map((t) => (
             <button
               key={t}
               data-testid={`settings-tab-${t}`}
+              aria-current={tab === t ? "true" : undefined}
               onClick={() => setTab(t)}
-              className={cn("block w-full text-left py-2 px-3 text-md rounded-sm mb-0.5 capitalize [transition:background_var(--dur-fast)_var(--ease),_color_var(--dur-fast)_var(--ease)]", tab === t ? "bg-bg-soft" : "bg-transparent", tab === t ? "text-text" : "text-text-dim", tab === t ? "font-semibold" : "font-normal")}
+              className={styles.railTab}
             >
               {t}
             </button>
@@ -662,125 +659,18 @@ export function Settings() {
           {/* Connected accounts lives at its own route so we can list providers
               independently of the in-page tab state. Styled like a tab button
               for visual continuity with the rest of the sidebar. */}
-          <Link
-            href="/settings/connections"
-            className="block w-full text-left py-2 px-3 text-md text-text-dim rounded-sm mt-1.5 no-underline border-t border-t-border pt-3.5 [transition:background_var(--dur-fast)_var(--ease),_color_var(--dur-fast)_var(--ease)]"
-          >
+          <Link href="/settings/connections" className={styles.railLink}>
             Connected accounts ↗
           </Link>
         </div>
       </div>
 
-      {previewOpen && preview && (
-        <PreviewModal profile={preview} onClose={() => setPreviewOpen(false)} />
-      )}
+      <AnimatePresence>
+        {previewOpen && preview && (
+          <PreviewModal key="preview" profile={preview} onClose={() => setPreviewOpen(false)} />
+        )}
+      </AnimatePresence>
     </FullHeightScreen>
-  );
-}
-
-/** The status line under the analytics switch, per state — what is actually true. */
-const ANALYTICS_NOTES: Record<AnalyticsState, string> = {
-  unknown: "Loading your saved setting…",
-  unreadable: "We couldn't load your saved setting, so we can't show it yet.",
-  unset:
-    "No choice is saved to your account yet, so this browser sends no page views. Switch it on to share usage data.",
-  on: "On — saved to your account, so it applies wherever you sign in. Nothing about it is stored in your browser.",
-  on_browser_blocked:
-    "On — saved to your account. Your browser's Do Not Track or Global Privacy Control signal is on, so this browser sends no page views and we share no actions from its requests, but some background processing on your documents can still be shared; switch this off to opt out of everything, wherever you sign in.",
-  on_not_running:
-    "On — saved to your account. Page views couldn't start in this browser (a blocker may have stopped them).",
-  off: "Off — saved to your account, so none of this is shared, wherever you sign in.",
-  off_unsaved:
-    "Off in this browser for this visit only — we couldn't save it to your account, so our servers may still share usage data, and it will be back on next visit.",
-};
-
-/**
- * Product-analytics opt-out (PostHog). It follows the signed-in student's
- * ACCOUNT (`analytics_opt_out`), which governs both this browser's pageviews
- * and the backend's own PostHog mirror (#677) — so the switch is usable as
- * soon as the account has answered, whether or not this build sends
- * pageviews, the admin `product_analytics` flag is on, or DNT/GPC is set
- * (src/lib/analytics.ts). It is disabled only until that answer arrives (with
- * a "Try again" after a failed read) and while a save is in flight. After a
- * failed opt-out save it shows "off in this browser for this visit only"
- * with a retry, never "saved".
- */
-function AnalyticsPreference({
-  onChange,
-  onRetry,
-  onReload,
-  saving,
-}: {
-  onChange: (enabled: boolean) => void;
-  onRetry: () => void;
-  onReload: () => void;
-  saving: boolean;
-}) {
-  const state = React.useSyncExternalStore(
-    subscribeAnalytics,
-    getAnalyticsState,
-    getServerAnalyticsState,
-  );
-  const on = state === "on" || state === "on_browser_blocked" || state === "on_not_running";
-  const loaded = state !== "unknown" && state !== "unreadable";
-
-  return (
-    <div className="card p-(--pad-lg) mt-4" data-testid="settings-analytics">
-      <div className="flex justify-between items-start gap-5">
-        <div>
-          <div className="font-semibold mb-1" id="settings-analytics-label">
-            Product analytics
-          </div>
-          <div className="text-sm text-text-dim">
-            Share how you use Sapling with PostHog, our analytics provider, so we can see what to
-            improve: the app pages you view (with basic browser and device details, but not your IP
-            address), actions you take (like starting a quiz, messaging the
-            tutor or uploading a document), the AI model, token counts and cost behind each AI
-            response, and error reports from our servers. It&apos;s tied to your Sapling account ID —
-            never your name or email, and never what you type or the text of your notes, documents,
-            messages or AI replies. Turning it off stops all of this within about a minute.{" "}
-            <Link href="/privacy" className="text-accent">Privacy Policy</Link>
-          </div>
-          <div className="text-xs text-text-muted mt-1.5" data-testid="settings-analytics-note">
-            {ANALYTICS_NOTES[state]}
-            {state === "unreadable" && (
-              <>
-                {" "}
-                <button
-                  type="button"
-                  className="btn btn--sm ml-1"
-                  data-testid="settings-analytics-reload"
-                  onClick={onReload}
-                >
-                  Try again
-                </button>
-              </>
-            )}
-            {state === "off_unsaved" && (
-              <>
-                {" "}
-                <button
-                  type="button"
-                  className="btn btn--sm ml-1"
-                  data-testid="settings-analytics-retry"
-                  disabled={saving}
-                  onClick={onRetry}
-                >
-                  Retry saving
-                </button>
-              </>
-            )}
-          </div>
-        </div>
-        <Toggle
-          on={on}
-          onChange={onChange}
-          disabled={!loaded || saving}
-          ariaLabelledBy="settings-analytics-label"
-          testId="settings-analytics-toggle"
-        />
-      </div>
-    </div>
   );
 }
 
@@ -842,28 +732,32 @@ function CosmeticsManager({ userId }: { userId: string }) {
   const ownedList = owned[subTab] || [];
   const catalogList = catalog[subTab] || [];
   const lockedCount = catalogList.filter(c => !c.owned).length;
+  const m = useMotionPresets();
+  // Each grid is keyed by what it lists, so a new sub-tab, view or a load
+  // staggers its cards in.
+  const gridKey = `${subTab}-${view}-${view === "owned" ? ownedList.length : catalogList.length}`;
 
   return (
-    <div className="max-w-180 my-0 mx-auto">
-      <div className="h-serif text-2xl mb-3">Cosmetics</div>
-      <div className="flex justify-between items-center border-b border-b-border mb-4">
-        <div className="flex gap-1">
+    <div className={styles.sectionWide}>
+      <div className={`h-serif ${styles.sectionTitleTight}`}>Cosmetics</div>
+      <div className={styles.cosmeticBar}>
+        <div className={styles.cosmeticTabs}>
           {(Object.keys(COSMETIC_TAB_LABELS) as CosmeticType[]).map(t => (
             <button
               key={t}
               onClick={() => setSubTab(t)}
-              className={cn("py-2 px-3.5 text-md", subTab === t ? "font-semibold" : "font-normal", subTab === t ? "text-text" : "text-text-dim", subTab === t ? "border-b-2 border-b-text" : "border-b-2 border-b-transparent")}
+              className={`${styles.cosmeticTab} ${subTab === t ? styles.cosmeticTabActive : ""}`}
             >
               {COSMETIC_TAB_LABELS[t]}
             </button>
           ))}
         </div>
-        <div className="flex gap-1 py-1 px-0">
+        <div className={styles.viewSwitch}>
           {(["owned", "catalog"] as const).map(v => (
             <button
               key={v}
               onClick={() => setView(v)}
-              className={cn("py-1 px-2.5 text-xs rounded-[var(--r-full)] border border-border capitalize", view === v ? "bg-bg-soft" : "bg-transparent", view === v ? "text-text" : "text-text-dim")}
+              className={`${styles.viewBtn} ${view === v ? styles.viewBtnActive : ""}`}
             >
               {v === "catalog" ? `Catalog · ${catalogList.length}` : `Owned · ${ownedList.length}`}
             </button>
@@ -873,10 +767,10 @@ function CosmeticsManager({ userId }: { userId: string }) {
 
       {view === "owned" ? (
         ownedList.length === 0 ? (
-          <div className="card p-7 text-center text-text-muted">
+          <div className={`card ${styles.empty}`}>
             No {COSMETIC_TAB_LABELS[subTab].toLowerCase()} unlocked yet.
             {catalogList.length > 0 && (
-              <div className="mt-2">
+              <div className={styles.emptyAction}>
                 <button className="btn btn--sm" onClick={() => setView("catalog")}>
                   Browse catalog ({catalogList.length})
                 </button>
@@ -884,7 +778,13 @@ function CosmeticsManager({ userId }: { userId: string }) {
             )}
           </div>
         ) : (
-          <div className="grid grid-cols-[repeat(auto-fill,_minmax(180px,_1fr))] gap-3">
+          <motion.div
+            key={gridKey}
+            className={styles.grid}
+            variants={m.list.container}
+            initial="hidden"
+            animate="shown"
+          >
             {ownedList.map(uc => {
               const c = uc.cosmetic;
               const isEquipped = equippedId === c.id;
@@ -901,16 +801,22 @@ function CosmeticsManager({ userId }: { userId: string }) {
                 />
               );
             })}
-          </div>
+          </motion.div>
         )
       ) : (
         <>
           {catalogList.length === 0 ? (
-            <div className="card p-7 text-center text-text-muted">
+            <div className={`card ${styles.empty}`}>
               Nothing in the catalog yet.
             </div>
           ) : (
-            <div className="grid grid-cols-[repeat(auto-fill,_minmax(180px,_1fr))] gap-3">
+            <motion.div
+              key={gridKey}
+              className={styles.grid}
+              variants={m.list.container}
+              initial="hidden"
+              animate="shown"
+            >
               {catalogList.map(c => {
                 const isEquipped = equippedId === c.id;
                 return (
@@ -927,10 +833,10 @@ function CosmeticsManager({ userId }: { userId: string }) {
                   />
                 );
               })}
-            </div>
+            </motion.div>
           )}
           {lockedCount > 0 && (
-            <div className="text-xs text-text-muted mt-3 text-center">
+            <div className={styles.lockedNote}>
               {lockedCount} locked · earn achievements or unlock via the ways shown on each card.
             </div>
           )}
@@ -952,36 +858,43 @@ function CosmeticCard({
   disabled: boolean;
   onClick?: () => void;
 }) {
+  const m = useMotionPresets();
   return (
-    <div
-      className={cn("card", "p-3 flex flex-col items-center gap-2 [outline-offset:-1px] relative", isEquipped ? "[outline:2px_solid_var(--accent)]" : "outline-none", locked ? "opacity-60" : "opacity-100")}
-      style={{ borderTop: `3px solid var(--rarity-${cosmetic.rarity}, var(--border))` }}
+    <motion.div
+      variants={m.list.item}
+      className={[
+        "card",
+        styles.cosmeticCard,
+        isEquipped ? styles.cosmeticEquipped : "",
+        locked ? styles.cosmeticLocked : "",
+      ].join(" ")}
+      style={{ "--rarity-color": `var(--rarity-${cosmetic.rarity}, var(--border))` } as React.CSSProperties}
     >
       {locked && (
         <span
-          className="chip absolute top-2 right-2 text-xs"
+          className={`chip ${styles.lockChip}`}
           title={unlockSource || "Locked"}
         >
           🔒 locked
         </span>
       )}
       <CosmeticPreview cosmetic={cosmetic} userName={userName} avatarUrl={avatarUrl} />
-      <div className="text-sm font-semibold text-center">{cosmetic.name}</div>
-      <div className="text-sm text-text-muted">{sentenceCase(cosmetic.rarity)}</div>
+      <div className={styles.cosmeticName}>{cosmetic.name}</div>
+      <div className={styles.rarity}>{sentenceCase(cosmetic.rarity)}</div>
       {locked ? (
-        <div className="text-2xs text-text-muted text-center min-h-3.5">
+        <div className={styles.unlock}>
           {unlockSource ? `Unlock: ${unlockSource}` : "Locked"}
         </div>
       ) : (
         <button
-          className={cn(`btn btn--sm ${isEquipped ? "" : "btn--primary"}`, "w-full")}
+          className={`btn btn--sm ${isEquipped ? "" : "btn--primary"} ${styles.fullWidth}`}
           onClick={onClick}
           disabled={disabled || !onClick}
         >
           {isEquipped ? "Unequip" : "Equip"}
         </button>
       )}
-    </div>
+    </motion.div>
   );
 }
 
@@ -994,17 +907,17 @@ function CosmeticPreview({
 }) {
   if (cosmetic.type === "avatar_frame") {
     return (
-      <div className="relative w-16 h-16">
-        <Avatar name={userName || "?"} size={52} img={avatarUrl || undefined} />
+      <div className={styles.frame}>
+        <Avatar name={userName || "?"} size={FRAME_AVATAR_PX} img={avatarUrl || undefined} />
         {cosmetic.asset_url && (
           <img
             src={cosmetic.asset_url}
             alt=""
-            width={64}
-            height={64}
+            width={FRAME_PX}
+            height={FRAME_PX}
             loading="lazy"
             decoding="async"
-            className="absolute inset-0 w-full h-full pointer-events-none object-contain"
+            className={styles.frameImg}
           />
         )}
       </div>
@@ -1012,22 +925,34 @@ function CosmeticPreview({
   }
   if (cosmetic.type === "banner" && cosmetic.asset_url) {
     return (
-      <div className="w-full h-12 rounded-sm overflow-hidden border border-border">
-        <img src={cosmetic.asset_url} alt="" width={180} height={48} loading="lazy" decoding="async" className="w-full h-full object-cover" />
+      <div className={styles.banner}>
+        <img
+          src={cosmetic.asset_url}
+          alt=""
+          width={BANNER_PREVIEW_W}
+          height={BANNER_PREVIEW_H}
+          loading="lazy"
+          decoding="async"
+          className={styles.bannerImg}
+        />
       </div>
     );
   }
   if (cosmetic.type === "name_color") {
     const css = cosmetic.css_value || "var(--text)";
     const isGradient = /gradient\(/i.test(css);
-    const style: React.CSSProperties = isGradient
-      ? { backgroundImage: css, WebkitBackgroundClip: "text", backgroundClip: "text", color: "transparent" }
-      : { color: css };
-    return <div className="h-serif text-xl font-semibold" style={{ ...style }}>{userName || "Preview"}</div>;
+    return (
+      <div
+        className={`h-serif ${isGradient ? styles.nameGradient : styles.nameColor}`}
+        style={{ "--name-color": css } as React.CSSProperties}
+      >
+        {userName || "Preview"}
+      </div>
+    );
   }
   if (cosmetic.type === "title") {
     return (
-      <span className="chip text-sm">
+      <span className={`chip ${styles.titleChip}`}>
         {cosmetic.css_value || cosmetic.name}
       </span>
     );
@@ -1036,11 +961,28 @@ function CosmeticPreview({
 }
 
 function PreviewModal({ profile, onClose }: { profile: UserProfile; onClose: () => void }) {
+  // Dialog's modal engine (scroll lock, focus, Escape, Tab trap), own chrome.
+  const { panelRef, onKeyDown } = useOverlayBehaviour({ open: true, onClose });
+
+  const m = useMotionPresets();
   return (
-    <PanelModal label="Profile preview" onClose={onClose} maxWidth="max-w-230" maxHeight="max-h-[88vh]">
-        <div className="p-5">
+    <motion.div onClick={onClose} onKeyDown={onKeyDown} className={styles.backdrop} {...presetVariants(m.fade)}>
+      <motion.div
+        ref={panelRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="profile-preview-title"
+        onClick={e => e.stopPropagation()}
+        className={styles.dialog}
+        {...presetVariants(m.scaleIn)}
+      >
+        <div className={styles.dialogHead}>
+          <div id="profile-preview-title" className="label-micro">Profile preview</div>
+          <button className="btn btn--sm btn--ghost" onClick={onClose} aria-label="Close">
+            <Icon name="x" size={12} /> Close
+          </button>
+        </div>
+        <div className={styles.dialogBody}>
           <ProfileView profile={profile} embedded />
         </div>
-    </PanelModal>
+      </motion.div>
+    </motion.div>
   );
 }

@@ -315,7 +315,7 @@ describe("recentActivity", () => {
   const at = (day: number, hour: number) => new Date(2026, 10, day, hour).toISOString();
   const attempt = (id: string, over: Partial<AttemptSummary> = {}): AttemptSummary => ({
     quiz_id: id, status: "completed", concept_node_id: "rec", concept_name: "Recursion", course_id: "c1",
-    score: 6, total: 10, difficulty: "medium", mastery_before: 0.25, mastery_after: 0.3, mastery_delta: 0.05,
+    score: 6, total: 10, difficulty: "medium", mastery_before: 0.25, mastery_after: 0.3, p_delta: 0.05,
     created_at: at(7, 10), completed_at: at(7, 11), ...over,
   });
   const guide = (id: string, over: Partial<GuideCard> = {}): GuideCard => ({
@@ -342,7 +342,7 @@ describe("recentActivity", () => {
       attempt("unscored", { score: null }),
       attempt("empty", { total: 0 }),
       attempt("elsewhere", { course_id: "c2", concept_node_id: "other" }),
-      attempt("by-concept", { course_id: null, mastery_delta: null }), // no course on the row, but one of its concepts
+      attempt("by-concept", { course_id: null, p_delta: null }), // no course on the row, but one of its concepts
     ] });
     expect(out.map(r => r.key)).toEqual(["qby-concept"]);
     expect(out[0].chips).toEqual([]);

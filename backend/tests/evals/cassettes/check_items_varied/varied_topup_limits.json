@@ -1,0 +1,107 @@
+{
+  "output": {
+    "items": [
+      {
+        "canonical_answer": "",
+        "chunk_ids": [
+          "eval-doc-1:c1"
+        ],
+        "concept": "Limits",
+        "difficulty": 2,
+        "final_answer": "The limit is 12 meters",
+        "format": "mc_reason",
+        "options": [
+          {
+            "is_correct": true,
+            "misconception_key": null,
+            "misconception_text": null,
+            "text": "The limit is 12 meters"
+          },
+          {
+            "is_correct": false,
+            "misconception_key": "needs_value_at_point",
+            "misconception_text": "Believes a limit exists only if the function has a defined value at the point.",
+            "text": "The limit does not exist"
+          },
+          {
+            "is_correct": false,
+            "misconception_key": "confuses_stop_with_zero",
+            "misconception_text": "Assumes the limit equals zero because the car stops at the line.",
+            "text": "The limit is 0 meters"
+          },
+          {
+            "is_correct": false,
+            "misconception_key": "confuses_input_with_output",
+            "misconception_text": "Mixes up the input value being approached with the output value approached.",
+            "text": "The limit is 5 meters"
+          }
+        ],
+        "prompt": "A car's distance from a stop line is given by a function of time t. As t gets closer and closer to 5 seconds, the distance values get closer and closer to 12 meters, though the car's recorded value exactly at t = 5 is missing. Which statement describes the limit of the distance as t approaches 5? Pick one option and give your reason.",
+        "reference_answer": "A limit is the value a function approaches as the input approaches a point. Here the distance values approach 12 meters as t nears 5, so the limit is that value, whether or not the function is defined at t = 5. Final answer: The limit is 12 meters.",
+        "rubric": [
+          "States that the limit is the value the function approaches as the input approaches the point",
+          "Explains that the distance values approach 12 as t nears 5, regardless of the missing value at t = 5"
+        ],
+        "surface_context": "car approaching a stop line",
+        "surface_representation": "applied",
+        "tolerance": "",
+        "wrong_keys": [],
+        "wrong_texts": []
+      },
+      {
+        "canonical_answer": "",
+        "chunk_ids": [
+          "eval-doc-1:c1",
+          "eval-doc-1:c2"
+        ],
+        "concept": "Limits",
+        "difficulty": 3,
+        "final_answer": "Take the value the quotient approaches as h approaches 0",
+        "format": "mc_reason",
+        "options": [
+          {
+            "is_correct": true,
+            "misconception_key": null,
+            "misconception_text": null,
+            "text": "Take the value the quotient approaches as h approaches 0"
+          },
+          {
+            "is_correct": false,
+            "misconception_key": "substitute_directly",
+            "misconception_text": "Thinks the limit is found by plugging in the point even when undefined.",
+            "text": "Substitute h = 0 directly into the quotient"
+          },
+          {
+            "is_correct": false,
+            "misconception_key": "large_h_for_slope",
+            "misconception_text": "Believes a large step gives the tangent slope rather than letting h shrink.",
+            "text": "Choose a very large h to get the slope"
+          },
+          {
+            "is_correct": false,
+            "misconception_key": "averaging_instead_of_limit",
+            "misconception_text": "Confuses approaching a value with averaging several values.",
+            "text": "Average the quotient over many positive h values"
+          }
+        ],
+        "prompt": "The derivative at a point is defined using the difference quotient (f(x+h) - f(x))/h. At h = 0 this quotient is not defined. Which statement explains how the derivative can still be defined from it? Pick one option and give your reason.",
+        "reference_answer": "The derivative is the slope of the tangent line, the instantaneous rate of change, defined as a limit of difference quotients. A limit is the value a function approaches as the input approaches a point, so it needs no value at h = 0 itself. As h approaches 0 the secant slopes approach the tangent slope. Final answer: Take the value the quotient approaches as h approaches 0.",
+        "rubric": [
+          "Identifies that the derivative is a limit of difference quotients as h approaches 0",
+          "Explains that a limit depends on values near the point, not on the value at h = 0"
+        ],
+        "surface_context": "derivative definition foundation",
+        "surface_representation": "verbal",
+        "tolerance": "",
+        "wrong_keys": [],
+        "wrong_texts": []
+      }
+    ]
+  },
+  "recorded_under": {
+    "input_sha256": "24a3dc6f8ef5ad436f93c3fdd3fd266e1e15c053b8f27592afb8f8a1788f5ef0",
+    "model": "claude-sonnet-5-5",
+    "prompt_hash": "a1767fafd7f7",
+    "schema_hash": "9744f1ff593a"
+  }
+}

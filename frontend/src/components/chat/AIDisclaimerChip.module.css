@@ -1,0 +1,96 @@
+@layer components {
+/* The "AI-assisted" chip and its hover card (AIDisclaimerChip.tsx). */
+
+.wrap {
+  position: relative;
+}
+
+/* --chip-h: the chip matches the controls beside it (set per host). */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  height: var(--chip-h);
+  padding: 0 var(--sp-6);
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  border-radius: var(--r-full);
+  cursor: pointer;
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  line-height: 1.2;
+  transition:
+    background-color var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
+}
+
+.chip:hover {
+  background: var(--bg-soft);
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .chip {
+    transition:
+      background-color var(--dur-fast) var(--ease),
+      border-color var(--dur-fast) var(--ease),
+      color var(--dur-fast) var(--ease),
+      transform var(--dur-instant) var(--ease-out);
+  }
+
+  .chip:active {
+    transform: scale(0.97);
+  }
+}
+
+.spark {
+  font-size: var(--fs-2xs);
+  opacity: 0.85;
+}
+
+/* 260px: the hover card's measure. */
+.tooltip {
+  --tooltip-w: 260px;
+  position: absolute;
+  top: calc(100% + var(--sp-5));
+  right: 0;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: var(--sp-6) var(--sp-7);
+  font-size: var(--fs-sm);
+  line-height: 1.6;
+  width: var(--tooltip-w);
+  z-index: var(--z-popover);
+  box-shadow: var(--shadow-md);
+  pointer-events: none;
+  color: var(--text-dim);
+  transform-origin: top right;
+}
+
+.tooltipTitle {
+  margin-bottom: var(--sp-3);
+  color: var(--text);
+}
+
+.tooltipBody {
+  margin: 0 0 var(--sp-4);
+}
+
+.tooltipFoot {
+  border-top: 1px solid var(--border);
+  padding-top: var(--sp-4);
+}
+
+.tooltipNote {
+  margin: 0;
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+}

@@ -1,0 +1,126 @@
+@layer components {
+/* The roadmap (Roadmap.tsx) and its tiles (RoadmapTile.tsx). The tile's own
+   fill, ring and hover live in StudyHub.module.css's `.tile*` rules. */
+
+.section { position: relative; padding: var(--sp-8) var(--sp-3) var(--sp-12) 0; }
+.head { display: flex; align-items: baseline; gap: var(--sp-5); margin-bottom: var(--sp-6); }
+.headLabel { flex-shrink: 0; }
+.caption { min-width: 0; font-size: var(--fs-sm); color: var(--text-muted); }
+.emptyNote { font-size: var(--fs-md); color: var(--text-muted); }
+
+/* Positioned, and its rows packed to the top, for useFlip.
+   auto-fit, not auto-fill: the columns share the whole row instead of leaving
+   empty tracks (a blank strip) to their right. A course with only one or two
+   columns is capped so its tiles don't stretch into banners.
+   At most four columns across, at any width: a track is never narrower than a
+   quarter of the row (less the three 16px gaps between four), so a fifth
+   cannot fit beside four and a course with more categories wraps onto a second
+   row. Below ~850px that quarter is under 200px and the 200px floor takes
+   over, wrapping earlier as before. The 0.1px keeps four quarters from
+   rounding up past the row's width, which would leave room for only three.
+   (The 48px is the three --sp-8 gaps between four tracks.) */
+.grid {
+  position: relative; display: grid; gap: var(--sp-10) var(--sp-8);
+  grid-template-columns: repeat(auto-fit, minmax(max(200px, calc((100% - 3 * var(--sp-8)) / 4 - 0.1px)), 1fr));
+  align-items: start; align-content: start;
+}
+/* One or two columns: each at most --col-max wide, so a tile is never a banner. */
+.gridNarrow { --col-max: 336px; max-width: calc(var(--cols) * var(--col-max) - var(--sp-8)); }
+.column { position: relative; display: flex; flex-direction: column; gap: var(--sp-3); min-width: 0; }
+
+/* A column's name, its mastered count, and a bar per concept. */
+.colHead { display: flex; flex-direction: column; gap: var(--col-head-gap); padding-bottom: var(--sp-1); --col-head-gap: 5px; }
+.colTitleRow { display: flex; align-items: baseline; justify-content: space-between; gap: var(--sp-4); }
+.colTitle { font-size: var(--fs-md); font-weight: 600; }
+.colFrac { font-size: var(--fs-xs); color: var(--text-dim); flex-shrink: 0; }
+/* 3px between bars: a hairline step under --sp-2. */
+.bars { --bar-gap: 3px; display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: var(--sp-2) var(--bar-gap); }
+.barShape { height: var(--sp-2); border-radius: var(--r-full); }
+
+/* "N more mastered" / "Show Less". */
+.fold {
+  display: flex; align-items: center; gap: var(--sp-4); height: 32px; padding: 0 var(--sp-5);
+  border: 1px dashed var(--border-strong); border-radius: var(--r-md); background: transparent;
+  font: inherit; font-size: var(--fs-sm); font-weight: 600; color: var(--text-dim); cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+.foldDots { display: flex; gap: var(--fold-dot-gap); --fold-dot-gap: 3px; }
+.foldDot { width: 7px; height: 7px; border-radius: var(--sp-1); }
+.foldLabel { flex: 1; text-align: left; white-space: nowrap; }
+/* The chevron turns over as the fold opens and closes. */
+.foldChevron { display: flex; flex-shrink: 0; transition: transform var(--dur) var(--ease-in-out); }
+.foldChevronOpen { transform: rotate(180deg); }
+
+/* ── a tile ─────────────────────────────────────────────────────────────── */
+.tileBox {
+  position: relative; display: flex; align-items: center; gap: var(--sp-5);
+  /* 9 x 11: the row height the roadmap was laid out at, between steps. */
+  --tile-pad-y: 9px; --tile-pad-x: 11px;
+  padding: var(--tile-pad-y) var(--tile-pad-x); border-radius: var(--r-md); cursor: pointer;
+}
+.tileText { flex: 1; min-width: 0; overflow: hidden; display: flex; flex-direction: column; }
+.tileName { font-size: var(--fs-md); font-weight: 600; line-height: 1.25; text-wrap: pretty; transition: color var(--dur-fast) var(--ease); }
+.tileStatus {
+  font-size: var(--fs-xs); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  transition: color var(--dur-fast) var(--ease);
+}
+
+/* The mastery ring. */
+.ring {
+  --ring-box: 28px;
+  position: relative; width: var(--ring-box); height: var(--ring-box); flex-shrink: 0;
+  transition: opacity var(--dur-fast) var(--ease);
+}
+.ringSvg { display: block; transform: rotate(-90deg); }
+.ringCheck {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  color: var(--text-on-fill);
+}
+/* A picture on a dimmed tile may fade; its text may not (spec §13 A135). */
+.faded { opacity: 0.3; }
+.gapMark { display: block; line-height: 0; flex-shrink: 0; transition: opacity var(--dur-fast) var(--ease); }
+
+/* The small tags that ride a tile's top edge: the `.chip` voice, tile-sized. */
+.tag {
+  --tag-h: 15px;
+  /* Half over the edge (the tag is 15px tall). */
+  --tag-rise: 7px;
+  /* Sentence-case caption (#928): main's tile tag is 11px. */
+  --tag-size: var(--fs-xs);
+  position: absolute; top: calc(-1 * var(--tag-rise)); right: var(--sp-4); height: var(--tag-h);
+  padding: 0 var(--sp-3); border-radius: var(--r-full);
+  font-family: var(--font-sans); font-size: var(--tag-size); font-weight: 600;
+  display: inline-flex; align-items: center; box-shadow: 0 0 0 var(--sp-1) var(--bg);
+}
+/* A tag lands with a small scale-in when it appears (a new "Next", or the
+   relation to the hovered concept). */
+@media (prefers-reduced-motion: no-preference) {
+  .tag { animation: tagIn var(--dur-fast) var(--ease-out) both; }
+}
+@keyframes tagIn {
+  from { opacity: 0; transform: scale(0.85); }
+  to { opacity: 1; transform: none; }
+}
+.tagNext { background: var(--brand-forest); color: var(--text-on-fill); }
+.tagNeeded { background: var(--warn-soft); color: var(--warn); }
+.tagUnlocks { background: var(--info-soft); color: var(--info); }
+
+/* A tile's action menu. */
+.menu {
+  position: absolute; left: 0; right: 0; top: calc(100% + var(--sp-3)); z-index: var(--z-popover);
+  min-width: 200px; padding: var(--sp-2); display: flex; flex-direction: column; gap: var(--sp-1);
+  cursor: default;
+}
+.menuItem {
+  display: flex; align-items: center; gap: var(--sp-4); height: 32px; padding: 0 var(--sp-3);
+  border: 0; border-radius: var(--r-sm); background: transparent;
+  font: inherit; font-size: var(--fs-md); font-weight: 600; color: var(--text);
+  text-align: left; text-decoration: none; cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease);
+}
+.menuGlyph {
+  width: 24px; height: 24px; border-radius: var(--r-sm);
+  display: flex; align-items: center; justify-content: center;
+}
+
+}

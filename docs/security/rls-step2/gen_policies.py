@@ -37,6 +37,11 @@ History:
     prints them; the applied step-2b/2c migrations are not regenerated.
   * 2026-11-25 document_folders joins bucket A the same way (the Library's
     folders; 20261125062932_library_folders.sql).
+  * 2026-11-26 tutor_saved_items (the Tutor's Saved tab) joins bucket A the
+    same way: its policies and grant ship in 20261126055016_tutor_saved_items.sql.
+  * 2026-11-26 course_concept_exclusions (concepts a student removed in the
+    Tutor's course setup) joins bucket A the same way: its policies and grant
+    ship in 20261126060659_course_concept_exclusions.sql.
 """
 import json
 import sys
@@ -86,6 +91,7 @@ BUCKETS = {
         "friend_requests", "friendships",
         "flashcard_sets",
         "document_folders",
+        "flashcard_sets", "tutor_saved_items", "course_concept_exclusions",
     ],
     "B_via_parent": [
         "messages", "node_mastery_events", "note_concepts", "quiz_responses",
@@ -112,6 +118,13 @@ BUCKETS = {
         "rate_limit_hits", "feature_flags_version",
         "tutor_pending_sessions",
         "legal_acceptances",
+        # The learning loop (spec §13 A148, 20261109032302_learning_loop_rls.sql):
+        "learner_state", "check_items", "check_item_draft_failures", "ai_tutor_daily_calls",
+        "misconceptions", "posttest_poses", "learning_reveals", "quiz_evidence_claims",
+        "checklist_budget_accounts", "checklist_budget_reservations",
+        "learning_evidence_operations", "check_item_reports", "check_item_reviews",
+        "learning_evidence_voids", "misconception_attempts", "check_item_audits",
+        "posttest_skips", "learning_prequestions", "learning_self_explanations",
     ],
 }
 # room_messages is bucket C but gets its policy and grants in step 2e (the
@@ -132,6 +145,8 @@ owner("flashcard_sets", own); grant("flashcard_sets", "SELECT, INSERT, UPDATE, D
 # Same shape, own migration (20261125062932_library_folders.sql).
 owner("document_folders", own)
 grant("document_folders", "SELECT, INSERT, UPDATE, DELETE")
+owner("tutor_saved_items", own); grant("tutor_saved_items", "SELECT, INSERT, UPDATE, DELETE")  # 20261126055016
+owner("course_concept_exclusions", own); grant("course_concept_exclusions", "SELECT, INSERT, UPDATE, DELETE")  # 20261126060659
 owner("documents", own)
 grant("documents", "SELECT, INSERT, DELETE")
 # Not the index_* lease columns (document_indexing owns them, svc), nor id /

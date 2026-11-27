@@ -1,0 +1,20 @@
+{
+  "attempts": [
+    "{\"key_idea\": \"A belief that recursion stops by itself predicts something you can test by tracing the calls one at a time.\", \"body\": \"Your answer was graded not yet correct, and the stored solution above shows what actually stops it. Take your own idea that the numbers run out and apply it to a factorial written as n * factorial(n-1) with no special-case line. Look at which argument the call receives right after factorial(0).\", \"question\": \"Trace that version by hand from factorial(0) for three calls: what argument does each call receive, and does anything in it tell the function to stop, compared with your belief that it stops by itself?\"}",
+    "{\"key_idea\": \"A belief that recursion stops by itself predicts something you can test by tracing the calls one at a time.\", \"body\": \"Your answer was graded not yet correct, and the stored solution above shows what actually stops it. Take your idea that the numbers run out and apply it to a factorial written as n * factorial(n-1) with no special-case line.\", \"question\": \"Trace that version by hand from factorial(0) for three calls: what argument does each call receive, and does anything in it tell the function to stop?\"}"
+  ],
+  "input_sha256": "666cc14c246d4bcc052e4dd3137a488b57111b7cb4bd6df7cae617bbca3e09b0",
+  "model": "claude-sonnet-5-5",
+  "output": {
+    "body": "Your answer was graded not yet correct, and the stored solution above shows what actually stops it. Take your idea that the numbers run out and apply it to a factorial written as n * factorial(n-1) with no special-case line.",
+    "key_idea": "A belief that recursion stops by itself predicts something you can test by tracing the calls one at a time.",
+    "question": "Trace that version by hand from factorial(0) for three calls: what argument does each call receive, and does anything in it tell the function to stop?"
+  },
+  "prompt_hash": "7d2b25572445",
+  "requests": 2,
+  "rescued": false,
+  "retries": 1,
+  "schema_hash": "ab89f4f429db",
+  "slot": "loop_tutor_deep",
+  "tool_calls": []
+}

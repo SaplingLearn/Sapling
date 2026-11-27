@@ -13,6 +13,15 @@ export interface GraphNode {
   course_color?: string | null;
   color?: string | null;
   is_subject_root?: boolean;
+  /** The learner model's decayed skill once the concept has a graded answer
+   *  (null: not started); present only with the learning loop on, when it
+   *  is also this node's mastery_score (`lib/levels.ts::applySkill`). */
+  skill?: number | null;
+  /** The Mastered badge: the backend's rule (≥ 98% and three strong answers). */
+  skill_mastered?: boolean;
+  /** The map's own stored score and tier, kept beside a skill graph's. */
+  map_mastery_score?: number;
+  map_mastery_tier?: GraphNode["mastery_tier"];
   x?: number;
   y?: number;
 }
@@ -40,11 +49,11 @@ export interface GraphStats {
   streak: number;
 }
 
+/** PKG-14b: the tutor writes only new concepts and edges — no tutor tool moves
+ *  mastery (the retired `updated_nodes` / `recommended_next` fields are gone). */
 export interface GraphUpdate {
   new_nodes: { concept_name: string; subject: string; initial_mastery: number }[];
-  updated_nodes: { concept_name: string; mastery_delta: number; reason: string }[];
   new_edges: { source: string; target: string; strength: number }[];
-  recommended_next: string[];
 }
 
 export interface MasteryChange {
@@ -70,10 +79,7 @@ export interface ChatResponse {
 
 export interface SessionSummary {
   concepts_covered: string[];
-  mastery_changes: MasteryChange[];
-  new_connections: { source: string; target: string }[];
   time_spent_minutes: number;
-  recommended_next: string[];
 }
 
 export interface QuizQuestion {
@@ -150,7 +156,12 @@ export interface RoomMessageRow {
 export interface ConceptNote {
   name: string;
   description: string;
+  /** Graph node id when the list response matched this name (W8.1c). */
+  node_id?: string | null;
 }
+
+/** A128 drafting bookkeeping on `documents` (Library W8.1). */
+export type CheckItemsStatus = 'pending' | 'done' | 'failed' | 'unavailable';
 
 export interface Document {
   id: string;
@@ -171,6 +182,8 @@ export interface Document {
   page_count?: number | null;
   created_at: string;
   processed_at: string | null;
+  /** Where check-item drafting is; null when the loop never drafted this row. */
+  check_items_status?: CheckItemsStatus | null;
   /** Set only on the Trash read. */
   deleted_at?: string | null;
 }
@@ -754,6 +767,10 @@ export interface ErrorEventRow {
   status_code: number | null;
   duration_ms: number | null;
 }
+
+// The learning-loop KPI report (GET /api/admin/analytics/learning-loop) lives
+// in its own module; re-exported so callers keep importing it from here.
+export type * from "./learningLoopKpiTypes";
 
 export interface ErrorsPageData {
   range: AnalyticsRange;

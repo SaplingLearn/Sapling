@@ -1,0 +1,20 @@
+{
+  "attempts": [
+    "Take a guess first \u2014 this one isn't scored.\n\nWhich part of a recursive function stops the chain of calls?",
+    "{\"key_idea\": \"A recursive chain only ends when some input is handled directly, without making another call.\", \"body\": \"Your guess, the recursive call, is what keeps the chain going, since each call produces another one. That makes it the opposite of what stops it, so something else must give an answer without calling itself.\", \"question\": \"In your own words, why would a function that only ever calls itself never finish?\"}"
+  ],
+  "input_sha256": "6b750bdd01898b3555cd3432da89f3795b039859930ba4d1519365b946c5d6cd",
+  "model": "claude-sonnet-5-5",
+  "output": {
+    "body": "Your guess, the recursive call, is what keeps the chain going, since each call produces another one. That makes it the opposite of what stops it, so something else must give an answer without calling itself.",
+    "key_idea": "A recursive chain only ends when some input is handled directly, without making another call.",
+    "question": "In your own words, why would a function that only ever calls itself never finish?"
+  },
+  "prompt_hash": "7d2b25572445",
+  "requests": 2,
+  "rescued": false,
+  "retries": 1,
+  "schema_hash": "ab89f4f429db",
+  "slot": "loop_tutor_deep",
+  "tool_calls": []
+}

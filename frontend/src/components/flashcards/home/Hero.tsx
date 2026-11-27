@@ -20,6 +20,7 @@ import { useLatestRequest } from "@/lib/useLatestRequest";
 import { useCrisisSupport } from "@/components/safety/CrisisSupportCard";
 import { Icon } from "../../Icon";
 import { useToast } from "../../ToastProvider";
+import { HERO_PRACTICE_NOTE } from "../flashcardsCopy";
 import { describeNote, namesOnMap, type MapColumn } from "./flashcardsModel";
 import h from "./home.module.css";
 
@@ -92,7 +93,8 @@ export function Hero({ courseId, columns, canSort, examples, figures, onSorted }
   return (
     <section className={h.hero} aria-labelledby="flashcards-hero-title">
       <div className={h.heroMain}>
-        <h2 id="flashcards-hero-title" className={`h-serif ${h.heroTitle}`}>What do you want to study?</h2>
+        <h2 id="flashcards-hero-title" className={`h-serif ${h.heroTitle}`}>What do you want to practice?</h2>
+        <p className={h.heroLede} data-testid="flashcards-practice-note">{HERO_PRACTICE_NOTE}</p>
         <form className={h.prompt} onSubmit={submit}>
           <input
             ref={input}

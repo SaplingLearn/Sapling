@@ -51,16 +51,13 @@ export function useOverlayBehaviour({
   useEffect(() => {
     if (!open) { setVisible(false); return; }
     previousFocusRef.current = document.activeElement;
-    const focusAtOpen = document.activeElement;
     const raf = requestAnimationFrame(() => setVisible(true));
 
     const focusTimer = setTimeout(() => {
       const panel = panelRef.current;
-      if (!panel) return;
-      // The user clicked into the panel before this ran (a fast click, or
-      // a slow machine): don't pull focus away from what they picked.
-      const active = document.activeElement;
-      if (active !== focusAtOpen && active !== panel && panel.contains(active)) return;
+      // Already in the panel: the student reached a control first (a list they
+      // opened keeps its focus, and its Escape). Never take it from them.
+      if (!panel || panel.contains(document.activeElement)) return;
       const preferred = initialFocusRef?.current;
       if (preferred) { preferred.focus(); return; }
       const focusable = panel.querySelector<HTMLElement>(FOCUSABLE);
@@ -126,8 +123,8 @@ interface DialogProps {
   /**
    * Element to focus on open. Without it focus lands on the first focusable
    * node in the panel — the close button, since it precedes {children} in
-   * the DOM. Form dialogs pass their first field instead. `autoFocus` can't
-   * do this job: React fires it at mount, before the focus pass below.
+   * the DOM. Form dialogs pass their first field instead. Focus already in
+   * the panel by then stays where it is.
    */
   initialFocusRef?: React.RefObject<HTMLElement | null>;
 }

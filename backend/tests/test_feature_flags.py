@@ -322,6 +322,7 @@ def test_resolved_client_flags_only_client_visible(monkeypatch):
 def test_resolved_client_flags_reads_the_store_once_even_when_it_is_down(monkeypatch):
     """One outage = one store read for the whole map, not one per flag; every
     flag fails closed, and an env override still wins."""
+    monkeypatch.delenv("SAPLING_FLAG_LEARNING_LOOP", raising=False)  # the suite's (conftest)
     monkeypatch.setenv("SAPLING_FLAG_HIDE_TREE", "on")
     factory = _tables(fail=True)
     calls = []
@@ -524,6 +525,17 @@ def test_decision_router_resolves_like_any_flag(monkeypatch):
 def test_decision_router_is_server_only_and_off_first():
     fd = ff.REGISTRY["decision_router"]
     assert fd.variants == ("off", "jev", "jev_shadow") and not fd.client_visible
+
+
+def test_upload_prereq_edges_is_server_only_off_first_and_off_unconfigured(monkeypatch):
+    """Spec §13 A118: the upload prerequisite-edge write. Server-only — the
+    write happens inside the upload routes — and, like every flag, "off" until
+    an admin configures it (no migration seeds a row)."""
+    monkeypatch.delenv("SAPLING_FLAG_UPLOAD_PREREQ_EDGES", raising=False)
+    fd = ff.REGISTRY["upload_prereq_edges"]
+    assert fd.variants == ("off", "on") and not fd.client_visible
+    with patch("services.feature_flags.table", side_effect=_tables()):
+        assert ff.flag_on("upload_prereq_edges", "u1") is False
 
 
 # ── #117: cross-replica invalidation through feature_flags_version ─────────

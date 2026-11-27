@@ -1,0 +1,20 @@
+{
+  "attempts": [
+    "{\"key_idea\": \"A recursive function stops when some input is handled directly, without calling itself, and every recursive call moves toward that input.\", \"body\": \"Take a different function: sum_to(n) equals 1+2+...+n, written as sum_to(n) = n + sum_to(n-1). Called on 3, it asks for sum_to(2), then sum_to(1), then sum_to(0). Without a rule for some smallest input, it would keep asking for sum_to(-1), sum_to(-2), and so on. So we add the line 'if n is 0, give 0 and make no further call', and the chain of calls ends there.\", \"question\": \"Looking at your factorial function, which line plays the role of that 'if n is 0' line, and what does it do instead of calling factorial again?\"}",
+    "{\"key_idea\": \"A recursive function stops when some input is handled directly, without calling itself, and every recursive call moves toward that input.\", \"body\": \"Take a different function: sum_to(n) equals 1+2+...+n, written as sum_to(n) = n + sum_to(n-1). Called on 3, it asks for sum_to(2), then sum_to(1), then sum_to(0), and without a rule for the smallest input it would keep going to sum_to(-1) and beyond. So we add the line 'if n is 0, give 0 and make no further call', and that is where the chain of calls ends.\", \"question\": \"In your factorial function, which line plays the role of that 'if n is 0' line, and what does it do instead of calling factorial again?\"}"
+  ],
+  "input_sha256": "78b8a97ede546da8ca6d3349c7a261196577cd93fde52115743a9f77fe7a482b",
+  "model": "claude-sonnet-5-5",
+  "output": {
+    "body": "Take a different function: sum_to(n) equals 1+2+...+n, written as sum_to(n) = n + sum_to(n-1). Called on 3, it asks for sum_to(2), then sum_to(1), then sum_to(0), and without a rule for the smallest input it would keep going to sum_to(-1) and beyond. So we add the line 'if n is 0, give 0 and make no further call', and that is where the chain of calls ends.",
+    "key_idea": "A recursive function stops when some input is handled directly, without calling itself, and every recursive call moves toward that input.",
+    "question": "In your factorial function, which line plays the role of that 'if n is 0' line, and what does it do instead of calling factorial again?"
+  },
+  "prompt_hash": "575193db5424",
+  "requests": 2,
+  "rescued": false,
+  "retries": 1,
+  "schema_hash": "ee2a0f1f177f",
+  "slot": "loop_tutor_deep",
+  "tool_calls": []
+}

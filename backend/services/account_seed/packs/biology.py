@@ -38,7 +38,7 @@ BI107 = Course(
     nickname="Bio 1 (Evo/Eco)",
     color="#2E8B57",
     concepts=[
-        Concept(name="Natural Selection", mastery=0.87,
+        Concept(name="Natural Selection", mastery=0.96,
                 description="Differential survival and reproduction of heritable variants; the Grants' "
                             "Geospiza fortis beak-depth shift after the 1977 Daphne Major drought."),
         Concept(name="Phylogenetics", mastery=0.79,
@@ -395,7 +395,7 @@ BI108 = Course(
     nickname="Bio 2 (Mol/Gen)",
     color="#4A7FC1",
     concepts=[
-        Concept(name="Mendelian Inheritance", mastery=0.88,
+        Concept(name="Mendelian Inheritance", mastery=0.96,
                 description="Segregation and independent assortment; monohybrid 3:1, dihybrid 9:3:3:1 "
                             "ratios and the testcross."),
         Concept(name="Transcription", mastery=0.83,
@@ -717,7 +717,7 @@ CH101 = Course(
     nickname="Gen Chem",
     color="#D9734E",
     concepts=[
-        Concept(name="Mole Concept and Molar Mass", mastery=0.91,
+        Concept(name="Mole Concept and Molar Mass", mastery=0.96,
                 description="Avogadro's number (6.022 x 10^23), converting between grams, moles and "
                             "particles using molar mass."),
         Concept(name="Stoichiometry", mastery=0.77,
@@ -1049,7 +1049,7 @@ BI203 = Course(
     nickname="Cell Bio",
     color="#8E6CC9",
     concepts=[
-        Concept(name="Membrane Structure", mastery=0.82,
+        Concept(name="Membrane Structure", mastery=0.96,
                 description="The fluid mosaic model: phospholipid bilayer, cholesterol, integral and "
                             "peripheral proteins, and membrane asymmetry."),
         Concept(name="Membrane Transport", mastery=0.76,

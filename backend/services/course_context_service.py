@@ -11,6 +11,22 @@ keyed on the offering.
 Stores data in:
 - offering_concept_stats: per-concept aggregated metrics (per offering)
 - offering_summary: class-wide summary with Gemini-generated text (per offering)
+
+The prose in offering_summary.summary_text has no reader on any request path.
+Two regimes, switched by the process-wide LEARNING_LOOP_ENABLED kill switch
+alone, never by a student's `learning_loop` flag: the summary is one row per
+offering, shared by a class that mixes students on and off the flag, so a
+per-student answer would flip it with every refresh (prose written for one
+student's trigger, cleared for the next, a course_summary call each time). The
+loop regime writes no prose and calls no model, and the prose has no reader,
+so a flag-off student sees nothing different and no model runs on their
+behalf; under the kill switch the pre-series regime returns, as before:
+- loop off (the pre-series product, unchanged): `update_course_context`
+  regenerates the prose synchronously whenever the per-concept stats hash moves.
+- loop on (spec §13 A35): `update_course_context` writes the same numbers and
+  no prose (NULL text and hash), and nothing else writes it. The loop moves
+  mastery on every graded answer, so the old regime put a course_summary call
+  on the answer path for each of the student's offerings, for text nothing reads.
 """
 
 import copy
@@ -23,6 +39,7 @@ import time
 from collections import OrderedDict
 from datetime import datetime, timezone
 
+import config
 from db.connection import table
 from db.scope import runs_as_service
 from agents._run import run_agent_sync
@@ -31,6 +48,7 @@ from agents.usage import record_agent_usage
 from services import jobs
 from services.encryption import bind, decrypt_json_column
 from services.feature_flags import flag_on
+from learning.bkt import stored_score
 
 logger = logging.getLogger(__name__)
 
@@ -239,12 +257,61 @@ def clear_course_context_cache() -> None:
         _cache_generation += 1
 
 
+def _concept_metrics(node_rows: list) -> tuple[dict, list, dict]:
+    """Steps 4-5 of `update_course_context`: per-concept metrics over the
+    class's graph nodes, every score, and node id -> owning student (M8)."""
+    # ── 4. Group by concept_name, track per-user scores ───────────────────────
+    concept_data: dict = {}
+
+    #: graph node id -> the student who owns it, so a quiz-context row (keyed
+    #: on its node) can be counted per distinct student (M8).
+    node_owner: dict = {}
+    for n in node_rows:
+        name = n["concept_name"]
+        if name not in concept_data:
+            concept_data[name] = {"scores": [], "tiers": [], "node_ids": []}
+        concept_data[name]["scores"].append(stored_score(n["mastery_score"]))
+        concept_data[name]["tiers"].append(n["mastery_tier"] or "unexplored")
+        concept_data[name]["node_ids"].append(n["id"])
+        node_owner[n["id"]] = n.get("user_id")
+
+    # ── 5. Compute per-concept metrics ────────────────────────────────────────
+    concept_metrics: dict = {}
+    all_scores: list = []
+
+    for name, data in concept_data.items():
+        scores = data["scores"]
+        tiers = data["tiers"]
+        n_s = len(scores)
+
+        if n_s == 0:
+            continue
+
+        avg_mastery = sum(scores) / n_s
+        all_scores.extend(scores)
+
+        struggling_count = sum(1 for t in tiers if t == "struggling")
+        mastered_count = sum(1 for t in tiers if t == "mastered")
+        unexplored_count = sum(1 for t in tiers if t == "unexplored")
+
+        concept_metrics[name] = {
+            "avg_mastery_score": round(avg_mastery, 4),
+            "pct_struggling": round(struggling_count / n_s, 4),
+            "pct_mastered": round(mastered_count / n_s, 4),
+            "pct_unexplored": round(unexplored_count / n_s, 4),
+            "student_count": n_s,
+            "node_ids": data["node_ids"],
+        }
+    return concept_metrics, all_scores, node_owner
+
+
 @runs_as_service  # #115: reads every classmate's graph + quiz context; under a user scope it would silently compute class stats from one student
 def update_course_context(offering_id: str) -> None:
     """
     Aggregate mastery + quiz data for the students enrolled in an **offering**
     (a course taught in a term) and upsert into offering_concept_stats and
     offering_summary. Offering-scoped. Called automatically after any graph update.
+    With the loop on it writes no prose (§13 A35; see the module docstring).
     Students who opted out of sharing (user_settings.share_class_context = false,
     #72) are excluded before any of their graph data is read.
 
@@ -302,48 +369,7 @@ def update_course_context(offering_id: str) -> None:
     if not node_rows:
         return  # No graph data yet for this course
 
-    # ── 4. Group by concept_name, track per-user scores ───────────────────────
-    concept_data: dict = {}
-
-    #: graph node id -> the student who owns it, so a quiz-context row (keyed
-    #: on its node) can be counted per distinct student (M8).
-    node_owner: dict = {}
-    for n in node_rows:
-        name = n["concept_name"]
-        if name not in concept_data:
-            concept_data[name] = {"scores": [], "tiers": [], "node_ids": []}
-        concept_data[name]["scores"].append(float(n["mastery_score"] or 0.0))
-        concept_data[name]["tiers"].append(n["mastery_tier"] or "unexplored")
-        concept_data[name]["node_ids"].append(n["id"])
-        node_owner[n["id"]] = n.get("user_id")
-
-    # ── 5. Compute per-concept metrics ────────────────────────────────────────
-    concept_metrics: dict = {}
-    all_scores: list = []
-    
-    for name, data in concept_data.items():
-        scores = data["scores"]
-        tiers = data["tiers"]
-        n_s = len(scores)
-        
-        if n_s == 0:
-            continue
-            
-        avg_mastery = sum(scores) / n_s
-        all_scores.extend(scores)
-        
-        struggling_count = sum(1 for t in tiers if t == "struggling")
-        mastered_count = sum(1 for t in tiers if t == "mastered")
-        unexplored_count = sum(1 for t in tiers if t == "unexplored")
-        
-        concept_metrics[name] = {
-            "avg_mastery_score": round(avg_mastery, 4),
-            "pct_struggling": round(struggling_count / n_s, 4),
-            "pct_mastered": round(mastered_count / n_s, 4),
-            "pct_unexplored": round(unexplored_count / n_s, 4),
-            "student_count": n_s,
-            "node_ids": data["node_ids"],
-        }
+    concept_metrics, all_scores, node_owner = _concept_metrics(node_rows)
 
     # ── 6. Helpers: quiz_context rows for a set of graph node ids ────────────
     def _fetch_quiz_context_rows(node_ids: list) -> list:
@@ -424,7 +450,7 @@ def update_course_context(offering_id: str) -> None:
 
     # ── 7. Upsert into course_concept_stats (quiz arrays per concept) ─────────
     for name, metrics in concept_metrics.items():
-        node_ids_for_concept = concept_data.get(name, {}).get("node_ids", [])
+        node_ids_for_concept = metrics.get("node_ids", [])
         ctx_rows = _fetch_quiz_context_rows(node_ids_for_concept)
         cm, pg = _parse_quiz_context_to_arrays(ctx_rows)
 
@@ -463,6 +489,29 @@ def update_course_context(offering_id: str) -> None:
         reverse=True,
     )
     top_mastered_concepts = [name for name, _ in sorted_by_mastered[:5]]
+
+    if config.LEARNING_LOOP_ENABLED:
+        # §13 A35: the numbers, and no prose. This runs after every evidence
+        # flush for each of the student's offerings of the course, and the
+        # prose has no reader. The text and its hash are cleared: prose from
+        # before the loop turned on would contradict the numbers the loop
+        # keeps moving, and a NULL hash makes the pre-series regime below
+        # rewrite it once if the kill switch turns the loop off.
+        table("offering_summary").upsert(
+            {
+                "offering_id": offering_id,
+                "student_count": student_count,
+                "avg_class_mastery": avg_class_mastery,
+                "top_struggling_concepts": top_struggling_concepts,
+                "top_mastered_concepts": top_mastered_concepts,
+                "summary_text": None,
+                "summary_hash": None,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            },
+            on_conflict="offering_id",
+        )
+        clear_course_context_cache()  # #98: aggregates changed → drop cached read
+        return
 
     # Generate data hash to detect changes
     stats_for_hash = [

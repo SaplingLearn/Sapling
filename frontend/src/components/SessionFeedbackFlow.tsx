@@ -3,39 +3,17 @@
 import React, { useCallback, useState } from "react";
 import { submitFeedback } from "@/lib/api";
 import { useUser } from "@/context/UserContext";
-import Dialog from "@/components/Dialog";
+import { useOverlayBehaviour } from "@/components/Dialog";
 import { useToast } from "./ToastProvider";
 import { LONG_TEXT_MAX } from "@/lib/inputLimits";
-import { cn } from "@/lib/cn";
+// Numeric scale — the brand's tone is "quiet library," not emoji reactions —
+// with its two ends labelled under it (shared with the Tutor's wrap-up).
+import { SessionRatingScale } from "./learn/SessionRatingScale";
+import { ChipPicker, FRICTION, HELPFULNESS, toggled } from "./sessionFeedbackOptions";
+import styles from "./FeedbackFlow.module.css";
 
-export const SESSION_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000;
-export const SESSION_COOLDOWN_KEY = "sapling_last_session_feedback";
-
-// Numeric scale — the brand's tone is "quiet library," not emoji reactions.
-const RATINGS: { value: number; label: string }[] = [
-  { value: 1, label: "Frustrating" },
-  { value: 2, label: "Just okay" },
-  { value: 3, label: "Productive" },
-  { value: 4, label: "Great session" },
-];
-
-const HELPFULNESS = [
-  "Explanations clicked",
-  "Right pace",
-  "Got me unstuck",
-  "Questions were sharp",
-  "Matched my style",
-  "Concepts felt linked",
-];
-
-const FRICTION = [
-  "Too slow",
-  "Too surface",
-  "Felt repetitive",
-  "Off-topic",
-  "Confusing",
-  "Didn't match my level",
-];
+/** The follow-up's steps: rating, what worked, friction, a note. */
+const STEPS = [0, 1, 2, 3];
 
 export interface SessionFeedbackContext {
   sessionId?: string;
@@ -60,8 +38,9 @@ export function SessionFeedbackFlow({ open, context, onClose }: SessionFeedbackF
   const [submitting, setSubmitting] = useState(false);
 
 
-  const close = useCallback((recordCooldown: boolean) => {
-    if (recordCooldown) localStorage.setItem(SESSION_COOLDOWN_KEY, String(Date.now()));
+  // Pacing (cooldown, one prompt per session) is recorded by the opener when
+  // the prompt opens — lib/feedbackPacing.ts — so every close here counts.
+  const close = useCallback(() => {
     setStep(0);
     setRating(null);
     setHelpful([]);
@@ -70,9 +49,7 @@ export function SessionFeedbackFlow({ open, context, onClose }: SessionFeedbackF
     onClose();
   }, [onClose]);
 
-  const toggle = (list: string[], setList: (v: string[]) => void, v: string) => {
-    setList(list.includes(v) ? list.filter(x => x !== v) : [...list, v]);
-  };
+  const toggle = (list: string[], setList: (v: string[]) => void, v: string) => setList(toggled(list, v));
 
   const submit = async () => {
     if (!userId || rating === null) return;
@@ -88,7 +65,7 @@ export function SessionFeedbackFlow({ open, context, onClose }: SessionFeedbackF
         topic: context?.topic,
       });
       toast.success("Thanks — this helps tune your tutor.");
-      close(true);
+      close();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to submit.");
     } finally {
@@ -96,96 +73,80 @@ export function SessionFeedbackFlow({ open, context, onClose }: SessionFeedbackF
     }
   };
 
+  // Dialog's modal engine (scroll lock, focus in and back out, Escape, the
+  // Tab trap) under this flow's own card.
+  const { panelRef, onKeyDown } = useOverlayBehaviour({ open, onClose: () => { if (!submitting) close(); } });
+
+  if (!open) return null;
+
   const canNext = step === 0 ? rating !== null : true;
 
   return (
-    <Dialog
-      open={open}
-      onClose={() => { if (!submitting) close(true); }}
-      labelledBy="session-feedback-title"
-      width="440px"
-      zIndex={200}
-      showCloseButton={false}
-    >
-        <div className="flex justify-between items-center mb-3">
-          <div id="session-feedback-title" className="h-serif text-2xl">How was that session?</div>
-          <button className="btn btn--ghost btn--sm" onClick={() => close(true)} aria-label="Close">×</button>
+    <div className={styles.backdrop} onClick={() => !submitting && close()} onKeyDown={onKeyDown}>
+      <div ref={panelRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="session-feedback-title" onClick={e => e.stopPropagation()} className={styles.card}>
+        <div className={styles.header}>
+          <div id="session-feedback-title" className={`h-serif ${styles.sessionTitle}`}>How was that session?</div>
+          <button className="btn btn--ghost btn--sm" onClick={() => close()} aria-label="Close">×</button>
         </div>
 
         {context?.topic && (
-          <div className="text-sm text-text-muted mb-4">
-            on <span className="text-text-dim">{context.topic}</span>
+          <div className={styles.topic}>
+            on <span className={styles.topicName}>{context.topic}</span>
           </div>
         )}
 
-        <div className="flex gap-1.5 mb-5">
-          {[0, 1, 2, 3].map(i => (
-            <div
-              key={i}
-              className={cn("flex-1 h-1 rounded-[var(--r-full)]", i <= step ? "bg-accent" : "bg-bg-soft")}
-            />
+        <div className={styles.steps}>
+          {STEPS.map(i => (
+            <div key={i} className={styles.stepSegment} data-done={i <= step} />
           ))}
         </div>
 
-        {step === 0 && (
-          <div>
-            <div className="label-micro mb-2">How did it feel?</div>
-            <div className="flex gap-2 justify-between">
-              {RATINGS.map(r => {
-                const sel = rating === r.value;
-                return (
-                  <button
-                    key={r.value}
-                    onClick={() => setRating(r.value)}
-                    aria-label={r.label}
-                    title={r.label}
-                    className={cn(cn("h-serif", "flex-1 py-3.5 px-1 text-[20px] font-medium rounded-md [transition:background_var(--dur-fast)_var(--ease),_color_var(--dur-fast)_var(--ease)]", sel ? "text-accent" : "text-text-dim", sel ? "bg-accent-soft" : "bg-bg-panel"), sel ? "border border-accent-border" : "border border-border")}
-                  >
-                    {r.value}
-                  </button>
-                );
-              })}
+        <div key={step} className={styles.stepBody}>
+          {step === 0 && (
+            <div>
+              <div className={`label-micro ${styles.stepLabel}`}>How did it feel?</div>
+              <SessionRatingScale value={rating} onSelect={setRating} />
             </div>
-          </div>
-        )}
+          )}
 
-        {step === 1 && (
-          <ChipPicker
-            label="What worked?"
-            options={HELPFULNESS}
-            selected={helpful}
-            onToggle={v => toggle(helpful, setHelpful, v)}
-          />
-        )}
-
-        {step === 2 && (
-          <ChipPicker
-            label="Any friction?"
-            options={FRICTION}
-            selected={friction}
-            onToggle={v => toggle(friction, setFriction, v)}
-          />
-        )}
-
-        {step === 3 && (
-          <div>
-            <div className="label-micro mb-1.5">Anything else to add?</div>
-            <textarea
-              value={comment}
-              maxLength={LONG_TEXT_MAX}
-              onChange={e => setComment(e.target.value)}
-              placeholder="Optional note…"
-              rows={4}
-              className="w-full py-2.5 px-3.5 text-md border border-border rounded-sm bg-bg-input [font-family:inherit] resize-y"
+          {step === 1 && (
+            <ChipPicker
+              label="What worked?"
+              options={HELPFULNESS}
+              selected={helpful}
+              onToggle={v => toggle(helpful, setHelpful, v)}
             />
-          </div>
-        )}
+          )}
 
-        <div className="flex gap-2 justify-between mt-4.5">
+          {step === 2 && (
+            <ChipPicker
+              label="Any friction?"
+              options={FRICTION}
+              selected={friction}
+              onToggle={v => toggle(friction, setFriction, v)}
+            />
+          )}
+
+          {step === 3 && (
+            <div>
+              <div className={`label-micro ${styles.fieldLabel}`}>Anything else to add?</div>
+              <textarea
+                value={comment}
+                maxLength={LONG_TEXT_MAX}
+                onChange={e => setComment(e.target.value)}
+                placeholder="Optional note…"
+                rows={4}
+                className={styles.textarea}
+              />
+            </div>
+          )}
+        </div>
+
+        <div className={`${styles.footer} ${styles.footerSplit}`}>
           {step > 0 ? (
             <button className="btn" onClick={() => setStep(step - 1)} disabled={submitting}>Back</button>
           ) : (
-            <button className="btn btn--ghost" onClick={() => close(true)} disabled={submitting}>Skip</button>
+            <button className="btn btn--ghost" onClick={() => close()} disabled={submitting}>Skip</button>
           )}
           {step < 3 ? (
             <button className="btn btn--primary" onClick={() => setStep(step + 1)} disabled={!canNext || submitting}>
@@ -197,29 +158,6 @@ export function SessionFeedbackFlow({ open, context, onClose }: SessionFeedbackF
             </button>
           )}
         </div>
-    </Dialog>
-  );
-}
-
-function ChipPicker({ label, options, selected, onToggle }: {
-  label: string; options: string[]; selected: string[]; onToggle: (v: string) => void;
-}) {
-  return (
-    <div>
-      <div className="label-micro mb-2">{label}</div>
-      <div className="flex flex-wrap gap-1.5">
-        {options.map(o => {
-          const isSel = selected.includes(o);
-          return (
-            <button
-              key={o}
-              onClick={() => onToggle(o)}
-              className={cn(cn("py-[5px] px-[11px] text-sm rounded-[var(--r-full)]", isSel ? "bg-accent-soft" : "bg-transparent", isSel ? "text-accent" : "text-text-dim"), isSel ? "border border-accent-border" : "border border-border")}
-            >
-              {o}
-            </button>
-          );
-        })}
       </div>
     </div>
   );

@@ -1,0 +1,56 @@
+@layer components {
+/* The loop's posed check (CheckCard): the styles its inline style objects held (#866). */
+
+/* The calm trust chrome (W4.4 "Key verified", W4.1a withheld figure): the
+   values of lib/loopTrustChrome.ts's TRUST_CHROME_STYLE, as tokens. */
+.trustChrome {
+  font-family: var(--font-sans);
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+
+/* No width or colour of its own: the browser's medium dashed edge in the text
+   colour, exactly what the inline `borderStyle: "dashed"` drew. */
+.figureWithheld {
+  border-style: dashed;
+  opacity: 0.9;
+}
+
+/* aria-disabled, not disabled, while a hint loads: the button keeps focus. */
+.unavailable {
+  cursor: not-allowed;
+}
+
+/* A press sinks the button a touch (the global .btn transition carries it). */
+.press {
+  --press-scale: 0.98;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .press:active:not(:disabled):not([aria-disabled="true"]) {
+    transform: scale(var(--press-scale));
+  }
+}
+
+.hintDenied {
+  font-size: var(--fs-md);
+  color: var(--text-muted);
+}
+
+.hintReply {
+  display: flex;
+  gap: var(--sp-4);
+  padding: var(--sp-5) var(--sp-6);
+  font-size: var(--fs-base);
+  white-space: pre-wrap;
+  border: 1px solid var(--accent-border);
+  border-radius: var(--r-md);
+  background: var(--accent-soft);
+}
+
+.hintIcon {
+  margin-top: var(--sp-1);
+  color: var(--accent);
+}
+
+}

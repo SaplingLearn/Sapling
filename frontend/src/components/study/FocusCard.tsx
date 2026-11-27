@@ -13,30 +13,40 @@
  * crossfaded by the hub's useFlip (the `data-flip` parts; the body's key
  * carries the concept, so a new concept is a new body).
  */
+import { HandoffLink } from "@/components/ui/HandoffLink";
 import React from "react";
-import Link from "next/link";
+import { Icon } from "@/components/Icon";
+import { LEARNING_COPY } from "@/lib/learningCopy";
 import { FOCUS_ARC, chipsThatFit, focusCardsLabel } from "./hubModel";
 import { Glyph, StatusDot, WarnIcon, shownTools, type GlyphName } from "./hubUi";
+import f from "./FocusCard.module.css";
 import s from "./StudyHub.module.css";
-import { ST_LABEL, ring, type Concept } from "./studyModel";
-import { leaveOnClick, type ToolKey, type ToolNav } from "./useToolNav";
-import { cn } from "@/lib/cn";
+import { ring, stLabel, type Concept } from "./studyModel";
+import { type ToolKey, type ToolNav } from "./useToolNav";
 
+/* Every word on the block is --sidenav-fg (white, 4.85:1 on the olive), its
+   chips a dark --sidenav-wash under it (globals.css, spec §13 A135). A paler
+   tint for secondary text (the micro label was --sap-100, the notes 86% white)
+   missed AA at these sizes, so the hierarchy is size, weight and case. */
 /** The gap mark's own chip: the icon, its padding, and the line's gap after
  *  it. Derived, so it cannot drift from what the mark actually renders. */
 const GAP_MARK_ICON = 13;
 const GAP_MARK_PAD = 6;
 const PREREQ_GAP = 6;
 const GAP_MARK_W = GAP_MARK_ICON + GAP_MARK_PAD * 2 + PREREQ_GAP;
+/** The same two numbers, handed to the stylesheet (FocusCard.module.css). */
+const LINE_VARS = { "--prereq-gap": `${PREREQ_GAP}px`, "--gap-mark-pad": `${GAP_MARK_PAD}px` } as React.CSSProperties;
+/** The mastery ring's geometry (SVG user units: its 72px box). */
+const RING = { box: 72, r: 31, stroke: 6.5 } as const;
 
 function MasteryRing({ concept }: { concept: Concept }) {
   return (
-    <span className="relative w-18 h-18 shrink-0">
-      <svg width="72" height="72" viewBox="0 0 72 72" aria-hidden="true" className="block [transform:rotate(-90deg)]">
-        <circle cx="36" cy="36" r="31" fill="none" stroke="rgba(255,255,255,0.18)" strokeWidth="6.5" />
-        <circle cx="36" cy="36" r="31" fill="none" stroke={FOCUS_ARC[concept.st]} strokeWidth="6.5" strokeLinecap="round" strokeDasharray={ring(concept.m, 31)} />
+    <span className={f.ringBox}>
+      <svg width={RING.box} height={RING.box} viewBox={`0 0 ${RING.box} ${RING.box}`} aria-hidden="true" className={f.ringSvg}>
+        <circle cx={RING.box / 2} cy={RING.box / 2} r={RING.r} fill="none" className={f.ringTrack} strokeWidth={RING.stroke} />
+        <circle cx={RING.box / 2} cy={RING.box / 2} r={RING.r} fill="none" stroke={FOCUS_ARC[concept.st]} strokeWidth={RING.stroke} strokeLinecap="round" strokeDasharray={ring(concept.m, RING.r)} className={s.ring} />
       </svg>
-      <span className="absolute inset-0 flex items-center justify-center text-[24px] font-semibold tracking-[-0.02em]">{concept.m}%</span>
+      <span className={f.ringPct}>{concept.m}%</span>
     </span>
   );
 }
@@ -45,13 +55,13 @@ function MasteryRing({ concept }: { concept: Concept }) {
 function MorePrereqs({ rest }: { rest: Concept[] }) {
   const [open, setOpen] = React.useState(false);
   return (
-    <span onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)} className="relative shrink-0">
-      <span tabIndex={0} onFocus={() => setOpen(true)} onBlur={() => setOpen(false)} className="inline-flex items-center h-5.5 py-0 px-2 rounded-[11px] text-accent-fg text-xs font-semibold whitespace-nowrap bg-[rgba(255,255,255,0.22)] cursor-default">+{rest.length} more</span>
+    <span onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)} className={f.hoverAnchor}>
+      <span tabIndex={0} onFocus={() => setOpen(true)} onBlur={() => setOpen(false)} className={`${f.chip} ${f.chipMore}`}>+{rest.length} more</span>
       {open && (
-        <span className="absolute left-0 top-full pt-1.5 z-25">
-          <span className={cn(s.pop, "flex flex-col gap-1.5 min-w-45 py-2 px-2.5 [background:var(--bg-panel)] border border-border shadow-lg rounded-md")}>
+        <span className={f.popAnchor}>
+          <span className={`${s.pop} ${s.popover} ${f.moreList}`}>
             {rest.map(t => (
-              <span key={t.id} className="flex items-center gap-2 text-md font-semibold text-text whitespace-nowrap">
+              <span key={t.id} className={f.moreRow}>
                 <StatusDot st={t.st} size={8} />{t.name}
               </span>
             ))}
@@ -76,16 +86,18 @@ function MorePrereqs({ rest }: { rest: Concept[] }) {
 function GapWarning({ concept }: { concept: Concept }) {
   const [open, setOpen] = React.useState(false);
   return (
-    <span onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)} className="relative shrink-0 flex">
-      <span tabIndex={0} aria-label={`${concept.name} · ${concept.gap}`} onFocus={() => setOpen(true)} onBlur={() => setOpen(false)}
-        className="inline-flex items-center h-5.5 py-0 px-2 rounded-[11px] text-accent-fg text-xs font-semibold whitespace-nowrap bg-warn-soft cursor-default" style={{ padding: `0 ${GAP_MARK_PAD}px` }}>
+    <span onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)} className={`${f.hoverAnchor} ${f.hoverAnchorFlex}`}>
+      {/* A button, not a focusable span: a span may not carry a name of its
+          own (axe aria-prohibited-attr), and this one has no text to read. */}
+      <button type="button" aria-label={`${concept.name} · ${concept.gap}`} onFocus={() => setOpen(true)} onBlur={() => setOpen(false)}
+        className={`${f.chip} ${f.chipGap}`}>
         <WarnIcon size={GAP_MARK_ICON} />
-      </span>
+      </button>
       {open && (
-        <span className="absolute -left-1 top-full pt-1.5 z-25">
-          <span role="tooltip" data-testid="focus-gap-warning" className={cn(s.pop, "flex items-start gap-2 w-65 py-2.5 px-3 border rounded-md shadow-lg [background:var(--warn-soft)] border-transparent text-warn text-sm leading-[1.45] text-pretty")}>
+        <span className={`${f.popAnchor} ${f.popAnchorNudge}`}>
+          <span role="tooltip" data-testid="focus-gap-warning" className={`${s.pop} ${f.gapTip}`}>
             <WarnIcon size={14} />
-            <span><strong className="font-bold">{concept.name}</strong> · {concept.gap}</span>
+            <span><strong className={f.gapTipName}>{concept.name}</strong> · {concept.gap}</span>
           </span>
         </span>
       )}
@@ -98,20 +110,20 @@ function Prereqs({ prereqs, gapOn }: { prereqs: Concept[]; gapOn: Concept | null
   const fit = chipsThatFit(prereqs.map(t => t.name), gapOn ? GAP_MARK_W : 0);
   const rest = prereqs.slice(fit);
   return (
-    <div className="flex flex-nowrap items-center h-5.5 min-w-0 text-sm text-[rgba(255,255,255,0.86)]" style={{ gap: PREREQ_GAP }}>
+    <div className={f.prereqs} style={LINE_VARS}>
       {gapOn && <GapWarning concept={gapOn} />}
       {/* Only the chips clip. The gap mark and "+N more" open their pop-ups
           below the line, and a line that clipped hid both. */}
-      <span className="flex items-center min-w-0 overflow-hidden" style={{ gap: PREREQ_GAP }}>
-        {prereqs.length === 0 && <span className="shrink-0 whitespace-nowrap">No prerequisites</span>}
+      <span className={f.prereqChips}>
+        {prereqs.length === 0 && <span className={f.noPrereqs}>No prerequisites</span>}
         {/* minWidth 0 + ellipsis on each chip: two are shown whether or not they
             fit (chipsThatFit), so one that does not must truncate visibly — the
             row clips, and a hard cut mid-word reads as a rendering bug. The
             title carries the full name either way. */}
         {prereqs.slice(0, fit).map(t => (
-          <span key={t.id} title={`${t.name} · ${ST_LABEL[t.st]}`} className="inline-flex items-center h-5.5 py-0 px-2 rounded-[11px] text-accent-fg text-xs font-semibold whitespace-nowrap gap-[5px] min-w-0 bg-[rgba(255,255,255,0.12)]">
+          <span key={t.id} title={`${t.name} · ${stLabel(t.st, t.ladder)}`} className={`${f.chip} ${f.chipPrereq}`}>
             <StatusDot st={t.st} size={7} />
-            <span className="min-w-0 overflow-hidden text-ellipsis">{t.name}</span>
+            <span className={f.clipText}>{t.name}</span>
           </span>
         ))}
       </span>
@@ -120,7 +132,7 @@ function Prereqs({ prereqs, gapOn }: { prereqs: Concept[]; gapOn: Concept | null
   );
 }
 
-export function FocusCard({ concept, upNext, masteredExam, prereqs, cardCount, quizShown, nav }: {
+export function FocusCard({ concept, upNext, masteredExam, prereqs, cardCount, quizShown, tutorShown = true, nav }: {
   concept: Concept;
   /** It is the head of the study queue (rather than a concept the student clicked off it). */
   upNext: boolean;
@@ -131,18 +143,32 @@ export function FocusCard({ concept, upNext, masteredExam, prereqs, cardCount, q
   /** Flashcards the student already has on it. */
   cardCount: number;
   quizShown: boolean;
+  /** False while `hide_tutor` hides Tutor (W3.4). */
+  tutorShown?: boolean;
   nav: ToolNav;
 }) {
-  const actions: { key: ToolKey; icon: GlyphName; label: string; href: string }[] = [
-    { key: "quiz", icon: "bulb", label: "Start quiz", href: nav.quizHref(concept.id) },
-    { key: "cards", icon: "cards", label: focusCardsLabel(cardCount), href: nav.cardsHref([concept.name]) },
+  type FocusAction = { key: ToolKey | "learn"; icon: GlyphName | "clover"; label: string; href: string; testId: string };
+  const actions: FocusAction[] = [
+    // Primary stays "Start quiz" (W7.D2); Guide uses "Quiz this concept".
+    { key: "quiz", icon: "bulb", label: "Start quiz", href: nav.quizHref(concept.id), testId: "focus-quiz" },
+    { key: "cards", icon: "cards", label: focusCardsLabel(cardCount), href: nav.cardsHref([concept.name]), testId: "focus-cards" },
   ];
+  if (tutorShown) {
+    actions.push({
+      key: "learn",
+      icon: "clover",
+      label: LEARNING_COPY.learn,
+      href: nav.learnHref(concept.id, concept.name),
+      testId: "focus-learn",
+    });
+  }
+  const visible = shownTools(actions, quizShown);
   return (
-    <div data-testid="focus-card" data-flip="focus" data-flip-how="fade" className={cn(s.focus, "relative rounded-lg [background:var(--sidenav-bg)] text-accent-fg py-4 px-4.5 min-w-0")}>
+    <div data-testid="focus-card" data-flip="focus" data-flip-how="fade" className={`${s.focus} ${f.block}`}>
       {/* The line stays while a clicked concept is shown (only its second half
           is about the queue), so picking one does not change the block's height. */}
       {masteredExam && (
-        <p key={`${masteredExam}:${upNext}`} data-testid="focus-fallback-note" data-flip={`focus-note:${masteredExam}:${upNext}`} data-flip-how="fade" className="mt-0 mx-0 mb-2.5 text-sm leading-[1.3] text-[rgba(255,255,255,0.86)]">
+        <p key={`${masteredExam}:${upNext}`} data-testid="focus-fallback-note" data-flip={`focus-note:${masteredExam}:${upNext}`} data-flip-how="fade" className={f.fallbackNote}>
           Everything on {masteredExam} is mastered.{upNext && " From the rest of the course:"}
         </p>
       )}
@@ -151,24 +177,29 @@ export function FocusCard({ concept, upNext, masteredExam, prereqs, cardCount, q
           block is too narrow for that (StudyHub.module.css). */}
       <div key={`${concept.id}:${upNext}`} className={s.focusBody} data-flip={`focus-body:${concept.id}:${upNext}`} data-flip-how="fade">
         <div className={s.focusMain}>
-          <span className="font-sans text-sm text-sap-100">{upNext ? "Up Next" : concept.group}</span>
+          <span className={f.micro}>{upNext ? "Up Next" : concept.group}</span>
           <div className={s.focusConcept}>
             <MasteryRing concept={concept} />
-            <div className="min-w-0 flex flex-col gap-1">
-              <span className={cn(s.focusName, "font-display text-2xl font-semibold leading-[1.2] tracking-[-0.01em]")} title={concept.name}>{concept.name}</span>
+            <div className={f.nameCol}>
+              <span className={`${s.focusName} ${f.name}`} title={concept.name}>{concept.name}</span>
               <Prereqs prereqs={prereqs} gapOn={concept.gap ? concept : null} />
             </div>
           </div>
         </div>
         {/* Straight into this concept. The header's tool buttons open the
-            tools themselves; these start the quiz / deck on what is up next. */}
+            tools themselves; these start the quiz / deck / tutor on what is up next. */}
         <nav aria-label={`Study ${concept.name}`} className={s.focusActions}>
-          {shownTools(actions, quizShown).map((ac, i) => (
-            <Link key={ac.key} href={ac.href} className={i === 0 ? `${s.focusAct} ${s.focusActPrimary}` : s.focusAct}
-              onClick={leaveOnClick(nav.leaveTo, ac.href)}>
-              <span aria-hidden="true" className="grid"><Glyph name={ac.icon} size={14} /></span>
+          {visible.map((ac, i) => (
+            <HandoffLink key={ac.key} variant="plain" href={ac.href} testId={ac.testId}
+              className={i === 0 ? `${s.focusAct} ${s.focusActPrimary}` : s.focusAct}
+              onNavigate={nav.leaveTo}>
+              <span aria-hidden="true" className={f.actIcon}>
+                {ac.icon === "clover"
+                  ? <Icon name="clover" size={14} />
+                  : <Glyph name={ac.icon} size={14} />}
+              </span>
               {ac.label}
-            </Link>
+            </HandoffLink>
           ))}
         </nav>
       </div>
@@ -183,15 +214,15 @@ export function FocusCard({ concept, upNext, masteredExam, prereqs, cardCount, q
  */
 export function FocusEmpty({ hasConcepts, pending = false }: { hasConcepts: boolean; pending?: boolean }) {
   if (pending) {
-    return <div key="pending" className={cn(s.focusEmpty, "rounded-lg [background:var(--sidenav-bg)] text-accent-fg py-4 px-4.5")} data-testid="focus-pending" aria-busy="true" data-flip="focus-empty:pending" data-flip-how="fade" />;
+    return <div key="pending" data-testid="focus-pending" aria-busy="true" data-flip="focus-empty:pending" data-flip-how="fade" className={`${s.focusEmpty} ${f.block}`} />;
   }
   const [title, body] = hasConcepts
     ? ["Every concept is mastered", "Keep them fresh with a mixed quiz before the exam."]
     : ["No concepts yet", "Upload course material in the Library to build this course's roadmap."];
   return (
-    <div key={String(hasConcepts)} className={cn(s.focusEmpty, "rounded-lg [background:var(--sidenav-bg)] text-accent-fg py-4 px-4.5 flex flex-col justify-center gap-1.5")} data-flip={`focus-empty:${hasConcepts}`} data-flip-how="fade">
-      <span className="font-display text-xl font-semibold">{title}</span>
-      <span className="text-md text-[rgba(255,255,255,0.86)]">{body}</span>
+    <div key={String(hasConcepts)} className={`${s.focusEmpty} ${f.block} ${f.emptyBlock}`} data-flip={`focus-empty:${hasConcepts}`} data-flip-how="fade">
+      <span className={f.emptyTitle}>{title}</span>
+      <span className={f.emptyBody}>{body}</span>
     </div>
   );
 }

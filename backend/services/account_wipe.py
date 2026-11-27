@@ -9,7 +9,10 @@ Deleted (directly, or through the FK cascades noted):
 * enrollments → gradebook_categories, assignments, gradescope_course_links,
   topic_checklists (→ topic_checklist_progress), gradescope_syncs
 * documents — chunks withdrawn FIRST via `chunk_visibility.withdraw_document_chunks`,
-  then any private `course_chunks` still carrying `uploader_id = user`
+  and the check items drafted from them retired
+  (`check_item_service.retire_items_for_documents`, A23: a classmate is never
+  served an item drafted from a withdrawn upload), then any private
+  `course_chunks` still carrying `uploader_id = user`
 * notes → note_concepts
 * flashcards
 * flashcard_sets (saved selections; they own no cards)
@@ -21,6 +24,13 @@ Deleted (directly, or through the FK cascades noted):
 * graph_nodes → graph_edges, node_mastery_events, note_concepts
 * xp_events, user_achievements
 * document_uploads, tutor_pending_sessions (in-flight work, never bundled)
+* the learning loop, every row the student owns (owner decision: erase):
+  learner_state, misconceptions (→ misconception_attempts), posttest_poses,
+  posttest_skips, quiz_evidence_claims, learning_reveals, check_item_reports,
+  learning_evidence_operations, ai_tutor_daily_calls, and, through the
+  `learning_account_erase` RPC (service_role holds no DELETE on these two
+  append-only records), learning_prequestions and learning_self_explanations.
+  learning_evidence_voids goes by cascade from node_mastery_events.
 
 Kept: users row, user_profiles, user_settings (its `featured_achievement_ids`
 is emptied, since every achievement it named is gone), user_roles,
@@ -29,9 +39,12 @@ accepted: account state, not study data; a consent record belongs to the
 account in the environment where it was given, so it is kept here and the
 account bundle never copies it to another environment), gradescope_credentials,
 user_cosmetics, social (rooms, friendships, …), feedback, issue_reports,
-events, llm_usage, admin_audit_log, and class-wide aggregates
-(offering_concept_stats). `KEPT_PER_USER` names every kept table that has a
-`user_id` column, with its reason; the 30-day purge of a self-deleted account
+events, llm_usage, admin_audit_log, the checklist budget ledger
+(checklist_budget_accounts/_reservations: spend records, see `KEPT_PER_USER`),
+and class-wide or course-shared rows (offering_concept_stats; check_items
+drafted from other students' uploads, and the review/audit/draft records). `KEPT_PER_USER` names every kept table that
+has a `user_id` column, with its reason (tests/test_account_wipe.py fails on a
+`user_id` table in neither list); the 30-day purge of a self-deleted account
 (services/account_purge.py) runs this wipe first and then removes most of them.
 
 Not atomic — PostgREST has no transactions. Each step selects the ids it is
@@ -49,8 +62,8 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 
-from db.connection import page_all, pg_quote_value, table
-from services import chunk_visibility
+from db.connection import page_all, pg_quote_value, rpc, table
+from services import check_item_service, chunk_visibility
 
 logger = logging.getLogger(__name__)
 
@@ -74,10 +87,36 @@ _USER_TABLES: tuple[tuple[str, str], ...] = (
     # Library folders. documents.folder_id is ON DELETE SET NULL, so these can
     # go before or after documents; they go here with the other owned labels.
     ("document_folders", "id"),
+    # Concepts the student took out of a course in the Tutor's course setup
+    # (plaintext normalized names): account data, wiped here AND copied by
+    # the bundle.
+    ("course_concept_exclusions", "id"),
+    # What a student saved from a session (the Tutor's Saved tab): account
+    # data, wiped here AND copied by the bundle; before the sessions it
+    # references (which would cascade it anyway).
+    ("tutor_saved_items", "id"),
     ("sessions", "id"),
     ("study_guides", "id"),
     ("quiz_attempts", "id"),
     ("quiz_context", "id"),
+    # The learning loop's per-student rows, before the graph nodes two of them
+    # reference (learner_state and misconceptions also cascade from
+    # graph_nodes; misconceptions cascades misconception_attempts). Keys are
+    # one column of a composite primary key where the table has no id; the
+    # delete is owner-scoped, so a key shared with another student is safe.
+    ("learner_state", "node_id"),
+    ("misconceptions", "id"),
+    ("posttest_poses", "node_id"),
+    ("posttest_skips", "node_id"),
+    ("quiz_evidence_claims", "question_hash"),
+    ("learning_reveals", "id"),
+    # The student's reports on course items (owner decision, #879: erase). A
+    # quarantine the reports already reached is recorded in check_item_reviews
+    # and holds without them; an unfinished count simply loses this reporter.
+    ("check_item_reports", "question_hash"),
+    ("learning_evidence_operations", "operation_id"),
+    # Today's (and past days') tutor-call counts (owner decision, #879: erase).
+    ("ai_tutor_daily_calls", "day"),
     ("graph_nodes", "id"),
     ("xp_events", "id"),
     ("user_achievements", "achievement_id"),
@@ -91,9 +130,16 @@ _USER_TABLES: tuple[tuple[str, str], ...] = (
     ("tutor_pending_sessions", "session_id"),
 )
 
+#: The learning loop's append-only teach-prompt records. service_role holds
+#: no DELETE on them (20261108184825, 20261109032302), so the wipe erases them
+#: through this SECURITY DEFINER RPC (20261111030019_learning_account_erase.sql),
+#: which deletes exactly one student's rows and returns a count per table.
+_ERASE_RPC = "learning_account_erase"
+_ERASED_BY_RPC: tuple[str, ...] = ("learning_self_explanations", "learning_prequestions")
+
 #: Every table the wipe deletes from directly.
 WIPED_DIRECTLY: frozenset[str] = frozenset(
-    ("enrollments", "documents", *(name for name, _ in _USER_TABLES)),
+    ("enrollments", "documents", *(name for name, _ in _USER_TABLES), *_ERASED_BY_RPC),
 )
 
 #: Tables the wipe empties through an ON DELETE CASCADE, child -> parent (the
@@ -111,8 +157,11 @@ WIPED_BY_CASCADE: dict[str, str] = {
     "note_concepts": "notes",
     "messages": "sessions",
     "quiz_responses": "quiz_attempts",
+    "misconception_attempts": "misconceptions",
+    # Append-only (service_role: SELECT + INSERT); "a delete happens only by
+    # cascade, when its journal row goes with the student's node or account".
+    "learning_evidence_voids": "node_mastery_events",
 }
-
 
 #: Every table with a `user_id` column that the wipe deliberately keeps, with
 #: the reason. tests/test_account_wipe.py fails on a `user_id` table (replayed
@@ -141,6 +190,17 @@ KEPT_PER_USER: dict[str, str] = {
     "feedback": "product feedback the student sent us",
     "issue_reports": "bug reports the student sent us",
     "events": "telemetry",
+    # AI budget state (owner decision 2026-11-11): deleting a student's data
+    # must not erase a possible bill or reset a cap they have already hit.
+    "checklist_budget_accounts": (
+        "AI budget: spend control, not study data. Its own migration gives it no "
+        "cascade so removing a user cannot erase a possible bill, and `blocked` is "
+        "the trip an over-budget bill sets, which a wipe must not quietly reset"
+    ),
+    "checklist_budget_reservations": (
+        "AI budget: spend holds against checklist_budget_accounts; an unsettled "
+        "one is a possibly billed call that no timer or wipe refunds"
+    ),
     "llm_usage": "telemetry and the billing record of model spend",
     "course_chunk_contributors": (
         "removed per document by chunk_visibility.withdraw_document_chunks; a "
@@ -196,7 +256,36 @@ def _delete_keys(name: str, keys: list[str], *, key: str = "id",
 
 
 def _delete_owned(name: str, user_id: str, key: str = "id") -> int:
-    return _delete_keys(name, _owned_keys(name, user_id, key), key=key, owner=user_id)
+    """Delete every row `user_id` owns in `name`; returns the rows deleted.
+
+    `key` need not be unique (one column of a composite key): the delete runs
+    over the distinct keys, owner-scoped, and the count is of rows."""
+    keys = _owned_keys(name, user_id, key)
+    _delete_keys(name, list(dict.fromkeys(keys)), key=key, owner=user_id)
+    return len(keys)
+
+
+def _erase_loop_records(user_id: str) -> dict[str, int]:
+    """The append-only teach-prompt records, through `_ERASE_RPC`."""
+    out = rpc(_ERASE_RPC, {"p_user_id": user_id})
+    if not isinstance(out, dict) or set(out) != set(_ERASED_BY_RPC):
+        raise AccountWipeIncomplete(
+            f"{_ERASE_RPC} returned an unexpected result for {user_id}; re-run the wipe"
+        )
+    return {name: int(out[name] or 0) for name in _ERASED_BY_RPC}
+
+
+def _retire_items(user_id: str, doc_ids: list[str]) -> int:
+    """The course check items drafted from these documents (A23). Run after
+    the chunk withdrawal and before the hard delete: a failure keeps the
+    soft-deleted documents, whose ids are what a re-run retires by."""
+    try:
+        return check_item_service.retire_items_for_documents(doc_ids)
+    except Exception as exc:
+        raise AccountWipeIncomplete(
+            f"check item retirement failed for {len(doc_ids)} document(s) of {user_id} "
+            f"({type(exc).__name__}); they are soft-deleted and kept so a re-run can finish"
+        ) from exc
 
 
 def _wipe_documents(user_id: str) -> dict[str, int]:
@@ -210,12 +299,17 @@ def _wipe_documents(user_id: str) -> dict[str, int]:
     soft-deleted documents are withdrawn again too (idempotent) — their
     original withdrawal may have failed.
 
-    A failed withdrawal stops the wipe before any document is hard-deleted:
-    the source ledger names the document, and keeping the (soft-deleted) row
-    is what lets a re-run finish the job.
+    Then every check item drafted from any of them is retired (A23), so the
+    class pool serves none of this account's uploads.
+
+    A failed withdrawal or retirement stops the wipe before any document is
+    hard-deleted: the source ledger and the items' `source_document_ids` name
+    the document, and keeping the (soft-deleted) row is what lets a re-run
+    finish the job.
     """
     doc_ids = _owned_keys("documents", user_id)
-    counts = {"documents": 0, "course_chunks": 0, "course_chunk_contributors": 0}
+    counts = {"documents": 0, "course_chunks": 0, "course_chunk_contributors": 0,
+              "check_items": 0}
     if doc_ids:
         table("documents").update(
             {"deleted_at": datetime.now(timezone.utc).isoformat()},
@@ -235,6 +329,7 @@ def _wipe_documents(user_id: str) -> dict[str, int]:
                 f"chunk withdrawal failed for {len(failed)} document(s) of {user_id}; "
                 "they are soft-deleted and kept so a re-run can finish"
             )
+        counts["check_items"] = _retire_items(user_id, doc_ids)
         counts["documents"] = _delete_keys("documents", doc_ids, owner=user_id)
 
     # Private rows that still name this uploader: written before the source
@@ -273,6 +368,7 @@ def wipe_account_data(user_id: str) -> dict[str, int]:
     # order also never leaves an enrollment pointing at a deleted document.
     counts["enrollments"] = _delete_owned("enrollments", user_id)
     counts.update(_wipe_documents(user_id))
+    counts.update(_erase_loop_records(user_id))
     for name, key in _USER_TABLES:
         counts[name] = _delete_owned(name, user_id, key)
 

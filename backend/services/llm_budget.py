@@ -64,7 +64,8 @@ same "under budget" status and all start. :func:`_admit` makes the decision
 check-and-reserve under one lock: each admitted run reserves
 ``RESERVE_TOKENS_PER_RUN`` in process memory, and later decisions add every
 reservation not yet visible in the status they read. A run whose usage row
-has been queued (``note_usage_recorded``, called by ``log_llm_usage``) is
+has been queued (``note_usage_recorded``, called by ``log_llm_usage``, and
+for the checklist's self-written receipt by ``note_written_llm_usage``) is
 settled: it stops counting once a status read is ``SETTLE_LAG_S`` past the
 queueing, since its real usage is in ``used`` by then. A run still in flight
 counts until it settles, or for at most ``LAND_LAG_S`` if it never reports.

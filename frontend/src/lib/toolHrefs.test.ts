@@ -27,6 +27,13 @@ describe("studyGuideHref", () => {
     expect(studyGuideHref().startsWith("/study/")).toBe(true);
   });
 
+  it("carries concept and course the same way Quiz/Teach deep links do", () => {
+    expect(studyGuideHref({ concept: "node-1" })).toBe("/study/guide?concept=node-1");
+    expect(studyGuideHref({ course: "c1" })).toBe("/study/guide?course=c1");
+    expect(studyGuideHref({ course: "c1", concept: "node-1" }))
+      .toBe("/study/guide?course=c1&concept=node-1");
+  });
+
   it("opens the home on the saved guides only when asked", () => {
     expect(studyGuideHref({ saved: true })).toBe("/study/guide?saved=1");
     expect(studyGuideHref({ saved: false })).toBe("/study/guide");

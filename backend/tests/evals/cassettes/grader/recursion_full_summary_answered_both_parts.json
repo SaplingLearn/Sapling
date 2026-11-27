@@ -1,0 +1,63 @@
+{
+  "context_checks": [
+    {
+      "withdrawn": [
+        "50517:no",
+        "85816:no"
+      ]
+    }
+  ],
+  "context_keys": [
+    {
+      "input_sha256": "7d10d536c6d9243241807adfd381626a8841e7a27107453097e97fef9d6f9e66",
+      "model": "claude-sonnet-5-5",
+      "prompt_hash": "d215edc372d3",
+      "schema_hash": "c322bdba6718"
+    }
+  ],
+  "run_keys": [
+    {
+      "input_sha256": "34cc37917a2fcfd203b5b8486279ece6a8e78488cbd4890c9fcc5b296add049d",
+      "model": "claude-haiku-5-5",
+      "prompt_hash": "d215edc372d3",
+      "schema_hash": "e42cc97704ca"
+    }
+  ],
+  "runs": [
+    {
+      "addresses_grader": false,
+      "confidence": 0.95,
+      "contradicts_reference": false,
+      "feedback_hint": "Think about what would happen during the calls if there were no point at which the function returns. Check whether your explanation says what stops the process and what goes wrong without it.",
+      "item_results": [
+        "50517:yes",
+        "85816:yes"
+      ],
+      "matched_wrong_key": "",
+      "support": [
+        "50517: The base case is what stops it; otherwise it keeps calling itself and the stack blows up.",
+        "85816: The base case is what stops it; otherwise it keeps calling itself and the stack blows up."
+      ]
+    }
+  ],
+  "span_checks": [
+    {
+      "asserted": [
+        "50517:yes",
+        "85816:yes"
+      ],
+      "item_results": [
+        "50517:yes",
+        "85816:yes"
+      ]
+    }
+  ],
+  "span_keys": [
+    {
+      "input_sha256": "33922f5c0f40583dab77b24ce51552bd0885bd685208777e2cfcafebce89203f",
+      "model": "claude-sonnet-5-5",
+      "prompt_hash": "d215edc372d3",
+      "schema_hash": "f72e918aa5ce"
+    }
+  ]
+}

@@ -1,10 +1,9 @@
 """Code-size ratchet for architecture-hardening Phase 4, "Domain modules" (#118).
 
-Phase 4 is done when no route file is over 600 lines and no function is over
-complexity 25 (docs/architecture-hardening-plan.md). Neither is true today, and
-the files that miss it most (routes/quiz.py, routes/learn.py,
-routes/documents.py) are under active edit by open PRs, so they cannot be split
-yet. This ratchet stops things getting worse in the meantime:
+Phase 4's target was no route file over 600 lines and no function over
+complexity 25 (docs/architecture-hardening-plan.md); PR #866 tightened the
+complexity ceiling to 15 (ruff.toml max-complexity). The functions still over
+it are baselined and may only shrink. This ratchet stops things getting worse:
 
   complexity        every function ruff's C901 (McCabe) scores above
                     ``[lint.mccabe] max-complexity`` in ruff.toml is listed in

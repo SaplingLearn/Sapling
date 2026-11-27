@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import re
 import threading
-import time
 from unittest.mock import patch
 
 import httpx
@@ -144,7 +143,10 @@ def test_admin_and_auth_routes_are_never_gated(monkeypatch):
 # ── /api/flags degraded marker ──────────────────────────────────────────────
 
 
-def test_flags_route_says_when_the_store_is_unreadable():
+def test_flags_route_says_when_the_store_is_unreadable(monkeypatch):
+    # the suite turns the learning_loop flag on by env override (conftest); this
+    # test reads every flag off the (down) store
+    monkeypatch.delenv("SAPLING_FLAG_LEARNING_LOOP", raising=False)
     with patch("services.feature_flags.read_config", side_effect=httpx.ConnectError("down")):
         r = client.get("/api/flags")
     assert r.status_code == 200
@@ -159,37 +161,103 @@ def test_flags_route_has_no_degraded_marker_normally():
 # ── Single-flight + bounded maps ────────────────────────────────────────────
 
 
-def test_concurrent_cold_reads_hit_the_store_once():
-    calls: list[int] = []
+class _Arrivals:
+    """Where each concurrent caller has got to: reading the store, waiting on
+    the read already in flight (a follower), or back with its answer. A test
+    holds the leader's read until every caller is accounted for, instead of
+    sleeping and hoping the others piled up; a caller that skips the flight
+    is accounted for as soon as it returns, so that fails at once."""
+
+    def __init__(self):
+        self.reads = 0
+        self.followers = 0
+        self._callers: set[int] = set()
+        self._changed = threading.Condition()
+
+    def _arrive(self):
+        self._callers.add(threading.get_ident())
+        self._changed.notify_all()
+
+    def read(self):
+        with self._changed:
+            self.reads += 1
+            self._arrive()
+
+    def follow(self):
+        with self._changed:
+            self.followers += 1
+            self._arrive()
+
+    def returned(self):
+        with self._changed:
+            self._arrive()
+
+    def wait_for(self, callers):
+        with self._changed:
+            assert self._changed.wait_for(lambda: len(self._callers) >= callers, timeout=30)
+
+
+@pytest.fixture
+def arrivals(monkeypatch):
+    """Every in-flight read reports each follower that waits on it."""
+    seen = _Arrivals()
+
+    class _CountedDone(threading.Event):
+        def wait(self, timeout=None):
+            seen.follow()
+            return super().wait(timeout)
+
+    class _Flight(ff._Flight):
+        def __init__(self, generation):
+            super().__init__(generation)
+            self.done = _CountedDone()
+
+    monkeypatch.setattr(ff, "_Flight", _Flight)
+    return seen
+
+
+def test_concurrent_cold_reads_hit_the_store_once(arrivals):
+    """Eight cold callers at once: one reads the store, seven wait on its read.
+    The leader's read is held until every caller is accounted for, so the
+    waiters provably piled up behind it (no sleep deciding that), and a broken
+    single-flight shows as a second read at once rather than after a timeout."""
     gate = threading.Event()
 
     def slow_read(**_k):
-        calls.append(1)
-        gate.wait(5)
+        arrivals.read()
+        assert gate.wait(30)  # a hang guard, never reached when the test passes
         return ff.Snapshot(flags={}, targets={})
 
     results: list = []
+
+    def call():
+        try:
+            results.append(ff._get_snapshot())
+        finally:
+            arrivals.returned()
+
     with patch("services.feature_flags.read_config", side_effect=slow_read):
-        threads = [threading.Thread(target=lambda: results.append(ff._get_snapshot()))
-                   for _ in range(8)]
+        threads = [threading.Thread(target=call) for _ in range(8)]
         for t in threads:
             t.start()
-        deadline = time.monotonic() + 5
-        while not calls and time.monotonic() < deadline:
-            time.sleep(0.001)
-        time.sleep(0.05)  # let the others pile up behind the leader
+        arrivals.wait_for(8)
         gate.set()
         for t in threads:
-            t.join(5)
-    assert len(calls) == 1
+            t.join(30)
+    assert arrivals.reads == 1 and arrivals.followers == 7
     assert len(results) == 8
 
 
-def test_a_failed_leader_read_fails_its_waiters_closed():
+def test_a_failed_leader_read_fails_its_waiters_closed(arrivals):
+    """The leader's read fails only once the three other callers have joined
+    it, so each fails closed on the leader's own error. Without that hold, a
+    caller arriving after the failure fails on the store-down mark instead and
+    the test passes without exercising the waiters at all."""
     gate = threading.Event()
 
     def failing_read(**_k):
-        gate.wait(5)
+        arrivals.read()
+        assert gate.wait(30)  # a hang guard, never reached when the test passes
         raise httpx.ConnectError("down")
 
     errors: list = []
@@ -199,17 +267,19 @@ def test_a_failed_leader_read_fails_its_waiters_closed():
             ff._get_snapshot()
         except Exception as exc:
             errors.append(type(exc))
+        finally:
+            arrivals.returned()
 
     with patch("services.feature_flags.read_config", side_effect=failing_read) as rc:
         threads = [threading.Thread(target=call) for _ in range(4)]
         for t in threads:
             t.start()
-        time.sleep(0.05)
+        arrivals.wait_for(4)
         gate.set()
         for t in threads:
-            t.join(5)
-    assert rc.call_count == 1
-    assert len(errors) == 4
+            t.join(30)
+    assert rc.call_count == 1 and arrivals.followers == 3
+    assert errors == [httpx.ConnectError] * 4
 
 
 def test_roles_cache_is_bounded(monkeypatch):
@@ -232,3 +302,64 @@ def test_warned_set_is_bounded(monkeypatch):
     for i in range(10):
         ff.explain(f"not_registered_{i}", None)
     assert len(ff._warned) <= 3
+
+
+# ── #866 Z37: the Study page's half of the learning loop's router ──────────
+#
+# Study's daily review (DueQueue) and retention check (RetentionCheck) call
+# /api/learn/loop, which other visible surfaces share, so hide_study gates
+# only those paths (NAV_FEATURE_PATHS). The loop's own gate answers 404 while
+# the loop is off, so these probes turn it on: a visible path then answers the
+# auth guard's 401, never the gate's 404.
+
+#: (method, path) only Study calls.
+LOOP_STUDY_CALLS = [
+    ("GET", "/api/learn/loop/review/next?user_id=u1"),
+    ("POST", "/api/learn/loop/review/answer"),
+    ("POST", "/api/learn/loop/posttest/start"),
+    ("POST", "/api/learn/loop/posttest/answer"),
+    ("POST", "/api/learn/loop/posttest/shown"),
+]
+
+#: (method, path) another surface calls: the Tutor's due pill (/review/summary),
+#: the loop probe every page runs (/review/active), the Dashboard card and nav
+#: badge (/posttest/due).
+LOOP_SHARED_CALLS = [
+    ("GET", "/api/learn/loop/review/summary?user_id=u1"),
+    ("GET", "/api/learn/loop/review/active?user_id=u1"),
+    ("GET", "/api/learn/loop/posttest/due?user_id=u1"),
+]
+
+
+@pytest.fixture
+def loop_on(monkeypatch):
+    monkeypatch.delenv("LEARNING_LOOP_ENABLED", raising=False)
+    monkeypatch.setenv("SAPLING_FLAG_LEARNING_LOOP", "on")
+    monkeypatch.setenv("SAPLING_FLAG_RETENTION_DUE_BADGE", "on")
+
+
+@pytest.mark.parametrize("method,path", LOOP_STUDY_CALLS)
+def test_hide_study_gates_the_loops_study_paths(monkeypatch, loop_on, method, path):
+    monkeypatch.setenv("SAPLING_FLAG_HIDE_STUDY", "on")
+    assert _gated(_call(method, path)), f"{method} {path} served while hide_study hides Study"
+    monkeypatch.setenv("SAPLING_FLAG_HIDE_STUDY", "off")
+    r = _call(method, path)
+    assert not _gated(r) and r.status_code != 405, f"{method} {path} is not a route"
+
+
+@pytest.mark.parametrize("method,path", LOOP_SHARED_CALLS)
+def test_hide_study_leaves_the_loops_shared_paths(monkeypatch, loop_on, method, path):
+    monkeypatch.setenv("SAPLING_FLAG_HIDE_STUDY", "on")
+    r = _call(method, path)
+    assert not _gated(r) and r.status_code != 405, f"{method} {path} is used by another surface"
+
+
+def test_every_gated_loop_path_has_a_probe():
+    probes = [(m, p.split("?")[0]) for m, p in LOOP_STUDY_CALLS]
+    for flag, routers in ff.NAV_FEATURE_PATHS.items():
+        for prefix, paths in routers.items():
+            for method, pattern in paths:
+                rx = re.compile(re.escape(prefix) + pattern + r"/?$")
+                assert any(method in ("*", m) and rx.match(p) for m, p in probes), (
+                    f"no probe for {flag}: {method} {prefix}{pattern}"
+                )
