@@ -49,7 +49,7 @@ def test_colour_matches_token(name):
 @pytest.mark.parametrize(
     ("const", "token"),
     [("_FS_MD", "fs-md"), ("_FS_LG", "fs-lg"), ("_FS_XL", "fs-xl"), ("_FS_2XL", "fs-2xl"),
-     ("_FS_4XL", "fs-4xl"), ("_FS_5XL", "fs-5xl"), ("R_SM", "r-sm")],
+     ("_FS_4XL", "fs-4xl"), ("_FS_5XL", "fs-5xl"), ("R_SM", "r-sm"), ("R_LG", "r-lg")],
 )
 def test_size_matches_token(const, token):
     assert f"{getattr(t, const)}px" == _root_tokens()[token]

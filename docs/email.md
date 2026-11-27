@@ -133,7 +133,8 @@ takes its sent count from `email_sends`. Two clicks start one run.
 (pale ground, point cloud) with the navbar's hand-drawn wordmark, as a header image
 that fades into one flat white column (no outer background, card border or
 boxed sections, which stack into boxes inside boxes on a phone), then Aleo
-headlines and SUSE body text, all left-aligned: flush with the header's edges
+headlines and SUSE body text, left-aligned with buttons centred. The header's
+top corners are rounded (`--r-lg`). Text sits flush with the header's edges
 on a desktop, 20px in on a phone. The 20px is inline and a min-width media
 query removes it on wide screens, because the Gmail phone app ignores media
 queries and must fall back to the padding.

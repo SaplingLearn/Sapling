@@ -2,8 +2,9 @@
 
 The look: one flat white column (no outer background, no card border, no
 boxed sections) topped with the landing page's hero, frozen into an image (the
-pale ground, the point cloud and the wordmark) that fades into the page, then
-Aleo headlines and SUSE body text, everything left-aligned. Nested frames read
+pale ground, the point cloud and the wordmark) with rounded top corners that
+fades into the page, then Aleo headlines and SUSE body text, left-aligned, with
+buttons centred. Nested frames read
 as boxes inside boxes on a phone, where the mail client already frames the
 message, so there is one column and nothing else. On a desktop the text runs
 flush with the header's edges; on a phone it sits 20px in. The 20px is the
@@ -62,6 +63,7 @@ _FS_2XL = 22   # --fs-2xl: section headings
 _FS_4XL = 30   # --fs-4xl: the headline on a phone
 _FS_5XL = 32   # --fs-5xl: the headline
 R_SM = 6       # --r-sm: the app's button radius
+R_LG = 16      # --r-lg: the header banner's top corners
 
 BRAND = TOKENS["brand-forest"]
 _PAPER = "#ffffff"    # the page and the column: one surface, no card
@@ -139,8 +141,8 @@ def _p(inner_html: str) -> str:
 
 def _button(href: str, label: str, *, margin: str = "24px 0 0 0") -> str:
     return (
-        '<table role="presentation" cellpadding="0" cellspacing="0" border="0" '
-        f'style="margin:{margin};"><tr>'
+        '<table role="presentation" align="center" cellpadding="0" cellspacing="0" border="0" '
+        f'style="margin:{margin};margin-left:auto;margin-right:auto;"><tr>'
         f'<td bgcolor="{BRAND}" style="border-radius:{R_SM}px;background:{BRAND};">'
         f'<a href="{_e(href)}" target="_blank" '
         f'style="display:inline-block;padding:14px 32px;font-family:{_SANS};font-size:{_FS_LG}px;'
@@ -289,8 +291,8 @@ def _layout(
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="{_PAPER}" style="background:{_PAPER};">
 <tr><td align="center" style="padding:0 0 40px 0;">
 <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:600px;background:{_PAPER};">
-<tr><td bgcolor="#F2F4F0" style="font-size:0;line-height:0;background:#F2F4F0;">
-<a href="{_e(site)}" target="_blank"><img src="{_e(_asset("header.jpg"))}" width="600" alt="Sapling" style="display:block;width:100%;max-width:600px;height:auto;border:0;"></a>
+<tr><td bgcolor="#F2F4F0" style="font-size:0;line-height:0;background:#F2F4F0;border-radius:{R_LG}px {R_LG}px 0 0;">
+<a href="{_e(site)}" target="_blank"><img src="{_e(_asset("header.jpg"))}" width="600" alt="Sapling" style="display:block;width:100%;max-width:600px;height:auto;border:0;border-radius:{R_LG}px {R_LG}px 0 0;"></a>
 </td></tr>
 {_spacer(28)}
 {"".join(rows)}
