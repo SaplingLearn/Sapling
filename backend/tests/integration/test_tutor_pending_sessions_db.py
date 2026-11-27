@@ -146,7 +146,7 @@ def test_the_store_is_service_only(db_conn):
 def test_the_migration_is_safe_to_apply_again(db_conn):
     _stash(db_conn, "tps-again")
     with db_conn.transaction() as tx:
-        db_conn.execute(_MIGRATION.read_text())
+        db_conn.execute(_MIGRATION.read_text(encoding="utf-8"))
         assert _state(db_conn, "tps-again") == "pending"
         raise psycopg.Rollback(tx)
 

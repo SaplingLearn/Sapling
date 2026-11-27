@@ -2175,7 +2175,7 @@ def test_the_frontend_fixture_has_the_payload_shape():
     from pathlib import Path
 
     fixture_path = Path(__file__).resolve().parents[2] / "frontend/src/test-utils/crisisSupport.json"
-    fixture = json.loads(fixture_path.read_text())
+    fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
     payload = crisis_support.client_payload(crisis_copy.DEFAULT_CAMPUS_COUNSELING)
 
     def shape(value):

@@ -290,7 +290,7 @@ WRITE_SCRIPTS = [
 def test_every_write_script_calls_the_guard(path):
     from pathlib import Path
 
-    src = (Path(__file__).resolve().parents[1] / path).read_text()
+    src = (Path(__file__).resolve().parents[1] / path).read_text(encoding="utf-8")
     assert "abort_unless_key_verified(" in src, f"{path} writes encrypted data without the key check"
 
 
@@ -307,6 +307,6 @@ def test_no_unguarded_encrypting_script():
             rel = f.relative_to(root).as_posix()
             if rel.startswith("db/archive/") or "__pycache__" in rel:
                 continue
-            if "if __name__" in f.read_text() and pattern.search(f.read_text()):
+            if "if __name__" in f.read_text(encoding="utf-8") and pattern.search(f.read_text(encoding="utf-8")):
                 found.add(rel)
     assert found <= set(WRITE_SCRIPTS), sorted(found - set(WRITE_SCRIPTS))

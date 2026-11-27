@@ -560,14 +560,14 @@ def test_the_ops_scope_migration_leaves_email_suppressions_untouched():
     alters = re.compile(r"ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?:public\.)?email_suppressions\b", re.I)
     touching = sorted(
         p.name for p in _MIGRATIONS.glob("*.sql")
-        if alters.search(re.sub(r"--[^\n]*", "", p.read_text()))
+        if alters.search(re.sub(r"--[^\n]*", "", p.read_text(encoding="utf-8")))
     )
     assert touching == ["20261022063145_email.sql"]
 
 
 def test_the_ops_scope_table_is_service_only():
     (mig,) = _MIGRATIONS.glob("*_email_alert_suppressions.sql")
-    sql = re.sub(r"--[^\n]*", "", mig.read_text())
+    sql = re.sub(r"--[^\n]*", "", mig.read_text(encoding="utf-8"))
     assert re.search(r"CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+public\.email_alert_suppressions", sql)
     assert re.search(r"recipient_hash\s+TEXT\s+PRIMARY\s+KEY", sql, re.I)
     assert "ENABLE ROW LEVEL SECURITY" in sql

@@ -104,7 +104,7 @@ def test_the_migration_drops_every_user_blind_unique_key_however_named(db_conn):
             "CREATE UNIQUE INDEX itest_drifted_key_idx ON xp_events (idempotency_key)")
         assert len(_user_blind_unique_indexes(db_conn)) == 3
 
-        db_conn.execute(MIGRATION.read_text())
+        db_conn.execute(MIGRATION.read_text(encoding="utf-8"))
 
         assert _user_blind_unique_indexes(db_conn) == []
         assert db_conn.execute(
@@ -116,7 +116,7 @@ def test_the_migration_drops_every_user_blind_unique_key_however_named(db_conn):
                 "INSERT INTO xp_events (user_id, rule_key, amount, idempotency_key)"
                 " VALUES (%s, 'achievement_unlocked', 40, 'itest:shared')", (user_id,))
 
-        db_conn.execute(MIGRATION.read_text())        # idempotent on its own result
+        db_conn.execute(MIGRATION.read_text(encoding="utf-8"))        # idempotent on its own result
         assert _user_blind_unique_indexes(db_conn) == []
 
 
@@ -132,4 +132,4 @@ def test_the_migration_refuses_duplicate_pairs_instead_of_deleting_them(db_conn)
                 db_conn.execute(
                     "INSERT INTO xp_events (user_id, rule_key, amount, idempotency_key)"
                     " VALUES (%s, 'quiz_completed', 30, 'itest:dup')", (USER_ACTIVE,))
-            db_conn.execute(MIGRATION.read_text())
+            db_conn.execute(MIGRATION.read_text(encoding="utf-8"))

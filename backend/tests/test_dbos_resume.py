@@ -191,8 +191,8 @@ def test_shim_resume_minimal_workflow(tmp_path):
     # checkpointed step. step2 also ran exactly once to completion (its
     # first, crashing invocation never returned, so it never appended to
     # the counter file -- only the resumed invocation did).
-    assert step1_counter.read_text().splitlines() == ["x"]
-    assert step2_counter.read_text().splitlines() == ["x"]
+    assert step1_counter.read_text(encoding="utf-8").splitlines() == ["x"]
+    assert step2_counter.read_text(encoding="utf-8").splitlines() == ["x"]
 
 
 # -- 2. process_document under DBOS produces the same shape as DBOS-off -----
@@ -509,13 +509,13 @@ def test_pipeline_crash_resume_via_workflow_id(tmp_path):
     # The resume-at-last-completed-step contract on the REAL pipeline:
     # classify ran exactly once (during the crash phase) -- DBOS must NOT
     # re-run an already-checkpointed step on the phase-2 same-id retry.
-    assert classify_counter.read_text().splitlines() == ["x"]
+    assert classify_counter.read_text(encoding="utf-8").splitlines() == ["x"]
 
     # The _step_apply_graph checkpoint claim: the graph merge runs exactly
     # once total, on whichever execution actually completes the workflow
     # (phase 1 crashes before reaching it). File-backed so the count is
     # correct across the two subprocesses.
-    assert graph_counter.read_text().splitlines() == ["x"]
+    assert graph_counter.read_text(encoding="utf-8").splitlines() == ["x"]
 
     [result_line] = [
         line for line in resume.stdout.splitlines() if line.startswith("RESULT_JSON:")

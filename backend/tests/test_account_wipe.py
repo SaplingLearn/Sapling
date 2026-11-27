@@ -493,7 +493,7 @@ def _create_table_body(name: str) -> str:
         re.S | re.I,
     )
     bodies = [m.group(1) for f in sorted(_MIGRATIONS.glob("*.sql"))
-              for m in pattern.finditer(f.read_text())]
+              for m in pattern.finditer(f.read_text(encoding="utf-8"))]
     assert bodies, f"no CREATE TABLE {name} in the migrations"
     return bodies[-1]
 
@@ -539,7 +539,7 @@ def test_wiped_but_not_bundled_tables_are_exactly_the_named_exceptions():
     from services.account_bundle import SPECS
 
     assert set(aw.wiped_tables()) - {s.name for s in SPECS} == set(WIPED_NOT_BUNDLED)
-    claude_md = (Path(__file__).resolve().parents[2] / "CLAUDE.md").read_text()
+    claude_md = (Path(__file__).resolve().parents[2] / "CLAUDE.md").read_text(encoding="utf-8")
     exception = claude_md[claude_md.index("Exception: in-flight staging tables"):]
     exception = exception[:exception.index("\n")]
     for name in (
@@ -563,7 +563,7 @@ def test_consent_records_are_kept_and_never_bundled_for_a_documented_reason():
     doc = account_bundle.__doc__
     assert "environment" in doc[doc.index("`legal_acceptances`"):][:200]
 
-    claude_md = (Path(__file__).resolve().parents[2] / "CLAUDE.md").read_text()
+    claude_md = (Path(__file__).resolve().parents[2] / "CLAUDE.md").read_text(encoding="utf-8")
     entry = next(
         line for line in claude_md.splitlines()
         if line.startswith("- backend/routes/admin_accounts.py")
@@ -623,7 +623,7 @@ def schema_user_id_columns() -> dict[str, bool]:
     Shared with tests/test_account_purge.py."""
     tables: dict[str, bool] = {}
     for path in sorted(_MIGRATIONS.glob("*.sql")):
-        sql = re.sub(r"--[^\n]*", "", path.read_text())
+        sql = re.sub(r"--[^\n]*", "", path.read_text(encoding="utf-8"))
         for m in _STATEMENT.finditer(sql):
             if m.group("create"):
                 tables[m.group("create").lower()] = bool(

@@ -119,7 +119,7 @@ def test_the_frontend_mirror_matches_the_backend_thresholds(rel, fn):
 
     from learning.params import BAND_NOVICE_MAX, BKT_PROFICIENT, TIER_UNEXPLORED_MAX
 
-    src = (_REPO / rel).read_text()
+    src = (_REPO / rel).read_text(encoding="utf-8")
     body = re.search(
         rf"function {fn}\(score: number\)[^{{]*\{{(.*?)\n\}}", src, re.S
     )
