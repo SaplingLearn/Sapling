@@ -134,6 +134,23 @@ export function Library() {
     scopeCourseId: scope.scopeCourseId, trashCount: data.trash.length, go: ui.setLoc,
   }), [data.documents, courses, ui.loc, scope.scopeCourseId, data.trash.length, ui.setLoc]);
 
+  // The Trash chip's own drag-over state. The row being dragged already named
+  // itself in `ui.dragIds`, so the drop only has to act on it.
+  const [trashOver, setTrashOver] = React.useState(false);
+  const onTrashDragOver = React.useCallback((e: React.DragEvent) => {
+    // Files are the page's own drop target (a new upload), never the Trash.
+    if (e.dataTransfer.types.includes("Files")) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    setTrashOver(true);
+  }, []);
+  const onTrashDrop = React.useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setTrashOver(false);
+    const ids = ui.dragIds.current;
+    if (ids?.length) act.trashDocs(ids);
+  }, [ui.dragIds, act]);
+
   const empty = scope.rows.length + scope.folderItems.length === 0;
   const menuDoc = ui.docMenu
     ? scope.source.find(d => d.id === ui.docMenu!.docId)
@@ -223,6 +240,11 @@ export function Library() {
               onFolderRenameCommit={act.commitEdit}
               onFolderRenameCancel={ui.cancelEdit}
               onFolderDelete={act.deleteOpenFolder}
+              onTrash={() => ui.setLoc("trash")}
+              trashDragOver={trashOver}
+              onTrashDragOver={onTrashDragOver}
+              onTrashDragLeave={() => setTrashOver(false)}
+              onTrashDrop={onTrashDrop}
               trashHasItems={scope.isTrash && data.trash.length > 0}
               emptyConfirm={ui.emptyConfirm}
               onEmptyTrash={() => {

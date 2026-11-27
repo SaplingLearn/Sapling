@@ -247,16 +247,22 @@ describe("the copy is the design's, verbatim", () => {
     expect(await screen.findByRole("menuitem", { name: text })).toBeTruthy();
   });
 
-  // The design's "Trash" sat on a chip beside the course switcher. Owner's
-  // call 2026-11-25 moved it into the switcher as its last option, so the word
-  // is still the design's but is one click in, not on the page at rest.
-  it("the design says \"Trash\", and the course switcher offers it, last", async () => {
+  // The design puts "Trash" on a chip beside the course switcher. It spent a
+  // day inside the switcher as its last option (owner's call 2026-11-25) and
+  // came back out on 2026-11-26, because a menu item cannot be the drop
+  // target the handoff draws. This is the prototype's own arrangement again.
+  it("the design says \"Trash\", and it is a chip beside the switcher", async () => {
     expect(declares(LIBRARY_DESIGN, "Trash")).toBe(true);
     await renderLibrary();
-    expect(screen.queryByTestId("library-trash")).toBeNull();
+    const chip = screen.getByTestId("library-trash");
+    expect(chip.textContent).toContain("Trash");
+    // Out on the page at rest, not behind a click.
+    expect(chip.closest('[role="listbox"]')).toBeNull();
+    // And the switcher no longer offers it.
     fireEvent.click(screen.getByTestId("library-course-switcher"));
-    const options = screen.getAllByRole("option");
-    expect(options[options.length - 1].textContent).toContain("Trash");
+    for (const o of screen.getAllByRole("option")) {
+      expect(o.textContent).not.toContain("Trash");
+    }
   });
 
   it("the Type menu's options read as the design writes them", async () => {

@@ -131,14 +131,8 @@ export function scopeOptions({
     pick: () => go("c:none"),
   };
 
-  const trash: ScopeOptionModel = {
-    id: "Trash",
-    sub: `Deleted after 30 days · ${plural(trashCount)}`,
-    color: null,
-    on: isTrash,
-    pick: () => go("trash"),
-    trash: true,
-  };
-
-  return [all, ...perCourse, none, trash];
+  // The Trash is NOT one of these. It is its own chip beside the switcher
+  // (`LibraryScopeBar.TrashButton`, the handoff's `trashBtn`), because it is a
+  // drop target — something a menu item cannot be. Owner's call 2026-11-26.
+  return [all, ...perCourse, none];
 }
