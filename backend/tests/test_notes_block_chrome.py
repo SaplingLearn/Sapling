@@ -10,6 +10,8 @@ model produced on a real document on 2026-11-26.
 The shapes asserted here are `frontend/src/lib/notes/blocks.ts`; the inputs
 are the markup an actual generation run emitted.
 """
+import re
+
 import pytest
 
 from services.documents.doc_notes import fallback_notes, restore_block_chrome
@@ -147,3 +149,76 @@ def test_the_injected_chrome_matches_the_frontend_templates():
     for cls in ("blk-x", "tbl-bar", "sbtn", "tg-arrow", "tbl-edit"):
         assert f'class="{cls}' in blocks, \
             f"blocks.ts no longer uses .{cls}"
+
+
+class TestTooThinToDraft:
+    """A document with almost no text never reaches the model.
+
+    Handed one truncated line, the model writes a paragraph explaining that
+    one truncated line is not enough — a request spent per page open and per
+    Regenerate, to say something that was already known. The answer is
+    written here instead, in one sentence.
+    """
+
+    def test_a_truncated_line_is_below_the_floor(self):
+        from services.documents.doc_notes import MIN_SOURCE_CHARS
+        # The seeded study guide, verbatim — the document that produced the
+        # paragraph-long apology on 2026-11-26.
+        seeded = ("Study guide: the plasma membrane regulates what enters "
+                  "and exits the cell...")
+        assert len(seeded) < MIN_SOURCE_CHARS
+
+    def test_the_notice_is_brief(self):
+        from services.documents.doc_notes import too_thin_notes
+        out = too_thin_notes({"file_name": "cell-bio-study-guide.pdf"})
+        text = re.sub(r"<[^>]+>", "", out)
+        assert len(text) < 200, f"too long for a notice: {text!r}"
+        sentences = re.findall(r"\.(?:\s|$)", text)
+        assert len(sentences) <= 2, f"one or two sentences, not a paragraph: {text!r}"
+
+    def test_the_notice_names_the_file_and_leaves_somewhere_to_type(self):
+        from services.documents.doc_notes import too_thin_notes
+        out = too_thin_notes({"file_name": "cell-bio-study-guide.pdf"})
+        assert "cell-bio-study-guide.pdf" in out
+        assert "<p><br></p>" in out, "the editor needs an empty paragraph"
+        assert "<h2>" in out
+
+    def test_a_document_with_no_name_still_reads_properly(self):
+        from services.documents.doc_notes import too_thin_notes
+        out = too_thin_notes({})
+        assert "<strong>" not in out        # no dangling "in **"
+        assert "readable text to draft" in re.sub(r"<[^>]+>", "", out)
+
+    def test_the_name_is_escaped(self):
+        from services.documents.doc_notes import too_thin_notes
+        out = too_thin_notes({"file_name": "<script>x</script>.pdf"})
+        assert "<script>" not in out and "&lt;script&gt;" in out
+
+    def test_generate_does_not_call_the_model_for_a_thin_document(self):
+        """The point of the floor: no request is made at all."""
+        import asyncio
+        from unittest.mock import AsyncMock, patch
+
+        from services.documents import notes_api
+
+        doc = {"file_name": "cell-bio-study-guide.pdf",
+               "_source_text": "Study guide: the plasma membrane regulates "
+                               "what enters and exits the cell..."}
+        with patch.object(notes_api, "run_agent", new=AsyncMock()) as agent:
+            out = asyncio.run(notes_api.generate(doc, "u1", "req1"))
+        agent.assert_not_called()
+        assert "not enough readable text" in re.sub(r"<[^>]+>", "", out)
+
+    def test_a_real_document_still_reaches_the_model(self):
+        """The floor must not swallow documents that CAN be drafted from."""
+        import asyncio
+        from unittest.mock import AsyncMock, patch
+
+        from services.documents import notes_api
+
+        doc = {"file_name": "lecture.pdf", "_source_text": "Cellular " * 200}
+        with patch.object(notes_api, "run_agent",
+                          new=AsyncMock(return_value="<h2>Overview</h2>")) as agent:
+            out = asyncio.run(notes_api.generate(doc, "u1", "req1"))
+        agent.assert_called_once()
+        assert "<h2>Overview</h2>" in out

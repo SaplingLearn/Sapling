@@ -112,9 +112,14 @@ async def generate(doc: dict, user_id: str, request_id: str) -> str:
     their own or regenerate. Only the two guardrail failures in `run_agent`
     surface as HTTP errors.
     """
-    text = doc.get("_source_text") or ""
-    if not text.strip():
-        return doc_notes.fallback_notes(doc)
+    text = (doc.get("_source_text") or "").strip()
+    # Decided BEFORE the call, not by the model. Handed a line of text it
+    # writes a paragraph explaining that a line of text is not enough, which
+    # costs a request every time the page is opened or regenerated and reads
+    # like an apology. Below the floor the answer is known, so it is written
+    # here for free.
+    if len(text) < doc_notes.MIN_SOURCE_CHARS:
+        return doc_notes.too_thin_notes(doc)
 
     prompt = (
         f"Document title: {doc.get('file_name') or 'Untitled'}\n"

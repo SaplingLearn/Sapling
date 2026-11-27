@@ -154,6 +154,36 @@ async def source_text(document_id: str, user_id: str) -> tuple[str, dict]:
     return text[:MAX_SOURCE_CHARS], doc
 
 
+#: Below this many characters of source text, there is nothing to build study
+#: notes FROM — no sections, no definitions, no examples to check against —
+#: and the model can only say so at length. Asking it to is a wasted call per
+#: document AND per Regenerate, and the answer it writes is a paragraph of
+#: apology where one line would do. `too_thin_notes` says it instead.
+#:
+#: 400 is a floor, not a judgement about length: a real one-page handout runs
+#: to a few thousand characters, while an upload that yields less than this is
+#: a failed extraction (a scan with no text layer, a truncated read) far more
+#: often than it is a genuinely tiny document.
+MIN_SOURCE_CHARS = 400
+
+
+def too_thin_notes(doc: dict) -> str:
+    """The notes body for a document with too little text to draft from.
+
+    Deliberately short. The student does not need the reasoning spelled out —
+    they need to know nothing could be read, what to do about it, and a place
+    to start typing.
+    """
+    name = (doc.get("file_name") or "").strip()
+    where = f" in <strong>{_esc(name)}</strong>" if name else ""
+    return (
+        "<h2>Your Notes</h2>"
+        f"<p>There was not enough readable text{where} to draft notes from. "
+        "Re-upload the full file, or write your own notes here.</p>"
+        "<p><br></p>"
+    )
+
+
 def fallback_notes(doc: dict) -> str:
     """Notes written without the model, for a document the generator could not
     read (no extracted text, no summary) — or when the model call failed.
