@@ -173,7 +173,8 @@ export function ItemPanel({ item, userId, courses, today, readiness, prepareHref
     else if (focusNext.current === "edit") editButton.current?.focus();
     focusNext.current = null;
   }, [editing]);
-  const startEdit = () => { focusNext.current = "field"; setEditing(true); };
+  // A new edit starts from the item as it is now: a cancelled edit's changes are dropped.
+  const startEdit = () => { setDraft(draftOf(item, courses, today)); focusNext.current = "field"; setEditing(true); };
   const stopEdit = () => { focusNext.current = "edit"; setEditing(false); };
   const closes = item === null || undated;
   const { saving, error, save } = useSave(userId, item, () => { if (!closes) stopEdit(); onChanged(closes); });
@@ -190,7 +191,8 @@ export function ItemPanel({ item, userId, courses, today, readiness, prepareHref
   React.useLayoutEffect(() => { heading.current?.focus(); }, []);
   const toGoogle = async () => {
     if (!item) return;
-    await exportToGoogleCalendar(userId, [item.id]).then(() => setSent(true)).catch(() => setSent(false));
+    // Sent disables the button just used: focus moves to the heading first.
+    await exportToGoogleCalendar(userId, [item.id]).then(() => { heading.current?.focus(); setSent(true); }).catch(() => setSent(false));
   };
   const title = item ? item.title : PANEL_COPY.newTitle;
   return (

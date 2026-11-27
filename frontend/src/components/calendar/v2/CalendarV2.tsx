@@ -317,6 +317,7 @@ export function CalendarV2(props: CalendarV2Props) {
   const undated = React.useMemo(() => undatedOf(props.assignments, props.courses), [props.assignments, props.courses]);
   const { isOpen, item: openItemNow, openItem, closeItem } = useOpenItem(all, undated);
   const items = React.useMemo(() => all.filter((i) => !hidden.has(i.courseId ?? "none")), [all, hidden]);
+  const undatedShown = React.useMemo(() => undated.filter((i) => !hidden.has(i.courseId ?? "none")), [undated, hidden]);
   const upcomingExams = React.useMemo(() => all.filter((i) => i.kind === "Exam" && daysBetween(today, i.day) >= 0), [all, today]);
   const readiness = useExamReadiness(upcomingExams, props.courses, milestones);
   const prepareHref = (i: CalItem) => (milestones && tutorShown && i.courseId
@@ -328,7 +329,12 @@ export function CalendarV2(props: CalendarV2Props) {
     if (next.has(id)) next.delete(id); else next.add(id);
     return next;
   });
-  const pickDay = (d: Date) => { period.setCursor(d); setView("week"); };
+  // A day picked in the mini month, the phone strip or a month cell's "+n"
+  // removes the button used: focus moves to the week's heading once it is up.
+  const periodHeading = React.useRef<HTMLHeadingElement>(null);
+  const focusPeriod = React.useRef(false);
+  React.useEffect(() => { if (focusPeriod.current) { focusPeriod.current = false; periodHeading.current?.focus(); } });
+  const pickDay = (d: Date) => { focusPeriod.current = true; period.setCursor(d); setView("week"); };
 
   const agenda = agendaOf(items, today);
   const semStart = semesterStart(period.cursor);
@@ -340,7 +346,7 @@ export function CalendarV2(props: CalendarV2Props) {
       <span id="calendar-view-label" className={styles.srOnly}>{CALENDAR_COPY.viewLabel}</span>
       <Toggle options={(Object.keys(CALENDAR_COPY.views) as View[]).map((v) => ({ value: v, label: CALENDAR_COPY.views[v] }))}
         value={view} onChange={setView} size="sm" testid="calendar-view" labelledBy="calendar-view-label" />
-      {all.length > 0 && <CourseFilter courses={coursesOf(all)} hidden={hidden} onToggle={toggleCourse} />}
+      {all.length + undated.length > 0 && <CourseFilter courses={coursesOf([...all, ...undated])} hidden={hidden} onToggle={toggleCourse} />}
       <button type="button" className="btn btn--sm btn--primary" onClick={props.onImportSyllabus} data-testid="calendar-import-syllabus">
         {CALENDAR_COPY.importSyllabus}
       </button>
@@ -361,7 +367,7 @@ export function CalendarV2(props: CalendarV2Props) {
             {view !== "agenda" && (
               <div className={styles.toolbar}>
                 <div className={styles.period}>
-                  <h2 className={styles.periodTitle} aria-live="polite" data-testid="calendar-period">{title}</h2>
+                  <h2 ref={periodHeading} tabIndex={-1} className={styles.periodTitle} aria-live="polite" data-testid="calendar-period">{title}</h2>
                   <div className={styles.stepper}>
                     <button type="button" className={styles.iconBtn} aria-label={CALENDAR_COPY.prev[view]} onClick={() => period.step(-1)} data-testid="calendar-prev"><Chevron dir="left" /></button>
                     <button type="button" className="btn btn--sm" onClick={() => period.setCursor(today)} data-testid="calendar-today">{CALENDAR_COPY.today}</button>
@@ -378,7 +384,7 @@ export function CalendarV2(props: CalendarV2Props) {
                 <>
                   <WeekStrip today={today} items={items} onPick={pickDay} />
                   <div className={styles.agendaLayout}>
-                    <AgendaView earlier={agenda.earlier} groups={agenda.groups} undated={undated} {...itemProps} />
+                    <AgendaView earlier={agenda.earlier} groups={agenda.groups} undated={undatedShown} {...itemProps} />
                     <aside className={styles.rail} aria-label="At a glance">
                       <MiniMonth today={today} items={items} onPick={pickDay} />
                       <BusiestCard items={items} today={today} prepareHref={prepareHref} />

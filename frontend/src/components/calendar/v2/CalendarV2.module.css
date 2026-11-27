@@ -1,6 +1,7 @@
 /* The redesigned calendar (CalendarV2.tsx and its views), after the Claude
    Design boards in calendar/v2/__fixtures__. Colours and sizes come from the
    globals.css tokens; a course's colour arrives as --course on the element. */
+@layer components {
 
 .shell {
   display: contents;
@@ -49,6 +50,10 @@
   font-family: var(--font-serif, "Aleo", Georgia, serif);
   font-size: var(--fs-2xl);
   font-weight: 600;
+}
+
+.periodTitle:focus {
+  outline: none;
 }
 
 .stepper {
@@ -1283,4 +1288,5 @@ textarea.input {
   .filterBtn:active {
     transform: none;
   }
+}
 }

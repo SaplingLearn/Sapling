@@ -160,6 +160,22 @@ describe("Agenda (the default)", () => {
     expect(screen.queryByTestId("calendar-panel")).toBeNull();
   });
 
+  it("the course filter also lists and hides a course that has only undated assignments", () => {
+    const undated = { ...a("read", "Reading response", "", "ma"), due_date: null } as unknown as Assignment;
+    renderCalendar({ assignments: [a("hw7", "HW 7", "2026-03-12", "cs"), undated] });
+    expect(screen.getByTestId("calendar-undated")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("calendar-courses"));
+    fireEvent.click(screen.getByTestId("calendar-course-ma"));
+    expect(screen.queryByTestId("calendar-undated")).toBeNull();
+  });
+
+  it("a day picked in the mini month opens its week and focus moves to the week's heading", () => {
+    renderCalendar();
+    fireEvent.click(within(screen.getByTestId("calendar-mini")).getByRole("button", { name: /Fri Mar 13/ }));
+    expect(screen.getByTestId("calendar-v2").getAttribute("data-view")).toBe("week");
+    expect(document.activeElement).toBe(screen.getByTestId("calendar-period"));
+  });
+
   it("only undated assignments: no empty state, the No date yet list instead", () => {
     const undated = { ...a("read", "Reading response", "", "cs"), due_date: null } as unknown as Assignment;
     renderCalendar({ assignments: [undated] });
@@ -258,6 +274,27 @@ describe("the item panel", () => {
     fireEvent.keyDown(document.activeElement!, { key: "Escape" });
     expect(screen.queryByTestId("calendar-panel")).toBeNull();
     await waitFor(() => expect(document.activeElement).toBe(title));
+  });
+
+  it("Edit after a Cancel starts from the item, not the cancelled change", () => {
+    renderCalendar();
+    fireEvent.click(within(screen.getByTestId("calendar-item-hw7")).getByRole("button", { name: /HW 7/ }));
+    const panel = screen.getByTestId("calendar-panel");
+    fireEvent.click(within(panel).getByTestId("calendar-panel-edit"));
+    fireEvent.change(within(panel).getByTestId("calendar-field-title"), { target: { value: "Something else" } });
+    fireEvent.click(within(panel).getByRole("button", { name: PANEL_COPY.cancel }));
+    fireEvent.click(within(panel).getByTestId("calendar-panel-edit"));
+    expect((within(panel).getByTestId("calendar-field-title") as HTMLInputElement).value).toBe("HW 7");
+  });
+
+  it("Add to Google disables itself once sent, and focus moves to the heading", async () => {
+    renderCalendar({ googleConnected: true });
+    fireEvent.click(within(screen.getByTestId("calendar-item-mid2")).getByRole("button", { name: /Midterm 2/ }));
+    const google = screen.getByTestId("calendar-panel-google");
+    google.focus();
+    await act(async () => { fireEvent.click(google); });
+    expect((google as HTMLButtonElement).disabled).toBe(true);
+    expect(document.activeElement?.id).toBe("calendar-panel-title");
   });
 
   it("Cancel hands focus back to Edit; the calendar behind an open panel is inert", () => {
