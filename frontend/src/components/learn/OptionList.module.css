@@ -1,3 +1,4 @@
+@layer components {
 /* The served options of an mc_reason item (OptionList): a radio group of rows. */
 
 .group {
@@ -49,4 +50,6 @@
 /* The letter column, wide enough for one capital so the texts align. */
 .letter {
   min-width: var(--sp-8);
+}
+
 }

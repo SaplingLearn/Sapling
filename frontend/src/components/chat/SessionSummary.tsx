@@ -4,6 +4,7 @@ import React from "react";
 import { motion } from "framer-motion";
 import type { SessionSummaryData } from "@/lib/api";
 import { useMotionPresets } from "@/lib/motion";
+import { useOverlayBehaviour } from "@/components/Dialog";
 import styles from "./SessionSummary.module.css";
 
 interface SessionSummaryProps {
@@ -17,6 +18,8 @@ interface SessionSummaryProps {
 export function SessionSummary({ summary, onClose }: SessionSummaryProps) {
   const { concepts_covered = [], time_spent_minutes = 0 } = summary || {};
   const m = useMotionPresets();
+  // Dialog's modal engine: scroll lock, focus in and back out, Escape, Tab trap.
+  const { panelRef, onKeyDown } = useOverlayBehaviour({ open: true, onClose });
 
   // The session just ended: the backdrop fades in and the dialog scales up
   // into place, then the concepts covered arrive one after another.
@@ -24,11 +27,17 @@ export function SessionSummary({ summary, onClose }: SessionSummaryProps) {
     <motion.div
       className={styles.backdrop}
       onClick={onClose}
+      onKeyDown={onKeyDown}
       initial={m.fade.initial}
       animate={m.fade.animate}
       transition={m.fade.transition}
     >
       <motion.div
+        ref={panelRef}
+        tabIndex={-1}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="session-summary-title"
         className={`card ${styles.dialog}`}
         onClick={e => e.stopPropagation()}
         initial={m.scaleIn.initial}
@@ -39,7 +48,7 @@ export function SessionSummary({ summary, onClose }: SessionSummaryProps) {
           <div className="label-micro">Session summary</div>
           <button className="btn btn--ghost btn--sm" onClick={onClose} aria-label="Close">×</button>
         </div>
-        <div className={`h-serif ${styles.title}`}>Nice session.</div>
+        <div id="session-summary-title" className={`h-serif ${styles.title}`}>Nice session.</div>
         <div className={styles.time}>
           {time_spent_minutes > 0 ? `${time_spent_minutes} minute${time_spent_minutes === 1 ? "" : "s"} spent.` : "Session wrapped."}
         </div>

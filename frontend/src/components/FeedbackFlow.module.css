@@ -1,3 +1,4 @@
+@layer components {
 /* The two feedback dialogs: the global pulse (FeedbackFlow.tsx) and the
    session follow-up (SessionFeedbackFlow.tsx). Enter-only motion: a close
    unmounts at once, so nothing waits on an exit. The global reduced-motion
@@ -205,4 +206,6 @@
 @keyframes feedback-step-in {
   from { opacity: 0; transform: translateX(var(--sp-4)); }
   to { opacity: 1; transform: none; }
+}
+
 }

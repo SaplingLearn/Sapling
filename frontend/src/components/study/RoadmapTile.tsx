@@ -17,6 +17,7 @@ import s from "./StudyHub.module.css";
 import { SC, TC, ring, stLabel, type Concept } from "./studyModel";
 import type { SetHub } from "./useHubState";
 import type { ToolKey, ToolNav } from "./useToolNav";
+import { cn } from "@/lib/cn";
 
 /* The small tags that ride a tile's top edge (Roadmap.module.css `.tag`). */
 const NEXT_TAG = `${rm.tag} ${rm.tagNext}`;
@@ -165,7 +166,7 @@ export function RoadmapTile({ tile, menuOpen, cardCount, quizShown, nav, set, cl
       <button type="button" aria-pressed={isSel} className={s.tileSelect} data-testid={`study-tile-select-${t.id}`}>
         <TileRing concept={t} faded={dim} />
         <span className={rm.tileText}>
-          <span className={rm.tileName} style={{ color: dim ? DIM_TEXT : undefined }}>{t.name}</span>
+          <span className={cn(rm.tileName, dim ? "text-text-muted" : "")}>{t.name}</span>
           <span className={rm.tileStatus} style={{ color: dim ? DIM_TEXT : SC[t.st] }}>{statusLine(t)}</span>
         </span>
       </button>

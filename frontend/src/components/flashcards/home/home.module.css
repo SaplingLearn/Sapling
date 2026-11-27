@@ -1,3 +1,4 @@
+@layer components {
 /* The Flashcards home and builder.
 
    HOME: one olive hero that asks what to study, then the student's sets as
@@ -543,4 +544,6 @@
   .deck:hover .face, .deck:focus-within .face, .play:hover:not(:disabled), .play:active:not(:disabled) { transform: none; }
   .deck:hover .layer, .deck:focus-within .layer { transform: translateY(12px); }
   .deck:hover .layerTwo, .deck:focus-within .layerTwo { transform: translateY(6px); }
+}
+
 }

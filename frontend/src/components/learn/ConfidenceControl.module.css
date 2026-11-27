@@ -1,3 +1,4 @@
+@layer components {
 /* The stated-confidence control (learning-loop spec §13 A127). */
 
 .row {
@@ -71,4 +72,6 @@
 .clear {
   font-size: var(--fs-sm);
   color: var(--text-muted);
+}
+
 }

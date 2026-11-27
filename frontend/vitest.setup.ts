@@ -50,3 +50,79 @@ if (typeof window !== "undefined" && typeof window.matchMedia !== "function") {
     },
   })) as unknown as typeof window.matchMedia;
 }
+
+// Radix primitives (components/ui Menu, Popover, Tooltip) position with
+// ResizeObserver and use pointer capture; jsdom has neither.
+if (typeof window !== "undefined") {
+  if (!("ResizeObserver" in window)) {
+    class ResizeObserverShim {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+    (window as unknown as { ResizeObserver: unknown }).ResizeObserver = ResizeObserverShim;
+    (globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = ResizeObserverShim;
+  }
+  const proto = window.HTMLElement.prototype as unknown as Record<string, unknown>;
+  if (!proto.hasPointerCapture) proto.hasPointerCapture = () => false;
+  if (!proto.setPointerCapture) proto.setPointerCapture = () => {};
+  if (!proto.releasePointerCapture) proto.releasePointerCapture = () => {};
+}
+
+// toHaveTwStyle: toHaveStyle for the Tailwind era. jsdom applies no
+// stylesheet, so a declaration that moved from an inline style to a class is
+// invisible to toHaveStyle. This compares against what the element's classes
+// and inline style set together (src/test-utils/twStyle.ts).
+import { expect as vitestExpect } from "vitest";
+import { cssValue, kebab, toClasses } from "./scripts/codemods/css-to-tailwind.mjs";
+import { twStyle } from "./src/test-utils/twStyle";
+import { readFileSync } from "node:fs";
+import { resolve as resolvePath } from "node:path";
+
+// Token values, so "var(--ink-800)" from a class can equal "rgb(26, 24, 20)"
+// written in a test.
+const TOKENS = Object.fromEntries(
+  [...readFileSync(resolvePath(__dirname, "src/styles/tokens.css"), "utf8").matchAll(/^\s*(--[a-z0-9-]+):\s*([^;]+);/gm)].map((m) => [m[1], m[2].trim()]),
+);
+const resolveVars = (v: string, depth = 0): string =>
+  depth > 8 ? v : v.replace(/var\((--[a-z0-9-]+)\)/g, (all, name: string) => (TOKENS[name] !== undefined ? resolveVars(TOKENS[name], depth + 1) : all));
+
+vitestExpect.extend({
+  toHaveTwStyle(received: Element, expected: Record<string, string | number>) {
+    const actual = twStyle(received);
+    const misses: string[] = [];
+    for (const [prop, raw] of Object.entries(expected)) {
+      const camel = prop.includes("-") && !prop.startsWith("--") ? prop.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase()) : prop;
+      const name = kebab(camel);
+      const probe = document.createElement("div");
+      probe.style.setProperty(name, cssValue(camel, raw));
+      // Compare longhand by longhand: a shorthand like border-top only
+      // reads back whole when every part was set the same way.
+      const parts = probe.style.length ? Array.from({ length: probe.style.length }, (_, i) => probe.style[i]) : [name];
+      const same = (part: string) => {
+        const got = actual.getPropertyValue(part), want = probe.style.getPropertyValue(part);
+        if (got === want) return true;
+        const norm = document.createElement("div");
+        norm.style.setProperty(part, resolveVars(got));
+        return norm.style.getPropertyValue(part) === want;
+      };
+      const partMisses = parts
+        .filter((part) => !same(part))
+        .map((part) => `${part}: wanted "${probe.style.getPropertyValue(part)}", got "${actual.getPropertyValue(part)}"`);
+      if (!partMisses.length) continue;
+      // jsdom can't split a shorthand holding var() into longhands; accept
+      // the exact classes the codemod writes for that declaration.
+      const classes = (received.getAttribute("class") ?? "").split(/\s+/);
+      const forms = [toClasses(camel, raw), toClasses(camel, raw, { strict: true })];
+      if (forms.some((f) => f.length > 0 && f.every((c: string) => classes.includes(c)))) continue;
+      misses.push(...partMisses);
+    }
+    return {
+      pass: misses.length === 0,
+      message: () =>
+        misses.length
+          ? `expected element to have\n  ${misses.join("\n  ")}\nclass="${received.getAttribute("class") ?? ""}"`
+          : `expected element not to have ${JSON.stringify(expected)}`,
+    };
+  },
+});

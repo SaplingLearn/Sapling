@@ -13,8 +13,9 @@
  */
 
 import { useCallback, useEffect, useState } from 'react';
-import { LAB_TIER, LABEL } from './LabShell';
+import { LAB_TIER } from './LabShell';
 import { DECK, RATE_DUE, RATE_LABEL, RATE_TONE } from './labData';
+import { cn } from "@/lib/cn";
 
 type RateKey = '1' | '2' | '3';
 const RATES: RateKey[] = ['1', '2', '3'];
@@ -53,35 +54,35 @@ export function CardsDemo() {
   }, [flip, rate]);
 
   return (
-    <div style={{ padding: '18px 26px 20px', display: 'flex', flexDirection: 'column', gap: 12, height: '100%', boxSizing: 'border-box' }}>
-      <div style={{ flex: '0 0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
-          <span style={{ width: 8, height: 8, borderRadius: 99, background: LAB_TIER.struggling }} />
-          <span style={{ fontSize: 14, fontWeight: 600, color: '#191F13' }}>Eigenvalues</span>
-          <span style={{ padding: '3px 8px', borderRadius: 6, background: '#F6F8F4', border: '1px solid #E6EAE2', ...LABEL, fontSize: 11, letterSpacing: '0.01em', color: '#697062' }}>MA 242</span>
+    <div className="pt-4.5 px-6.5 pb-5 flex flex-col gap-3 h-full box-border">
+      <div className="flex-[0_0_auto] flex items-center justify-between gap-4">
+        <div className="flex items-center gap-[9px]">
+          <span className="w-2 h-2 rounded-[99px]" style={{ background: LAB_TIER.struggling }} />
+          <span className="text-base font-semibold text-moss-900">Eigenvalues</span>
+          <span className="py-[3px] px-2 rounded-sm bg-moss-25 border border-moss-75 font-sans text-xs tracking-[0.01em] text-moss-500">MA 242</span>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-          <span style={{ ...LABEL, fontSize: 11.5, letterSpacing: '0.01em', color: '#91978B' }}>
+        <div className="flex items-center gap-3.5">
+          <span className="font-sans text-[11.5px] tracking-[0.01em] text-moss-400">
             DUE TODAY · {DECK.length - Math.min(idx, DECK.length)} LEFT
           </span>
-          <span style={{ fontSize: 12.5, color: '#697062' }}>
+          <span className="text-[12.5px] text-moss-500">
             Card {done ? DECK.length : idx + 1} of {DECK.length}
           </span>
         </div>
       </div>
 
-      <span style={{ flex: '0 0 auto', height: 5, borderRadius: 99, background: '#E6EAE2', overflow: 'hidden' }}>
-        <span style={{ display: 'block', height: '100%', borderRadius: 99, background: '#68951F', transition: 'width 400ms cubic-bezier(0.22,1,0.36,1)', width: `${Math.round((Math.min(idx, DECK.length) / DECK.length) * 100)}%` }} />
+      <span className="flex-[0_0_auto] h-[5px] rounded-[99px] bg-moss-75 overflow-hidden">
+        <span className="block h-full rounded-[99px] bg-leaf-500 [transition:width_400ms_cubic-bezier(0.22,1,0.36,1)]" style={{ width: `${Math.round((Math.min(idx, DECK.length) / DECK.length) * 100)}%` }} />
       </span>
 
       {done ? (
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 14, animation: 'labIn 320ms ease both' }}>
-          <span style={{ fontFamily: "var(--font-aleo), 'Aleo', Georgia, serif", fontSize: 30, fontWeight: 600 }}>Deck complete</span>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, width: 'min(340px,100%)' }}>
+        <div className="flex-1 flex flex-col items-center justify-center gap-3.5 [animation:labIn_320ms_ease_both]">
+          <span className="font-serif text-4xl font-semibold">Deck complete</span>
+          <div className="flex flex-col gap-2 w-[min(340px,100%)]">
             {log.map((l, i) => (
-              <div key={i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '9px 13px', borderRadius: 9, background: '#F6F8F4', border: '1px solid #E6EAE2' }}>
-                <span style={{ fontSize: 12.5, color: '#3B4233', maxWidth: '60%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{l.q}</span>
-                <span style={{ ...LABEL, fontSize: 10.5, color: RATE_TONE[l.key] }}>
+              <div key={i} className="flex items-center justify-between py-[9px] px-[13px] rounded-[9px] bg-moss-25 border border-moss-75">
+                <span className="text-[12.5px] text-moss-700 max-w-3/5 overflow-hidden text-ellipsis whitespace-nowrap">{l.q}</span>
+                <span className="font-sans text-[10.5px]" style={{ color: RATE_TONE[l.key] }}>
                   {RATE_LABEL[l.key]} · {RATE_DUE[l.key]}
                 </span>
               </div>
@@ -90,48 +91,48 @@ export function CardsDemo() {
           <button
             onClick={() => { setIdx(0); setFlipped(false); setLog([]); }}
             type="button"
-            style={{ marginTop: 4, padding: '10px 22px', borderRadius: 10, border: 'none', background: '#445D22', color: '#FDFCF9', fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif", fontSize: 13, fontWeight: 600, cursor: 'pointer' }}
+            className="mt-1 py-2.5 px-5.5 rounded-md border-0 bg-brand-forest text-bg-panel font-sans text-md font-semibold cursor-pointer"
           >
             Study again
           </button>
         </div>
       ) : (
         <>
-          <div onClick={flip} style={{ position: 'relative', flex: '1 1 auto', minHeight: 200, cursor: 'pointer' }}>
-            <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', perspective: 1600 }}>
-              <div style={{ position: 'relative', width: '100%', maxWidth: 600, aspectRatio: '16 / 9', maxHeight: '100%', transformStyle: 'preserve-3d', transition: 'transform 560ms cubic-bezier(0.4,0,0.2,1)', transform: `rotateY(${flipped ? 180 : 0}deg)` }}>
-                <div style={{ position: 'absolute', inset: 0, backfaceVisibility: 'hidden', borderRadius: 18, background: '#FDFCF9', border: '1px solid #E3E0D5', boxShadow: '0 18px 40px -18px rgba(25,31,19,0.28)', padding: '30px 34px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', gap: 14 }}>
-                  <span style={{ ...LABEL, fontSize: 11, letterSpacing: '0.01em', color: '#9FA49A' }}>Front</span>
-                  <span style={{ fontFamily: "var(--font-aleo), 'Aleo', Georgia, serif", fontSize: 'clamp(20px,2.3vw,27px)', fontWeight: 600, lineHeight: 1.3, color: '#191F13' }}>{card.q}</span>
-                  <span style={{ position: 'absolute', bottom: 16, left: 0, right: 0, fontSize: 11.5, color: '#B8BDB4' }}>click to reveal</span>
+          <div onClick={flip} className="relative flex-[1_1_auto] min-h-50 cursor-pointer">
+            <div className="absolute inset-0 flex items-center justify-center [perspective:1600px]">
+              <div className={cn("relative w-full max-w-150 aspect-video max-h-full [transform-style:preserve-3d] [transition:transform_560ms_cubic-bezier(0.4,0,0.2,1)]", flipped ? "[transform:rotateY(180deg)]" : "[transform:rotateY(0deg)]")}>
+                <div className="absolute inset-0 [backface-visibility:hidden] rounded-[18px] bg-bg-panel border border-paper-300 [box-shadow:0_18px_40px_-18px_rgba(25,31,19,0.28)] py-7.5 px-8.5 flex flex-col items-center justify-center text-center gap-3.5">
+                  <span className="font-sans text-xs tracking-[0.01em] text-moss-300">Front</span>
+                  <span className="font-serif text-[length:clamp(20px,2.3vw,27px)] font-semibold leading-[1.3] text-moss-900">{card.q}</span>
+                  <span className="absolute bottom-4 left-0 right-0 text-[11.5px] text-[#B8BDB4]">click to reveal</span>
                 </div>
-                <div style={{ position: 'absolute', inset: 0, backfaceVisibility: 'hidden', transform: 'rotateY(180deg)', borderRadius: 18, background: '#445D22', border: '1px solid #445D22', boxShadow: '0 18px 40px -18px rgba(68,93,34,0.5)', padding: '30px 34px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', gap: 14 }}>
-                  <span style={{ ...LABEL, fontSize: 11, letterSpacing: '0.01em', color: '#B1D28B' }}>Back</span>
-                  <span style={{ fontFamily: "var(--font-aleo), 'Aleo', Georgia, serif", fontSize: 'clamp(18px,2.1vw,24px)', fontWeight: 500, lineHeight: 1.4, color: '#F6F8F4' }}>{card.a}</span>
-                  <span style={{ position: 'absolute', bottom: 16, left: 0, right: 0, ...LABEL, fontSize: 11, letterSpacing: '0.01em', color: 'rgba(234,241,228,0.5)' }}>How did that go?</span>
+                <div className="absolute inset-0 [backface-visibility:hidden] [transform:rotateY(180deg)] rounded-[18px] bg-brand-forest border border-brand-forest [box-shadow:0_18px_40px_-18px_rgba(68,93,34,0.5)] py-7.5 px-8.5 flex flex-col items-center justify-center text-center gap-3.5">
+                  <span className="font-sans text-xs tracking-[0.01em] text-[#B1D28B]">Back</span>
+                  <span className="font-serif text-[length:clamp(18px,2.1vw,24px)] font-medium leading-[1.4] text-moss-25">{card.a}</span>
+                  <span className="absolute bottom-4 left-0 right-0 font-sans text-xs tracking-[0.01em] text-[rgba(234,241,228,0.5)]">How did that go?</span>
                 </div>
               </div>
             </div>
           </div>
 
-          <div style={{ flex: '0 0 auto', display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'center' }}>
-            <div style={{ display: 'flex', gap: 10, width: '100%', maxWidth: 560, transition: 'opacity 250ms', opacity: flipped ? 1 : 0.35, pointerEvents: flipped ? 'auto' : 'none' }}>
+          <div className="flex-[0_0_auto] flex flex-col gap-2 items-center">
+            <div className={cn("flex gap-2.5 w-full max-w-140 [transition:opacity_250ms]", flipped ? "opacity-100" : "opacity-35", flipped ? "pointer-events-auto" : "pointer-events-none")}>
               {RATES.map((k) => (
                 <button
                   key={k}
                   onClick={() => rate(k)}
                   type="button"
-                  className="ld-labrate"
-                  style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, padding: '11px 0', borderRadius: 11, fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif", cursor: 'pointer', transition: 'all 180ms', border: `1px solid ${RATE_TONE[k]}66`, background: `${RATE_TONE[k]}12` }}
+                  className="ld-labrate flex-1 flex flex-col items-center gap-0.5 py-[11px] px-0 rounded-[11px] font-sans cursor-pointer [transition:all_180ms]"
+                  style={{ border: `1px solid ${RATE_TONE[k]}66`, background: `${RATE_TONE[k]}12` }}
                 >
-                  <span style={{ fontSize: 13.5, fontWeight: 600, color: RATE_TONE[k] }}>
-                    {RATE_LABEL[k]} <b style={{ ...LABEL, fontSize: 10, color: '#9FA49A', fontWeight: 400 }}>{k}</b>
+                  <span className="text-[13.5px] font-semibold" style={{ color: RATE_TONE[k] }}>
+                    {RATE_LABEL[k]} <b className="font-sans text-2xs text-moss-300 font-normal">{k}</b>
                   </span>
-                  <span style={{ ...LABEL, fontSize: 10, color: `${RATE_TONE[k]}cc` }}>next in {RATE_DUE[k]}</span>
+                  <span className="font-sans text-2xs" style={{ color: `${RATE_TONE[k]}cc` }}>next in {RATE_DUE[k]}</span>
                 </button>
               ))}
             </div>
-            <span style={{ fontSize: 11.5, color: '#9FA49A' }}>
+            <span className="text-[11.5px] text-moss-300">
               {flipped ? 'Rate it: 1 Forgot, 2 Hard, 3 Easy' : 'Click the card or press space to reveal'}
             </span>
           </div>

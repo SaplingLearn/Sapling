@@ -1,3 +1,4 @@
+@layer components {
 /* The Dashboard (Dashboard.tsx): the hero greeting, the knowledge-map card
    and its two layouts (the sidebar layout's two columns, the top-nav layout's
    legacy three), the suggest/retention nudges, the fullscreen map and the
@@ -331,4 +332,6 @@
   background: var(--seg-color);
   opacity: var(--seg-opacity, 1);
   transition: width var(--dur-slow) var(--ease-out);
+}
+
 }

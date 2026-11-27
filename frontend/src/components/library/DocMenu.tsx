@@ -26,10 +26,8 @@ import type { DocFolder, Document as Doc } from "@/lib/types";
 import type { EnrolledCourse } from "@/lib/api";
 import { LibraryDocNext } from "./LibraryDocNext";
 import { TYPE_ORDER, TYPES, courseLabel } from "./libraryModel";
-import {
-  FolderIcon, Glyph, MENU_HEADING, MENU_IN, MENU_ITEM, MENU_OUT,
-  MenuDivider, MenuScrim,
-} from "./primitives";
+import { FolderIcon, Glyph, MENU_IN, MENU_OUT, MenuDivider, MenuScrim } from "./primitives";
+import { cn } from "@/lib/cn";
 
 /** Where the dialog sits, in the scroll section's own coordinates. */
 export interface MenuPosition {
@@ -109,28 +107,19 @@ function DocumentFacts({ doc }: { doc: Doc }) {
       <MenuDivider />
       {doc.summary && (
         <>
-          <span style={MENU_HEADING}>Summary</span>
-          <p style={{
-            margin: 0, padding: "0 10px 6px", fontSize: 13, lineHeight: 1.5,
-            color: "#3F3B31", textWrap: "pretty",
-          }}>{doc.summary}</p>
+          <span className="pt-1.5 px-2.5 pb-1 font-sans text-md text-[#6F6857]">Summary</span>
+          <p className="m-0 pt-0 px-2.5 pb-1.5 text-md leading-[1.5] text-ink-600 text-pretty">{doc.summary}</p>
         </>
       )}
       {concepts.length > 0 && (
         <>
-          <span style={MENU_HEADING}>Key Concepts ({concepts.length})</span>
-          <div style={{
-            display: "flex", flexWrap: "wrap", gap: 4, padding: "0 10px 8px",
-          }}>
+          <span className="pt-1.5 px-2.5 pb-1 font-sans text-md text-[#6F6857]">Key Concepts ({concepts.length})</span>
+          <div className="flex flex-wrap gap-1 pt-0 px-2.5 pb-2">
             {concepts.map((c, i) => (
               <span
                 key={`${c.name}-${i}`}
                 title={c.description || undefined}
-                style={{
-                  display: "inline-flex", alignItems: "center", height: 22,
-                  padding: "0 8px", borderRadius: 6, background: "#EBF0E1",
-                  color: "#2F4417", fontSize: 12.5, fontWeight: 600,
-                }}
+                className="inline-flex items-center h-5.5 py-0 px-2 rounded-sm bg-[#EBF0E1] text-leaf-800 text-[12.5px] font-semibold"
               >{c.name}</span>
             ))}
           </div>
@@ -154,15 +143,11 @@ export function DocMenu(props: DocMenuProps) {
     <button
       role="menuitem"
       aria-expanded={sub === key}
-      className="sapHoverMenu"
+      className="sapHoverMenu flex items-center gap-2.5 py-[9px] px-2.5 border-0 rounded-[8px] [background:transparent] text-ink-800 [font-family:inherit] [font-style:inherit] [font-variant:inherit] [font-stretch:inherit] [line-height:inherit] text-base font-semibold text-left cursor-pointer w-full"
       onClick={() => onSub(sub === key ? null : key)}
-      style={{ ...MENU_ITEM, width: "100%" }}
     >
-      <span style={{ flex: 1 }}>{label}</span>
-      <span style={{
-        display: "inline-flex",
-        transform: sub === key ? "rotate(180deg)" : "none",
-      }}>
+      <span className="flex-1">{label}</span>
+      <span className={cn("inline-flex", sub === key ? "[transform:rotate(180deg)]" : "[transform:none]")}>
         <Glyph name="chevronDown" size={11} fill="#6F6857" />
       </span>
     </button>
@@ -179,22 +164,17 @@ export function DocMenu(props: DocMenuProps) {
       key={key}
       role="menuitemradio"
       aria-checked={on}
-      className="sapHoverMenu"
+      className="sapHoverMenu flex items-center gap-2.5 py-2 px-2.5 border-0 rounded-[8px] [background:transparent] [font-family:inherit] [font-weight:inherit] [font-style:inherit] [font-variant:inherit] [font-stretch:inherit] [line-height:inherit] text-base text-left cursor-pointer"
       onClick={pick}
-      style={{
-        display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", border: 0,
-        borderRadius: 8, background: "transparent", font: "inherit", fontSize: 14,
-        textAlign: "left", cursor: "pointer",
-      }}
     >
       {icon}
-      <span style={{ flex: 1 }}>{label}</span>
+      <span className="flex-1">{label}</span>
       <Glyph name="check" size={12} fill="#445D22" style={{ opacity: on ? 1 : 0 }} />
     </button>
   );
 
   const subList = (children: React.ReactNode) => (
-    <div role="group" style={{ display: "flex", flexDirection: "column", gap: 1, paddingLeft: 10 }}>
+    <div role="group" className="flex flex-col gap-px pl-2.5">
       {children}
     </div>
   );
@@ -206,31 +186,14 @@ export function DocMenu(props: DocMenuProps) {
         role="dialog"
         aria-label="Document details"
         data-testid="library-doc-menu"
-        style={{
-          transformOrigin: position.origin,
-          animation: anim,
-          position: "absolute",
-          right: position.right,
-          top: position.top,
-          bottom: position.bottom,
-          maxHeight: position.maxHeight,
-          zIndex: 31,
-          width: 240,
-          background: "#FDFCF9",
-          border: "1px solid rgba(42,39,31,0.14)",
-          borderRadius: 12,
-          boxShadow: "0 14px 36px rgba(25,37,11,0.16)",
-          display: "flex",
-          flexDirection: "column",
-          overflowY: "auto",
-        }}
+        className="absolute z-31 w-60 bg-bg-panel border border-[rgba(42,39,31,0.14)] rounded-[12px] [box-shadow:0_14px_36px_rgba(25,37,11,0.16)] flex flex-col overflow-y-auto" style={{ transformOrigin: position.origin, animation: anim, right: position.right, top: position.top, bottom: position.bottom, maxHeight: position.maxHeight }}
       >
-        <div style={{ padding: 6, display: "flex", flexDirection: "column", gap: 1 }}>
+        <div className="p-1.5 flex flex-col gap-px">
           {/* The actions are menus inside the dialog (its facts and next steps
               between them are not menu items), so every menuitem has the
               parent ARIA requires. `display: contents` keeps the layout. */}
-          <div role="menu" aria-label="Document actions" style={{ display: "contents" }}>
-          <button role="menuitem" className="sapHoverMenu" onClick={onRename} style={MENU_ITEM}>
+          <div role="menu" aria-label="Document actions" className="contents">
+          <button role="menuitem" className="sapHoverMenu flex items-center gap-2.5 py-[9px] px-2.5 border-0 rounded-[8px] [background:transparent] text-ink-800 [font-family:inherit] [font-style:inherit] [font-variant:inherit] [font-stretch:inherit] [line-height:inherit] text-base font-semibold text-left cursor-pointer" onClick={onRename}>
             Rename
           </button>
 
@@ -244,22 +207,14 @@ export function DocMenu(props: DocMenuProps) {
                 `${courseLabel(c)} · ${c.course_name}`,
                 doc.course_id === c.course_id,
                 () => onMoveCourse(c.course_id),
-                <span style={{
-                  width: 9, height: 9, borderRadius: "50%",
-                  background: c.color || "transparent",
-                  border: c.color ? "0" : "1.5px dashed #8A8372",
-                  boxSizing: "border-box",
-                }} />,
+                <span className={cn("w-[9px] h-[9px] rounded-[50%] box-border", c.color ? "border-0" : "border-[1.5px] border-dashed border-ink-400")} style={{ background: c.color || "transparent" }} />,
               ))}
               {option(
                 "none",
                 "No Course",
                 !doc.course_id,
                 () => onMoveCourse(null),
-                <span style={{
-                  width: 9, height: 9, borderRadius: "50%", background: "transparent",
-                  border: "1.5px dashed #8A8372", boxSizing: "border-box",
-                }} />,
+                <span className="w-[9px] h-[9px] rounded-[50%] bg-transparent border-[1.5px] border-dashed border-ink-400 box-border" />,
               )}
             </>,
           )}
@@ -288,23 +243,19 @@ export function DocMenu(props: DocMenuProps) {
               TYPES[c].label,
               doc.category === c,
               () => onType(c),
-              <span style={{
-                width: 9, height: 9, borderRadius: 2, background: TYPES[c].color,
-                boxSizing: "border-box",
-              }} />,
+              <span className="w-[9px] h-[9px] rounded-[2px] box-border" style={{ background: TYPES[c].color }} />,
             )),
           )}
 
           <button
             role="menuitem"
             data-testid="library-detail-scan"
-            className="sapHoverMenu"
+            className={cn("sapHoverMenu", "flex items-center gap-2.5 py-[9px] px-2.5 border-0 rounded-[8px] [background:transparent] text-ink-800 [font-family:inherit] [font-style:inherit] [font-variant:inherit] [font-stretch:inherit] [line-height:inherit] text-base font-semibold text-left", scanState === "scanning" ? "cursor-default" : "cursor-pointer")}
             onClick={onScan}
             disabled={scanState === "scanning"}
             title="Extend this course's concept graph from this document"
-            style={{ ...MENU_ITEM, cursor: scanState === "scanning" ? "default" : "pointer" }}
           >
-            <span style={{ flex: 1 }}>
+            <span className="flex-1">
               {scanState === "scanning"
                 ? "Scanning…"
                 : scanState === "done" ? "Scanned ✓" : "Scan to Knowledge Graph"}
@@ -317,13 +268,12 @@ export function DocMenu(props: DocMenuProps) {
 
           <MenuDivider />
 
-          <div role="menu" aria-label="Remove" style={{ display: "contents" }}>
+          <div role="menu" aria-label="Remove" className="contents">
           <button
             role="menuitem"
             data-testid="library-detail-delete"
-            className="sapHoverDanger"
+            className="sapHoverDanger flex items-center gap-2.5 py-[9px] px-2.5 border-0 rounded-[8px] [background:transparent] [font-family:inherit] [font-style:inherit] [font-variant:inherit] [font-stretch:inherit] [line-height:inherit] text-base text-left cursor-pointer text-[#A8443F] font-bold"
             onClick={onTrash}
-            style={{ ...MENU_ITEM, color: "#A8443F", fontWeight: 700 }}
           >
             Move to Trash
           </button>

@@ -189,7 +189,12 @@ class MajorPack(BaseModel):
     key: str = Field(pattern=r"^[a-z_]+$")  # "cs", "business", ...
     label: str  # "Computer Science" — written to user_profiles.majors
     year: str = "Sophomore"
-    courses: list[Course] = Field(min_length=4, max_length=4)
+    #: Four courses is the house semester; five is allowed because a real
+    #: schedule can pair four-credit courses with two-credit ones (the
+    #: computer_engineering pack does exactly that). The seeder is
+    #: count-agnostic — it zips courses with resolved offerings — so the
+    #: only ceiling is how much a seeded account should hold.
+    courses: list[Course] = Field(min_length=4, max_length=5)
     #: Account-level gamification.
     total_xp: int = Field(default=1250, ge=0)
     streak_days: int = Field(default=6, ge=0)

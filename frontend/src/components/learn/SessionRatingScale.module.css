@@ -1,3 +1,4 @@
+@layer components {
 /* The 1–4 "How was that session?" scale (SessionRatingScale). */
 
 .scale {
@@ -60,4 +61,6 @@
   gap: var(--sp-4);
   font-size: var(--fs-sm);
   color: var(--text-muted);
+}
+
 }

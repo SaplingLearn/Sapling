@@ -1,3 +1,4 @@
+@layer components {
 /* The rebuilt wrap-up (WrapUpV2.tsx), after the Claude Design board: one
    column, the headline first, then what changed, the summary, Next time, the
    one next step and More practice. */
@@ -121,4 +122,6 @@
   .change {
     text-align: left;
   }
+}
+
 }

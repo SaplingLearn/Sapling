@@ -1,3 +1,4 @@
+@layer components {
 /* The Calendar screen (Calendar.tsx): the month / week / day views, the
    assignments table, the load-error banner and the Google events modal.
    Every value is a token from app/globals.css; the few layout dimensions
@@ -261,4 +262,6 @@
   color: var(--accent);
   margin-top: var(--sp-3);
   display: inline-block;
+}
+
 }

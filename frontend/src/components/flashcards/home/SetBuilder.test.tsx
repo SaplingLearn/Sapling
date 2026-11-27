@@ -172,7 +172,7 @@ describe("Flashcards builder: the concept map", () => {
     const tray = within(screen.getByRole("complementary", { name: "Your selection" }));
     // With nothing ticked there is nothing to clear (it is kept in the layout,
     // hidden, so the tray's head never changes height).
-    expect(tray.queryByRole("button", { name: "Clear" })).toBeNull();
+    expect(tray.getByText("Clear")).toHaveTwStyle({ visibility: "hidden" });
 
     await user.click(tile("Variables"));
     await user.click(tile("Recursion"));

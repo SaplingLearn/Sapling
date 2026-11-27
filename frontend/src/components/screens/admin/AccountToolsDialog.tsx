@@ -10,11 +10,12 @@ import {
 import type {
   AccountTableCounts, AdminAccountSummary, AdminAccountsMeta, AdminUserListItem,
 } from "@/lib/types";
-import { fieldStyle } from "./adminStyles";
 import {
   accountHandles, canConfirmReview, isCopyBlocked, metaView,
   type Action, type ReviewData, type ReviewState,
 } from "./accountToolsModel";
+import { cn } from "@/lib/cn";
+import { fieldClass } from "@/components/ui/field";
 
 /**
  * Admin → Users → "Account tools": seed an account with a major's mock
@@ -87,23 +88,6 @@ function envTone(env: string): "prod" | "staging" | "other" {
 
 const isProd = (env: string | null | undefined) => Boolean(env) && envTone(env as string) === "prod";
 
-const sectionStyle: React.CSSProperties = {
-  border: "1px solid var(--border)",
-  borderRadius: "var(--r-sm)",
-  padding: "14px 16px",
-  marginBottom: 12,
-};
-
-const sectionTitle: React.CSSProperties = { fontWeight: 600, fontSize: "var(--fs-base)", margin: "0 0 4px" };
-
-const bodyText: React.CSSProperties = {
-  margin: "0 0 12px", color: "var(--text-dim)", fontSize: 13, lineHeight: 1.55,
-};
-
-const listStyle: React.CSSProperties = {
-  listStyle: "none", padding: 0, margin: "8px 0 0", display: "grid", gap: 4, fontSize: 12,
-};
-
 function EnvBadge({ env, testid = "admin-account-env", badgeTestid = "admin-account-env-badge", label = "Environment", message }: {
   env: string;
   testid?: string;
@@ -134,14 +118,14 @@ function EnvBadge({ env, testid = "admin-account-env", badgeTestid = "admin-acco
         flexWrap: "wrap",
       }}
     >
-      <span className="label-micro" style={{ color: "inherit" }}>{label}</span>
+      <span className="label-micro text-inherit">{label}</span>
       <strong
         data-testid={badgeTestid}
-        style={{ fontFamily: "var(--font-sans)", letterSpacing: "0.06em", fontSize: 14 }}
+        className="font-sans tracking-[0.06em] text-base"
       >
         {env.toUpperCase()}
       </strong>
-      <span style={{ fontSize: 12, color: "inherit" }}>
+      <span className="text-sm text-inherit">
         {message ?? (tone === "prod"
           ? "Live student data. Every action here writes to the production database."
           : `Actions here write to the ${env} database.`)}
@@ -157,10 +141,10 @@ function CourseList({ courses, testid, label }: {
 }) {
   if (courses.length === 0) return null;
   return (
-    <ul data-testid={testid} aria-label={label} style={listStyle}>
+    <ul data-testid={testid} aria-label={label} className="list-none p-0 mt-2 mx-0 mb-0 grid gap-1 text-sm">
       {courses.map((c, i) => (
-        <li key={`${c.code}-${i}`} style={{ color: "var(--text-dim)" }}>
-          <span style={{ fontFamily: "var(--font-sans)", color: "var(--text)" }}>{c.code}</span>
+        <li key={`${c.code}-${i}`} className="text-text-dim">
+          <span className="font-sans text-text">{c.code}</span>
           {c.name ? <> · {c.name}</> : null}
         </li>
       ))}
@@ -183,21 +167,16 @@ function SummaryBlock({ testid, title, summary, danger, emptyText, missing }: {
   return (
     <section
       data-testid={testid}
-      style={{
-        ...sectionStyle,
-        flex: "1 1 260px",
-        borderColor: danger ? "var(--err)" : "var(--border)",
-        background: danger ? "var(--err-soft)" : undefined,
-      }}
+      className={cn("border border-border rounded-sm py-3.5 px-4 mb-3 flex-[1_1_260px]", danger ? "border-err" : "border-border", danger ? "bg-err-soft" : "")}
     >
-      <h3 style={sectionTitle}>{title}</h3>
+      <h3 className="font-semibold text-base mt-0 mx-0 mb-1">{title}</h3>
       {!summary.exists && missing ? (
         missing
       ) : summary.empty || parts.length === 0 ? (
-        <p data-testid={`${testid}-empty`} style={{ ...bodyText, margin: 0 }}>{emptyText}</p>
+        <p data-testid={`${testid}-empty`} className="text-text-dim text-md leading-[1.55] m-0">{emptyText}</p>
       ) : (
         <>
-          <p data-testid={`${testid}-counts`} style={{ ...bodyText, margin: 0, color: "var(--text)" }}>
+          <p data-testid={`${testid}-counts`} className="text-md leading-[1.55] m-0 text-text">
             {parts.join(", ")}
           </p>
           <CourseList
@@ -224,9 +203,9 @@ function renderMetaHeader({ meta, metaError, reviewing, loadMeta }: {
     <div
       data-testid="admin-account-meta-error"
       role="alert"
-      style={{ ...sectionStyle, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}
+      className="border border-border rounded-sm py-3.5 px-4 mb-3 flex items-center justify-between gap-3"
     >
-      <span style={{ color: "var(--err)", fontSize: 13 }}>{metaError}</span>
+      <span className="text-err text-md">{metaError}</span>
       <button
         type="button"
         className="btn btn--sm"
@@ -237,7 +216,7 @@ function renderMetaHeader({ meta, metaError, reviewing, loadMeta }: {
       </button>
     </div>
   ) : (
-    <div data-testid="admin-account-meta-loading" style={{ ...bodyText, marginBottom: 16 }}>
+    <div data-testid="admin-account-meta-loading" className="mt-0 mx-0 text-text-dim text-md leading-[1.55] mb-4">
       Loading environment…
     </div>
   );
@@ -391,15 +370,15 @@ export function AccountToolsDialog({ user, onClose }: {
         <>
           <SummaryBlock
             testid="admin-account-review-delete"
-            title={<>Will delete from <span style={{ fontFamily: "var(--font-sans)" }}>{env.toUpperCase()}</span>:</>}
+            title={<>Will delete from <span className="font-sans">{env.toUpperCase()}</span>:</>}
             summary={s}
             danger={isProd(env) && !s.empty}
             emptyText="This account has no study data yet — nothing will be deleted."
           />
           {action === "seed" && selectedMajor && (
-            <section data-testid="admin-account-review-add" style={sectionStyle}>
-              <h3 style={sectionTitle}>Will add:</h3>
-              <p style={{ ...bodyText, margin: 0 }}>
+            <section data-testid="admin-account-review-add" className="border border-border rounded-sm py-3.5 px-4 mb-3">
+              <h3 className="font-semibold text-base mt-0 mx-0 mb-1">Will add:</h3>
+              <p className="text-text-dim text-md leading-[1.55] m-0">
                 A {selectedMajor.label} semester: {plural(selectedMajor.courses.length, "course", "courses")} with
                 assignments, notes, documents, flashcards, quizzes, a tutor chat and XP.
               </p>
@@ -411,7 +390,7 @@ export function AccountToolsDialog({ user, onClose }: {
             </section>
           )}
           {action === "wipe" && (
-            <p data-testid="admin-account-review-kept" style={{ ...bodyText, fontSize: 12 }}>
+            <p data-testid="admin-account-review-kept" className="mt-0 mx-0 mb-3 text-text-dim leading-[1.55] text-sm">
               <strong>Kept:</strong> the account, profile, settings, roles, and social (rooms, friends). Streak and
               level reset.
             </p>
@@ -426,7 +405,7 @@ export function AccountToolsDialog({ user, onClose }: {
         <p
           data-testid="admin-account-review-missing"
           role="alert"
-          style={{ ...bodyText, margin: 0, color: "var(--err)", fontWeight: 600 }}
+          className="text-md leading-[1.55] m-0 text-err font-semibold"
         >
           {side === "destination"
             ? `This account hasn't signed in on ${where} yet, so the copy would fail. Have them sign in on ${where} once, then try again.`
@@ -435,12 +414,12 @@ export function AccountToolsDialog({ user, onClose }: {
       );
     };
     return (
-      <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+      <div className="flex gap-3 flex-wrap">
         <SummaryBlock
           testid="admin-account-review-destination"
           title={
             <>
-              <span style={{ fontFamily: "var(--font-sans)" }}>{destination.env.toUpperCase()}</span> currently has
+              <span className="font-sans">{destination.env.toUpperCase()}</span> currently has
               {" "}(will be deleted):
             </>
           }
@@ -453,7 +432,7 @@ export function AccountToolsDialog({ user, onClose }: {
           testid="admin-account-review-source"
           title={
             <>
-              Replaced with, from <span style={{ fontFamily: "var(--font-sans)" }}>{source.env.toUpperCase()}</span>:
+              Replaced with, from <span className="font-sans">{source.env.toUpperCase()}</span>:
             </>
           }
           summary={source.summary}
@@ -510,15 +489,15 @@ export function AccountToolsDialog({ user, onClose }: {
               : `This deletes data on ${written}. It can't be undone.`
           }
         />
-        <h3 style={{ ...sectionTitle, fontSize: "var(--fs-md, 16px)", margin: "0 0 12px" }}>{reviewTitle(action)}</h3>
+        <h3 className="font-semibold [font-size:var(--fs-md,_16px)] mt-0 mx-0 mb-3">{reviewTitle(action)}</h3>
 
         {review?.status === "error" ? (
           <div
             data-testid="admin-account-review-error"
             role="alert"
-            style={{ ...sectionStyle, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}
+            className="border border-border rounded-sm py-3.5 px-4 mb-3 flex items-center justify-between gap-3"
           >
-            <span style={{ color: "var(--err)", fontSize: 13 }}>{review.message}</span>
+            <span className="text-err text-md">{review.message}</span>
             <button
               type="button"
               className="btn btn--sm"
@@ -531,16 +510,16 @@ export function AccountToolsDialog({ user, onClose }: {
         ) : review?.status === "ready" ? (
           renderReviewBody(action, review.data)
         ) : (
-          <p data-testid="admin-account-review-loading" role="status" style={bodyText}>
+          <p data-testid="admin-account-review-loading" role="status" className="mt-0 mx-0 mb-3 text-text-dim text-md leading-[1.55]">
             Counting what this account holds…
           </p>
         )}
 
         {ready && !blocked && (
-          <label htmlFor={confirmId} style={{ display: "block", margin: "4px 0 16px" }}>
-            <span className="label-micro" style={{ display: "block", marginBottom: 4 }}>
+          <label htmlFor={confirmId} className="block mt-1 mx-0 mb-4">
+            <span className="label-micro block mb-1">
               Type {targetIsEmail ? "the account's email" : "the account's user id"}{" "}
-              <span style={{ fontFamily: "var(--font-code)", textTransform: "none", color: "var(--text)" }}>{target}</span>{" "}
+              <span className="font-code normal-case text-text">{target}</span>{" "}
               to confirm
             </span>
             <input
@@ -553,15 +532,15 @@ export function AccountToolsDialog({ user, onClose }: {
               spellCheck={false}
               disabled={busy}
               aria-describedby={`${confirmId}-hint`}
-              style={fieldStyle}
+              className={fieldClass}
             />
-            <span id={`${confirmId}-hint`} style={{ display: "block", marginTop: 4, fontSize: 12, color: "var(--text-muted)" }}>
+            <span id={`${confirmId}-hint`} className="block mt-1 text-sm text-text-muted">
               {armed ? "Confirmed. The button below runs it." : "Not case-sensitive."}
             </span>
           </label>
         )}
 
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+        <div className="flex justify-between gap-2.5 flex-wrap">
           <button
             type="button"
             className="btn"
@@ -594,28 +573,28 @@ export function AccountToolsDialog({ user, onClose }: {
 
   const renderActions = () => (
     <>
-      <p style={{ ...bodyText, fontSize: 12 }}>
+      <p className="mt-0 mx-0 mb-3 text-text-dim leading-[1.55] text-sm">
         Nothing runs from this list. Each action first shows what it will delete, with counts, and asks you to
         confirm.
       </p>
 
-      <section aria-labelledby={`${majorId}-title`} style={sectionStyle}>
-        <h3 id={`${majorId}-title`} style={sectionTitle}>Seed with a major&apos;s mock data</h3>
-        <p style={bodyText}>
+      <section aria-labelledby={`${majorId}-title`} className="border border-border rounded-sm py-3.5 px-4 mb-3">
+        <h3 id={`${majorId}-title`} className="font-semibold text-base mt-0 mx-0 mb-1">Seed with a major&apos;s mock data</h3>
+        <p className="mt-0 mx-0 mb-3 text-text-dim text-md leading-[1.55]">
           <strong>Replaces</strong> this account&apos;s courses and study data (enrollments, documents, notes,
           flashcards, quizzes, tutor sessions, knowledge graph, XP) with a realistic semester of four courses for
           the chosen major. Nothing is stacked: whatever is there now is wiped first.
         </p>
-        <div style={{ display: "flex", gap: 10, alignItems: "flex-end", flexWrap: "wrap" }}>
-          <label htmlFor={majorId} style={{ flex: "1 1 220px" }}>
-            <span className="label-micro" style={{ display: "block", marginBottom: 4 }}>Major</span>
+        <div className="flex gap-2.5 items-end flex-wrap">
+          <label htmlFor={majorId} className="flex-[1_1_220px]">
+            <span className="label-micro block mb-1">Major</span>
             <select
               id={majorId}
               data-testid="admin-account-major"
               value={major}
               onChange={(e) => setMajor(e.target.value)}
               disabled={busy || !meta || meta.majors.length === 0}
-              style={fieldStyle}
+              className={fieldClass}
             >
               {(meta?.majors ?? []).map((m) => (
                 <option key={m.key} value={m.key}>{m.label}</option>
@@ -641,9 +620,9 @@ export function AccountToolsDialog({ user, onClose }: {
         )}
       </section>
 
-      <section aria-labelledby={`${majorId}-wipe-title`} style={sectionStyle}>
-        <h3 id={`${majorId}-wipe-title`} style={sectionTitle}>Wipe study data</h3>
-        <p style={bodyText}>
+      <section aria-labelledby={`${majorId}-wipe-title`} className="border border-border rounded-sm py-3.5 px-4 mb-3">
+        <h3 id={`${majorId}-wipe-title`} className="font-semibold text-base mt-0 mx-0 mb-1">Wipe study data</h3>
+        <p className="mt-0 mx-0 mb-3 text-text-dim text-md leading-[1.55]">
           Removes enrollments and gradebook, documents (and their indexed chunks), notes, flashcards, study
           guides, quizzes, tutor sessions, the knowledge graph, XP and achievements, and resets streak and level.
           <br />
@@ -660,25 +639,25 @@ export function AccountToolsDialog({ user, onClose }: {
         </button>
       </section>
 
-      <section aria-labelledby={`${majorId}-copy-title`} style={{ ...sectionStyle, marginBottom: 20 }}>
-        <h3 id={`${majorId}-copy-title`} style={sectionTitle}>Copy between environments</h3>
+      <section aria-labelledby={`${majorId}-copy-title`} className="border border-border rounded-sm py-3.5 px-4 mb-5">
+        <h3 id={`${majorId}-copy-title`} className="font-semibold text-base mt-0 mx-0 mb-1">Copy between environments</h3>
         {!meta ? null : !meta.sync.configured ? (
-          <p data-testid="admin-account-copy-unconfigured" style={{ ...bodyText, margin: 0, color: "var(--text-muted)" }}>
+          <p data-testid="admin-account-copy-unconfigured" className="text-md leading-[1.55] m-0 text-text-muted">
             Copying isn&apos;t configured on this environment.
           </p>
         ) : (
           <>
-            <p style={bodyText}>
+            <p className="mt-0 mx-0 mb-3 text-text-dim text-md leading-[1.55]">
               Overwrites the <strong>destination&apos;s</strong> data for this account with the source&apos;s
               copy. It doesn&apos;t merge: the destination is wiped first. The account must already exist on the
               other environment (they&apos;ve signed in there once).
             </p>
             {peer === null && (
-              <p data-testid="admin-account-copy-unreachable" role="status" style={{ ...bodyText, color: "var(--warn)" }}>
+              <p data-testid="admin-account-copy-unreachable" role="status" className="mt-0 mx-0 mb-3 text-md leading-[1.55] text-warn">
                 The other environment is unreachable right now, so copying is unavailable.
               </p>
             )}
-            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            <div className="flex gap-2.5 flex-wrap">
               <button
                 type="button"
                 className="btn"
@@ -704,7 +683,7 @@ export function AccountToolsDialog({ user, onClose }: {
         )}
       </section>
 
-      <div style={{ display: "flex", justifyContent: "flex-end" }}>
+      <div className="flex justify-end">
         <button
           type="button"
           className="btn"

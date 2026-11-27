@@ -1,3 +1,4 @@
+@layer components {
 .screen {
   min-width: 0;
 }
@@ -234,3 +235,5 @@
 
 /* The learner chip above the conversation when the session panel is hidden,
    aligned with the conversation's text. */
+
+}

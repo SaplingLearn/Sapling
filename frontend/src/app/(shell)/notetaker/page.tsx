@@ -1,4 +1,5 @@
 "use client";
+import { useOverlayBehaviour } from "@/components/Dialog";
 import React, { Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Icon } from "@/components/Icon";
@@ -1114,15 +1115,16 @@ function CoursePickerModal({
   onClose: () => void;
 }) {
   const m = useMotionPresets();
+  // Dialog's modal engine: scroll lock, focus in and back out, Tab trap.
+  const { panelRef, onKeyDown } = useOverlayBehaviour({ open: true, onClose });
   return (
     <motion.div
-      role="dialog"
-      aria-modal="true"
-      onClick={onClose}
+      onClick={onClose} onKeyDown={onKeyDown}
       className={styles.backdrop}
       {...m.fade}
     >
       <motion.div
+        ref={panelRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="course-picker-title"
         onClick={stopClick}
         className={`card ${styles.modal}`}
         {...m.scaleIn}
@@ -1131,7 +1133,7 @@ function CoursePickerModal({
           <div className={`label-micro ${styles.modalEyebrow}`}>
             New note
           </div>
-          <h2 className={`h-serif ${styles.modalTitle}`}>
+          <h2 id="course-picker-title" className={`h-serif ${styles.modalTitle}`}>
             Which course is this for?
           </h2>
           <p className={styles.modalCopy}>
@@ -1226,16 +1228,17 @@ function ConceptPickerModal({
     });
   }, [nodes, query, alreadyLinkedIds]);
   const m = useMotionPresets();
+  // Dialog's modal engine: scroll lock, focus in and back out, Tab trap.
+  const { panelRef, onKeyDown } = useOverlayBehaviour({ open: true, onClose });
 
   return (
     <motion.div
-      role="dialog"
-      aria-modal="true"
-      onClick={onClose}
+      onClick={onClose} onKeyDown={onKeyDown}
       className={styles.backdrop}
       {...m.fade}
     >
       <motion.div
+        ref={panelRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="concept-picker-title"
         onClick={stopClick}
         className={`card ${styles.modal} ${styles.modalTall}`}
         {...m.scaleIn}
@@ -1244,7 +1247,7 @@ function ConceptPickerModal({
           <div className={`label-micro ${styles.modalEyebrow}`}>
             Link concept
           </div>
-          <h2 className={`h-serif ${styles.modalTitle}`}>
+          <h2 id="concept-picker-title" className={`h-serif ${styles.modalTitle}`}>
             Pick a concept to link
           </h2>
           <p className={styles.modalCopy}>

@@ -1,3 +1,4 @@
+@layer components {
 /* Shared layout for every quiz screen (§5 "Common").
  *
  * Per-screen rules live beside their screen (`home/home.css`, `question/
@@ -172,4 +173,6 @@ html:has([data-quiz-session]) nav[aria-label="Primary"] {
 /* Phones: the question page keeps a 16px gutter instead of the desktop air. */
 @media (max-width: 640px) {
   .quiz-root { --quiz-pad-question: var(--sp-12) var(--sp-8) var(--sp-10); }
+}
+
 }

@@ -1,3 +1,4 @@
+@layer components {
 /* Admin > Achievements (AchievementWiki.tsx): the catalog of badge cards, the
    grant panel and the XP rules. Layout widths that are not design tokens are
    named here, once. */
@@ -237,3 +238,5 @@
   font-size: var(--fs-md);
 }
 .ruleLabel { flex: 1; font-weight: 500; }
+
+}

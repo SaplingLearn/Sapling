@@ -1,6 +1,5 @@
-import { readFileSync } from "node:fs";
-import path from "node:path";
 import { describe, it, expect } from "vitest";
+import { readAppCss } from "@/test-utils/appCss";
 import {
   HUB_EASE, HUB_EASE_POINTS, HUB_IN, HUB_IN_FROM, HUB_IN_LATE, HUB_OUT, HUB_OUT_UNTIL, HUB_STAGGER_MS, HUB_SWITCH_MS, HUB_WHOLE,
   countAt, cubicBezier, hubEase,
@@ -8,7 +7,7 @@ import {
 
 describe("the switch clock", () => {
   it("uses the app's own easing curve", () => {
-    const css = readFileSync(path.resolve(__dirname, "../../app/globals.css"), "utf8");
+    const css = readAppCss();
     expect(css).toContain(`--ease: ${HUB_EASE};`);
     expect(HUB_EASE).toBe("cubic-bezier(0.2, 0.7, 0.2, 1)");
   });

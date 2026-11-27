@@ -1,3 +1,4 @@
+@layer components {
 /* The exam row (ExamTabs.tsx): the tabs, "+", and the deadlines bell. */
 
 .row {
@@ -113,3 +114,5 @@
 .deadlineTitle { display: block; font-size: var(--fs-md); font-weight: 600; }
 .deadlineMeta { display: block; font-size: var(--fs-sm); color: var(--text-muted); }
 .deadlineCount { font-size: var(--fs-sm); font-weight: 600; white-space: nowrap; }
+
+}

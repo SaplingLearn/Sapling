@@ -346,7 +346,7 @@ export const MarkdownChat = React.memo(function MarkdownChat({
 }) {
   const inert = profile === "inert";
   return (
-    <div style={{ lineHeight: 1.55 }}>
+    <div className="leading-[1.55]">
       <ReactMarkdown
         remarkPlugins={
           inert

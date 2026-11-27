@@ -6,6 +6,7 @@ import type {
   GradedAssignment,
   LetterScaleTier,
 } from "@/lib/types";
+import { cn } from "@/lib/cn";
 
 // ───────────────────────────────────────────────────────────────────────────
 // Projection math
@@ -235,13 +236,7 @@ export function GradeProjector({
   if (current === null) {
     return (
       <div
-        style={{
-          padding: "32px 0",
-          fontFamily: "var(--font-serif), var(--font-aleo), 'Aleo', Georgia, serif",
-          fontSize: 15,
-          lineHeight: 1.6,
-          color: "var(--text-dim)",
-        }}
+        className="py-8 px-0 font-serif text-[15px] leading-[1.6] text-text-dim"
       >
         Once your first assignment is graded, this becomes a live projector
         showing what&apos;s guaranteed, what&apos;s still reachable, and what
@@ -285,41 +280,21 @@ export function GradeProjector({
   const ceilingTier = projection ? tierFor(scale, projection.ceiling) : undefined;
 
   return (
-    <div style={{ position: "relative" }}>
+    <div className="relative">
       {/* Letter ticks above the bar */}
-      <div style={{ position: "relative", height: 30, marginBottom: 8 }}>
+      <div className="relative h-7.5 mb-2">
         {ticks.map(({ letter, min }) => (
           <div
             key={letter}
-            style={{
-              position: "absolute",
-              left: `${min}%`,
-              top: 0,
-              transform: "translateX(-50%)",
-              textAlign: "center",
-            }}
+            className="absolute top-0 [transform:translateX(-50%)] text-center" style={{ left: `${min}%` }}
           >
             <div
-              className="mono"
-              style={{
-                fontSize: 11,
-                fontWeight: 700,
-                color: "var(--text-dim)",
-                letterSpacing: "-0.01em",
-                lineHeight: 1,
-              }}
+              className="mono text-xs font-bold text-text-dim tracking-[-0.01em] leading-none"
             >
               {letter}
             </div>
             <div
-              className="mono"
-              style={{
-                fontSize: 9,
-                color: "var(--text-muted)",
-                letterSpacing: "-0.01em",
-                lineHeight: 1.2,
-                marginTop: 2,
-              }}
+              className="mono text-[9px] text-text-muted tracking-[-0.01em] leading-[1.2] mt-0.5"
             >
               {min}
             </div>
@@ -328,32 +303,18 @@ export function GradeProjector({
       </div>
 
       {/* The bar — neutral track + earned-so-far solid + reachable hatched range + current pin */}
-      <div style={{ position: "relative", height: 18, marginBottom: 28 }}>
+      <div className="relative h-4.5 mb-7">
         {/* Track */}
         <div
           aria-hidden="true"
-          style={{
-            position: "absolute",
-            inset: 0,
-            background: "var(--bg-subtle)",
-            borderRadius: "var(--r-full)",
-          }}
+          className="absolute inset-0 bg-bg-subtle rounded-[var(--r-full)]"
         />
 
         {/* Guaranteed-floor zone: 0 -> floor% */}
         {projection && projection.floor > 0 && (
           <div
             aria-hidden="true"
-            style={{
-              position: "absolute",
-              top: 0,
-              bottom: 0,
-              left: 0,
-              width: `${projection.floor}%`,
-              background: percentColor(projection.floor),
-              borderTopLeftRadius: "var(--r-full)",
-              borderBottomLeftRadius: "var(--r-full)",
-            }}
+            className="absolute top-0 bottom-0 left-0 [border-top-left-radius:var(--r-full)] [border-bottom-left-radius:var(--r-full)]" style={{ width: `${projection.floor}%`, background: percentColor(projection.floor) }}
           />
         )}
 
@@ -361,14 +322,7 @@ export function GradeProjector({
         {projection && projection.ceiling > projection.floor && (
           <div
             aria-hidden="true"
-            style={{
-              position: "absolute",
-              top: 0,
-              bottom: 0,
-              left: `${projection.floor}%`,
-              width: `${projection.ceiling - projection.floor}%`,
-              backgroundImage: `repeating-linear-gradient(135deg, color-mix(in oklch, ${percentColor(projection.ceiling)}, transparent 40%) 0 5px, transparent 5px 10px)`,
-            }}
+            className="absolute top-0 bottom-0" style={{ left: `${projection.floor}%`, width: `${projection.ceiling - projection.floor}%`, backgroundImage: `repeating-linear-gradient(135deg, color-mix(in oklch, ${percentColor(projection.ceiling)}, transparent 40%) 0 5px, transparent 5px 10px)` }}
           />
         )}
 
@@ -377,75 +331,34 @@ export function GradeProjector({
           <div
             key={`tick-${letter}`}
             aria-hidden="true"
-            style={{
-              position: "absolute",
-              left: `${min}%`,
-              top: -4,
-              bottom: -4,
-              width: 1,
-              background: "var(--border-strong)",
-              transform: "translateX(-0.5px)",
-            }}
+            className="absolute -top-1 -bottom-1 w-px bg-border-strong [transform:translateX(-0.5px)]" style={{ left: `${min}%` }}
           />
         ))}
 
         {/* Current marker — bold pin, indexed above ticks */}
         <div
           aria-hidden="true"
-          style={{
-            position: "absolute",
-            left: `${current}%`,
-            top: -8,
-            bottom: -8,
-            width: 3,
-            background: "var(--text)",
-            borderRadius: 1,
-            transform: "translateX(-50%)",
-          }}
+          className="absolute -top-2 -bottom-2 w-[3px] bg-text rounded-[1px] [transform:translateX(-50%)]" style={{ left: `${current}%` }}
         />
       </div>
 
       {/* "Now" label, centered under the marker */}
-      <div style={{ position: "relative", height: 38, marginBottom: 8 }}>
+      <div className="relative h-9.5 mb-2">
         <div
-          style={{
-            position: "absolute",
-            left: `clamp(0%, ${current}%, 100%)`,
-            transform: "translateX(-50%)",
-            textAlign: "center",
-            whiteSpace: "nowrap",
-          }}
+          className="absolute [transform:translateX(-50%)] text-center whitespace-nowrap" style={{ left: `clamp(0%, ${current}%, 100%)` }}
         >
           <div
-            className="mono"
-            style={{
-              fontSize: 11,
-              
-              
-              color: "var(--text-muted)",
-              marginBottom: 2 }}
+            className="mono text-xs text-text-muted mb-0.5"
           >
             now
           </div>
           <div
-            style={{
-              fontFamily: "var(--font-display), 'Aleo', Georgia, serif",
-              fontSize: 18,
-              fontWeight: 500,
-              color: percentColor(current),
-              letterSpacing: "-0.01em",
-              lineHeight: 1.1,
-            }}
+            className="font-display text-xl font-medium tracking-[-0.01em] leading-[1.1]" style={{ color: percentColor(current) }}
           >
             {current.toFixed(1)}%
             {currentTier && (
               <span
-                style={{
-                  marginLeft: 6,
-                  fontSize: 12,
-                  color: "var(--text-dim)",
-                  fontWeight: 400,
-                }}
+                className="ml-1.5 text-sm text-text-dim font-normal"
               >
                 {currentTier}
               </span>
@@ -455,19 +368,13 @@ export function GradeProjector({
       </div>
 
       {isPredicted && (
-        <div className="chip chip--accent" style={{ marginBottom: 10 }}>
+        <div className="chip chip--accent mb-2.5">
           Predicted
         </div>
       )}
       {/* Footer trio: Floor · Action · Ceiling */}
       <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "1fr 1fr 1fr",
-          gap: 24,
-          paddingTop: 18,
-          borderTop: "1px solid var(--border)",
-        }}
+        className="grid grid-cols-[1fr_1fr_1fr] gap-6 pt-4.5 border-t border-t-border"
       >
         <Stat
           label="If you stop here"
@@ -503,35 +410,17 @@ function Stat({
   return (
     <div>
       <div
-        className="mono"
-        style={{
-          fontSize: 12,
-          
-          
-          color: "var(--text-muted)",
-          marginBottom: 6 }}
+        className="mono text-sm text-text-muted mb-1.5"
       >
         {label}
       </div>
       <div
-        style={{
-          fontFamily: "var(--font-display), 'Aleo', Georgia, serif",
-          fontWeight: emphasis ? 600 : 500,
-          fontSize: emphasis ? 22 : 20,
-          color: muted ? "var(--text-dim)" : "var(--text)",
-          letterSpacing: "-0.01em",
-          lineHeight: 1.15,
-        }}
+        className={cn("font-display tracking-[-0.01em] leading-[1.15]", emphasis ? "font-semibold" : "font-medium", emphasis ? "text-2xl" : "text-[20px]", muted ? "text-text-dim" : "text-text")}
       >
         {value}
         {suffix && (
           <span
-            style={{
-              marginLeft: 8,
-              fontSize: 12,
-              color: "var(--text-muted)",
-              fontWeight: 400,
-            }}
+            className="ml-2 text-sm text-text-muted font-normal"
           >
             {suffix}
           </span>

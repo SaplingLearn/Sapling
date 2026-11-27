@@ -64,7 +64,8 @@ describe("the src/ tree against hardcode-baseline.json", () => {
   });
 
   it("still finds the landing sections it skips in globals.css", () => {
-    const css = fs.readFileSync(path.join(ROOT, "src/app/globals.css"), "utf8");
+    // The landing sections moved with the rest of the shared rules (ADR 0031).
+    const css = fs.readFileSync(path.join(ROOT, "src/styles/components.css"), "utf8");
     for (const { banner } of ratchet.GLOBALS_LANDING_SECTIONS) {
       expect(css.includes(banner), `globals.css lost the banner "${banner}"; update GLOBALS_LANDING_SECTIONS`).toBe(true);
     }

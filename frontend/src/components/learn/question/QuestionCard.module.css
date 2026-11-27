@@ -1,3 +1,4 @@
+@layer components {
 /* The one question card (QuestionCard.tsx). A full card is the Tutor's
    `.qcard` (tutor.module.css); these are the parts every variant shares. */
 
@@ -61,4 +62,6 @@
   flex-direction: column;
   gap: var(--sp-5);
   min-width: 0;
+}
+
 }

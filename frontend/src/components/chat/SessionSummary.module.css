@@ -1,3 +1,4 @@
+@layer components {
 /* The end-of-session summary dialog (SessionSummary.tsx). */
 
 .backdrop {
@@ -65,4 +66,6 @@
   justify-content: flex-end;
   margin-top: var(--sp-10);
   gap: var(--sp-4);
+}
+
 }

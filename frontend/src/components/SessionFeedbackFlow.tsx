@@ -3,7 +3,7 @@
 import React, { useCallback, useState } from "react";
 import { submitFeedback } from "@/lib/api";
 import { useUser } from "@/context/UserContext";
-import { useScrollLock } from "@/lib/useScrollLock";
+import { useOverlayBehaviour } from "@/components/Dialog";
 import { useToast } from "./ToastProvider";
 import { LONG_TEXT_MAX } from "@/lib/inputLimits";
 // Numeric scale — the brand's tone is "quiet library," not emoji reactions —
@@ -37,7 +37,6 @@ export function SessionFeedbackFlow({ open, context, onClose }: SessionFeedbackF
   const [comment, setComment] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
-  useScrollLock(open);
 
   // Pacing (cooldown, one prompt per session) is recorded by the opener when
   // the prompt opens — lib/feedbackPacing.ts — so every close here counts.
@@ -74,15 +73,19 @@ export function SessionFeedbackFlow({ open, context, onClose }: SessionFeedbackF
     }
   };
 
+  // Dialog's modal engine (scroll lock, focus in and back out, Escape, the
+  // Tab trap) under this flow's own card.
+  const { panelRef, onKeyDown } = useOverlayBehaviour({ open, onClose: () => { if (!submitting) close(); } });
+
   if (!open) return null;
 
   const canNext = step === 0 ? rating !== null : true;
 
   return (
-    <div className={styles.backdrop} onClick={() => !submitting && close()}>
-      <div onClick={e => e.stopPropagation()} className={styles.card}>
+    <div className={styles.backdrop} onClick={() => !submitting && close()} onKeyDown={onKeyDown}>
+      <div ref={panelRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="session-feedback-title" onClick={e => e.stopPropagation()} className={styles.card}>
         <div className={styles.header}>
-          <div className={`h-serif ${styles.sessionTitle}`}>How was that session?</div>
+          <div id="session-feedback-title" className={`h-serif ${styles.sessionTitle}`}>How was that session?</div>
           <button className="btn btn--ghost btn--sm" onClick={() => close()} aria-label="Close">×</button>
         </div>
 

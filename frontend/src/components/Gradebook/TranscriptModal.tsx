@@ -50,35 +50,24 @@ export function TranscriptModal({ open, userId, onClose }: Props) {
     <Dialog open={open} onClose={onClose} title="Transcript" size="md" padding="24px">
       {loading ? (
         <div aria-hidden="true">
-          <div className="skeleton" style={{ height: 40, borderRadius: 8, marginBottom: 16 }} />
+          <div className="skeleton h-10 rounded-[8px] mb-4" />
           {Array.from({ length: 3 }).map((_, i) => (
-            <div key={i} className="skeleton" style={{ height: 22, borderRadius: 6, marginBottom: 10 }} />
+            <div key={i} className="skeleton h-5.5 rounded-sm mb-2.5" />
           ))}
         </div>
       ) : failed ? (
         <div
           role="alert"
-          style={{
-            padding: "14px 16px",
-            borderRadius: "var(--r-md)",
-            background: "var(--err-soft)",
-            border: "1px solid color-mix(in oklab, var(--err) 20%, transparent)",
-            display: "flex",
-            gap: 12,
-            alignItems: "center",
-            justifyContent: "space-between",
-            flexWrap: "wrap",
-          }}
+          className="py-3.5 px-4 rounded-md bg-err-soft border border-[color-mix(in_oklab,_var(--err)_20%,_transparent)] flex gap-3 items-center justify-between flex-wrap"
         >
-          <span style={{ fontSize: 13, color: "var(--text-dim)" }}>
+          <span className="text-md text-text-dim">
             We couldn&apos;t load your transcript.
           </span>
           <button
             type="button"
             data-testid="gradebook-transcript-retry"
-            className="btn btn--primary"
+            className="btn btn--primary py-1.5 px-3.5 text-md"
             onClick={load}
-            style={{ padding: "6px 14px", fontSize: 13 }}
           >
             Try again
           </button>
@@ -95,7 +84,7 @@ function TranscriptBody({ report }: { report: GpaReport }) {
 
   if (semesters.length === 0) {
     return (
-      <p style={{ margin: 0, fontSize: 14, color: "var(--text-dim)", lineHeight: 1.55 }}>
+      <p className="m-0 text-base text-text-dim leading-[1.55]">
         Nothing on the transcript yet — grades appear here once your courses
         have graded work.
       </p>
@@ -105,110 +94,60 @@ function TranscriptBody({ report }: { report: GpaReport }) {
   return (
     <div>
       <div
-        style={{
-          display: "flex",
-          alignItems: "baseline",
-          justifyContent: "space-between",
-          gap: 12,
-          padding: "4px 0 14px",
-          borderBottom: "1px solid var(--border)",
-          marginBottom: 16,
-        }}
+        className="flex items-baseline justify-between gap-3 pt-1 px-0 pb-3.5 border-b border-b-border mb-4"
       >
         <span
-          className="mono"
-          style={{
-            fontSize: 12,
-            
-            
-            color: "var(--text-muted)",
-            fontWeight: 600 }}
+          className="mono text-sm text-text-muted font-semibold"
         >
           Cumulative GPA
         </span>
         <span
           data-testid="gradebook-transcript-gpa"
-          style={{
-            fontFamily: "var(--font-display), 'Aleo', Georgia, serif",
-            fontWeight: 500,
-            fontSize: 32,
-            lineHeight: 1,
-            letterSpacing: "-0.02em",
-            color: "var(--text)",
-          }}
+          className="font-display font-medium text-5xl leading-none tracking-[-0.02em] text-text"
         >
           {report.gpa === null ? "—" : report.gpa.toFixed(2)}
         </span>
       </div>
 
       {semesters.map((sem) => (
-        <section key={sem.label || "no-term"} style={{ marginBottom: 18 }}>
+        <section key={sem.label || "no-term"} className="mb-4.5">
           <div
-            style={{
-              display: "flex",
-              alignItems: "baseline",
-              justifyContent: "space-between",
-              gap: 12,
-              marginBottom: 8,
-            }}
+            className="flex items-baseline justify-between gap-3 mb-2"
           >
             <span
-              style={{
-                fontFamily: "var(--font-display), 'Aleo', Georgia, serif",
-                fontWeight: 500,
-                fontSize: 16,
-                color: "var(--text)",
-              }}
+              className="font-display font-medium text-lg text-text"
             >
               {sem.label || "No term"}
             </span>
-            <span className="mono" style={{ fontSize: 14, color: "var(--text-dim)" }}>
+            <span className="mono text-base text-text-dim">
               GPA {sem.gpa === null ? "—" : sem.gpa.toFixed(2)}
             </span>
           </div>
-          <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
+          <ul className="list-none m-0 p-0">
             {sem.courses.map((c) => (
               <li
                 key={c.course_id}
-                style={{
-                  display: "flex",
-                  alignItems: "baseline",
-                  justifyContent: "space-between",
-                  gap: 12,
-                  padding: "5px 0",
-                  borderBottom: "1px solid var(--border)",
-                }}
+                className="flex items-baseline justify-between gap-3 py-[5px] px-0 border-b border-b-border"
               >
-                <span className="mono" style={{ fontSize: 12, color: "var(--text)" }}>
+                <span className="mono text-sm text-text">
                   {c.course_code}
                 </span>
-                <span style={{ display: "flex", alignItems: "baseline", gap: 14 }}>
+                <span className="flex items-baseline gap-3.5">
                   <span
-                    className="mono"
-                    style={{ fontSize: 11, color: "var(--text-muted)" }}
+                    className="mono text-xs text-text-muted"
                   >
                     {/* Same rule as the GPA math — display what is weighed. */}
                     {effectiveCredits(c)} cr
                   </span>
                   {c.letter === null ? (
                     <span
-                      style={{
-                        fontSize: 12,
-                        fontStyle: "italic",
-                        color: "var(--text-muted)",
-                      }}
+                      className="text-sm italic text-text-muted"
                     >
                       in progress
                     </span>
                   ) : (
                     <span
-                      style={{
-                        fontFamily:
-                          "var(--font-display), 'Aleo', Georgia, serif",
-                        fontWeight: 500,
-                        fontSize: 15,
-                        color: percentColor(c.percent),
-                      }}
+                      className="font-display font-medium text-[15px]" style={{ color: percentColor(c.percent) }}
                     >
                       {c.letter}
                     </span>

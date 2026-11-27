@@ -1,3 +1,4 @@
+@layer components {
 /* The Tutor's Saved tab (saved.tsx): the Save action under a tutor reply and
    the session panel's list of what was saved. */
 
@@ -67,4 +68,6 @@
   line-height: 1.5;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
 }

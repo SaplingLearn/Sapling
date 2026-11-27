@@ -10,6 +10,7 @@ import type { EnrolledCourse } from "@/lib/api";
 import { useToast } from "@/components/ToastProvider";
 import { humanizeError } from "@/lib/errorMessage";
 import type { ExtractedSyllabusCategory } from "@/lib/types";
+import { cn } from "@/lib/cn";
 
 interface Props {
   open: boolean;
@@ -130,7 +131,7 @@ export function SyllabusUploadFlow({ open, userId, onClose }: Props) {
             <select
               value={courseId}
               onChange={(e) => setCourseId(e.target.value)}
-              style={{ width: "100%", padding: 6, border: "1px solid var(--border)", borderRadius: 6 }}
+              className="w-full p-1.5 border border-border rounded-sm"
             >
               <option value="">Pick a course</option>
               {courses.map((c) => (
@@ -145,15 +146,15 @@ export function SyllabusUploadFlow({ open, userId, onClose }: Props) {
             accept=".pdf,.docx,.pptx"
             disabled={!courseId}
             onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])}
-            style={{ marginTop: 12, maxWidth: "100%" }}
+            className="mt-3 max-w-full"
           />
         </>
       )}
 
       {step === "upload" && (
         <>
-          <p style={{ color: "var(--text-dim)" }}>Extracting syllabus…</p>
-          <div style={{ display: "flex", justifyContent: "flex-end" }}>
+          <p className="text-text-dim">Extracting syllabus…</p>
+          <div className="flex justify-end">
             <button type="button" onClick={cancelUpload}>Cancel upload</button>
           </div>
         </>
@@ -161,10 +162,10 @@ export function SyllabusUploadFlow({ open, userId, onClose }: Props) {
 
       {step === "review" && (
         <>
-          <h4 style={{ marginTop: 0 }}>Categories</h4>
-          <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
+          <h4 className="mt-0">Categories</h4>
+          <ul className="list-none m-0 p-0">
             {categories.map((c, i) => (
-              <li key={i} style={{ display: "flex", gap: 8, marginBottom: 6 }}>
+              <li key={i} className="flex gap-2 mb-1.5">
                 <input
                   value={c.name}
                   onChange={(e) =>
@@ -172,7 +173,7 @@ export function SyllabusUploadFlow({ open, userId, onClose }: Props) {
                       arr.map((x, idx) => (idx === i ? { ...x, name: e.target.value } : x)),
                     )
                   }
-                  style={{ flex: 1, minWidth: 0, padding: 6, border: "1px solid var(--border)", borderRadius: 6 }}
+                  className="flex-1 min-w-0 p-1.5 border border-border rounded-sm"
                 />
                 <input
                   type="number"
@@ -184,9 +185,9 @@ export function SyllabusUploadFlow({ open, userId, onClose }: Props) {
                       ),
                     )
                   }
-                  style={{ width: 70, flexShrink: 0, padding: 6, border: "1px solid var(--border)", borderRadius: 6 }}
+                  className="w-17.5 shrink-0 p-1.5 border border-border rounded-sm"
                 />
-                <span style={{ alignSelf: "center" }}>%</span>
+                <span className="self-center">%</span>
                 <button type="button" onClick={() =>
                   setCategories((arr) => arr.filter((_, idx) => idx !== i))
                 }>✕</button>
@@ -196,14 +197,14 @@ export function SyllabusUploadFlow({ open, userId, onClose }: Props) {
           <button type="button" onClick={() =>
             setCategories((arr) => [...arr, { name: "", weight: 0 }])
           }>+ Add category</button>
-          <p style={{ color: weightsValid ? "var(--accent)" : "var(--err)", fontSize: 12 }}>
+          <p className={cn("text-sm", weightsValid ? "text-accent" : "text-err")}>
             Total: {total.toFixed(1)}% {weightsValid ? "✓" : "(need 100%)"}
           </p>
 
           <h4>Assignments ({assignments.length})</h4>
-          <ul style={{ listStyle: "none", margin: 0, padding: 0, maxHeight: 200, overflow: "auto" }}>
+          <ul className="list-none m-0 p-0 max-h-50 overflow-auto">
             {assignments.map((a, i) => (
-              <li key={i} style={{ display: "flex", flexWrap: "wrap", gap: 8, padding: "4px 0" }}>
+              <li key={i} className="flex flex-wrap gap-2 py-1 px-0">
                 <input
                   value={a.title}
                   onChange={(e) =>
@@ -211,7 +212,7 @@ export function SyllabusUploadFlow({ open, userId, onClose }: Props) {
                       arr.map((x, idx) => (idx === i ? { ...x, title: e.target.value } : x)),
                     )
                   }
-                  style={{ flex: 1, minWidth: 120, padding: 4, border: "1px solid var(--border)", borderRadius: 4 }}
+                  className="flex-1 min-w-30 p-1 border border-border rounded-xs"
                 />
                 <input
                   type="date"
@@ -223,7 +224,7 @@ export function SyllabusUploadFlow({ open, userId, onClose }: Props) {
                       ),
                     )
                   }
-                  style={{ padding: 4, border: "1px solid var(--border)", borderRadius: 4 }}
+                  className="p-1 border border-border rounded-xs"
                 />
                 <button type="button" onClick={() =>
                   setAssignments((arr) => arr.filter((_, idx) => idx !== i))
@@ -232,7 +233,7 @@ export function SyllabusUploadFlow({ open, userId, onClose }: Props) {
             ))}
           </ul>
 
-          <div style={{ marginTop: 16, display: "flex", flexWrap: "wrap", justifyContent: "flex-end", gap: 8 }}>
+          <div className="mt-4 flex flex-wrap justify-end gap-2">
             <button type="button" onClick={onClose}>Cancel</button>
             <Button
               variant="primary"
@@ -247,7 +248,7 @@ export function SyllabusUploadFlow({ open, userId, onClose }: Props) {
       )}
 
       {step === "saving" && (
-        <p style={{ color: "var(--text-dim)" }}>Saving…</p>
+        <p className="text-text-dim">Saving…</p>
       )}
     </Dialog>
   );

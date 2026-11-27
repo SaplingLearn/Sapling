@@ -4,7 +4,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 import { submitFeedback } from "@/lib/api";
 import { useUser } from "@/context/UserContext";
-import { useScrollLock } from "@/lib/useScrollLock";
+import { useOverlayBehaviour } from "@/components/Dialog";
 import {
   currentLearningSession,
   mayPrompt,
@@ -70,7 +70,6 @@ export function FeedbackFlow({ passive = true, open: openProp, onClose }: Feedba
   const [comment, setComment] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
-  useScrollLock(open);
 
   useEffect(() => {
     if (!passive) return;
@@ -145,13 +144,17 @@ export function FeedbackFlow({ passive = true, open: openProp, onClose }: Feedba
     }
   };
 
+  // Dialog's modal engine (scroll lock, focus in and back out, Escape, the
+  // Tab trap) under this flow's own card.
+  const { panelRef, onKeyDown } = useOverlayBehaviour({ open, onClose: () => { if (!submitting) close(); } });
+
   if (!open) return null;
 
   return (
-    <div className={styles.backdrop} onClick={() => !submitting && close()}>
-      <div onClick={e => e.stopPropagation()} className={styles.card}>
+    <div className={styles.backdrop} onClick={() => !submitting && close()} onKeyDown={onKeyDown}>
+      <div ref={panelRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="feedback-pulse-title" onClick={e => e.stopPropagation()} className={styles.card}>
         <div className={styles.header}>
-          <div className={`h-serif ${styles.pulseTitle}`}>What's clicking?</div>
+          <div id="feedback-pulse-title" className={`h-serif ${styles.pulseTitle}`}>What's clicking?</div>
           <button className="btn btn--ghost btn--sm" onClick={() => close()} aria-label="Close">×</button>
         </div>
         <div className={`body-serif ${styles.lede}`}>

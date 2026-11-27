@@ -1,3 +1,4 @@
+@layer components {
 /* The typed blocks inside a guide's sections.
 
    Every block shares one frame (BlockFrame): a header with an icon tile, the
@@ -213,4 +214,6 @@
   .block { break-inside: avoid; box-shadow: none; }
   .actions, .stepActions, .prompts { display: none !important; }
   .step[hidden] { display: flex !important; }
+}
+
 }

@@ -1,3 +1,4 @@
+@layer components {
 /* The hub speaks the Dashboard's visual language (globals.css tokens, .btn,
    .chip, .label-micro, the display face for titles and figures) WITHOUT its
    cards: sections sit open on the page and are told apart by hairlines, micro
@@ -366,3 +367,5 @@
 /* The hub's own title: a step past --fs-5xl, the one place it is this large. */
 .emptyTitle { margin: 0; font-size: calc(var(--fs-5xl) + var(--sp-5)); letter-spacing: -0.02em; }
 .emptyLead { font-size: var(--fs-base); color: var(--text-dim); }
+
+}

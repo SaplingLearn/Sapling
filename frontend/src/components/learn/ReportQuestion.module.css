@@ -1,3 +1,4 @@
+@layer components {
 /* "Report this question" (ReportQuestion): a quiet link-weight button, then
    one row of reasons. */
 
@@ -18,4 +19,6 @@ button.open {
 
 .question {
   color: var(--text-muted);
+}
+
 }

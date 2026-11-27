@@ -24,14 +24,13 @@ import { READINESS_ID, ROADMAP_ID } from "./hubUi";
 import et from "./ExamTabs.module.css";
 import s from "./StudyHub.module.css";
 import { countdown, countFg, daysTo, fmtDow, type AssessType, type Assessment } from "./studyModel";
+import { cn } from "@/lib/cn";
 
 const TYPE_DOT: Record<AssessType, string> = { Exam: et.dotExam, Quiz: et.dotQuiz, Homework: et.dotHomework };
 
 /* The title darkens as the line arrives, on the hub's clock (the app-wide
    reduced-motion reset collapses it). */
 const TITLE_FADE = { "--tab-fade": `${HUB_SWITCH_MS}ms` } as React.CSSProperties;
-/* The line grows from its left edge when it slides in (useSlidingLine). */
-const TAB_LINE: React.CSSProperties = { transformOrigin: "0 50%" };
 
 /** What every tab re-scopes. */
 const TAB_PANELS = `${READINESS_ID} ${ROADMAP_ID}`;
@@ -55,7 +54,7 @@ function ExamTab({ exam, on, tabStop, today, onSelect }: { exam: Assessment; on:
       className={on ? `${et.tab} ${et.tabOn}` : `${et.tab} ${s.hoverTab}`} onClick={onSelect} style={TITLE_FADE}>
       <span className={et.tabTitle}>{exam.title}</span>
       <span className={et.tabDate}>{fmtDow(exam.iso, today)}</span>
-      {on && <span data-tab-line="" aria-hidden="true" className={et.tabLine} style={TAB_LINE} />}
+      {on && <span data-tab-line="" aria-hidden="true" className={cn(et.tabLine, "[transform-origin:0_50%]")} />}
     </button>
   );
 }

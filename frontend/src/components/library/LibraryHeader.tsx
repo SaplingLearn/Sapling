@@ -11,12 +11,9 @@ import Link from "next/link";
 import type { Document as Doc } from "@/lib/types";
 import { Glyph as ToolGlyph, TOOL } from "../study/hubUi";
 import { studyGuideHref } from "@/lib/toolHrefs";
-import {
-  FONT_MONO, FONT_SERIF, Glyph, FolderIcon, MENU_IN, MENU_ITEM, MENU_OUT,
-  MENU_SURFACE, MenuDivider, MenuScrim,
-  CONTROL_H,
-} from "./primitives";
+import { Glyph, FolderIcon, MENU_IN, MENU_OUT, MenuDivider, MenuScrim, CONTROL_H } from "./primitives";
 import { TYPE_ORDER, TYPES, SORTS, type SortKey } from "./libraryModel";
+import { cn } from "@/lib/cn";
 
 export type HeaderMenu = "upload" | "sort" | "type" | null;
 
@@ -60,16 +57,10 @@ function GuidesButton() {
     <Link
       href={studyGuideHref()}
       data-testid="library-guides"
-      className="btn btn--sm"
-      style={{
-        height: CONTROL_H, padding: "0 16px", fontSize: "var(--fs-md)",
-        // Owner's call 2026-11-25: sit a little further left, so the pair is
-        // not read as one split control.
-        marginRight: 8,
-        whiteSpace: "nowrap", flexShrink: 0, textDecoration: "none",
-      }}
+      className="btn btn--sm py-0 px-4 text-md mr-2 whitespace-nowrap shrink-0 no-underline"
+      style={{ height: CONTROL_H }}
     >
-      <span aria-hidden="true" style={{ display: "grid", color: TOOL.guide.fg }}>
+      <span aria-hidden="true" className="grid" style={{ color: TOOL.guide.fg }}>
         <ToolGlyph name={TOOL.guide.icon} size={14} />
       </span>
       {TOOL.guide.title}
@@ -89,47 +80,13 @@ export function LibraryHeader(props: LibraryHeaderProps) {
   const typeLabel = type === "all" ? "All Types" : TYPES[type].label;
 
   return (
-    <header style={{
-      position: "relative",
-      zIndex: 20,
-      animation: "sapFadeIn 260ms cubic-bezier(0.2, 0.7, 0.2, 1) 900ms both",
-      gridColumn: 1,
-      gridRow: 1,
-      display: "flex",
-      alignItems: "center",
-      gap: 16,
-      marginBottom: 24,
-    }}>
-      <div style={{ display: "flex", flexDirection: "column", gap: 14, flexShrink: 0 }}>
-        <h1 style={{
-          margin: 0,
-          fontFamily: FONT_SERIF,
-          fontSize: 34,
-          fontWeight: 600,
-          letterSpacing: "-0.02em",
-          lineHeight: 1.15,
-          flexShrink: 0,
-        }}>Library</h1>
+    <header className="relative z-20 [animation:sapFadeIn_260ms_cubic-bezier(0.2,_0.7,_0.2,_1)_900ms_both] [grid-column:1] [grid-row:1] flex items-center gap-4 mb-6">
+      <div className="flex flex-col gap-3.5 shrink-0">
+        <h1 className="m-0 font-serif text-[34px] font-semibold tracking-[-0.02em] leading-[1.15] shrink-0">Library</h1>
 
       </div>
 
-      <label style={{
-        flex: 1,
-        minWidth: 0,
-        maxWidth: 840,
-        marginLeft: 24,
-        display: "flex",
-        alignItems: "center",
-        gap: 10,
-        height: CONTROL_H,
-        boxSizing: "border-box",
-        padding: "0 8px 0 16px",
-        border: "1px solid rgba(42,39,31,0.16)",
-        borderRadius: 12,
-        background: "#FDFCF9",
-        boxShadow: focused ? "0 0 0 3px rgba(89,117,54,0.22)" : "none",
-        cursor: "text",
-      }}>
+      <label className={cn("flex-1 min-w-0 max-w-210 ml-6 flex items-center gap-2.5 box-border pt-0 pr-2 pb-0 pl-4 border border-[rgba(42,39,31,0.16)] rounded-[12px] bg-bg-panel cursor-text", focused ? "[box-shadow:0_0_0_3px_rgba(89,117,54,0.22)]" : "shadow-none")} style={{ height: CONTROL_H }}>
         <Glyph name="search" size={18} fill="#6F6857" />
         <input
           data-testid="library-search"
@@ -141,50 +98,36 @@ export function LibraryHeader(props: LibraryHeaderProps) {
           onBlur={() => setFocused(false)}
           placeholder="Search titles, summaries, and concepts"
           aria-label="Search documents"
-          style={{
-            flex: 1, minWidth: 0, height: "100%", border: 0, background: "transparent",
-            font: "inherit", fontSize: 16, color: "#1A1814", outline: "none",
-          }}
+          className="flex-1 min-w-0 h-full border-0 bg-transparent [font-family:inherit] [font-weight:inherit] [font-style:inherit] [font-variant:inherit] [font-stretch:inherit] [line-height:inherit] text-lg text-ink-800 outline-none"
         />
 
-        <div style={{ display: "flex", alignItems: "center", gap: 2, flexShrink: 0 }}>
-          <div style={{ position: "relative" }}>
+        <div className="flex items-center gap-0.5 shrink-0">
+          <div className="relative">
             <button
               type="button"
-              className="sapHoverWarmest"
+              className={cn("sapHoverWarmest", "inline-flex items-center gap-2 h-8.5 py-0 px-2.5 border-0 rounded-[8px] [font-family:inherit] [font-weight:inherit] [font-style:inherit] [font-variant:inherit] [font-stretch:inherit] [line-height:inherit] text-base text-text-muted whitespace-nowrap cursor-pointer", menu === "sort" ? "[background:#EDE9E0]" : "[background:transparent]")}
               onClick={() => onMenu(menu === "sort" ? null : "sort")}
               aria-haspopup="menu"
               aria-expanded={menu === "sort"}
-              style={{
-                display: "inline-flex", alignItems: "center", gap: 8, height: 34,
-                padding: "0 10px", border: 0, borderRadius: 8,
-                background: menu === "sort" ? "#EDE9E0" : "transparent",
-                font: "inherit", fontSize: 14, color: "#6F6857",
-                whiteSpace: "nowrap", cursor: "pointer",
-              }}
             >
               Sort
-              <span style={{ fontWeight: 600, color: "#1A1814" }}>{sortLabel}</span>
+              <span className="font-semibold text-ink-800">{sortLabel}</span>
               <Glyph name="chevronDown" size={11} fill="#6F6857" />
             </button>
             {menu === "sort" && (
               <>
                 <MenuScrim onClick={() => onMenu(null)} />
-                <div role="menu" aria-label="Sort by" style={{
-                  position: "absolute", right: 0, top: 46, zIndex: 31, width: 220,
-                  transformOrigin: "top right", animation: menuAnim, ...MENU_SURFACE,
-                }}>
+                <div role="menu" aria-label="Sort by" className="absolute right-0 top-11.5 z-31 w-55 [transform-origin:top_right] bg-bg-panel border border-[rgba(42,39,31,0.14)] rounded-[12px] [box-shadow:0_14px_36px_rgba(25,37,11,0.16)] p-1.5 flex flex-col gap-px" style={{ animation: menuAnim }}>
                   {SORTS.map(([k, label]) => (
                     <button
                       key={k}
                       type="button"
                       role="menuitemradio"
                       aria-checked={sort === k}
-                      className="sapHoverMenu"
+                      className={cn("sapHoverMenu", "flex items-center gap-2.5 py-[9px] px-2.5 border-0 rounded-[8px] text-ink-800 [font-family:inherit] [font-style:inherit] [font-variant:inherit] [font-stretch:inherit] [line-height:inherit] text-base font-semibold text-left cursor-pointer", sort === k ? "[background:#F2F6EE]" : "[background:transparent]")}
                       onClick={() => { onSort(k); onMenu(null); }}
-                      style={{ ...MENU_ITEM, background: sort === k ? "#F2F6EE" : "transparent" }}
                     >
-                      <span style={{ flex: 1 }}>{label}</span>
+                      <span className="flex-1">{label}</span>
                       <Glyph name="check" size={12} fill="#445D22" style={{ opacity: sort === k ? 1 : 0 }} />
                     </button>
                   ))}
@@ -193,32 +136,20 @@ export function LibraryHeader(props: LibraryHeaderProps) {
             )}
           </div>
 
-          <span style={{ width: 1, height: 20, background: "rgba(42,39,31,0.14)" }} />
+          <span className="w-px h-5 bg-[rgba(42,39,31,0.14)]" />
 
-          <div style={{ position: "relative" }}>
+          <div className="relative">
             <button
               type="button"
-              className="sapHoverWarmest"
+              className={cn("sapHoverWarmest", "inline-flex items-center gap-2 h-8.5 py-0 px-2.5 border-0 rounded-[8px] [font-family:inherit] [font-weight:inherit] [font-style:inherit] [font-variant:inherit] [font-stretch:inherit] [line-height:inherit] text-base text-text-muted whitespace-nowrap cursor-pointer", menu === "type" ? "[background:#EDE9E0]" : "[background:transparent]")}
               onClick={() => onMenu(menu === "type" ? null : "type")}
               aria-haspopup="menu"
               aria-expanded={menu === "type"}
-              style={{
-                display: "inline-flex", alignItems: "center", gap: 8, height: 34,
-                padding: "0 10px", border: 0, borderRadius: 8,
-                background: menu === "type" ? "#EDE9E0" : "transparent",
-                font: "inherit", fontSize: 14, color: "#6F6857",
-                whiteSpace: "nowrap", cursor: "pointer",
-              }}
             >
               Type
-              <span style={{
-                display: "inline-flex", alignItems: "center", gap: 6,
-                fontWeight: 600, color: "#1A1814",
-              }}>
+              <span className="inline-flex items-center gap-1.5 font-semibold text-ink-800">
                 {type !== "all" && (
-                  <span style={{
-                    width: 8, height: 8, borderRadius: 2, background: TYPES[type].color,
-                  }} />
+                  <span className="w-2 h-2 rounded-[2px]" style={{ background: TYPES[type].color }} />
                 )}
                 {typeLabel}
               </span>
@@ -227,10 +158,7 @@ export function LibraryHeader(props: LibraryHeaderProps) {
             {menu === "type" && (
               <>
                 <MenuScrim onClick={() => onMenu(null)} />
-                <div role="menu" aria-label="Document type" style={{
-                  position: "absolute", right: 0, top: 46, zIndex: 31, width: 240,
-                  transformOrigin: "top right", animation: menuAnim, ...MENU_SURFACE,
-                }}>
+                <div role="menu" aria-label="Document type" className="absolute right-0 top-11.5 z-31 w-60 [transform-origin:top_right] bg-bg-panel border border-[rgba(42,39,31,0.14)] rounded-[12px] [box-shadow:0_14px_36px_rgba(25,37,11,0.16)] p-1.5 flex flex-col gap-px" style={{ animation: menuAnim }}>
                   {(["all", ...TYPE_ORDER] as const).map(k => {
                     const on = type === k;
                     const count = k === "all" ? scopedCount : (typeCounts[k] || 0);
@@ -240,18 +168,12 @@ export function LibraryHeader(props: LibraryHeaderProps) {
                         type="button"
                         role="menuitemradio"
                         aria-checked={on}
-                        className="sapHoverMenu"
+                        className={cn("sapHoverMenu", "flex items-center gap-2.5 py-[9px] px-2.5 border-0 rounded-[8px] text-ink-800 [font-family:inherit] [font-style:inherit] [font-variant:inherit] [font-stretch:inherit] [line-height:inherit] text-base font-semibold text-left cursor-pointer", on ? "[background:#F2F6EE]" : "[background:transparent]")}
                         onClick={() => { onType(k); onMenu(null); }}
-                        style={{ ...MENU_ITEM, background: on ? "#F2F6EE" : "transparent" }}
                       >
-                        <span style={{
-                          width: 9, height: 9, borderRadius: 2,
-                          background: k === "all" ? "transparent" : TYPES[k].color,
-                          border: k === "all" ? "1.5px solid #8A8372" : "0",
-                          boxSizing: "border-box", flexShrink: 0,
-                        }} />
-                        <span style={{ flex: 1 }}>{k === "all" ? "All Types" : TYPES[k].label}</span>
-                        <span style={{ fontWeight: 400, fontSize: 13, color: "#6F6857" }}>{count}</span>
+                        <span className={cn("w-[9px] h-[9px] rounded-[2px] box-border shrink-0", k === "all" ? "border-[1.5px] border-ink-400" : "border-0")} style={{ background: k === "all" ? "transparent" : TYPES[k].color }} />
+                        <span className="flex-1">{k === "all" ? "All Types" : TYPES[k].label}</span>
+                        <span className="font-normal text-md text-text-muted">{count}</span>
                         <Glyph name="check" size={12} fill="#445D22" style={{ opacity: on ? 1 : 0 }} />
                       </button>
                     );
@@ -266,67 +188,30 @@ export function LibraryHeader(props: LibraryHeaderProps) {
           <button
             onClick={() => onQuery("")}
             aria-label="Clear search"
-            style={{
-              width: 32, height: 32, display: "grid", placeItems: "center", border: 0,
-              borderRadius: 8, background: "#F4F1EA", color: "#3F3B31", cursor: "pointer",
-            }}
+            className="w-8 h-8 grid place-items-center border-0 rounded-[8px] bg-ink-50 text-ink-600 cursor-pointer"
           >
             <Glyph name="cross" size={12} />
           </button>
         ) : (
-          <span title="Press / to search" style={{
-            minWidth: 24, height: 24, display: "grid", placeItems: "center", marginRight: 4,
-            border: "1px solid rgba(42,39,31,0.18)", borderRadius: 6,
-            fontFamily: FONT_MONO, fontSize: 12, color: "#6F6857",
-          }}>/</span>
+          <span title="Press / to search" className="min-w-6 h-6 grid place-items-center mr-1 border border-[rgba(42,39,31,0.18)] rounded-sm font-sans text-sm text-text-muted">/</span>
         )}
       </label>
-        <div style={{
-          display: "flex", alignItems: "center", gap: 10,
-          flexShrink: 0, marginLeft: "auto",
-        }}>
+        <div className="flex items-center gap-2.5 shrink-0 ml-auto">
           <GuidesButton />
-          <div style={{ position: "relative", flexShrink: 0, display: "flex" }}>
+          <div className="relative shrink-0 flex">
             <button
               data-testid="library-upload"
-              className="sapHoverForest"
+              className={cn("sapHoverForest", "inline-flex items-center gap-2 pt-0 pr-3.5 pb-0 pl-4 border-0 [background:#445D22] text-accent-fg rounded-sm [font-family:inherit] [font-style:inherit] [font-variant:inherit] [font-stretch:inherit] [line-height:inherit] text-md font-bold", canUpload ? "cursor-pointer" : "cursor-not-allowed", canUpload ? "opacity-100" : "opacity-55")}
               onClick={() => onMenu(menu === "upload" ? null : "upload")}
               aria-haspopup="menu"
               aria-expanded={menu === "upload"}
               disabled={!canUpload}
               title={canUpload ? "Upload documents" : "Enroll in a course first"}
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 8,
-                height: CONTROL_H,
-                padding: "0 14px 0 16px",
-                border: 0,
-                background: "#445D22",
-                color: "#FFFFFF",
-                // Owner's call 2026-11-25: the same edge as the Study Guide
-                // button beside it, rather than the handoff's 12px, so the
-                // pair matches. That button is `btn btn--sm`, whose
-                // `var(--r-sm)` resolves to 6px — written as the number so the
-                // rendered value stays one the design names, which is what
-                // `designParity` checks every radius against.
-                borderRadius: 6,
-                font: "inherit",
-                // Owner's call 2026-11-25: the Study Guide button beside it is
-                // `btn btn--sm`, whose type is `--fs-md`. Upload read a size
-                // and an icon larger than its neighbour; both come down to
-                // match. The 700 weight stays — it is still the primary.
-                fontSize: "var(--fs-md)",
-                fontWeight: 700,
-                cursor: canUpload ? "pointer" : "not-allowed",
-                opacity: canUpload ? 1 : 0.55,
-              }}
+              style={{ height: CONTROL_H }}
             >
               <Glyph name="upload" size={14} />
               Upload
-              <span style={{
-                width: 1, height: 18, margin: "0 2px 0 6px", background: "rgba(255,255,255,0.3)",
-              }} />
+              <span className="w-px h-4.5 mt-0 mr-0.5 mb-0 ml-1.5 bg-[rgba(255,255,255,0.3)]" />
               <Glyph name="chevronDown" size={11} />
             </button>
 
@@ -340,37 +225,27 @@ export function LibraryHeader(props: LibraryHeaderProps) {
                 const files = [...(e.target.files || [])];
                 if (files.length) onFiles(files);
               }}
-              style={{ display: "none" }}
+              className="hidden"
             />
 
             {menu === "upload" && (
               <>
                 <MenuScrim onClick={() => onMenu(null)} />
-                <div role="menu" style={{
-                  // `right: 0` is the handoff's own anchor, and the rebuild
-                  // had it as `left: 0` — a porting slip. Upload is the last
-                  // thing in the header, so a 236px menu hung off its LEFT ran
-                  // past the window and clipped. `top` follows the control
-                  // height: the prototype's 54 is its 48px button plus 6.
-                  position: "absolute", right: 0, top: CONTROL_H + 6,
-                  zIndex: 31, width: 236,
-                  transformOrigin: "top right", animation: menuAnim, ...MENU_SURFACE,
-                }}>
+                <div role="menu" className="absolute right-0 z-31 w-59 [transform-origin:top_right] bg-bg-panel border border-[rgba(42,39,31,0.14)] rounded-[12px] [box-shadow:0_14px_36px_rgba(25,37,11,0.16)] p-1.5 flex flex-col gap-px" style={{ top: CONTROL_H + 6, animation: menuAnim }}>
                   <button
                     role="menuitem"
-                    className="sapHoverMenu"
+                    className="sapHoverMenu flex items-center gap-2.5 py-[9px] px-2.5 border-0 rounded-[8px] [background:transparent] text-ink-800 [font-family:inherit] [font-style:inherit] [font-variant:inherit] [font-stretch:inherit] [line-height:inherit] text-base font-semibold text-left cursor-pointer"
                     onClick={() => {
                       onMenu(null);
                       const el = fileRef.current;
                       if (el) { el.value = ""; el.click(); }
                     }}
-                    style={MENU_ITEM}
                   >
                     <Glyph name="upload" size={16} fill="#445D22" />
                     Upload Documents
                   </button>
                   <MenuDivider />
-                  <button role="menuitem" className="sapHoverMenu" onClick={onNewFolder} style={MENU_ITEM}>
+                  <button role="menuitem" className="sapHoverMenu flex items-center gap-2.5 py-[9px] px-2.5 border-0 rounded-[8px] [background:transparent] text-ink-800 [font-family:inherit] [font-style:inherit] [font-variant:inherit] [font-stretch:inherit] [line-height:inherit] text-base font-semibold text-left cursor-pointer" onClick={onNewFolder}>
                     <FolderIcon size={16} />
                     New Folder
                   </button>

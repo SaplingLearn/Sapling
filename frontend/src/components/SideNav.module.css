@@ -1,3 +1,4 @@
+@layer components {
 /* The sidebar rail (SideNav.tsx). Its collapse/expand GEOMETRY (the rail's
    width and padding, each row's computed inset, the header slot's height,
    the labels' fade) is computed in SideNav.tsx and written inline, because
@@ -264,4 +265,6 @@
 
 .toggleIcon[data-collapsed="true"] .toggleChevron {
   transform: rotate(180deg);
+}
+
 }

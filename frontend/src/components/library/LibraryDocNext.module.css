@@ -1,4 +1,7 @@
+@layer components {
 /* A document's next steps in the Library details dialog (LibraryDocNext.tsx). */
 .next {
   padding: 0 var(--sp-2);
+}
+
 }

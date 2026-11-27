@@ -256,13 +256,13 @@ describe("AssignmentModal validation", () => {
     renderModal();
     await screen.findByRole("dialog");
     expect(screen.queryByText("Required")).toBeNull();
-    expect(titleInput().style.border).toBe("1px solid var(--border)");
+    expect(titleInput()).toHaveTwStyle({ border: "1px solid var(--border)" });
     fireEvent.blur(titleInput());
     expect(screen.getByText("Required")).toBeInTheDocument();
-    expect(titleInput().style.border).toBe("1px solid var(--err)");
+    expect(titleInput()).toHaveTwStyle({ border: "1px solid var(--err)" });
     change(titleInput(), "x");
     expect(screen.queryByText("Required")).toBeNull();
-    expect(titleInput().style.border).toBe("1px solid var(--border)");
+    expect(titleInput()).toHaveTwStyle({ border: "1px solid var(--border)" });
   });
 
   it("flags an impossible stored due date and blocks Save", async () => {
@@ -270,7 +270,7 @@ describe("AssignmentModal validation", () => {
     await screen.findByRole("dialog");
     expect(screen.getByText("Invalid date")).toBeInTheDocument();
     // The error span sits inside the <label>, so its text joins the label's.
-    expect(field(/^Due Date/).style.border).toBe("1px solid var(--err)");
+    expect(field(/^Due Date/)).toHaveTwStyle({ border: "1px solid var(--err)" });
     expect(saveButton()).toBeDisabled();
   });
 
@@ -278,7 +278,7 @@ describe("AssignmentModal validation", () => {
     renderModal({ initial: { ...PLAIN, due_date: "2024-02-29" } });
     await screen.findByRole("dialog");
     expect(screen.queryByText("Invalid date")).toBeNull();
-    expect(field("Due Date").style.border).toBe("1px solid var(--border)");
+    expect(field("Due Date")).toHaveTwStyle({ border: "1px solid var(--border)" });
     expect(saveButton()).toBeEnabled();
   });
 });
@@ -384,10 +384,10 @@ describe("AssignmentModal edit", () => {
     await screen.findByRole("dialog");
     const toggle = screen.getByRole("button", { name: /Bell Curve/ });
     const chevron = toggle.querySelector("span") as HTMLSpanElement;
-    expect(chevron.style.transform).toBe("rotate(0deg)");
+    expect(chevron).toHaveTwStyle({ transform: "rotate(0deg)" });
     await userEvent.click(toggle);
     expect(screen.queryByLabelText("Class Average (%)")).toBeNull();
-    expect(chevron.style.transform).toBe("rotate(-90deg)");
+    expect(chevron).toHaveTwStyle({ transform: "rotate(-90deg)" });
     await userEvent.click(toggle);
     expect(field("Class Average (%)").value).toBe("68.0");
   });

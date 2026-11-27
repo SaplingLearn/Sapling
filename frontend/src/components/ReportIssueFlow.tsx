@@ -5,7 +5,7 @@ import { Icon } from "./Icon";
 import { Pill } from "./Pill";
 import { useToast } from "./ToastProvider";
 import { useUser } from "@/context/UserContext";
-import { useScrollLock } from "@/lib/useScrollLock";
+import Dialog from "@/components/Dialog";
 import { submitIssueReport, API_URL } from "@/lib/api";
 import { LONG_TEXT_MAX } from "@/lib/inputLimits";
 
@@ -45,7 +45,6 @@ export function ReportIssueFlow({ open, onClose }: ReportIssueFlowProps) {
   const [submitting, setSubmitting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  useScrollLock(open);
 
   const reset = useCallback(() => {
     setTopic("Bug");
@@ -120,102 +119,46 @@ export function ReportIssueFlow({ open, onClose }: ReportIssueFlowProps) {
     }
   };
 
-  if (!open) return null;
-
   return (
-    <div
-      style={{
-        position: "fixed",
-        inset: 0,
-        background: "rgba(0,0,0,0.4)",
-        zIndex: 100,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-      }}
-      onClick={close}
-    >
-      <div
-        onClick={e => e.stopPropagation()}
-        style={{
-          width: 480,
-          maxWidth: "calc(100vw - 32px)",
-          maxHeight: "calc(100vh - 64px)",
-          overflowY: "auto",
-          background: "var(--bg-panel)",
-          borderRadius: "var(--r-lg)",
-          padding: 28,
-          boxShadow: "var(--shadow-lg)",
-        }}
-      >
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-          <div className="h-serif" style={{ fontSize: 22 }}>Report an issue</div>
+    <Dialog open={open} onClose={close} labelledBy="report-issue-title" width="480px" showCloseButton={false}>
+        <div className="flex justify-between items-center mb-4">
+          <div id="report-issue-title" className="h-serif text-2xl">Report an issue</div>
           <button className="btn btn--ghost btn--sm" onClick={close} aria-label="Close">
             <Icon name="x" size={14} />
           </button>
         </div>
 
-        <div className="label-micro" style={{ marginBottom: 6 }}>Type</div>
-        <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap" }}>
+        <div className="label-micro mb-1.5">Type</div>
+        <div className="flex gap-1.5 mb-4 flex-wrap">
           {TOPICS.map(t => (
             <Pill key={t} active={t === topic} onClick={() => setTopic(t)}>{t}</Pill>
           ))}
         </div>
 
-        <div className="label-micro" style={{ marginBottom: 6 }}>What happened?</div>
+        <div className="label-micro mb-1.5">What happened?</div>
         <textarea
           value={description}
           maxLength={LONG_TEXT_MAX}
           onChange={e => setDescription(e.target.value)}
           placeholder="Describe the issue…"
           rows={4}
-          style={{
-            width: "100%",
-            padding: "10px 14px",
-            border: "1px solid var(--border)",
-            borderRadius: "var(--r-sm)",
-            fontSize: 13,
-            fontFamily: "inherit",
-            background: "var(--bg-input)",
-            resize: "vertical",
-          }}
+          className="w-full py-2.5 px-3.5 border border-border rounded-sm text-md [font-family:inherit] bg-bg-input resize-y"
         />
 
-        <div className="label-micro" style={{ marginTop: 16, marginBottom: 6 }}>
+        <div className="label-micro mt-4 mb-1.5">
           Screenshots (up to {MAX_SCREENSHOTS})
         </div>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <div className="flex gap-2 flex-wrap">
           {screenshots.map((s, i) => (
             <div
               key={i}
-              style={{
-                position: "relative",
-                width: 64,
-                height: 64,
-                borderRadius: "var(--r-sm)",
-                overflow: "hidden",
-                border: "1px solid var(--border)",
-              }}
+              className="relative w-16 h-16 rounded-sm overflow-hidden border border-border"
             >
-              <img src={s.preview} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+              <img src={s.preview} alt="" className="w-full h-full object-cover" />
               <button
                 onClick={() => removeScreenshot(i)}
                 aria-label="Remove screenshot"
-                style={{
-                  position: "absolute",
-                  top: 2,
-                  right: 2,
-                  background: "rgba(0,0,0,0.6)",
-                  color: "#fff",
-                  width: 18,
-                  height: 18,
-                  borderRadius: "50%",
-                  fontSize: 11,
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  lineHeight: 1,
-                }}
+                className="absolute top-0.5 right-0.5 bg-[rgba(0,0,0,0.6)] text-accent-fg w-4.5 h-4.5 rounded-[50%] text-xs flex items-center justify-center leading-none"
               >
                 ×
               </button>
@@ -224,15 +167,7 @@ export function ReportIssueFlow({ open, onClose }: ReportIssueFlowProps) {
           {screenshots.length < MAX_SCREENSHOTS && (
             <button
               onClick={() => fileInputRef.current?.click()}
-              style={{
-                width: 64,
-                height: 64,
-                borderRadius: "var(--r-sm)",
-                border: "1px dashed var(--border-strong)",
-                color: "var(--text-muted)",
-                fontSize: 24,
-                background: "var(--bg-subtle)",
-              }}
+              className="w-16 h-16 rounded-sm border border-dashed border-border-strong text-text-muted text-[24px] bg-bg-subtle"
               aria-label="Add screenshot"
             >
               +
@@ -249,25 +184,17 @@ export function ReportIssueFlow({ open, onClose }: ReportIssueFlowProps) {
         </div>
 
         <div
-          style={{
-            marginTop: 14,
-            padding: "10px 12px",
-            background: "var(--bg-subtle)",
-            borderRadius: "var(--r-sm)",
-            fontSize: 11,
-            color: "var(--text-muted)",
-          }}
+          className="mt-3.5 py-2.5 px-3 bg-bg-subtle rounded-sm text-xs text-text-muted"
         >
           Your report will include the topic, your description, and any screenshots you attach.
         </div>
 
-        <div style={{ display: "flex", gap: 8, marginTop: 16, justifyContent: "flex-end" }}>
+        <div className="flex gap-2 mt-4 justify-end">
           <button className="btn" onClick={close} disabled={submitting}>Cancel</button>
           <button className="btn btn--primary" onClick={submit} disabled={submitting}>
             {submitting ? "Submitting…" : "Submit"}
           </button>
         </div>
-      </div>
-    </div>
+    </Dialog>
   );
 }

@@ -1,3 +1,4 @@
+@layer components {
 /* The Tutor's shell (wireframes T1–T17, "AI tutor structure layout V2"):
    a Claude-style tutor sidebar (new session, search, courses, recents), the
    TopBar, the chat column, and the session panel on the right. Colours come
@@ -1260,4 +1261,6 @@
    Every control keeps the global :focus-visible ring. */
 .shell [tabindex="-1"]:focus {
   outline: none;
+}
+
 }

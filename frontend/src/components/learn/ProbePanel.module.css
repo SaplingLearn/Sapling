@@ -1,3 +1,4 @@
+@layer components {
 /* The check-in phase (ProbePanel): the greeting, one question at a time. */
 
 .scroll {
@@ -49,4 +50,6 @@
 
 .next {
   align-self: flex-start;
+}
+
 }

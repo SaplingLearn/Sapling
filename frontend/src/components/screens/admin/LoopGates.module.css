@@ -1,3 +1,4 @@
+@layer components {
 /* The learning loop's spec §10 gates (LoopGates.tsx). */
 
 .gates {
@@ -22,4 +23,6 @@
 
 .unscanned {
   color: var(--text);
+}
+
 }

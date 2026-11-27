@@ -1,3 +1,4 @@
+@layer components {
 /* The session-feedback chip picker (sessionFeedbackOptions.tsx). */
 .label {
   margin-bottom: var(--sp-4);
@@ -36,4 +37,6 @@
   background: var(--accent-soft);
   color: var(--accent);
   border-color: var(--accent-border);
+}
+
 }

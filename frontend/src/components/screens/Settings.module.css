@@ -1,3 +1,4 @@
+@layer components {
 /* The Settings screen (Settings.tsx): a scrolling form column on the left,
    the tab rail on the right, and the profile-preview modal. */
 
@@ -471,3 +472,5 @@
 }
 
 .dialogBody { padding: var(--sp-10); }
+
+}

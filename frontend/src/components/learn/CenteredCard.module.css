@@ -1,3 +1,4 @@
+@layer components {
 /* A card that stands in for the screen (CenteredCard). */
 
 .scroll {
@@ -13,4 +14,6 @@
   max-width: var(--centered-card-max);
   margin: var(--sp-12) auto;
   padding: var(--pad-xl);
+}
+
 }

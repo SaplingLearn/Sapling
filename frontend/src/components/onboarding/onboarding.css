@@ -1,3 +1,4 @@
+@layer components {
 /* Onboarding, ported from the Claude Design handoff ("Sapling Onboarding",
  * Paper theme). Everything is scoped under .ob-root and uses --ob-* tokens so
  * it never leaks into the app's own design system. */
@@ -470,4 +471,6 @@ button.ob-school:hover { transform: translateY(-2px); }
 
 @media (prefers-reduced-motion: reduce) {
   .ob-root *, .ob-root *::before, .ob-root *::after { animation-duration: 1ms !important; transition-duration: 1ms !important; }
+}
+
 }

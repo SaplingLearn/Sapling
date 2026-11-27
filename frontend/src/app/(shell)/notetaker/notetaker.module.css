@@ -1,3 +1,4 @@
+@layer components {
 /* The notetaker screen (page.tsx). The four rails' widths and the fullscreen
    swap live in lib/notes/notetakerLayout.ts; this sheet styles what sits inside
    them. Where a rule overrides a global component class (.card, .btn, .chip)
@@ -792,4 +793,6 @@
 .composerField {
   flex: 1;
   min-width: 0;
+}
+
 }

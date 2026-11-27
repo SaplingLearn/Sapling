@@ -13,3 +13,7 @@ export { Sheet, type SheetProps } from "./Sheet";
 export { EmptyState, type EmptyStateProps } from "./EmptyState";
 export { HandoffLink, CtaLink, isPlainClick, type HandoffLinkProps } from "./HandoffLink";
 export { StatusSlot, type StatusNotice, type StatusSlotProps } from "./StatusSlot";
+export { Switch } from "./Switch";
+export { Tooltip } from "./Tooltip";
+export { Menu, MenuTrigger, MenuContent, MenuItem, MenuRadioGroup, MenuRadioItem, MenuGroup, MenuSeparator } from "./Menu";
+export { fieldClass } from "./field";

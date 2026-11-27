@@ -1,5 +1,6 @@
 "use client";
 import React from "react";
+import { cn } from "@/lib/cn";
 
 type SkeletonProps = {
   width?: number | string;
@@ -21,15 +22,9 @@ export function Skeleton({
   const r = circle ? "999px" : radius ?? "var(--r-sm)";
   return (
     <div
-      className={`skeleton ${className || ""}`.trim()}
+      className={cn(`skeleton ${className || ""}`.trim(), "block")}
       aria-hidden
-      style={{
-        width,
-        height,
-        borderRadius: r,
-        display: "block",
-        ...style,
-      }}
+      style={{ width, height, borderRadius: r, ...style }}
     />
   );
 }
@@ -46,7 +41,7 @@ export function SkeletonText({
   lineHeight?: number;
 }) {
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap }}>
+    <div className="flex flex-col" style={{ gap }}>
       {Array.from({ length: lines }).map((_, i) => (
         <Skeleton
           key={i}
@@ -61,29 +56,15 @@ export function SkeletonText({
 export function LibraryGridSkeleton({ count = 8 }: { count?: number }) {
   return (
     <div
-      style={{
-        display: "grid",
-        gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
-        gap: 16,
-      }}
+      className="grid grid-cols-[repeat(auto-fill,_minmax(280px,_1fr))] gap-4"
     >
       {Array.from({ length: count }).map((_, i) => (
         <div
           key={i}
-          className="card"
-          style={{
-            padding: "var(--pad-lg)",
-            display: "flex",
-            flexDirection: "column",
-            gap: 10,
-          }}
+          className="card p-(--pad-lg) flex flex-col gap-2.5"
         >
           <div
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "flex-start",
-            }}
+            className="flex justify-between items-start"
           >
             <Skeleton width={40} height={48} radius="var(--r-sm)" />
             <Skeleton width={70} height={20} radius={999} />
@@ -99,21 +80,14 @@ export function LibraryGridSkeleton({ count = 8 }: { count?: number }) {
 
 export function LibraryListSkeleton({ count = 8 }: { count?: number }) {
   return (
-    <div className="card" style={{ padding: 0 }}>
+    <div className="card p-0">
       {Array.from({ length: count }).map((_, i) => (
         <div
           key={i}
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 16,
-            padding: "14px 20px",
-            borderBottom:
-              i < count - 1 ? "1px solid var(--border)" : "none",
-          }}
+          className={cn("flex items-center gap-4 py-3.5 px-5", i < count - 1 ? "border-b border-b-border" : "border-b-0")}
         >
           <Skeleton width={28} height={36} radius="var(--r-xs)" />
-          <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 6 }}>
+          <div className="flex-1 min-w-0 flex flex-col gap-1.5">
             <Skeleton width="55%" height={13} />
             <Skeleton width="80%" height={11} />
           </div>
@@ -128,36 +102,21 @@ export function LibraryListSkeleton({ count = 8 }: { count?: number }) {
 export function ProfileSkeleton() {
   return (
     <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        gap: 16,
-        padding: "20px 0",
-        maxWidth: 900,
-        margin: "0 auto",
-      }}
+      className="flex flex-col gap-4 py-5 px-0 max-w-225 my-0 mx-auto"
     >
       <section
-        style={{
-          display: "flex",
-          gap: 20,
-          alignItems: "flex-start",
-          padding: "var(--pad-lg)",
-          background: "var(--bg-panel)",
-          border: "1px solid var(--border)",
-          borderRadius: "var(--r-xl)",
-        }}
+        className="flex gap-5 items-start p-(--pad-lg) bg-bg-panel border border-border rounded-xl"
       >
         <Skeleton width={88} height={88} circle />
-        <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 10 }}>
+        <div className="flex-1 min-w-0 flex flex-col gap-2.5">
           <Skeleton width="40%" height={26} />
           <Skeleton width="20%" height={11} />
-          <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
+          <div className="flex gap-1.5 mt-1">
             <Skeleton width={64} height={20} radius={999} />
             <Skeleton width={80} height={20} radius={999} />
           </div>
           <SkeletonText lines={2} lineHeight={11} lastWidth="70%" />
-          <div style={{ display: "flex", gap: 14, marginTop: 4 }}>
+          <div className="flex gap-3.5 mt-1">
             <Skeleton width={120} height={11} />
             <Skeleton width={80} height={11} />
             <Skeleton width={100} height={11} />
@@ -166,13 +125,7 @@ export function ProfileSkeleton() {
       </section>
 
       <section
-        style={{
-          padding: "10px 0",
-          borderTop: "1px solid var(--border)",
-          borderBottom: "1px solid var(--border)",
-          display: "flex",
-          gap: 14,
-        }}
+        className="py-2.5 px-0 border-t border-t-border border-b border-b-border flex gap-3.5"
       >
         <Skeleton width={120} height={14} />
         <Skeleton width={120} height={14} />
@@ -180,23 +133,19 @@ export function ProfileSkeleton() {
         <Skeleton width={140} height={14} />
       </section>
 
-      <section className="card" style={{ padding: "var(--pad-lg)" }}>
+      <section className="card p-(--pad-lg)">
         <Skeleton width={120} height={10} style={{ marginBottom: 12 }} />
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <div className="flex gap-2 flex-wrap">
           <Skeleton width={90} height={22} radius={999} />
           <Skeleton width={120} height={22} radius={999} />
           <Skeleton width={70} height={22} radius={999} />
         </div>
       </section>
 
-      <section className="card" style={{ padding: "var(--pad-lg)" }}>
+      <section className="card p-(--pad-lg)">
         <Skeleton width={160} height={10} style={{ marginBottom: 12 }} />
         <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))",
-            gap: 10,
-          }}
+          className="grid grid-cols-[repeat(auto-fill,_minmax(140px,_1fr))] gap-2.5"
         >
           {Array.from({ length: 4 }).map((_, i) => (
             <Skeleton key={i} height={92} radius="var(--r-md)" />
@@ -210,87 +159,58 @@ export function ProfileSkeleton() {
 export function DashboardSkeleton() {
   return (
     <div
-      style={{
-        padding: "18px 32px 24px",
-        display: "grid",
-        gap: 16,
-        gridTemplateColumns: "minmax(0, 1fr) minmax(280px, 360px)",
-        flex: 1,
-        minHeight: 0,
-      }}
+      className="pt-4.5 px-8 pb-6 grid gap-4 grid-cols-[minmax(0,_1fr)_minmax(280px,_360px)] flex-1 min-h-0"
     >
-      <div style={{ display: "flex", flexDirection: "column", gap: 14, minWidth: 0 }}>
+      <div className="flex flex-col gap-3.5 min-w-0">
         <Skeleton width={140} height={11} />
         <Skeleton width="55%" height={42} />
         <Skeleton width="80%" height={14} />
         <div
-          className="card"
-          style={{
-            padding: 0,
-            overflow: "hidden",
-            minHeight: 420,
-            display: "flex",
-            flexDirection: "column",
-            flex: 1,
-          }}
+          className="card p-0 overflow-hidden min-h-105 flex flex-col flex-1"
         >
           <div
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              padding: "16px 22px",
-              borderBottom: "1px solid var(--border)",
-            }}
+            className="flex justify-between items-center py-4 px-5.5 border-b border-b-border"
           >
-            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            <div className="flex flex-col gap-1.5">
               <Skeleton width={140} height={10} />
               <Skeleton width={260} height={20} />
             </div>
             <Skeleton width={32} height={28} radius="var(--r-sm)" />
           </div>
-          <div style={{ flex: 1, minHeight: 260, padding: 22, display: "grid", placeItems: "center" }}>
+          <div className="flex-1 min-h-65 p-5.5 grid place-items-center">
             <Skeleton width={200} height={200} circle style={{ opacity: 0.5 }} />
           </div>
         </div>
       </div>
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 16, minWidth: 0 }}>
-        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, minHeight: 30 }}>
+      <div className="flex flex-col gap-4 min-w-0">
+        <div className="flex justify-end gap-2 min-h-7.5">
           <Skeleton width={80} height={28} radius="var(--r-sm)" />
           <Skeleton width={120} height={28} radius="var(--r-sm)" />
         </div>
-        <div className="card" style={{ padding: 0, display: "grid", gridTemplateColumns: "1fr 1fr" }}>
-          <div style={{ padding: "16px 18px", borderRight: "1px solid var(--border)", display: "flex", flexDirection: "column", gap: 8 }}>
+        <div className="card p-0 grid grid-cols-[1fr_1fr]">
+          <div className="py-4 px-4.5 border-r border-r-border flex flex-col gap-2">
             <Skeleton width={60} height={10} />
             <Skeleton width={70} height={32} />
             <Skeleton width={100} height={10} />
           </div>
-          <div style={{ padding: "16px 18px", display: "flex", flexDirection: "column", gap: 8 }}>
+          <div className="py-4 px-4.5 flex flex-col gap-2">
             <Skeleton width={60} height={10} />
             <Skeleton width={50} height={32} />
             <Skeleton width={100} height={10} />
           </div>
         </div>
         {Array.from({ length: 2 }).map((_, i) => (
-          <div key={i} className="card" style={{ padding: "var(--pad-lg)" }}>
+          <div key={i} className="card p-(--pad-lg)">
             <Skeleton width={80} height={10} style={{ marginBottom: 8 }} />
             <Skeleton width="60%" height={16} style={{ marginBottom: 14 }} />
             {Array.from({ length: 3 }).map((__, j) => (
               <div
                 key={j}
-                style={{
-                  display: "flex",
-                  gap: 10,
-                  padding: "10px 12px",
-                  borderRadius: "var(--r-md)",
-                  background: "var(--bg-subtle)",
-                  marginBottom: 6,
-                  alignItems: "center",
-                }}
+                className="flex gap-2.5 py-2.5 px-3 rounded-md bg-bg-subtle mb-1.5 items-center"
               >
                 <Skeleton width={20} height={20} circle />
-                <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 6 }}>
+                <div className="flex-1 flex flex-col gap-1.5">
                   <Skeleton width="60%" height={12} />
                   <Skeleton width="80%" height={10} />
                 </div>
@@ -306,24 +226,17 @@ export function DashboardSkeleton() {
 export function CalendarMonthSkeleton() {
   const weekdays = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
   return (
-    <div style={{ padding: "20px 32px" }}>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4, marginBottom: 4 }}>
+    <div className="py-5 px-8">
+      <div className="grid grid-cols-[repeat(7,_1fr)] gap-1 mb-1">
         {weekdays.map(d => (
-          <div key={d} className="label-micro" style={{ padding: 6 }}>{d}</div>
+          <div key={d} className="label-micro p-1.5">{d}</div>
         ))}
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4 }}>
+      <div className="grid grid-cols-[repeat(7,_1fr)] gap-1">
         {Array.from({ length: 42 }).map((_, i) => (
           <div
             key={i}
-            className="card"
-            style={{
-              padding: 8,
-              minHeight: 96,
-              display: "flex",
-              flexDirection: "column",
-              gap: 6,
-            }}
+            className="card p-2 min-h-24 flex flex-col gap-1.5"
           >
             <Skeleton width={16} height={11} />
             {i % 3 === 0 && <Skeleton width="80%" height={10} />}
@@ -337,21 +250,13 @@ export function CalendarMonthSkeleton() {
 
 export function AchievementsSkeleton() {
   return (
-    <div style={{ padding: "24px 32px" }}>
+    <div className="py-6 px-8">
       <Skeleton width={220} height={11} style={{ marginBottom: 12 }} />
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 10, marginBottom: 30 }}>
+      <div className="grid grid-cols-[repeat(5,_1fr)] gap-2.5 mb-7.5">
         {Array.from({ length: 5 }).map((_, i) => (
           <div
             key={i}
-            className="card"
-            style={{
-              padding: 12,
-              minHeight: 92,
-              display: "flex",
-              flexDirection: "column",
-              gap: 8,
-              alignItems: "center",
-            }}
+            className="card p-3 min-h-23 flex flex-col gap-2 items-center"
           >
             <Skeleton width={32} height={32} circle />
             <Skeleton width="80%" height={10} />
@@ -359,12 +264,12 @@ export function AchievementsSkeleton() {
         ))}
       </div>
       <Skeleton width={120} height={10} style={{ marginBottom: 12 }} />
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 14 }}>
+      <div className="grid grid-cols-[repeat(auto-fill,_minmax(320px,_1fr))] gap-3.5">
         {Array.from({ length: 6 }).map((_, i) => (
-          <div key={i} className="card" style={{ padding: "var(--pad-lg)", display: "flex", gap: 14 }}>
+          <div key={i} className="card p-(--pad-lg) flex gap-3.5">
             <Skeleton width={52} height={52} radius="var(--r-md)" />
-            <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 8 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", gap: 6 }}>
+            <div className="flex-1 flex flex-col gap-2">
+              <div className="flex justify-between gap-1.5">
                 <Skeleton width="50%" height={14} />
                 <Skeleton width={60} height={18} radius={999} />
               </div>
@@ -379,18 +284,11 @@ export function AchievementsSkeleton() {
 
 export function SocialRoomsSkeleton({ count = 5 }: { count?: number }) {
   return (
-    <div style={{ padding: 8 }}>
+    <div className="p-2">
       {Array.from({ length: count }).map((_, i) => (
         <div
           key={i}
-          style={{
-            padding: "10px 12px",
-            borderRadius: "var(--r-md)",
-            marginBottom: 4,
-            display: "flex",
-            flexDirection: "column",
-            gap: 6,
-          }}
+          className="py-2.5 px-3 rounded-md mb-1 flex flex-col gap-1.5"
         >
           <Skeleton width="70%" height={13} />
           <Skeleton width="40%" height={10} />
@@ -402,14 +300,13 @@ export function SocialRoomsSkeleton({ count = 5 }: { count?: number }) {
 
 export function SettingsFormSkeleton() {
   return (
-    <div style={{ maxWidth: 640, margin: "0 auto", padding: "24px 32px" }}>
+    <div className="max-w-160 my-0 mx-auto py-6 px-8">
       <Skeleton width={120} height={22} style={{ marginBottom: 20 }} />
       <div
-        className="card"
-        style={{ padding: "var(--pad-lg)", display: "flex", gap: 20, alignItems: "center", marginBottom: 16 }}
+        className="card p-(--pad-lg) flex gap-5 items-center mb-4"
       >
         <Skeleton width={72} height={72} circle />
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 6 }}>
+        <div className="flex-1 flex flex-col gap-1.5">
           <Skeleton width={140} height={18} />
           <Skeleton width={180} height={11} />
         </div>
@@ -418,14 +315,7 @@ export function SettingsFormSkeleton() {
       {Array.from({ length: 5 }).map((_, i) => (
         <div
           key={i}
-          style={{
-            display: "grid",
-            gridTemplateColumns: "180px 1fr",
-            gap: 16,
-            padding: "12px 0",
-            borderBottom: "1px solid var(--border)",
-            alignItems: "center",
-          }}
+          className="grid grid-cols-[180px_1fr] gap-4 py-3 px-0 border-b border-b-border items-center"
         >
           <Skeleton width={100} height={11} />
           <Skeleton width="100%" height={32} radius="var(--r-sm)" />
@@ -437,8 +327,8 @@ export function SettingsFormSkeleton() {
 
 export function GraphPanelSkeleton() {
   return (
-    <div style={{ flex: 1, display: "grid", placeItems: "center" }}>
-      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 14 }}>
+    <div className="flex-1 grid place-items-center">
+      <div className="flex flex-col items-center gap-3.5">
         <Skeleton width={220} height={220} circle style={{ opacity: 0.6 }} />
         <Skeleton width={180} height={11} />
       </div>
@@ -448,27 +338,18 @@ export function GraphPanelSkeleton() {
 
 export function FlashcardsSkeleton() {
   return (
-    <div style={{ padding: "24px 32px", maxWidth: 720, margin: "0 auto" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+    <div className="py-6 px-8 max-w-180 my-0 mx-auto">
+      <div className="flex justify-between items-center mb-4">
         <Skeleton width={160} height={11} />
         <Skeleton width={120} height={28} radius="var(--r-sm)" />
       </div>
       <div
-        className="card"
-        style={{
-          padding: "var(--pad-lg)",
-          minHeight: 280,
-          display: "flex",
-          flexDirection: "column",
-          gap: 14,
-          justifyContent: "center",
-          alignItems: "center",
-        }}
+        className="card p-(--pad-lg) min-h-70 flex flex-col gap-3.5 justify-center items-center"
       >
         <Skeleton width="60%" height={18} />
         <SkeletonText lines={3} lineHeight={12} lastWidth="55%" />
       </div>
-      <div style={{ display: "flex", gap: 8, marginTop: 16, justifyContent: "center" }}>
+      <div className="flex gap-2 mt-4 justify-center">
         {Array.from({ length: 3 }).map((_, i) => (
           <Skeleton key={i} width={100} height={36} radius="var(--r-sm)" />
         ))}
@@ -489,41 +370,32 @@ export function StudyHubSkeleton({ isMobile = false }: { isMobile?: boolean }) {
       aria-busy="true"
       aria-label="Loading your study hub"
       role="status"
-      style={{
-        height: isMobile ? "auto" : "100%", minHeight: isMobile ? "100%" : 640,
-        display: "grid",
-        // The hub's own frame (StudyHub.module.css .hub): the Dashboard's page
-        // padding, a 340px rail, a 40px gap.
-        gridTemplateColumns: isMobile ? "minmax(0, 1fr)" : "minmax(0, 1fr) 340px",
-        columnGap: 40, alignContent: "start",
-        padding: isMobile ? "8px 20px 16px" : "18px 32px 0",
-        boxSizing: "border-box", background: "var(--bg)",
-      }}
+      className={cn("grid gap-x-10 [align-content:start] box-border bg-bg", isMobile ? "h-auto" : "h-full", isMobile ? "min-h-full" : "min-h-160", isMobile ? "grid-cols-[minmax(0,_1fr)]" : "grid-cols-[minmax(0,_1fr)_340px]", isMobile ? "pt-2 px-5 pb-4" : "pt-4.5 px-8 pb-0")}
     >
-      <div style={{ gridColumn: isMobile ? "1" : "1 / 3", display: "flex", alignItems: "center", gap: 16, padding: "6px 0 18px" }}>
+      <div className={cn("flex items-center gap-4 pt-1.5 px-0 pb-4.5", isMobile ? "[grid-column:1]" : "[grid-column:1_/_3]")}>
         <Skeleton width={120} height={48} radius={10} />
         <Skeleton width={240} height={20} />
         <Skeleton width={120} height={20} style={{ marginLeft: "auto" }} />
       </div>
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 22, minWidth: 0 }}>
-        <div style={{ display: "flex", gap: 28 }}>
+      <div className="flex flex-col gap-5.5 min-w-0">
+        <div className="flex gap-7">
           {Array.from({ length: 2 }).map((_, i) => (
-            <div key={i} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            <div key={i} className="flex flex-col gap-1.5">
               <Skeleton width={120} height={16} />
               <Skeleton width={90} height={12} />
             </div>
           ))}
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "minmax(0, 300px) minmax(0, 1fr)", gap: 28, alignItems: "center" }}>
-          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <div className={cn("grid gap-7 items-center", isMobile ? "grid-cols-[1fr]" : "grid-cols-[minmax(0,_300px)_minmax(0,_1fr)]")}>
+          <div className="flex flex-col gap-3">
             <Skeleton width={180} height={52} radius={12} />
-            <div style={{ display: "flex", gap: 6 }}>
+            <div className="flex gap-1.5">
               {Array.from({ length: 5 }).map((_, i) => (
                 <Skeleton key={i} width={18} height={18} radius={4} />
               ))}
             </div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            <div className="flex flex-wrap gap-2">
               {Array.from({ length: 4 }).map((_, i) => (
                 <Skeleton key={i} width={104} height={28} radius={999} />
               ))}
@@ -532,11 +404,11 @@ export function StudyHubSkeleton({ isMobile = false }: { isMobile?: boolean }) {
           <Skeleton height={170} radius={16} style={{ opacity: 0.75 }} />
         </div>
 
-        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <div className="flex flex-col gap-3">
           <Skeleton width={90} height={11} />
-          <div style={{ display: "flex", gap: 24 }}>
+          <div className="flex gap-6">
             {Array.from({ length: 3 }).map((_, col) => (
-              <div key={col} style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 10 }}>
+              <div key={col} className="flex-1 min-w-0 flex flex-col gap-2.5">
                 <Skeleton width="70%" height={15} />
                 <Skeleton width="100%" height={4} radius={2} />
                 {Array.from({ length: 2 }).map((_, row) => (
@@ -549,7 +421,7 @@ export function StudyHubSkeleton({ isMobile = false }: { isMobile?: boolean }) {
       </div>
 
       {!isMobile && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 26 }}>
+        <div className="flex flex-col gap-6.5">
           <Skeleton width={120} height={11} />
           <Skeleton width={150} height={40} />
           <Skeleton height={96} radius={12} />
@@ -566,16 +438,9 @@ export function StudyHubSkeleton({ isMobile = false }: { isMobile?: boolean }) {
 
 export function AdminTableSkeleton({ rows = 8 }: { rows?: number }) {
   return (
-    <div className="card" style={{ padding: 0, overflow: "hidden" }}>
+    <div className="card p-0 overflow-hidden">
       <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "32px 1fr 1fr 1fr 100px",
-          gap: 12,
-          padding: "10px 14px",
-          background: "var(--bg-subtle)",
-          borderBottom: "1px solid var(--border)",
-        }}
+        className="grid grid-cols-[32px_1fr_1fr_1fr_100px] gap-3 py-2.5 px-3.5 bg-bg-subtle border-b border-b-border"
       >
         {Array.from({ length: 5 }).map((_, i) => (
           <Skeleton key={i} width={i === 0 ? 14 : "60%"} height={11} />
@@ -584,14 +449,7 @@ export function AdminTableSkeleton({ rows = 8 }: { rows?: number }) {
       {Array.from({ length: rows }).map((_, i) => (
         <div
           key={i}
-          style={{
-            display: "grid",
-            gridTemplateColumns: "32px 1fr 1fr 1fr 100px",
-            gap: 12,
-            padding: "12px 14px",
-            borderTop: i === 0 ? "none" : "1px solid var(--border)",
-            alignItems: "center",
-          }}
+          className={cn("grid grid-cols-[32px_1fr_1fr_1fr_100px] gap-3 py-3 px-3.5 items-center", i === 0 ? "border-t-0" : "border-t border-t-border")}
         >
           <Skeleton width={14} height={14} radius="var(--r-xs)" />
           <Skeleton width="80%" height={12} />

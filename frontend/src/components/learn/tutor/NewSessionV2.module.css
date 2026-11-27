@@ -1,3 +1,4 @@
+@layer components {
 /* New session, rebuilt (NewSessionV2.tsx), after the Claude Design board:
    one centred column, the question, a two-up grid of radio cards, and one
    start button with the wrap-up line under it. */
@@ -138,4 +139,6 @@ fieldset:disabled .intent {
   .intent {
     transition: none;
   }
+}
+
 }

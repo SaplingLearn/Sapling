@@ -1,3 +1,4 @@
+@layer components {
 /* Quick Reviews (QuickReviews.tsx): one row that opens the list of what it
    covers (a disclosure), with Review and Practice under it. */
 
@@ -56,3 +57,5 @@
 .actions { display: flex; gap: var(--sp-4); }
 .action { height: 36px; justify-content: center; }
 .actionShare { flex: 1; }
+
+}

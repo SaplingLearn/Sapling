@@ -4,7 +4,7 @@ import React from "react";
 import { createPortal } from "react-dom";
 import { Icon } from "./Icon";
 import { CustomSelect } from "./CustomSelect";
-import { useScrollLock } from "@/lib/useScrollLock";
+import { useOverlayBehaviour } from "./Dialog";
 import { useLatestRequest } from "@/lib/useLatestRequest";
 import { useToast } from "./ToastProvider";
 import {
@@ -120,7 +120,6 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
   const loopOn = flags[LEARNING_LOOP_FLAG] === "on";
   const treeHidden = isNavHidden("/tree");
   const quizHidden = isNavHidden("/quiz");
-  const [mounted, setMounted] = React.useState(false);
   const [items, setItems] = React.useState<UploadItem[]>([]);
   const [dragging, setDragging] = React.useState(false);
   const [courseQuery, setCourseQuery] = React.useState("");
@@ -143,10 +142,8 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
     controllersRef.current.clear();
   }, []);
 
-  React.useEffect(() => setMounted(true), []);
   React.useEffect(() => abortAll, [abortAll]);
 
-  useScrollLock(open);
 
   React.useEffect(() => {
     if (!open) {
@@ -382,6 +379,9 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
   };
 
   const m = useMotionPresets();
+  // Dialog's modal engine: portal readiness, scroll lock, focus in and
+  // back out, Escape and the Tab trap, with this modal's own chrome.
+  const { mounted, panelRef, onKeyDown: onOverlayKeyDown } = useOverlayBehaviour({ open, onClose: handleClose });
   const allFinished = items.length > 0 && items.every(i => i.status !== "uploading" && i.status !== "pending");
 
   if (!open || !mounted) return null;
@@ -389,17 +389,23 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
   return createPortal(
     <div
       onClick={handleClose}
+      onKeyDown={onOverlayKeyDown}
       className={styles.backdrop}
     >
       <div
         data-testid="upload-modal"
+        ref={panelRef}
+        tabIndex={-1}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="upload-modal-title"
         onClick={e => e.stopPropagation()}
-        className={`card slide-up ${styles.card}`}
+        className={`card slide-up outline-none ${styles.card}`}
       >
         <div className={styles.header}>
           <div>
             <div className="label-micro">Upload</div>
-            <div className={`h-serif ${styles.title}`}>Add course materials</div>
+            <div id="upload-modal-title" className={`h-serif ${styles.title}`}>Add course materials</div>
           </div>
           <button data-testid="upload-modal-close" className="btn btn--ghost btn--sm" onClick={handleClose} aria-label="Close">
             <Icon name="x" size={14} />

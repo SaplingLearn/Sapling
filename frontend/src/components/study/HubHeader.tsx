@@ -9,6 +9,7 @@ import { CoursePicker } from "./CoursePicker";
 import { Glyph, TOOL, TOOL_ORDER, shownTools } from "./hubUi";
 import s from "./StudyHub.module.css";
 import type { ToolKey } from "./useToolNav";
+import { cn } from "@/lib/cn";
 
 const TOOL_BUTTONS = TOOL_ORDER.map(key => ({ key, ...TOOL[key] }));
 
@@ -28,18 +29,18 @@ export function HubHeader({ courses, courseId, onPickCourse, upcomingIn, isMobil
     return n > 0 ? `${n} upcoming` : null;
   };
   return (
-    <header className={s.areaHeader} style={{ display: "flex", flexDirection: "column", gap: 10, padding: isMobile ? "14px 0" : "6px 0 18px" }}>
-      <div className={s.headRow} style={{ display: "flex", alignItems: "center", gap: 16 }}>
+    <header className={cn(s.areaHeader, "flex flex-col gap-2.5", isMobile ? "py-3.5 px-0" : "pt-1.5 px-0 pb-4.5")}>
+      <div className={cn(s.headRow, "flex items-center gap-4")}>
         {/* The Dashboard greeting's size and line box, so the page title sits
             on the same line on both screens, at `.h-serif`'s own medium
             weight: the greeting's 600 is right for a sentence but made this
             one short word read as a slab. */}
-        <h1 className="h-serif" style={{ margin: 0, fontSize: isMobile ? 34 : 42, letterSpacing: "-0.02em", lineHeight: 1.15, color: "var(--text)" }}>Study</h1>
+        <h1 className={cn("h-serif", "m-0 tracking-[-0.02em] leading-[1.15] text-text", isMobile ? "text-[34px]" : "text-[42px]")}>Study</h1>
         <CoursePicker courses={courses} value={courseId} onChange={onPickCourse} fullWidth={isMobile} meta={upcomingNote} />
-        <nav aria-label="Study tools" style={{ display: "flex", gap: 8, flexShrink: 0, marginLeft: "auto" }}>
+        <nav aria-label="Study tools" className="flex gap-2 shrink-0 ml-auto">
           {shownTools(TOOL_BUTTONS, quizShown).map(tl => (
             <button key={tl.key} type="button" className={`btn btn--sm ${s.tool}`} onClick={() => onTool(tl.key)}>
-              <span aria-hidden="true" style={{ display: "grid", color: tl.fg }}><Glyph name={tl.icon} size={14} /></span>
+              <span aria-hidden="true" className="grid" style={{ color: tl.fg }}><Glyph name={tl.icon} size={14} /></span>
               {tl.title}
             </button>
           ))}

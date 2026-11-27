@@ -1,3 +1,4 @@
+@layer components {
 /* The admin analytics tables and their prose (#866): AdminAnalytics, the
    learning-loop panels under admin/, AdminLoopCost. One look for every panel:
    a muted sentence-case header row, ruled body rows, numbers right-aligned in
@@ -154,3 +155,5 @@
 .minLoopCourses { min-width: 640px; }
 .minMultiConcept { min-width: 680px; }
 .minHelpGroup { min-width: 760px; }
+
+}

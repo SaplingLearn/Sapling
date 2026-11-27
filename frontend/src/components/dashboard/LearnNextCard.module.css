@@ -1,3 +1,4 @@
+@layer components {
 /* The legacy right panel's Learn next card (LearnNextCard.tsx). */
 
 .card {
@@ -56,4 +57,6 @@
 
 .footerBtn {
   flex: 1;
+}
+
 }

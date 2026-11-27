@@ -19,6 +19,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 
 import { declarations, normalizeColor, renderedDeclarations } from "./designParity";
+import { toClasses } from "../../../scripts/codemods/css-to-tailwind.mjs";
 
 vi.mock("@/context/UserContext", () => ({
   useUser: () => ({ userId: "u1", userReady: true }),
@@ -146,8 +147,19 @@ const norm = (p: string, v: string) => `${p}: ${isColor(v) ? normalizeColor(v) :
 /** A transition/animation list means the same thing in any order. */
 const asSet = (v: string) => v.split(",").map(s => s.trim()).sort().join(" | ");
 
+// Since the Tailwind migration most declarations are classes: a design
+// declaration is carried when the source holds the exact classes the
+// codemod makes of it (scripts/codemods/css-to-tailwind.mjs).
+const SOURCE_TOKENS = new Set(SOURCE.split(/[\s"'`{}(),]+/).filter(Boolean));
+function carriedAsClasses(p: string, v: string): boolean {
+  const camel = p.startsWith("-webkit-") ? "Webkit" + p.slice(8).replace(/-([a-z])/g, (_, c) => c.toUpperCase()).replace(/^./, (c) => c.toUpperCase()) : p.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
+  const ok = (classes: string[]) => classes.length > 0 && classes.every((c) => SOURCE_TOKENS.has(c) || SOURCE.includes(c));
+  return ok(toClasses(camel, v)) || ok(toClasses(camel, v, { strict: true }));
+}
+
 function carried(have: Set<string>, haveSets: Set<string>, p: string, v: string): boolean {
   if (have.has(norm(p, v))) return true;
+  if (carriedAsClasses(p, v)) return true;
   if (/^(transition|animation)$/.test(p) && haveSets.has(asSet(v))) return true;
   const camel = p.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
   const bare = v.replace(/px$/, "");

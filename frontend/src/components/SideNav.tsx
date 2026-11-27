@@ -13,19 +13,13 @@ import { useVisibleNavSections } from "@/lib/useNavSections";
 import { RETENTION_NAV_HREF, RetentionDueDot } from "./RetentionDueDot";
 import { STUDY_TOOL_PATHS } from "@/lib/toolHrefs";
 import styles from "./SideNav.module.css";
+import { cn } from "@/lib/cn";
 
 type Entry = NavItem;
 
 export const SIDE_NAV_EXPANDED = 200;
 export const SIDE_NAV_COLLAPSED = 64;
 const COLLAPSE_KEY = "sapling_sidenav_collapsed";
-
-/* Row rhythm. 44px is the WCAG comfort target and this rail used to sit there,
-   but a desktop-only sidebar carrying 12 destinations reads as a wall at that
-   pitch. 38px is the dense-desktop value: still above the 36px floor we hold
-   ourselves to on a pointer-first surface, and ~15% tighter per row once the
-   1px gap (SideNav.module.css) is counted. Never take NAV_ITEM_MIN_HEIGHT below 36. */
-const NAV_ITEM_MIN_HEIGHT = 38;
 
 /* Collapse/expand geometry.
  *
@@ -56,8 +50,6 @@ const HEADER = { above: 12, line: 17, below: 6 };
 /* Narrow-rail header slot: room for the group hairline (drawn at --sp-9,
    18px, in SideNav.module.css) with even space around it. */
 const RULE_SLOT_HEIGHT = 29;
-/* The rail's and each row's vertical padding: not part of the tween. */
-const RAIL_PAD_Y = "var(--sp-8)";
 const ROW_PAD_Y = "var(--sp-3)";
 /* The profile block's avatar, px; the narrow rail centres it like an icon. */
 const AVATAR_SIZE = 30;
@@ -150,15 +142,8 @@ export function SideNav() {
       // Hook for the pre-hydration mobile guard in globals.css (#110).
       data-app-sidenav=""
       data-peek={peek}
-      className={`${styles.rail} ${onTutor ? styles.railFloating : styles.railInFlow}`}
-      style={{
-        width,
-        minWidth: width,
-        paddingTop: RAIL_PAD_Y,
-        paddingBottom: RAIL_PAD_Y,
-        paddingLeft: collapsed ? RAIL_PAD_X.narrow : RAIL_PAD_X.wide,
-        paddingRight: collapsed ? RAIL_PAD_X.narrow : RAIL_PAD_X.wide,
-      }}
+      className={cn(`${styles.rail} ${onTutor ? styles.railFloating : styles.railInFlow}`, "pt-(--sp-8) pb-(--sp-8)")}
+      style={{ width, minWidth: width, paddingLeft: collapsed ? RAIL_PAD_X.narrow : RAIL_PAD_X.wide, paddingRight: collapsed ? RAIL_PAD_X.narrow : RAIL_PAD_X.wide }}
     >
       {/* Wide: the wordmark. Narrow: the Sapling symbol, centred. The two
           cross-fade in one fixed-height slot so nothing below shifts, and the
@@ -185,15 +170,8 @@ export function SideNav() {
           width={SYMBOL_WIDTH}
           height={LOGO_SLOT_HEIGHT}
           draggable={false}
-          className={styles.symbol}
-          style={{
-            left: (RAIL_INNER_NARROW - SYMBOL_WIDTH) / 2,
-            width: SYMBOL_WIDTH,
-            height: LOGO_SLOT_HEIGHT,
-            // Inverse of `fade`: in once the rail is narrow, out at once when it widens.
-            opacity: collapsed ? 1 : 0,
-            transition: `opacity var(--dur-fast) var(--ease) ${collapsed ? FADE_IN_DELAY : NO_DELAY}`,
-          }}
+          className={cn(styles.symbol, collapsed ? "opacity-100" : "opacity-0")}
+          style={{ left: (RAIL_INNER_NARROW - SYMBOL_WIDTH) / 2, width: SYMBOL_WIDTH, height: LOGO_SLOT_HEIGHT, transition: `opacity var(--dur-fast) var(--ease) ${collapsed ? FADE_IN_DELAY : NO_DELAY}` }}
         />
       </Link>
 
@@ -215,8 +193,8 @@ export function SideNav() {
             }}
           >
             <div
-              className={`label-micro ${styles.groupLabel}`}
-              style={{ bottom: HEADER.below, lineHeight: `${HEADER.line}px`, ...fade(collapsed) }}
+              className={cn(`label-micro ${styles.groupLabel}`, "bottom-1.5 leading-[17px]")}
+              style={{ ...fade(collapsed) }}
             >
               {section.label}
             </div>
@@ -224,8 +202,7 @@ export function SideNav() {
               <div
                 data-sidenav-group-rule=""
                 aria-hidden
-                className={styles.groupRule}
-                style={{ opacity: collapsed ? 1 : 0 }}
+                className={cn(styles.groupRule, collapsed ? "opacity-100" : "opacity-0")}
               />
             )}
           </div>
@@ -243,7 +220,6 @@ export function SideNav() {
 
       </div>
 
-
       {/* The account footer — Collapse, Admin and the profile block — sits
           under one full-width rule, the same line as the logo's, so the pair
           frames the rail top and bottom and the account cluster reads as split
@@ -259,8 +235,8 @@ export function SideNav() {
         aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
         title={collapsed ? "Expand sidebar" : undefined}
         onClick={() => setCollapsed(!collapsed)}
-        className={styles.row}
-        style={{ minHeight: NAV_ITEM_MIN_HEIGHT, ...rowGeometry(collapsed) }}
+        className={cn(styles.row, "min-h-9.5")}
+        style={{ ...rowGeometry(collapsed) }}
       >
         <PanelToggleIcon collapsed={collapsed} />
         <span aria-hidden className={styles.label} style={fade(collapsed)}>Collapse</span>
@@ -335,17 +311,8 @@ function NavLink({ entry, active, collapsed, retentionDue = false }: {
       title={collapsed ? label : undefined}
       aria-label={collapsed || retentionDue ? label : undefined}
       data-active={active}
-      className={styles.row}
-      style={{
-        // No explicit width: the rail is a flex column, so a row stretches to
-        // the content box on its own and the margins below actually inset it.
-        // `width: 100%` would have added to them and overflowed instead.
-        minHeight: NAV_ITEM_MIN_HEIGHT,
-        // Wide: the pill runs the rail's full width and the icon sits 12px
-        // inside it, on the same line as the avatar below. Narrow: the icon
-        // is centred. See ROW.
-        ...rowGeometry(collapsed),
-      }}
+      className={cn(styles.row, "min-h-9.5")}
+      style={{ ...rowGeometry(collapsed) }}
     >
       {/* A126: the dot rides the icon, so the narrow rail shows it too. */}
       <span className={styles.iconWrap}>

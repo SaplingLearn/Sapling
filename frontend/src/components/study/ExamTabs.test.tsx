@@ -70,7 +70,7 @@ describe("ExamTabs' selected line", () => {
     expect(slides[0].frames).toEqual([{ transform: "translateX(88px) scaleX(1.5)" }, { transform: "none" }]);
     // The whole length of the switch: the line never waits for the content swap.
     expect(slides[0].timing).toEqual({ delay: 0, duration: HUB_SWITCH_MS, easing: HUB_EASE });
-    expect(lines()[0].style.transformOrigin).toBe("0 50%");
+    expect(lines()[0]).toHaveTwStyle({ transformOrigin: "0 50%" });
   });
 
   it("a second switch mid-slide cancels the first and starts from the tab just left", () => {

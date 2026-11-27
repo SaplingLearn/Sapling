@@ -2,9 +2,8 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, cleanup, fireEvent } from "@testing-library/react";
 import React from "react";
-import fs from "node:fs";
-import path from "node:path";
 import { AnswerOption, type AnswerState } from "./AnswerOption";
+import { readAppCss } from "@/test-utils/appCss";
 
 afterEach(cleanup);
 
@@ -110,7 +109,7 @@ describe("AnswerOption", () => {
   });
 
   it("draws its text at 16px, its own token rather than the --fs-* ramp", () => {
-    const css = fs.readFileSync(path.resolve(__dirname, "../../app/globals.css"), "utf8");
+    const css = readAppCss();
     expect(css).toMatch(/--answer-text-fs:\s*16px;/);
     expect(css).toMatch(
       /\.answer-option__text \{[^}]*font-size:\s*var\(--answer-text-fs\)[^}]*\}/,

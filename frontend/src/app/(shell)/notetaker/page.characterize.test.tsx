@@ -223,7 +223,8 @@ describe("loading and empty states", () => {
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(screen.queryByRole("dialog")).toBeNull();
     fireEvent.click(create);
-    fireEvent.click(screen.getByRole("dialog"));
+    // The backdrop is the dialog's parent: the panel itself carries the role.
+    fireEvent.click(screen.getByRole("dialog").parentElement!);
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 });

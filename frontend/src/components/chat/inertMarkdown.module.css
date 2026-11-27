@@ -1,3 +1,4 @@
+@layer components {
 /* A ```mermaid or ```plot fence drawn as the code it is (inertMarkdown.tsx). */
 .fence {
   padding: var(--sp-5) var(--sp-6);
@@ -7,4 +8,6 @@
   overflow-x: auto;
   font-size: var(--fs-sm);
   margin: var(--sp-3) 0 var(--sp-5);
+}
+
 }

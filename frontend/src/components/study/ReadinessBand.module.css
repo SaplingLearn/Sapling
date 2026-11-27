@@ -1,3 +1,4 @@
+@layer components {
 /* The readiness figure (ReadinessBand.tsx). */
 
 .band {
@@ -44,3 +45,5 @@
 }
 .chip:active { transform: scale(var(--press-scale)); }
 .chipOn { background: var(--sap-100); color: var(--text); }
+
+}

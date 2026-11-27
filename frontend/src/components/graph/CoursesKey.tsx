@@ -9,6 +9,7 @@ import { graphUsesSkill } from "@/lib/levels";
 import React from "react";
 import type { EnrolledCourse } from "@/lib/api";
 import type { GraphNode } from "@/lib/data";
+import { cn } from "@/lib/cn";
 
 export type CourseProgressEntry = {
   course: Pick<EnrolledCourse, "course_id" | "course_code" | "course_name" | "color">;
@@ -83,26 +84,15 @@ export function CoursesKey({
       "0 0 2px rgba(255,255,255,1), " +
       "0 0 8px rgba(255,255,255,0.6)",
   };
-  const legibleDot: React.CSSProperties = {
-    boxShadow: "0 0 0 2px rgba(255,255,255,0.95)",
-  };
 
   return (
     <div
       data-testid={`${testIdPrefix}-courses-key`}
       role="group"
       aria-label="My courses"
-      style={{
-        position: "absolute",
-        ...(placement === "top-left" ? { top: 44, left: 12 } : { bottom: 14, right: 14 }),
-        maxWidth: "min(220px, calc(100% - 28px))",
-        padding: "6px 8px",
-        zIndex: 2,
-        fontSize: 12,
-        // No title: the coloured dots say what it is.
-      }}
+      className="absolute max-w-[min(220px,_calc(100%_-_28px))] py-1.5 px-2 z-2 text-sm" style={{ ...(placement === "top-left" ? { top: 44, left: 12 } : { bottom: 14, right: 14 }) }}
     >
-      <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+      <div className="flex flex-col gap-px">
         {courseProgress.map(({ course }) => {
           const color = course.color || "var(--accent)";
           const lit = activeCourseId === course.course_id;
@@ -120,34 +110,12 @@ export function CoursesKey({
               onFocus={() => onHoverCourse?.(course.course_id)}
               onBlur={() => onHoverCourse?.(null)}
               onClick={() => onSelectCourse?.(course.course_id)}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 7,
-                margin: "0 -6px",
-                padding: "3px 6px",
-                border: 0,
-                borderRadius: "var(--r-sm)",
-                background: lit || chosen ? "rgba(255,255,255,0.8)" : "transparent",
-                boxShadow: chosen ? `inset 0 0 0 1.5px ${color}` : "none",
-                textAlign: "left",
-                color: "inherit",
-                font: "inherit",
-                cursor: onSelectCourse ? "pointer" : "default",
-                transition: "background 150ms ease",
-              }}
+              className={cn("flex items-center gap-[7px] my-0 -mx-1.5 py-[3px] px-1.5 border-0 rounded-sm text-left text-inherit [font:inherit] [transition:background_150ms_ease]", lit || chosen ? "bg-[rgba(255,255,255,0.8)]" : "bg-transparent", onSelectCourse ? "cursor-pointer" : "cursor-default")} style={{ boxShadow: chosen ? `inset 0 0 0 1.5px ${color}` : "none" }}
             >
-              <span style={{ width: 9, height: 9, borderRadius: "50%", background: color, flexShrink: 0, ...legibleDot }} />
+              <span className="w-[9px] h-[9px] rounded-[50%] shrink-0 [box-shadow:0_0_0_2px_rgba(255,255,255,0.95)]" style={{ background: color }} />
               <span
                 data-testid={`${testIdPrefix}-course-code`}
-                style={{
-                  fontSize: 12,
-                  fontWeight: lit || chosen ? 600 : 500,
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
-                  ...legibleText,
-                }}
+                className={cn("text-sm overflow-hidden text-ellipsis whitespace-nowrap", lit || chosen ? "font-semibold" : "font-medium")} style={{ ...legibleText }}
               >
                 {course.course_code || course.course_name}
               </span>

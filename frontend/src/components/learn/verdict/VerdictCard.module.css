@@ -1,3 +1,4 @@
+@layer components {
 /* The rebuilt verdict (VerdictCard.tsx): title, one credit line, the skill
    change. The container is the Tutor's verdict box (tutor.module.css). */
 
@@ -29,4 +30,6 @@
   margin: 0;
   font-size: var(--fs-base);
   font-weight: 600;
+}
+
 }

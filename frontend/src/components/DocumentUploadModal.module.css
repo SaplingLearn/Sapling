@@ -1,3 +1,4 @@
+@layer components {
 /* The upload modal (DocumentUploadModal.tsx). The card enters with the
    global `.slide-up`; everything here animates a CHANGE (a file added, a
    stage reached, a status flipped). The global reduced-motion reset
@@ -261,4 +262,6 @@
 @keyframes upload-status-in {
   from { opacity: 0; transform: scale(0.85); }
   to { opacity: 1; transform: none; }
+}
+
 }

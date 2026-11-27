@@ -1,3 +1,4 @@
+@layer components {
 /* The course topic checklist above the notetaker (TopicChecklistPanel.tsx). */
 
 .root {
@@ -50,4 +51,6 @@
 .description {
   font-size: var(--fs-md);
   margin: var(--sp-3) 0;
+}
+
 }

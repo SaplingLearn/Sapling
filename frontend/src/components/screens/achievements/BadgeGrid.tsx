@@ -38,15 +38,15 @@ export function BadgeGrid({
             || a.sort_order - b.sort_order,
         );
         return (
-          <section key={cat} style={{ marginBottom: 38 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
-              <h2 style={{ margin: 0, fontSize: 21, fontWeight: 600 }}>{CAT_META[cat].label}</h2>
+          <section key={cat} className="mb-9.5">
+            <div className="flex items-center gap-2.5 mb-1">
+              <h2 className="m-0 text-[21px] font-semibold">{CAT_META[cat].label}</h2>
               <span className="chip">{earnedCount} / {list.length}</span>
             </div>
-            <div style={{ fontSize: 12.5, color: "var(--text-muted)", marginBottom: 16, maxWidth: 640 }}>
+            <div className="text-[12.5px] text-text-muted mb-4 max-w-160">
               {CAT_META[cat].blurb}
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(268px, 1fr))", gap: 14 }}>
+            <div className="grid grid-cols-[repeat(auto-fill,_minmax(268px,_1fr))] gap-3.5">
               {ordered.map((a) => {
                 const ua = earnedById.get(a.id);
                 const earned = !!ua;
@@ -58,44 +58,39 @@ export function BadgeGrid({
                   <button
                     key={a.id}
                     onClick={() => onOpen(a)}
-                    className="card"
-                    style={{ textAlign: "left", padding: 18, display: "flex", gap: 15,
-                             alignItems: "flex-start", cursor: "pointer" }}
+                    className="card text-left p-4.5 flex gap-[15px] items-start cursor-pointer"
                   >
-                    <div style={{ width: 80, height: 80, flexShrink: 0 }}>
+                    <div className="w-20 h-20 shrink-0">
                       <BadgeArt slug={secret ? "secret" : a.slug} rarity={a.rarity}
                                 locked={!earned} iconUrl={a.icon_url} emoji={a.icon} size={80} />
                     </div>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ display: "flex", justifyContent: "space-between",
-                                    alignItems: "baseline", gap: 6 }}>
-                        <div style={{ fontWeight: 600, fontSize: 14.5 }}>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex justify-between items-baseline gap-1.5">
+                        <div className="font-semibold text-[14.5px]">
                           {secret ? "???" : a.name}
                         </div>
                         <span className="chip">{sentenceCase(a.rarity)}</span>
                       </div>
-                      <div style={{ fontSize: 12, color: "var(--text-dim)", marginTop: 5, lineHeight: 1.45 }}>
+                      <div className="text-sm text-text-dim mt-[5px] leading-[1.45]">
                         {secret ? "A hidden achievement. Keep exploring to discover it." : a.description}
                       </div>
                       {earned && (
-                        <div style={{ marginTop: 10, fontSize: 11, color: "var(--accent)", fontWeight: 500 }}>
+                        <div className="mt-2.5 text-xs text-accent font-medium">
                           Earned {new Date(ua.earned_at).toLocaleDateString()} · +{a.xp_reward} XP
                         </div>
                       )}
                       {!earned && pct !== null && (
-                        <div style={{ marginTop: 11 }}>
-                          <div style={{ height: 5, background: "var(--bg-soft)",
-                                        borderRadius: "var(--r-full)", overflow: "hidden" }}>
-                            <div style={{ height: "100%", width: `${pct}%`, background: "var(--accent)" }} />
+                        <div className="mt-[11px]">
+                          <div className="h-[5px] bg-bg-soft rounded-[var(--r-full)] overflow-hidden">
+                            <div className="h-full bg-accent" style={{ width: `${pct}%` }} />
                           </div>
-                          <div style={{ display: "flex", justifyContent: "space-between",
-                                        fontSize: 10, color: "var(--text-muted)", marginTop: 5 }}>
+                          <div className="flex justify-between text-2xs text-text-muted mt-[5px]">
                             <span>{a.progress!.current} / {a.progress!.target}</span><span>{pct}%</span>
                           </div>
                         </div>
                       )}
                       {!earned && pct === null && (
-                        <div style={{ marginTop: 10, fontSize: 12, color: "var(--text-muted)" }}>
+                        <div className="mt-2.5 text-sm text-text-muted">
                           Locked · +{a.xp_reward} XP
                         </div>
                       )}
@@ -112,7 +107,7 @@ export function BadgeGrid({
     // Both an empty catalog and an empty single-category filter land here —
     // without this the screen just shows blank space below the showcase.
     return (
-      <div className="label-micro" style={{ padding: "12px 0 24px" }}>
+      <div className="label-micro pt-3 px-0 pb-6">
         {category === "all"
           ? "No achievements yet."
           : `No ${CAT_META[category].label.toLowerCase()} achievements yet.`}

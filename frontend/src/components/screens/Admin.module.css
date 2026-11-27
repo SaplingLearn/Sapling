@@ -1,3 +1,4 @@
+@layer components {
 /* The Admin console (Admin.tsx): its tab strip and the Users, Roles,
    Cosmetics, Analytics, Audit and Feedback tabs. The other tabs
    (Allowlist, Email, Flags, Achievements) style themselves. */
@@ -459,4 +460,6 @@ button.addRole { font-size: var(--fs-xs); }
   margin-top: var(--sp-2);
   font-size: var(--fs-md);
   color: var(--text-dim);
+}
+
 }

@@ -1,3 +1,4 @@
+@layer components {
 /* Quiz home (§5 B1) — the proposal, the topic list beside it, and
  * the two settings dialogs.
  *
@@ -638,4 +639,6 @@
   .quiz-home__row[data-returned="true"] {
     animation: none;
   }
+}
+
 }

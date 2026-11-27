@@ -1,3 +1,4 @@
+@layer components {
 /* The top navigation bar (TopNav.tsx). Hover, open and active states are
    attributes the component sets (`data-active`, `aria-expanded`), styled
    here; the panels are mounted on open, so they animate in and unmount at
@@ -295,4 +296,6 @@
 @keyframes nav-panel-in {
   from { opacity: 0; transform: translateY(calc(-1 * var(--sp-2))) scale(0.98); }
   to { opacity: 1; transform: none; }
+}
+
 }

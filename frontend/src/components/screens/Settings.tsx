@@ -5,7 +5,7 @@ import { AnimatePresence, motion, type Variants } from "framer-motion";
 import { TopBar } from "../TopBar";
 import { FullHeightScreen } from "../FullHeightScreen";
 import { Icon } from "../Icon";
-import { useScrollLock } from "@/lib/useScrollLock";
+import { useOverlayBehaviour } from "@/components/Dialog";
 import { Avatar } from "../Avatar";
 import { CustomSelect } from "../CustomSelect";
 import { ProfileView } from "../ProfileView";
@@ -961,23 +961,20 @@ function CosmeticPreview({
 }
 
 function PreviewModal({ profile, onClose }: { profile: UserProfile; onClose: () => void }) {
-  // This modal only exists while it's open, so the lock is unconditional.
-  useScrollLock(true);
-
-  React.useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
-    window.addEventListener("keydown", onKey);
-    return () => {
-      window.removeEventListener("keydown", onKey);
-    };
-  }, [onClose]);
+  // Dialog's modal engine (scroll lock, focus, Escape, Tab trap), own chrome.
+  const { panelRef, onKeyDown } = useOverlayBehaviour({ open: true, onClose });
 
   const m = useMotionPresets();
   return (
-    <motion.div onClick={onClose} className={styles.backdrop} {...presetVariants(m.fade)}>
-      <motion.div onClick={e => e.stopPropagation()} className={styles.dialog} {...presetVariants(m.scaleIn)}>
+    <motion.div onClick={onClose} onKeyDown={onKeyDown} className={styles.backdrop} {...presetVariants(m.fade)}>
+      <motion.div
+        ref={panelRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="profile-preview-title"
+        onClick={e => e.stopPropagation()}
+        className={styles.dialog}
+        {...presetVariants(m.scaleIn)}
+      >
         <div className={styles.dialogHead}>
-          <div className="label-micro">Profile preview</div>
+          <div id="profile-preview-title" className="label-micro">Profile preview</div>
           <button className="btn btn--sm btn--ghost" onClick={onClose} aria-label="Close">
             <Icon name="x" size={12} /> Close
           </button>

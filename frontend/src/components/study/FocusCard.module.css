@@ -1,3 +1,4 @@
+@layer components {
 /* The Up Next block (FocusCard.tsx). Its layout (the row, the clamp, the
    actions) is in StudyHub.module.css's `.focus*` rules; these are its parts.
    Every word on the block is --sidenav-fg on --sidenav-bg (spec §13 A135). */
@@ -76,3 +77,5 @@
   font-size: var(--fs-sm); line-height: 1.45; text-wrap: pretty;
 }
 .gapTipName { font-weight: 700; }
+
+}

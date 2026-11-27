@@ -24,23 +24,9 @@ export function Avatar({
     .toUpperCase();
   const bg = color || palette[name.charCodeAt(0) % palette.length];
   return (
-    <div style={{ position: "relative", width: size, height: size, flexShrink: 0 }}>
+    <div className="relative shrink-0" style={{ width: size, height: size }}>
       <div
-        style={{
-          width: size,
-          height: size,
-          borderRadius: "50%",
-          background: bg,
-          color: "#fff",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          fontSize: Math.max(10, size * 0.36),
-          fontWeight: 600,
-          fontFamily: "var(--font-sans)",
-          border: "1px solid rgba(0,0,0,0.08)",
-          overflow: "hidden",
-        }}
+        className="rounded-[50%] text-accent-fg flex items-center justify-center font-semibold font-sans border border-[rgba(0,0,0,0.08)] overflow-hidden" style={{ width: size, height: size, background: bg, fontSize: Math.max(10, size * 0.36) }}
       >
         {img ? (
           <img
@@ -51,7 +37,7 @@ export function Avatar({
             loading="lazy"
             decoding="async"
             referrerPolicy="no-referrer"
-            style={{ width: "100%", height: "100%", objectFit: "cover" }}
+            className="w-full h-full object-cover"
           />
         ) : (
           initials
@@ -59,13 +45,7 @@ export function Avatar({
       </div>
       {frame && (
         <div
-          style={{
-            position: "absolute",
-            inset: -3,
-            borderRadius: "50%",
-            border: `2px solid ${frame}`,
-            boxShadow: `0 0 8px ${frame}66`,
-          }}
+          className="absolute inset-[-3px] rounded-[50%]" style={{ border: `2px solid ${frame}`, boxShadow: `0 0 8px ${frame}66` }}
         />
       )}
     </div>

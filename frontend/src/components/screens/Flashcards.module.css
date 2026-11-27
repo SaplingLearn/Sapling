@@ -1,3 +1,4 @@
+@layer components {
 /* The Flashcards page, in the Study hub's language: the Dashboard's page
    padding, the big display title with the course field beside it and the
    page's actions on the right. Under it, either the home
@@ -50,3 +51,5 @@
 .messageTitle { font-size: var(--fs-2xl); color: var(--text); }
 .messageBody { margin-top: var(--sp-3); }
 .messageAction { margin-top: var(--sp-8); }
+
+}

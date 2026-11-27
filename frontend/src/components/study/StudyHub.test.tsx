@@ -51,6 +51,7 @@ import { listGuides } from "@/lib/studyGuide/api";
 import type { GuideCard } from "@/lib/studyGuide/types";
 import { getTopicChecklist, refreshTopicChecklist } from "@/lib/topicChecklistApi";
 import type { EnrolledCourse } from "@/lib/api";
+import { twStyle } from "@/test-utils/twStyle";
 
 const TODAY = new Date(2026, 10, 8, 12);
 const iso = (d: number) => `2026-11-${String(d).padStart(2, "0")}`;
@@ -293,7 +294,7 @@ describe("StudyHub", () => {
     await hubLoaded();
     fireEvent.click(screen.getByLabelText("Upcoming deadlines, 1 this week"));
     const panel = screen.getByRole("dialog", { name: "Upcoming deadlines" });
-    expect(within(panel).getByText("in 2 days").getAttribute("style")).toContain("var(--err)");
+    expect(twStyle(within(panel).getByText("in 2 days")).cssText).toContain("var(--err)");
     expect(within(panel).getByText("in 10 days")).toBeTruthy();
     // A dated exam or quiz in the list selects its tab.
     const selected = () => screen.getAllByRole("tab").filter(t => t.getAttribute("aria-selected") === "true").map(t => t.textContent);
@@ -326,8 +327,8 @@ describe("StudyHub", () => {
     // Dimmed, the tile recedes but its words stay AA: nothing on it fades but its ring.
     expect(screen.getByTestId("tile-var").dataset.dim).toBeUndefined();
     expect(screen.getByTestId("tile-rec").dataset.dim).toBe("true");
-    expect(screen.getByTestId("tile-rec").style.opacity).toBe("");
-    expect(within(screen.getByTestId("tile-rec")).getByText("Recursion").style.color).toBe("var(--text-muted)");
+    expect(twStyle(screen.getByTestId("tile-rec")).opacity).toBe("");
+    expect(twStyle(within(screen.getByTestId("tile-rec")).getByText("Recursion")).color).toBe("var(--text-muted)");
     // The tile itself only selects; the menu is behind its "..." button.
     fireEvent.click(screen.getByTestId("tile-loop"));
     expect(screen.queryByRole("menu")).toBeNull();
@@ -865,8 +866,8 @@ describe("StudyHub's roadmap and Up Next follow the selected exam", () => {
   const settled = () => {
     const roadmap = screen.getByLabelText("Roadmap");
     expect(roadmap.querySelectorAll("[inert], [aria-hidden='true'][style*='absolute']")).toHaveLength(0);
-    for (const el of roadmap.querySelectorAll<HTMLElement>("[data-flip]")) expect(el.style.transform).toBe("");
-    expect(roadmap.querySelector<HTMLElement>("[data-flip]")!.parentElement!.style.height).toBe("");
+    for (const el of roadmap.querySelectorAll<HTMLElement>("[data-flip]")) expect(twStyle(el).transform).toBe("");
+    expect(twStyle(roadmap.querySelector<HTMLElement>("[data-flip]")!.parentElement!).height).toBe("");
   };
   /** An outline that puts `onExam2` on Exam 2 and nothing on Quiz 3. */
   const linkExam2 = (...onExam2: string[]) =>
@@ -1068,7 +1069,7 @@ describe("StudyHub's roadmap and Up Next follow the selected exam", () => {
       expect(legendCounts()).toEqual(["1 Mastered", "1 Learning", "1 Struggling", "1 Not Started"]);
       // Nothing of the switch is left in the band or the block either.
       expect(section.querySelectorAll("[inert]")).toHaveLength(0);
-      expect(section.style.height).toBe("");
+      expect(twStyle(section).height).toBe("");
     });
 
     it("clicking through the tabs quickly ends on the last one's values", async () => {

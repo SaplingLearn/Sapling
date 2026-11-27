@@ -1,3 +1,4 @@
+@layer components {
 /* The hint ladder (HintLadder.tsx): the hints taken, stacked, and what the
    next step costs. */
 
@@ -42,4 +43,6 @@
   flex-basis: 100%;
   margin: 0;
   color: var(--text-dim);
+}
+
 }

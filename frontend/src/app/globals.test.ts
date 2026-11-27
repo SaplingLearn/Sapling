@@ -20,6 +20,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, it, expect } from 'vitest';
+import { appCssFiles } from '@/test-utils/appCss';
 
 const CSS_PATH = path.resolve(__dirname, 'globals.css');
 
@@ -91,8 +92,9 @@ function structuralProblems(css: string): string[] {
 }
 
 describe('globals.css', () => {
-  it('is structurally parseable', () => {
-    const css = fs.readFileSync(CSS_PATH, 'utf8');
+  // The entry and every stylesheet it imports (src/styles/*.css).
+  it.each(appCssFiles().map((f) => [path.relative(path.dirname(CSS_PATH), f), f]))('%s is structurally parseable', (_, file) => {
+    const css = fs.readFileSync(file, 'utf8');
     expect(structuralProblems(css)).toEqual([]);
   });
 

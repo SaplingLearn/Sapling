@@ -7,11 +7,11 @@
  */
 import React from "react";
 import Link from "next/link";
-import { INHERIT_FONT } from "@/lib/inheritFont";
 import { RECENT_SHOWN, type RecentRow } from "./hubModel";
-import { ELLIPSIS, Glyph, TOOL } from "./hubUi";
+import { Glyph, TOOL } from "./hubUi";
 import s from "./StudyHub.module.css";
 import { StudyModal } from "./StudyModal";
+import { cn } from "@/lib/cn";
 
 type Chip = RecentRow["chips"][number];
 
@@ -20,13 +20,11 @@ function DeltaChip({ chip, onPick }: { chip: Chip; onPick: () => void }) {
   const up = chip.delta >= 0;
   return (
     <button onClick={onPick} title="Mastery change from this quiz"
-      style={{ display: "inline-flex", alignItems: "center", gap: 5, height: 22, padding: "0 8px", border: 0, borderRadius: 11, background: up ? "var(--sap-100)" : "var(--err-soft)", color: "var(--text)", ...INHERIT_FONT, fontSize: "var(--fs-xs)", whiteSpace: "nowrap", flexShrink: 0, cursor: "pointer" }}>
-      {chip.name}<span style={{ fontWeight: 600, color: up ? "var(--sap-600)" : "var(--err)" }}>{up ? "+" : "−"}{Math.abs(chip.delta)}%</span>
+      className={cn("inline-flex items-center gap-[5px] h-5.5 py-0 px-2 border-0 rounded-[11px] text-text [font-family:inherit] [font-weight:inherit] [font-style:inherit] [line-height:inherit] text-xs whitespace-nowrap shrink-0 cursor-pointer", up ? "bg-sap-100" : "bg-err-soft")}>
+      {chip.name}<span className={cn("font-semibold", up ? "text-sap-600" : "text-err")}>{up ? "+" : "−"}{Math.abs(chip.delta)}%</span>
     </button>
   );
 }
-
-const ROW: React.CSSProperties = { display: "grid", gridTemplateColumns: "28px minmax(0, 1fr)", columnGap: 10, padding: "8px 0" };
 
 /** One row: the rail shows the newest few, the "Show all" modal every one.
  *  A row that leads somewhere (a study guide, to its reader) is a link. */
@@ -34,26 +32,26 @@ function Row({ row, onPickConcept }: { row: RecentRow; onPickConcept: (conceptId
   const look = TOOL[row.kind];
   const inside = (
     <>
-      <span style={{ width: 28, height: 28, borderRadius: 7, background: look.bg, color: look.fg, display: "flex", alignItems: "center", justifyContent: "center" }}><Glyph name={look.icon} size={13} /></span>
-      <div style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 4 }}>
-        <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
-          <span style={{ flex: 1, minWidth: 0 }}>
-            <span style={{ display: "block", fontSize: "var(--fs-md)", fontWeight: 600, ...ELLIPSIS }}>{row.title}</span>
-            <span style={{ display: "block", fontSize: "var(--fs-sm)", color: "var(--text-muted)" }}>{row.meta}</span>
+      <span className="w-7 h-7 rounded-[7px] flex items-center justify-center" style={{ background: look.bg, color: look.fg }}><Glyph name={look.icon} size={13} /></span>
+      <div className="min-w-0 flex flex-col gap-1">
+        <div className="flex items-baseline gap-2.5">
+          <span className="flex-1 min-w-0">
+            <span className="block text-md font-semibold whitespace-nowrap overflow-hidden text-ellipsis">{row.title}</span>
+            <span className="block text-sm text-text-muted">{row.meta}</span>
           </span>
-          {row.result && <span style={{ fontSize: "var(--fs-md)", fontWeight: 600, color: row.resultColor, whiteSpace: "nowrap" }}>{row.result}</span>}
+          {row.result && <span className="text-md font-semibold whitespace-nowrap" style={{ color: row.resultColor }}>{row.result}</span>}
         </div>
         {row.chips.length > 0 && (
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+          <div className="flex flex-wrap gap-1">
             {row.chips.map(ch => <DeltaChip key={ch.id} chip={ch} onPick={() => onPickConcept(ch.id)} />)}
           </div>
         )}
       </div>
     </>
   );
-  if (!row.href) return <div style={ROW}>{inside}</div>;
+  if (!row.href) return <div className="grid grid-cols-[28px_minmax(0,_1fr)] gap-x-2.5 py-2 px-0">{inside}</div>;
   return (
-    <Link href={row.href} data-testid={`recent-${row.key}`} style={{ ...ROW, color: "inherit", textDecoration: "none" }}>
+    <Link href={row.href} data-testid={`recent-${row.key}`} className="grid grid-cols-[28px_minmax(0,_1fr)] gap-x-2.5 py-2 px-0 text-inherit no-underline">
       {inside}
     </Link>
   );
@@ -66,16 +64,16 @@ export function RecentActivity({ rows, onPickConcept, onShowAll }: {
   onShowAll: () => void;
 }) {
   return (
-    <section aria-label="Recent activity" style={{ display: "flex", flexDirection: "column", gap: 2, paddingTop: 16, borderTop: "1px solid var(--border)" }}>
-      <span className="label-micro" style={{ marginBottom: 6 }}>Recent Activity</span>
-      {rows.length === 0 && <span style={{ fontSize: "var(--fs-md)", color: "var(--text-muted)" }}>Quizzes, flashcards, and study guides for this course will show up here.</span>}
+    <section aria-label="Recent activity" className="flex flex-col gap-0.5 pt-4 border-t border-t-border">
+      <span className="label-micro mb-1.5">Recent Activity</span>
+      {rows.length === 0 && <span className="text-md text-text-muted">Quizzes, flashcards, and study guides for this course will show up here.</span>}
       {rows.slice(0, RECENT_SHOWN).map(row => <Row key={row.key} row={row} onPickConcept={onPickConcept} />)}
       {rows.length > RECENT_SHOWN && (
-        <button type="button" className="btn btn--ghost btn--sm" data-testid="recent-toggle" aria-haspopup="dialog"
+        <button type="button" className="btn btn--ghost btn--sm self-start mt-1 -ml-2.5 text-text-dim" data-testid="recent-toggle" aria-haspopup="dialog"
           onClick={onShowAll}
           // -10px: the ghost button's own side padding, so its label lines
           // up with the row icons above it.
-          style={{ alignSelf: "flex-start", marginTop: 4, marginLeft: -10, color: "var(--text-dim)" }}>
+>
           Show all {rows.length} <span aria-hidden="true">→</span>
         </button>
       )}
@@ -92,19 +90,18 @@ export function RecentActivityModal({ rows, courseLabel, isMobile, onPickConcept
 }) {
   return (
     <StudyModal open onClose={onClose} label="Recent activity" width={480} maxHeight={640} top={isMobile ? 40 : 120} gap={4}>
-      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12, paddingBottom: 8 }}>
-        <span className="h-serif" style={{ fontSize: "var(--fs-2xl)" }}>Recent Activity</span>
-        <span style={{ fontSize: "var(--fs-sm)", color: "var(--text-muted)" }}>{courseLabel}</span>
+      <div className="flex items-baseline justify-between gap-3 pb-2">
+        <span className="h-serif text-2xl">Recent Activity</span>
+        <span className="text-sm text-text-muted">{courseLabel}</span>
       </div>
       {/* The LIST scrolls, not the dialog: the title and Close stay put,
           and the scrollbar sits inside the card (in the gutter this margin
           and padding make) instead of riding the dialog's rounded edge. */}
-      <div className={s.catScroll} data-testid="recent-all"
-        style={{ flex: "1 1 auto", minHeight: 0, overflowY: "auto", overscrollBehavior: "contain", marginRight: -14, paddingRight: 14 }}>
+      <div className={cn(s.catScroll, "flex-[1_1_auto] min-h-0 overflow-y-auto [overscroll-behavior:contain] -mr-3.5 pr-3.5")} data-testid="recent-all">
         {rows.map(row => <Row key={row.key} row={row} onPickConcept={onPickConcept} />)}
       </div>
-      <div style={{ display: "flex", justifyContent: "flex-end", paddingTop: 12, marginTop: 8, borderTop: "1px solid var(--border)" }}>
-        <button type="button" className="btn" onClick={onClose} style={{ height: 36, padding: "0 16px" }}>Close</button>
+      <div className="flex justify-end pt-3 mt-2 border-t border-t-border">
+        <button type="button" className="btn h-9 py-0 px-4" onClick={onClose}>Close</button>
       </div>
     </StudyModal>
   );

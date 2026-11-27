@@ -175,7 +175,7 @@ export function BirthdayScreen({ dob, blocked, confirming, minor, onDob, onConfi
   return (
     <section className="ob-screen ob-screen--roomy">
       <ScreenHead title="When's your birthday?" />
-      <div className="ob-body" style={{ gap: 24 }}>
+      <div className="ob-body gap-6">
         <CakeArt />
         {blocked ? (
           <AgeBlocked onSignOut={onSignOut} />
@@ -212,7 +212,7 @@ export function SchoolScreen({ school, onSchool, onSignOut }: {
   return (
     <section className="ob-screen">
       <ScreenHead title="Where do you study?" sub="Tap your school's logo." />
-      <div className="ob-body" style={{ gap: 18 }}>
+      <div className="ob-body gap-4.5">
         <div className="ob-schools">
           <button
             data-testid="onboarding-school-bu"
@@ -220,12 +220,12 @@ export function SchoolScreen({ school, onSchool, onSignOut }: {
             aria-pressed={school === "bu"}
             onClick={() => onSchool("bu")}
           >
-            <div className="ob-school-logo"><img src="/onboarding/schools/bu-t.png" alt="" style={{ height: "52%", width: "auto", maxWidth: "90%" }} /></div>
+            <div className="ob-school-logo"><img src="/onboarding/schools/bu-t.png" alt="" className="h-[52%] w-auto max-w-[90%]" /></div>
             Boston University
           </button>
           {OTHER_SCHOOLS.map(([name, logo, h]) => (
             <div key={name} className="ob-school ob-school--soon">
-              <div className="ob-school-logo"><img src={`/onboarding/schools/${logo}`} alt="" style={{ height: h, width: "auto", maxWidth: "100%" }} /></div>
+              <div className="ob-school-logo"><img src={`/onboarding/schools/${logo}`} alt="" className="w-auto max-w-full" style={{ height: h }} /></div>
               {name}
               <span className="ob-soon">Coming soon</span>
             </div>

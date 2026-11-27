@@ -1,3 +1,4 @@
+@layer components {
 /* Study's rail entries for Review and the retention check (RailReviews.tsx):
    the Quick Reviews row's shape (QuickReviews.module.css), stacked under it. */
 
@@ -44,4 +45,6 @@
   gap: var(--sp-4);
   font-size: var(--fs-md);
   color: var(--text-dim);
+}
+
 }

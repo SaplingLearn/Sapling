@@ -1,3 +1,4 @@
+@layer components {
 /* The rebuilt Tutor course page (CourseV2.tsx), after the Claude Design
    board: an optional note on top, then two columns of headed sections, each
    list in one bordered box. */
@@ -186,4 +187,6 @@
     grid-column: 1 / -1;
     grid-row: 2;
   }
+}
+
 }

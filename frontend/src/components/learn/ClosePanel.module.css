@@ -1,3 +1,4 @@
+@layer components {
 /* The loop's wrap-up (ClosePanel): the styles its inline style objects held (#866). */
 
 .root {
@@ -106,4 +107,6 @@
   .press:active:not(:disabled) {
     transform: scale(var(--press-scale));
   }
+}
+
 }

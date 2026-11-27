@@ -1,3 +1,4 @@
+@layer components {
 /* The Study Guides home: a toolbar (search, sort and Saved on the left, New
    study guide on the right) over the student's guides as a grid of paper
    cards.
@@ -75,20 +76,6 @@
 }
 
 /* The reader's three-dot menu, under the sort button. */
-.menu {
-  position: absolute; left: 0; top: calc(100% + 6px); z-index: 8; width: 210px; padding: 6px;
-  display: flex; flex-direction: column; gap: 2px;
-  border-radius: var(--r-md); background: var(--bg-panel); border: 1px solid var(--border);
-  box-shadow: var(--shadow-lg);
-}
-.menuItem {
-  display: flex; align-items: center; justify-content: space-between; gap: 12px;
-  width: 100%; min-height: 44px; padding: 0 12px; border-radius: var(--r-sm);
-  font-size: var(--fs-base); font-weight: 500; color: var(--text); text-align: left; white-space: nowrap;
-}
-.menuItem:hover { background: var(--bg-subtle); }
-.menuItem svg { color: var(--text-dim); }
-.menuItem[aria-checked="true"] { font-weight: 700; }
 
 /* ── the grid ────────────────────────────────────────────────────────────── */
 
@@ -210,4 +197,6 @@
 @media (prefers-reduced-motion: reduce) {
   .search, .sortChevron, .savedOnly, .card { transition: none; }
   .card:hover { transform: none; }
+}
+
 }

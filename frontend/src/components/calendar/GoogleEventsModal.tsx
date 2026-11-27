@@ -1,10 +1,9 @@
 "use client";
 // The Calendar's "View Google events" modal (moved out of screens/Calendar.tsx
-// unchanged, so the redesigned calendar shares it).
-import React from "react";
+// so the redesigned calendar shares it).
 import { motion, type MotionProps } from "framer-motion";
 import { useMotionPresets, type MotionPreset } from "@/lib/motion";
-import { useScrollLock } from "@/lib/useScrollLock";
+import { useOverlayBehaviour } from "@/components/Dialog";
 import type { GoogleEvent } from "@/lib/api";
 import { Icon } from "../Icon";
 import styles from "../screens/Calendar.module.css";
@@ -22,29 +21,25 @@ export function GoogleEventsModal({
   events: GoogleEvent[];
   onClose: () => void;
 }) {
-  // This modal only exists while it's open, so the lock is unconditional.
-  useScrollLock(true);
-
-  React.useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
-    window.addEventListener("keydown", onKey);
-    return () => {
-      window.removeEventListener("keydown", onKey);
-    };
-  }, [onClose]);
+  // Dialog's modal engine (scroll lock, focus, Escape, Tab trap), own chrome.
+  const { panelRef, onKeyDown } = useOverlayBehaviour({ open: true, onClose });
 
   const m = useMotionPresets();
   return (
     <motion.div
-      role="dialog"
-      aria-modal="true"
       onClick={onClose}
+      onKeyDown={onKeyDown}
       className={styles.scrim}
       {...asProps(m.fade)}
     >
-      <motion.div onClick={e => e.stopPropagation()} className={styles.modal} {...asProps(m.scaleIn)}>
+      <motion.div
+        ref={panelRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="google-events-title"
+        onClick={e => e.stopPropagation()}
+        className={styles.modal}
+        {...asProps(m.scaleIn)}
+      >
         <div className={styles.modalHead}>
-          <div className="label-micro">Upcoming Google Calendar events</div>
+          <div id="google-events-title" className="label-micro">Upcoming Google Calendar events</div>
           <button className="btn btn--sm btn--ghost" onClick={onClose} aria-label="Close">
             <Icon name="x" size={12} /> Close
           </button>

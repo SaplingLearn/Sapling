@@ -1,3 +1,4 @@
+@layer components {
 /* A wrapped-up session, read-only (ReadOnlyTranscript). */
 
 .scroll {
@@ -65,4 +66,6 @@
 
 .turnUser .bubble {
   background: var(--accent-soft);
+}
+
 }

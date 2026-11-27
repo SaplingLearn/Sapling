@@ -186,8 +186,8 @@ describe("curve-mode toggle", () => {
       "Couldn't switch to curved grades: Server unavailable.",
     ));
     // Back on raw: "Curved" is clickable again, "Raw" is the active pill.
-    expect(screen.getByRole("button", { name: "Curved" })).toHaveStyle({ cursor: "pointer" });
-    expect(screen.getByRole("button", { name: "Raw" })).toHaveStyle({ cursor: "default" });
+    expect(screen.getByRole("button", { name: "Curved" })).toHaveTwStyle({ cursor: "pointer" });
+    expect(screen.getByRole("button", { name: "Raw" })).toHaveTwStyle({ cursor: "default" });
   });
 });
 

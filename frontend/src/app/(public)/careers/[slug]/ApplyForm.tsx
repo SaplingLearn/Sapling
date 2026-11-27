@@ -26,40 +26,8 @@ import Link from 'next/link';
 import { type Job, DEPT_COLORS } from '../jobs';
 import { submitJobApplication } from '@/lib/api';
 import { CompanionShell } from '@/components/companion/CompanionShell';
-import { ACCENT, BODY, DISPLAY, INK, LABEL, MUTED, SERIF } from '@/lib/landing/companionType';
-
-const SANS = "var(--font-suse), 'SUSE', system-ui, sans-serif";
-
-/**
- * Warm brick for the required-field marks and submit errors. Hardcoded like
- * every other colour on the companion pages: `var(--err)` is an app-shell
- * token and does not belong to this palette layer.
- */
-const ALERT = '#a83a3a';
-
-const HAIRLINE = '1px solid rgba(42,39,31,0.10)';
-
-/** Fields are white on the `#faf8f3` card so an input reads as an input. */
-const INPUT_STYLE: React.CSSProperties = {
-  width: '100%',
-  background: '#fff',
-  border: '1px solid rgba(42,39,31,0.16)',
-  borderRadius: 8,
-  padding: '11px 14px',
-  fontSize: 14.5,
-  color: INK,
-  fontFamily: SANS,
-  boxSizing: 'border-box',
-  transition: 'border-color 200ms',
-};
-
-const LABEL_STYLE: React.CSSProperties = {
-  display: 'block',
-  fontSize: 13,
-  fontWeight: 600,
-  color: INK,
-  marginBottom: 7,
-};
+import { ACCENT, LABEL, MUTED } from '@/lib/landing/companionType';
+import { cn } from "@/lib/cn";
 
 const EYEBROW: React.CSSProperties = {
   display: 'block', fontFamily: LABEL, fontSize: 12, 
@@ -75,8 +43,8 @@ function BackToOpenings() {
   return (
     <Link
       href="/careers"
-      className="cp-navlink"
-      style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 13, color: MUTED, animation: 'fadeUp 600ms ease both' }}
+      className="cp-navlink inline-flex items-center gap-2 text-md [animation:fadeUp_600ms_ease_both]"
+      style={{ color: MUTED }}
     >
       <span aria-hidden="true">←</span> All openings
     </Link>
@@ -96,11 +64,11 @@ export default function ApplyForm({ job }: { job: Job | null }) {
   if (!job) {
     return (
       <CompanionShell current="/careers">
-        <div style={{ padding: '80px 0' }}>
-          <h1 style={{ margin: 0, fontFamily: DISPLAY, fontWeight: 500, fontSize: 40, lineHeight: 1.15, letterSpacing: '-0.015em', color: INK }}>
+        <div className="py-20 px-0">
+          <h1 className="m-0 font-display font-medium text-[40px] leading-[1.15] tracking-[-0.015em] text-ink-800">
             Role not found
           </h1>
-          <p style={{ margin: '18px 0 26px', fontFamily: SERIF, fontSize: 16, lineHeight: 1.6, color: BODY, maxWidth: '58ch' }}>
+          <p className="mt-4.5 mx-0 mb-6.5 font-serif text-lg leading-[1.6] text-ink-600 max-w-[58ch]">
             That opening is closed or the link is wrong. The roles we are hiring for right now are
             all on the openings page.
           </p>
@@ -155,50 +123,41 @@ export default function ApplyForm({ job }: { job: Job | null }) {
       <div>
         <BackToOpenings />
 
-        <h1 style={{ margin: '18px 0 0', fontFamily: DISPLAY, fontWeight: 500, fontSize: 48, lineHeight: 1.15, letterSpacing: '-0.015em', color: INK, animation: 'fadeUp 700ms ease 60ms both' }}>
+        <h1 className="mt-4.5 mx-0 mb-0 font-display font-medium text-[48px] leading-[1.15] tracking-[-0.015em] text-ink-800 [animation:fadeUp_700ms_ease_60ms_both]">
           {job.title}
         </h1>
 
-        <div style={{ marginTop: 16, display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 12, animation: 'fadeUp 700ms ease 120ms both' }}>
+        <div className="mt-4 flex items-center flex-wrap gap-3 [animation:fadeUp_700ms_ease_120ms_both]">
           {dept && (
             <span
-              style={{
-                fontSize: 11, fontWeight: 500, padding: '3px 10px', borderRadius: 99,
-                background: dept.bg, color: dept.text, border: `1px solid ${dept.border}`,
-              }}
+              className="text-xs font-medium py-[3px] px-2.5 rounded-[99px]" style={{ background: dept.bg, color: dept.text, border: `1px solid ${dept.border}` }}
             >
               {job.department}
             </span>
           )}
-          <span style={{ fontFamily: LABEL, fontSize: 12.5, color: MUTED }}>
+          <span className="font-sans text-[12.5px]" style={{ color: MUTED }}>
             {job.location} · {job.type}
           </span>
         </div>
 
         <div
-          style={{
-            marginTop: 40, paddingTop: 40, borderTop: HAIRLINE,
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%,380px),1fr))',
-            gap: 48,
-            alignItems: 'start',
-          }}
+          className="mt-10 pt-10 border-t border-t-[rgba(42,39,31,0.10)] grid grid-cols-[repeat(auto-fit,_minmax(min(100%,380px),1fr))] gap-12 [align-items:start]"
         >
           {/* Sticky because the form beside it is about twice as tall; the
               offset clears the shell's 92px header scrim. */}
-          <aside style={{ position: 'sticky', top: 108, animation: 'fadeUp 700ms ease 200ms both' }}>
+          <aside className="sticky top-27 [animation:fadeUp_700ms_ease_200ms_both]">
             <span style={EYEBROW}>The role</span>
-            <p style={{ margin: '14px 0 0', fontFamily: SERIF, fontSize: 17.5, lineHeight: 1.64, color: BODY }}>
+            <p className="mt-3.5 mx-0 mb-0 font-serif text-[17.5px] leading-[1.64] text-ink-600">
               {job.description}
             </p>
 
-            <div style={{ marginTop: 30, paddingTop: 26, borderTop: HAIRLINE }}>
+            <div className="mt-7.5 pt-6.5 border-t border-t-[rgba(42,39,31,0.10)]">
               <span style={EYEBROW}>What you&apos;d touch</span>
-              <div style={{ marginTop: 14, display: 'flex', flexWrap: 'wrap', gap: 7 }}>
+              <div className="mt-3.5 flex flex-wrap gap-[7px]">
                 {job.tags.map((tag) => (
                   <span
                     key={tag}
-                    style={{ fontSize: 12, padding: '4px 11px', borderRadius: 7, background: '#faf8f3', border: HAIRLINE, color: BODY }}
+                    className="text-sm py-1 px-[11px] rounded-[7px] bg-ink-0 border border-[rgba(42,39,31,0.10)] text-ink-600"
                   >
                     {tag}
                   </span>
@@ -207,42 +166,37 @@ export default function ApplyForm({ job }: { job: Job | null }) {
             </div>
           </aside>
 
-          <div style={{ background: '#faf8f3', border: HAIRLINE, borderRadius: 18, animation: 'fadeUp 700ms ease 260ms both' }}>
+          <div className="bg-ink-0 border border-[rgba(42,39,31,0.10)] rounded-[18px] [animation:fadeUp_700ms_ease_260ms_both]">
             {submitted ? (
-              <div style={{ padding: 'clamp(36px,5vw,52px) clamp(24px,4vw,36px)', textAlign: 'center' }}>
+              <div className="py-[clamp(36px,5vw,52px)] px-[clamp(24px,4vw,36px)] text-center">
                 <div
-                  style={{
-                    width: 48, height: 48, borderRadius: '50%',
-                    background: 'rgba(89,117,54,0.10)', border: '1px solid rgba(89,117,54,0.28)',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    margin: '0 auto 18px',
-                  }}
+                  className="w-12 h-12 rounded-[50%] bg-[rgba(89,117,54,0.10)] border border-[rgba(89,117,54,0.28)] flex items-center justify-center mt-0 mx-auto mb-4.5"
                 >
                   <svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke={ACCENT} strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
                     <path d="M5 13l4 4L19 7" />
                   </svg>
                 </div>
-                <h2 style={{ margin: 0, fontFamily: DISPLAY, fontWeight: 500, fontSize: 26, lineHeight: 1.2, letterSpacing: '-0.015em', color: INK }}>
+                <h2 className="m-0 font-display font-medium text-3xl leading-[1.2] tracking-[-0.015em] text-ink-800">
                   Application submitted
                 </h2>
-                <p style={{ margin: '12px auto 26px', maxWidth: '38ch', fontFamily: SERIF, fontSize: 15.5, lineHeight: 1.65, color: BODY }}>
+                <p className="mt-3 mx-auto mb-6.5 max-w-[38ch] font-serif text-[15.5px] leading-[1.65] text-ink-600">
                   Thanks for applying to Sapling. We&apos;ll review your application and reach out soon.
                 </p>
                 <Link
                   href="/careers"
-                  style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 13.5, fontWeight: 600, color: 'var(--brand-forest)' }}
+                  className="inline-flex items-center gap-[7px] text-[13.5px] font-semibold text-brand-forest"
                 >
                   <span aria-hidden="true">←</span> All openings
                 </Link>
               </div>
             ) : (
-              <form onSubmit={handleSubmit} style={{ padding: 'clamp(24px,3.4vw,34px)' }}>
+              <form onSubmit={handleSubmit} className="p-[clamp(24px,3.4vw,34px)]">
                 <span style={EYEBROW}>Apply</span>
 
-                <div style={{ marginTop: 22, display: 'flex', flexDirection: 'column', gap: 20 }}>
+                <div className="mt-5.5 flex flex-col gap-5">
                   <div>
-                    <label style={LABEL_STYLE}>
-                      Full Name <span style={{ color: ALERT }}>*</span>
+                    <label className="block text-md font-semibold text-ink-800 mb-[7px]">
+                      Full Name <span className="text-err">*</span>
                     </label>
                     <input
                       type="text"
@@ -250,13 +204,13 @@ export default function ApplyForm({ job }: { job: Job | null }) {
                       placeholder="Jane Smith"
                       value={form.name}
                       onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-                      style={INPUT_STYLE}
+                      className="w-full bg-accent-fg border border-[rgba(42,39,31,0.16)] rounded-[8px] py-[11px] px-3.5 text-[14.5px] text-ink-800 font-sans box-border [transition:border-color_200ms]"
                     />
                   </div>
 
                   <div>
-                    <label style={LABEL_STYLE}>
-                      Email <span style={{ color: ALERT }}>*</span>
+                    <label className="block text-md font-semibold text-ink-800 mb-[7px]">
+                      Email <span className="text-err">*</span>
                     </label>
                     <input
                       type="email"
@@ -264,24 +218,24 @@ export default function ApplyForm({ job }: { job: Job | null }) {
                       placeholder="jane@university.edu"
                       value={form.email}
                       onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
-                      style={INPUT_STYLE}
+                      className="w-full bg-accent-fg border border-[rgba(42,39,31,0.16)] rounded-[8px] py-[11px] px-3.5 text-[14.5px] text-ink-800 font-sans box-border [transition:border-color_200ms]"
                     />
                   </div>
 
                   <div>
-                    <label style={LABEL_STYLE}>Phone Number</label>
+                    <label className="block text-md font-semibold text-ink-800 mb-[7px]">Phone Number</label>
                     <input
                       type="tel"
                       placeholder="+1 (555) 000-0000"
                       value={form.phone}
                       onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))}
-                      style={INPUT_STYLE}
+                      className="w-full bg-accent-fg border border-[rgba(42,39,31,0.16)] rounded-[8px] py-[11px] px-3.5 text-[14.5px] text-ink-800 font-sans box-border [transition:border-color_200ms]"
                     />
                   </div>
 
                   <div>
-                    <label style={LABEL_STYLE}>
-                      LinkedIn Profile <span style={{ color: ALERT }}>*</span>
+                    <label className="block text-md font-semibold text-ink-800 mb-[7px]">
+                      LinkedIn Profile <span className="text-err">*</span>
                     </label>
                     <input
                       type="url"
@@ -289,24 +243,24 @@ export default function ApplyForm({ job }: { job: Job | null }) {
                       placeholder="https://linkedin.com/in/yourprofile"
                       value={form.linkedin}
                       onChange={(e) => setForm((f) => ({ ...f, linkedin: e.target.value }))}
-                      style={INPUT_STYLE}
+                      className="w-full bg-accent-fg border border-[rgba(42,39,31,0.16)] rounded-[8px] py-[11px] px-3.5 text-[14.5px] text-ink-800 font-sans box-border [transition:border-color_200ms]"
                     />
                   </div>
 
                   <div>
-                    <label style={LABEL_STYLE}>Portfolio Link</label>
+                    <label className="block text-md font-semibold text-ink-800 mb-[7px]">Portfolio Link</label>
                     <input
                       type="url"
                       placeholder="https://yourportfolio.com"
                       value={form.portfolio}
                       onChange={(e) => setForm((f) => ({ ...f, portfolio: e.target.value }))}
-                      style={INPUT_STYLE}
+                      className="w-full bg-accent-fg border border-[rgba(42,39,31,0.16)] rounded-[8px] py-[11px] px-3.5 text-[14.5px] text-ink-800 font-sans box-border [transition:border-color_200ms]"
                     />
                   </div>
 
                   <div>
-                    <label style={LABEL_STYLE}>
-                      Resume <span style={{ color: ALERT }}>*</span>
+                    <label className="block text-md font-semibold text-ink-800 mb-[7px]">
+                      Resume <span className="text-err">*</span>
                     </label>
                     <div
                       onClick={() => fileInputRef.current?.click()}
@@ -316,18 +270,10 @@ export default function ApplyForm({ job }: { job: Job | null }) {
                       }}
                       onDragLeave={() => setDragging(false)}
                       onDrop={handleDrop}
-                      style={{
-                        border: `1.5px dashed ${dragging ? ACCENT : 'rgba(42,39,31,0.22)'}`,
-                        borderRadius: 10,
-                        padding: '28px 20px',
-                        textAlign: 'center',
-                        cursor: 'pointer',
-                        background: dragging ? 'rgba(89,117,54,0.08)' : '#fff',
-                        transition: 'border-color 200ms, background 200ms',
-                      }}
+                      className={cn("rounded-md py-7 px-5 text-center cursor-pointer [transition:border-color_200ms,_background_200ms]", dragging ? "bg-[rgba(89,117,54,0.08)]" : "bg-accent-fg")} style={{ border: `1.5px dashed ${dragging ? ACCENT : 'rgba(42,39,31,0.22)'}` }}
                     >
                       {resumeFile ? (
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+                        <div className="flex items-center justify-center gap-2">
                           <svg
                             width="16"
                             height="16"
@@ -340,7 +286,7 @@ export default function ApplyForm({ job }: { job: Job | null }) {
                           >
                             <path d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z" />
                           </svg>
-                          <span style={{ fontSize: 13, color: 'var(--brand-forest)', fontWeight: 600 }}>
+                          <span className="text-md text-brand-forest font-semibold">
                             {resumeFile.name}
                           </span>
                           <button
@@ -350,7 +296,7 @@ export default function ApplyForm({ job }: { job: Job | null }) {
                               setResumeFile(null);
                             }}
                             aria-label="Remove attached resume"
-                            style={{ color: MUTED, padding: '0 2px', fontSize: 15, lineHeight: 1, cursor: 'pointer' }}
+                            className="py-0 px-0.5 text-[15px] leading-none cursor-pointer" style={{ color: MUTED }}
                           >
                             ×
                           </button>
@@ -366,15 +312,15 @@ export default function ApplyForm({ job }: { job: Job | null }) {
                             strokeWidth={1.5}
                             strokeLinecap="round"
                             strokeLinejoin="round"
-                            style={{ margin: '0 auto 8px', display: 'block' }}
+                            className="mt-0 mx-auto mb-2 block"
                           >
                             <path d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
                           </svg>
-                          <p style={{ fontSize: 13, color: BODY, margin: '0 0 3px' }}>
-                            <span style={{ fontWeight: 600, color: 'var(--brand-forest)' }}>Click to upload</span>{' '}
+                          <p className="text-md text-ink-600 mt-0 mx-0 mb-[3px]">
+                            <span className="font-semibold text-brand-forest">Click to upload</span>{' '}
                             or drag and drop
                           </p>
-                          <p style={{ fontSize: 11, color: MUTED, margin: 0 }}>PDF only</p>
+                          <p className="text-xs m-0" style={{ color: MUTED }}>PDF only</p>
                         </>
                       )}
                       <input
@@ -382,63 +328,48 @@ export default function ApplyForm({ job }: { job: Job | null }) {
                         type="file"
                         accept=".pdf"
                         onChange={handleFileChange}
-                        style={{ display: 'none' }}
+                        className="hidden"
                       />
                     </div>
                   </div>
                 </div>
 
-                <div style={{ marginTop: 22, display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+                <div className="mt-5.5 flex items-start gap-2.5">
                   <input
                     type="checkbox"
                     id="privacy-consent"
                     required
                     checked={agreedToPrivacy}
                     onChange={(e) => setAgreedToPrivacy(e.target.checked)}
-                    style={{ marginTop: 2, accentColor: 'var(--brand-forest)', cursor: 'pointer', flexShrink: 0 }}
+                    className="mt-0.5 accent-brand-forest cursor-pointer shrink-0"
                   />
                   <label
                     htmlFor="privacy-consent"
-                    style={{ fontSize: 13, color: BODY, lineHeight: 1.55, cursor: 'pointer' }}
+                    className="text-md text-ink-600 leading-[1.55] cursor-pointer"
                   >
                     I have read and agree to Sapling&apos;s{' '}
-                    <Link href="/privacy" target="_blank" style={{ color: 'var(--brand-forest)', fontWeight: 600, textDecoration: 'underline' }}>
+                    <Link href="/privacy" target="_blank" className="text-brand-forest font-semibold underline">
                       Privacy Policy
                     </Link>
                     , including how my application data is collected and used.
                   </label>
                 </div>
 
-                <div style={{ marginTop: 28, paddingTop: 24, borderTop: HAIRLINE }}>
+                <div className="mt-7 pt-6 border-t border-t-[rgba(42,39,31,0.10)]">
                   {submitError && (
-                    <p style={{ fontSize: 13, color: ALERT, margin: '0 0 12px', textAlign: 'center' }}>
+                    <p className="text-md text-err mt-0 mx-0 mb-3 text-center">
                       {submitError}
                     </p>
                   )}
                   <button
                     type="submit"
                     disabled={submitting}
-                    className="cp-cta"
-                    style={{
-                      width: '100%',
-                      display: 'flex',
-                      justifyContent: 'center',
-                      alignItems: 'center',
-                      background: 'var(--brand-forest)',
-                      color: '#fff',
-                      borderRadius: 8,
-                      padding: '13px 22px',
-                      fontFamily: SANS,
-                      fontSize: 14.5,
-                      fontWeight: 600,
-                      opacity: submitting ? 0.8 : 1,
-                      cursor: submitting ? 'default' : 'pointer',
-                    }}
+                    className={cn("cp-cta", "w-full flex justify-center items-center [background:var(--brand-forest)] text-accent-fg rounded-[8px] py-[13px] px-5.5 font-sans text-[14.5px] font-semibold", submitting ? "opacity-80" : "opacity-100", submitting ? "cursor-default" : "cursor-pointer")}
                   >
                     {submitting ? 'Submitting…' : 'Submit Application'}
                   </button>
-                  <p style={{ fontSize: 11, color: MUTED, textAlign: 'center', margin: '12px 0 0' }}>
-                    Fields marked <span style={{ color: ALERT }}>*</span> are required
+                  <p className="text-xs text-center mt-3 mx-0 mb-0" style={{ color: MUTED }}>
+                    Fields marked <span className="text-err">*</span> are required
                   </p>
                 </div>
               </form>

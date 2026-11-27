@@ -1,3 +1,4 @@
+@layer components {
 /* CustomSelect.tsx: a button that opens a listbox. Callers' `style` and
    `triggerStyle` props stay inline, so they still override these. */
 
@@ -130,4 +131,6 @@
 .check {
   color: var(--accent);
   font-size: var(--fs-sm);
+}
+
 }

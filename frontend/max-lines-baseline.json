@@ -2,17 +2,17 @@
   "_comment": "File-size ratchet: the source files already over the max-lines limit (800 lines; blank lines and comments not counted), each with the line count it may not pass. Keyed by path relative to frontend/. Entries may only be lowered or deleted (npm run max-lines:shrink). eslint.config.mjs turns each entry into that file's own max-lines ceiling; scripts/max_lines_ratchet.test.ts enforces the rest.",
   "max-lines": {
     "src/app/(shell)/notetaker/page.tsx": 1308,
-    "src/components/Gradebook/GradescopeSyncModal.tsx": 1502,
+    "src/components/Gradebook/GradescopeSyncModal.tsx": 1173,
     "src/components/graph/KnowledgeGraph2D.tsx": 1334,
-    "src/components/learn/LoopLearn.tsx": 2034,
+    "src/components/learn/LoopLearn.tsx": 2033,
     "src/components/screens/Admin.tsx": 1102,
-    "src/components/screens/AdminAnalytics.tsx": 948,
+    "src/components/screens/AdminAnalytics.tsx": 944,
     "src/components/screens/Dashboard.tsx": 972,
-    "src/components/screens/Gradebook/Course.tsx": 1560,
+    "src/components/screens/Gradebook/Course.tsx": 1274,
     "src/components/screens/Learn.tsx": 1937,
-    "src/components/screens/Settings.tsx": 885,
-    "src/components/screens/Social.tsx": 1506,
-    "src/lib/api.ts": 2005,
+    "src/components/screens/Settings.tsx": 882,
+    "src/components/screens/Social.tsx": 1449,
+    "src/lib/api.ts": 2004,
     "src/lib/graph/radialLayout.ts": 1022
   }
 }

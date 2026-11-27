@@ -1,3 +1,4 @@
+@layer components {
 /* Preferences → Quiz (QuizPrefsSection.tsx): a titled block of label / select
    rows, laid out like the other Settings sections around it. */
 
@@ -41,4 +42,6 @@
   /* The select's width, matching the other Settings rows' controls. */
   --quiz-prefs-control-w: 180px;
   min-width: var(--quiz-prefs-control-w);
+}
+
 }

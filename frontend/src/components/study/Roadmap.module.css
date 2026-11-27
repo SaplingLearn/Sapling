@@ -1,3 +1,4 @@
+@layer components {
 /* The roadmap (Roadmap.tsx) and its tiles (RoadmapTile.tsx). The tile's own
    fill, ring and hover live in StudyHub.module.css's `.tile*` rules. */
 
@@ -120,4 +121,6 @@
 .menuGlyph {
   width: 24px; height: 24px; border-radius: var(--r-sm);
   display: flex; align-items: center; justify-content: center;
+}
+
 }

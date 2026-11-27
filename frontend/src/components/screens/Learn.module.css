@@ -1,3 +1,4 @@
+@layer components {
 /* The legacy tutor screen (Learn.tsx): the entry picker, the chat column and
    the knowledge-map rail. Every value is a token from app/globals.css; the few
    layout dimensions that are not design tokens are named local properties.
@@ -818,4 +819,6 @@
 
 .railTabDragging .railChevron {
   transition: none;
+}
+
 }

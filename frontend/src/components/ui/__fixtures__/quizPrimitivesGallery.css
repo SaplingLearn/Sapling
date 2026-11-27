@@ -1,3 +1,4 @@
+@layer components {
 /* QuizPrimitivesGallery — the harness's own layout (#537).
  *
  * Co-located and imported by the fixture, not appended to globals.css: no
@@ -47,4 +48,6 @@
 .quiz-gallery__answers {
   width: 100%;
   border-top: 1px solid var(--border);
+}
+
 }

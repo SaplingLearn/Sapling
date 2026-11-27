@@ -14,8 +14,6 @@
  * token it can only send them back to sign in.
  */
 import React from 'react';
-import fs from 'node:fs';
-import path from 'node:path';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
 
@@ -27,6 +25,8 @@ vi.mock('@/context/UserContext', () => ({ useUser: () => ({ signOut }) }));
 
 import PendingPage from './page';
 import { PENDING_TOKEN_KEY } from '@/lib/pendingToken';
+import { readAppCss } from "@/test-utils/appCss";
+import { twStyle } from "@/test-utils/twStyle";
 
 type Answer = { status: number; body?: unknown } | 'network';
 
@@ -97,7 +97,7 @@ describe('#290 approval gate', () => {
     // .card supplies bg/border/radius/shadow but no padding — that is the
     // caller's job, and an unpadded card is the bug in a different costume.
     expect(
-      (card as HTMLElement).style.padding,
+      twStyle(card as HTMLElement).padding,
       'the card must set its own padding',
     ).not.toBe('');
     // The sign-out control must live INSIDE the new surface, not beside it.
@@ -106,7 +106,7 @@ describe('#290 approval gate', () => {
   });
 
   it('plays the confirmation beat exactly once', () => {
-    const css = fs.readFileSync(path.resolve(__dirname, '../globals.css'), 'utf8');
+    const css = readAppCss();
     const rules = css.match(/\.pending-[\w-]+[^{]*\{[^}]*\}/g) ?? [];
     expect(rules.length, 'the beat should be defined in globals.css').toBeGreaterThan(0);
     for (const rule of rules) {

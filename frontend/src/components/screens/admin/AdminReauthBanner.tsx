@@ -24,20 +24,9 @@ export function AdminReauthBanner() {
       {needed && (
         <div
           data-testid="admin-reauth-banner"
-          style={{
-            margin: "12px 32px 0",
-            padding: "10px 14px",
-            borderRadius: "var(--r-sm)",
-            background: "var(--warn-soft)",
-            color: "var(--warn)",
-            fontSize: 13,
-            display: "flex",
-            gap: 12,
-            alignItems: "center",
-            flexWrap: "wrap",
-          }}
+          className="mt-3 mx-8 mb-0 py-2.5 px-3.5 rounded-sm bg-warn-soft text-warn text-md flex gap-3 items-center flex-wrap"
         >
-          <span style={{ flex: "1 1 240px" }}>
+          <span className="flex-[1_1_240px]">
             For your security, admin actions need a recent sign-in. Sign in with Google again to
             continue — you&apos;ll come back to this page.
           </span>

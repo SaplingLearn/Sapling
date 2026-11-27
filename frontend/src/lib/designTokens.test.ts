@@ -3,12 +3,12 @@
  * numbers. This pins the two together: a value that changes on one side
  * only, or a token that exists on one side only, fails here.
  */
-import fs from "node:fs";
-import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { MOTION, Z, cssBezier } from "./designTokens";
+import { readAppCss } from "@/test-utils/appCss";
 
-const CSS = fs.readFileSync(path.resolve(__dirname, "../app/globals.css"), "utf8");
+// globals.css is an import list (ADR 0031): read every stylesheet it pulls in.
+const CSS = readAppCss();
 
 /** Every custom property declared directly in a top-level `:root { … }` block. */
 function rootTokens(css: string): Map<string, string> {

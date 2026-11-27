@@ -18,12 +18,12 @@ import type {
   EmailAudience, EmailAudienceKey, EmailBroadcast, EmailBroadcastPreview, EmailStatus, EmailVariable,
 } from "@/lib/types";
 
-import { fieldStyle, tdStyle, thStyle } from "./adminStyles";
 import {
   audienceLabel, broadcastChipClass, broadcastDate, broadcastStatusLabel, deriveSendGate, isAnySending,
   people, spliceAtSelection, token, variableTitle,
 } from "./emailBroadcastHelpers";
 import { EmailNotConfiguredBanner } from "./EmailNotConfiguredBanner";
+import { fieldClass } from "@/components/ui/field";
 
 /**
  * Admin "Email" tab: compose a plain-text broadcast, preview it, send a test
@@ -52,8 +52,6 @@ export const SUBJECT_MAX = 200;
 export const BODY_MAX = 20000;
 export const POLL_MS = 5000;
 export const PREVIEW_DEBOUNCE_MS = 350;
-/** Fixed: auto-sizing would need a same-origin frame. The frame scrolls past this. */
-const PREVIEW_HEIGHT = 720;
 
 /**
  * What the server said about a failed send. A 422 from the unknown-variable
@@ -306,7 +304,7 @@ export function EmailBroadcastsTab() {
     <>
       {flow.gate.notConfigured && <EmailNotConfiguredBanner />}
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 340px), 1fr))", gap: 16, marginBottom: 16 }}>
+      <div className="grid grid-cols-[repeat(auto-fit,_minmax(min(100%,_340px),_1fr))] gap-4 mb-4">
         <ComposeCard draft={draft} insertion={insertion} data={data} flow={flow} />
         <PreviewCard pv={pv} />
       </div>
@@ -324,11 +322,11 @@ function ComposeCard({ draft, insertion, data, flow }: {
   const { subject, body, setSubject, setBody } = draft;
   const { subjectRef, bodyRef, lastField: lastFieldRef } = insertion;
   return (
-    <div className="card" style={{ padding: "var(--pad-lg)" }}>
-      <div className="label-micro" style={{ marginBottom: 10 }}>Compose</div>
+    <div className="card p-(--pad-lg)">
+      <div className="label-micro mb-2.5">Compose</div>
 
-      <label style={{ display: "block", marginBottom: 12 }}>
-        <span style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+      <label className="block mb-3">
+        <span className="flex justify-between mb-1">
           <span className="label-micro">Subject</span>
           <span className="label-micro" data-testid="email-subject-count">{subject.length}/{SUBJECT_MAX}</span>
         </span>
@@ -339,13 +337,13 @@ function ComposeCard({ draft, insertion, data, flow }: {
           maxLength={SUBJECT_MAX}
           onFocus={() => { lastFieldRef.current = "subject"; }}
           onChange={(e) => setSubject(e.target.value)}
-          style={fieldStyle}
+          className={fieldClass}
         />
       </label>
 
-      <div style={{ marginBottom: 12 }}>
-        <label style={{ display: "block" }}>
-          <span style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+      <div className="mb-3">
+        <label className="block">
+          <span className="flex justify-between mb-1">
             <span className="label-micro">Body</span>
             <span className="label-micro" data-testid="email-body-count">{body.length}/{BODY_MAX}</span>
           </span>
@@ -357,10 +355,10 @@ function ComposeCard({ draft, insertion, data, flow }: {
             rows={10}
             onFocus={() => { lastFieldRef.current = "body"; }}
             onChange={(e) => setBody(e.target.value)}
-            style={{ ...fieldStyle, resize: "vertical", minHeight: 160 }}
+            className="w-full py-[7px] px-2.5 border border-border rounded-sm text-md bg-bg-input [font-family:inherit] resize-y min-h-40"
           />
         </label>
-        <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>
+        <div className="text-xs text-text-muted mt-1">
           Plain text. Blank lines make paragraphs; links are clickable.
           Variables like {token("first_name")} are filled in for each person. Put{" "}
           {token("signin_link")} on its own line for a button.
@@ -373,7 +371,7 @@ function ComposeCard({ draft, insertion, data, flow }: {
 
       <ComposeActions flow={flow} />
       {data.status?.from_address && (
-        <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 10 }}>
+        <div className="text-xs text-text-muted mt-2.5">
           From {data.status.from_address}
         </div>
       )}
@@ -386,18 +384,17 @@ function VariableChips({ variables, onInsert }: { variables: EmailVariable[]; on
   return (
     <div
       data-testid="email-variables"
-      style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6, marginTop: 8 }}
+      className="flex flex-wrap items-center gap-1.5 mt-2"
     >
       <span className="label-micro">Personalize:</span>
       {variables.map((v) => (
         <button
           key={v.key}
           type="button"
-          className="chip"
+          className="chip cursor-pointer normal-case"
           data-testid={`email-variable-${v.key}`}
           title={variableTitle(v)}
           onClick={() => onInsert(v.key)}
-          style={{ cursor: "pointer", textTransform: "none" }}
         >
           {v.label}
         </button>
@@ -412,10 +409,7 @@ function UnknownVariablesNotice({ unknownVars }: { unknownVars: string[] }) {
     <div
       data-testid="email-unknown-variables"
       role="status"
-      style={{
-        marginTop: 10, padding: "8px 10px", borderRadius: "var(--r-sm)", fontSize: 12,
-        background: "var(--warn-soft)", color: "var(--warn)", overflowWrap: "anywhere",
-      }}
+      className="mt-2.5 py-2 px-2.5 rounded-sm text-sm bg-warn-soft text-warn [overflow-wrap:anywhere]"
     >
       Unknown {unknownVars.length === 1 ? "variable" : "variables"} {unknownVars.map(token).join(", ")}.
       {" "}Check the spelling, or pick one from Personalize. Sending is off until it&apos;s fixed.
@@ -427,17 +421,15 @@ function AudienceFieldset({ audiences, audience, onChange }: {
   audiences: EmailAudience[]; audience: EmailAudienceKey | null; onChange: (key: EmailAudienceKey) => void;
 }) {
   return (
-    <fieldset style={{ border: 0, padding: 0, margin: "0 0 16px" }}>
-      <legend className="label-micro" style={{ marginBottom: 6 }}>Audience</legend>
+    <fieldset className="border-0 p-0 mt-0 mx-0 mb-4">
+      <legend className="label-micro mb-1.5">Audience</legend>
       {audiences.length === 0 && (
-        <div style={{ fontSize: 12, color: "var(--text-muted)" }}>No audiences available.</div>
+        <div className="text-sm text-text-muted">No audiences available.</div>
       )}
       {audiences.map((a) => (
         <label
           key={a.key}
-          style={{
-            display: "flex", alignItems: "center", gap: 8, padding: "6px 0", fontSize: 13, cursor: "pointer",
-          }}
+          className="flex items-center gap-2 py-1.5 px-0 text-md cursor-pointer"
         >
           <input
             type="radio"
@@ -447,8 +439,8 @@ function AudienceFieldset({ audiences, audience, onChange }: {
             checked={audience === a.key}
             onChange={() => onChange(a.key)}
           />
-          <span style={{ flex: 1 }}>{a.label}</span>
-          <span style={{ fontFamily: "var(--font-sans)", color: "var(--text-dim)" }}>{a.count}</span>
+          <span className="flex-1">{a.label}</span>
+          <span className="font-sans text-text-dim">{a.count}</span>
         </label>
       ))}
     </fieldset>
@@ -458,7 +450,7 @@ function AudienceFieldset({ audiences, audience, onChange }: {
 function ComposeActions({ flow }: { flow: SendFlow }) {
   const { gate, testing, sending } = flow;
   return (
-    <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+    <div className="flex flex-wrap gap-2">
       <button
         type="button"
         className="btn btn--ghost btn--sm"
@@ -484,22 +476,19 @@ function ComposeActions({ flow }: { flow: SendFlow }) {
 function PreviewCard({ pv }: { pv: Preview }) {
   const { preview, previewFor, previewError, previewSubject } = pv;
   return (
-    <div className="card" style={{ padding: "var(--pad-lg)", minWidth: 0 }}>
-      <div className="label-micro" style={{ marginBottom: 10 }}>Preview</div>
+    <div className="card p-(--pad-lg) min-w-0">
+      <div className="label-micro mb-2.5">Preview</div>
       <div
         data-testid="email-preview"
-        style={{
-          border: "1px solid var(--border)", borderRadius: "var(--r-md)", overflow: "hidden",
-          background: "var(--bg-subtle)", fontSize: 14,
-        }}
+        className="border border-border rounded-md overflow-hidden bg-bg-subtle text-base"
       >
         <div
           data-testid="email-preview-subject"
-          style={{ fontWeight: 600, padding: "12px 16px", borderBottom: "1px solid var(--border)", overflowWrap: "anywhere" }}
+          className="font-semibold py-3 px-4 border-b border-b-border [overflow-wrap:anywhere]"
         >
           {previewSubject
             ? (preview && previewFor?.subject === previewSubject ? preview.subject : previewSubject)
-            : <span style={{ color: "var(--text-muted)", fontWeight: 400 }}>(no subject)</span>}
+            : <span className="text-text-muted font-normal">(no subject)</span>}
         </div>
         {preview ? (
           <iframe
@@ -508,10 +497,10 @@ function PreviewCard({ pv }: { pv: Preview }) {
             srcDoc={preview.html}
             sandbox="allow-popups allow-popups-to-escape-sandbox"
             referrerPolicy="no-referrer"
-            style={{ display: "block", width: "100%", height: PREVIEW_HEIGHT, border: 0, background: "#fff" }}
+            className="block w-full h-180 border-0 bg-accent-fg"
           />
         ) : (
-          <div style={{ padding: 16, fontSize: 13, color: "var(--text-muted)" }}>
+          <div className="p-4 text-md text-text-muted">
             {previewError ? (
               <span data-testid="email-preview-error">Couldn&apos;t load the preview.</span>
             ) : (
@@ -521,7 +510,7 @@ function PreviewCard({ pv }: { pv: Preview }) {
         )}
       </div>
       {preview && previewError && (
-        <div data-testid="email-preview-error" role="status" style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 8 }}>
+        <div data-testid="email-preview-error" role="status" className="text-sm text-text-muted mt-2">
           Couldn&apos;t load the preview. Showing the last version.
         </div>
       )}
@@ -534,21 +523,21 @@ function HistoryCard({ data, resuming, onResume }: {
 }) {
   const { broadcasts, audiences } = data;
   return (
-    <div className="card" style={{ padding: 0 }} data-testid="email-history">
-      <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--border)" }}>
+    <div className="card p-0" data-testid="email-history">
+      <div className="py-3 px-4 border-b border-b-border">
         <div className="label-micro">History · {broadcasts.length}</div>
       </div>
       {broadcasts.length === 0 ? (
-        <div style={{ padding: 28, textAlign: "center", color: "var(--text-muted)", fontSize: 13 }}>
+        <div className="p-7 text-center text-text-muted text-md">
           No broadcasts yet.
         </div>
       ) : (
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+        <div className="overflow-x-auto">
+          <table className="w-full border-collapse text-md">
             <thead>
-              <tr style={{ background: "var(--bg-subtle)" }}>
+              <tr className="bg-bg-subtle">
                 {["Subject", "Audience", "Status", "Delivered", "Date"].map((h) => (
-                  <th key={h} style={thStyle}>{h}</th>
+                  <th key={h} className="text-left py-2.5 px-4 font-medium text-md text-text-muted">{h}</th>
                 ))}
               </tr>
             </thead>
@@ -568,32 +557,31 @@ function HistoryRow({ b, audiences, resuming, onResume }: {
   b: EmailBroadcast; audiences: EmailAudience[]; resuming: string | null; onResume: (b: EmailBroadcast) => Promise<void>;
 }) {
   return (
-    <tr data-testid={`email-history-row-${b.id}`} style={{ borderTop: "1px solid var(--border)" }}>
-      <td style={{ ...tdStyle, fontWeight: 500, overflowWrap: "anywhere" }}>{b.subject}</td>
-      <td style={{ ...tdStyle, color: "var(--text-dim)" }}>{audienceLabel(audiences, b.audience)}</td>
-      <td style={tdStyle}>
+    <tr data-testid={`email-history-row-${b.id}`} className="border-t border-t-border">
+      <td className="py-2.5 px-4 font-medium [overflow-wrap:anywhere]">{b.subject}</td>
+      <td className="py-2.5 px-4 text-text-dim">{audienceLabel(audiences, b.audience)}</td>
+      <td className="py-2.5 px-4">
         <span className={broadcastChipClass(b.status)} data-testid={`email-history-status-${b.id}`}>
           {broadcastStatusLabel(b)}
         </span>
         {b.resumable && (
           <button
             type="button"
-            className="btn btn--ghost btn--sm"
+            className="btn btn--ghost btn--sm ml-2"
             data-testid={`email-history-resume-${b.id}`}
             title="Send it to everyone in this audience it hasn't reached yet."
             disabled={resuming !== null}
             onClick={() => void onResume(b)}
-            style={{ marginLeft: 8 }}
           >
             {resuming === b.id ? "Resuming…" : "Resume"}
           </button>
         )}
       </td>
-      <td style={{ ...tdStyle, whiteSpace: "nowrap" }}>
-        <span style={{ fontFamily: "var(--font-sans)" }}>{b.sent_count}/{b.recipient_count}</span>
+      <td className="py-2.5 px-4 whitespace-nowrap">
+        <span className="font-sans">{b.sent_count}/{b.recipient_count}</span>
         <DeliveryOutcome failed={b.failed_count} skipped={b.skipped_count} />
       </td>
-      <td style={{ ...tdStyle, color: "var(--text-muted)", whiteSpace: "nowrap" }}>
+      <td className="py-2.5 px-4 text-text-muted whitespace-nowrap">
         {broadcastDate(b)}
       </td>
     </tr>
@@ -604,8 +592,8 @@ function HistoryRow({ b, audiences, resuming, onResume }: {
 function DeliveryOutcome({ failed, skipped }: { failed: number; skipped: number }) {
   if (!(failed > 0 || skipped > 0)) return null;
   return (
-    <span style={{ display: "block", fontSize: 11, color: "var(--text-muted)" }}>
-      {failed > 0 && <span style={{ color: "var(--warn)" }}>{failed} failed</span>}
+    <span className="block text-xs text-text-muted">
+      {failed > 0 && <span className="text-warn">{failed} failed</span>}
       {failed > 0 && skipped > 0 && " · "}
       {skipped > 0 && <span>{skipped} skipped</span>}
     </span>
@@ -623,13 +611,13 @@ function ConfirmSendDialog({ subject, flow }: { subject: string; flow: SendFlow 
       title={`Email ${people(n)}?`}
       initialFocusRef={confirmInputRef}
     >
-      <p className="flags__confirm-text" style={{ marginBottom: 12 }}>
+      <p className="flags__confirm-text mb-3">
         This sends &ldquo;{subject.trim()}&rdquo; to {people(n)} in <strong>{selectedAudience?.label}</strong>.
         These are real inboxes and it can&apos;t be undone.
         {notConfigured && " Email isn't configured, so the broadcast will be recorded but nothing is delivered."}
       </p>
-      <label style={{ display: "block", marginBottom: 20 }}>
-        <span className="label-micro" style={{ display: "block", marginBottom: 4 }}>
+      <label className="block mb-5">
+        <span className="label-micro block mb-1">
           Type {n} or SEND to confirm
         </span>
         <input
@@ -639,7 +627,7 @@ function ConfirmSendDialog({ subject, flow }: { subject: string; flow: SendFlow 
           onChange={(e) => setConfirmText(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter" && confirmOk) void send(); }}
           autoComplete="off"
-          style={fieldStyle}
+          className={fieldClass}
         />
       </label>
       <div className="flags__confirm-actions">

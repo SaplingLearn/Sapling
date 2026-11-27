@@ -1,3 +1,4 @@
+@layer components {
 /* The composer box: one focus indicator, on the box (the design's composer).
    The textarea inside draws none of its own — a second ring inside the box
    read as a stray rectangle. The box's ring is the AA focus indicator. */
@@ -293,4 +294,6 @@
   clip-path: inset(50%);
   white-space: nowrap;
   border: 0;
+}
+
 }

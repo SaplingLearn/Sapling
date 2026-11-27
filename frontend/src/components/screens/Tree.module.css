@@ -1,3 +1,4 @@
+@layer components {
 /* The Knowledge Tree (Tree.tsx): the toolbar, the graph row with its corner
    Fullscreen button, the selected concept's panel (a desktop aside, a mobile
    bottom sheet) and the fullscreen map. Every value is a token; the layout
@@ -210,3 +211,5 @@
 .quizRow { gap: var(--sp-4); }
 .quizWhen { font-size: var(--fs-sm); }
 .quizScore { font-size: var(--fs-xs); color: var(--text-muted); }
+
+}

@@ -8,36 +8,18 @@ export default function CoursePlannerPage() {
     <FullHeightScreen>
       <TopBar title="Course Planner" />
       <main
-        style={{
-          flex: 1,
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          justifyContent: "center",
-          padding: 32,
-          gap: 14,
-          textAlign: "center",
-        }}
+        className="flex-1 flex flex-col items-center justify-center p-8 gap-3.5 text-center"
       >
         <div
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 8,
-            padding: "6px 14px",
-            borderRadius: "var(--r-full)",
-            background: "var(--accent-soft)",
-            color: "var(--accent)",
-            fontSize: 14,
-            fontWeight: 600 }}
+          className="inline-flex items-center gap-2 py-1.5 px-3.5 rounded-[var(--r-full)] bg-accent-soft text-accent text-base font-semibold"
         >
           <Icon name="sparkle" size={12} />
           Coming soon
         </div>
-        <div className="h-serif" style={{ fontSize: 28, fontWeight: 500 }}>
+        <div className="h-serif text-[28px] font-medium">
           Course Planner
         </div>
-        <div style={{ color: "var(--text-dim)", fontSize: 14, maxWidth: 480, lineHeight: 1.55 }}>
+        <div className="text-text-dim text-base max-w-120 leading-[1.55]">
           Plan semesters, map prerequisites, and project your degree timeline. We&apos;re still
           building it — check back soon.
         </div>

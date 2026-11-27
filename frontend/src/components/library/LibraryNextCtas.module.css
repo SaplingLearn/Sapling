@@ -1,3 +1,4 @@
+@layer components {
 /* Library → Tree / Quiz CTAs (LibraryNextCtas.tsx). */
 .card {
   margin-top: var(--sp-5);
@@ -28,4 +29,6 @@
 @keyframes next-ctas-in {
   from { opacity: 0; transform: translateY(var(--sp-2)); }
   to { opacity: 1; transform: none; }
+}
+
 }

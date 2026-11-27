@@ -1,3 +1,4 @@
+@layer components {
 /* The results screen (§5 B3).
  *
  * Class names only (R-1): the ONE inline style anywhere under
@@ -258,4 +259,6 @@
 
 @media (prefers-reduced-motion: reduce) {
   .quiz-results > * { animation: none; }
+}
+
 }

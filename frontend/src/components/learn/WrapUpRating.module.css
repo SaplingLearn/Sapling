@@ -1,3 +1,4 @@
+@layer components {
 /* The wrap-up's feedback card (WrapUpRating). */
 
 .card {
@@ -57,4 +58,6 @@
 .outcome {
   font-size: var(--fs-md);
   color: var(--text-muted);
+}
+
 }

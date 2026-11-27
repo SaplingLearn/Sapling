@@ -45,6 +45,7 @@ import {
 } from "@/lib/api";
 import type { PublicRoom, RoomMessageRow, RoomOverviewData, Friend } from "@/lib/types";
 import { ROOM_MESSAGE_MAX } from "@/lib/inputLimits";
+import { cn } from "@/lib/cn";
 
 type IncomingFriendRequest = { id: string; from_user_id: string; name: string; created_at: string };
 type OutgoingFriendRequest = { id: string; to_user_id: string; name: string; created_at: string };
@@ -208,24 +209,18 @@ function CreateJoinBar({ onDone }: { onDone: () => void }) {
 
   if (mode === "idle") {
     return (
-      <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
-        <button data-testid="social-create-room" className="btn btn--sm btn--primary" style={{ flex: 1 }} onClick={() => setMode("create")}>
+      <div className="flex gap-1.5 mt-2.5">
+        <button data-testid="social-create-room" className="btn btn--sm btn--primary flex-1" onClick={() => setMode("create")}>
           <Icon name="plus" size={12} /> Create
         </button>
-        <button data-testid="social-join-room" className="btn btn--sm" style={{ flex: 1 }} onClick={() => setMode("join")}>Join</button>
+        <button data-testid="social-join-room" className="btn btn--sm flex-1" onClick={() => setMode("join")}>Join</button>
       </div>
     );
   }
 
-  const inputStyle: React.CSSProperties = {
-    flex: 1, padding: "6px 10px",
-    border: "1px solid var(--border)", borderRadius: "var(--r-sm)",
-    fontSize: 12, background: "var(--bg-panel)",
-  };
-
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 10 }}>
-      <div style={{ display: "flex", gap: 6 }}>
+    <div className="flex flex-col gap-1.5 mt-2.5">
+      <div className="flex gap-1.5">
         <input
           data-testid="social-create-join-input"
           autoFocus
@@ -233,7 +228,7 @@ function CreateJoinBar({ onDone }: { onDone: () => void }) {
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter") submit(); if (e.key === "Escape") reset(); }}
           placeholder={mode === "create" ? "Room name" : "Invite code"}
-          style={inputStyle}
+          className="flex-1 py-1.5 px-2.5 border border-border rounded-sm text-sm bg-bg-panel"
         />
         <button data-testid="social-create-join-submit" className="btn btn--sm btn--primary" onClick={submit}>Go</button>
       </div>
@@ -244,16 +239,16 @@ function CreateJoinBar({ onDone }: { onDone: () => void }) {
             value={topic}
             onChange={(e) => setTopic(e.target.value)}
             placeholder="Topic (optional)"
-            style={inputStyle}
+            className="flex-1 py-1.5 px-2.5 border border-border rounded-sm text-sm bg-bg-panel"
           />
           <input
             data-testid="social-create-course"
             value={course}
             onChange={(e) => setCourse(e.target.value)}
             placeholder="Course (optional)"
-            style={inputStyle}
+            className="flex-1 py-1.5 px-2.5 border border-border rounded-sm text-sm bg-bg-panel"
           />
-          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text-dim)" }}>
+          <label className="flex items-center gap-1.5 text-sm text-text-dim">
             <input
               data-testid="social-create-public"
               type="checkbox"
@@ -309,20 +304,16 @@ function PublicRoomsList({ excludeIds, onJoined }: { excludeIds: string[]; onJoi
   };
 
   return (
-    <div style={{ marginTop: 14 }}>
-      <div className="label-micro" style={{ marginBottom: 6 }}>Public rooms</div>
+    <div className="mt-3.5">
+      <div className="label-micro mb-1.5">Public rooms</div>
       {discoverable.map((r) => (
         <div
           key={r.id}
-          style={{
-            display: "flex", alignItems: "center", gap: 8,
-            padding: "8px 10px", marginBottom: 4,
-            border: "1px solid var(--border)", borderRadius: "var(--r-md)",
-          }}
+          className="flex items-center gap-2 py-2 px-2.5 mb-1 border border-border rounded-md"
         >
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name}</div>
-            <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
+          <div className="flex-1 min-w-0">
+            <div className="text-md font-semibold overflow-hidden text-ellipsis whitespace-nowrap">{r.name}</div>
+            <div className="text-xs text-text-muted">
               {r.topic ? `${r.topic} · ` : ""}{r.member_count} member{r.member_count === 1 ? "" : "s"}
             </div>
           </div>
@@ -345,14 +336,14 @@ function FriendRow({ friend, onRemove }: { friend: Friend; onRemove: () => void 
   return (
     <div
       data-testid={`social-friend-row-${friend.user_id}`}
-      style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0" }}
+      className="flex items-center gap-2 py-1.5 px-0"
     >
       <Avatar name={friend.name} size={26} />
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 12, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+      <div className="flex-1 min-w-0">
+        <div className="text-sm font-semibold overflow-hidden text-ellipsis whitespace-nowrap">
           {friend.name}
         </div>
-        <div style={{ fontSize: 10, color: "var(--text-muted)" }}>
+        <div className="text-2xs text-text-muted">
           Lv {friend.level} · {friend.total_xp} XP
         </div>
       </div>
@@ -449,31 +440,31 @@ export function FriendsPanel() {
 
   if (loading) {
     return (
-      <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--border)" }}>
-        <div className="label-micro" style={{ marginBottom: 6 }}>Friends</div>
-        <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Loading…</div>
+      <div className="py-3 px-4 border-b border-b-border">
+        <div className="label-micro mb-1.5">Friends</div>
+        <div className="text-sm text-text-muted">Loading…</div>
       </div>
     );
   }
 
   return (
-    <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--border)", maxHeight: 320, overflowY: "auto" }}>
-      <div className="label-micro" style={{ marginBottom: 6 }}>Friends</div>
+    <div className="py-3 px-4 border-b border-b-border max-h-80 overflow-y-auto">
+      <div className="label-micro mb-1.5">Friends</div>
 
       {incoming.length > 0 && (
-        <div style={{ marginBottom: 12 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
-            <span style={{ fontSize: 11, fontWeight: 600 }}>Incoming requests</span>
-            <span className="chip chip--accent" style={{ fontSize: 11 }}>{incoming.length}</span>
+        <div className="mb-3">
+          <div className="flex items-center gap-1.5 mb-1">
+            <span className="text-xs font-semibold">Incoming requests</span>
+            <span className="chip chip--accent text-xs">{incoming.length}</span>
           </div>
           {incoming.map((r) => (
             <div
               key={r.id}
               data-testid={`social-friend-incoming-${r.id}`}
-              style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 0" }}
+              className="flex items-center gap-2 py-1 px-0"
             >
               <Avatar name={r.name} size={24} />
-              <div style={{ flex: 1, minWidth: 0, fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              <div className="flex-1 min-w-0 text-sm overflow-hidden text-ellipsis whitespace-nowrap">
                 {r.name}
               </div>
               <button
@@ -496,19 +487,19 @@ export function FriendsPanel() {
       )}
 
       {outgoing.length > 0 && (
-        <div style={{ marginBottom: 12 }}>
-          <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 4 }}>Outgoing</div>
+        <div className="mb-3">
+          <div className="text-xs font-semibold mb-1">Outgoing</div>
           {outgoing.map((r) => (
             <div
               key={r.id}
               data-testid={`social-friend-outgoing-${r.id}`}
-              style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 0" }}
+              className="flex items-center gap-2 py-1 px-0"
             >
               <Avatar name={r.name} size={24} />
-              <div style={{ flex: 1, minWidth: 0, fontSize: 12, color: "var(--text-dim)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              <div className="flex-1 min-w-0 text-sm text-text-dim overflow-hidden text-ellipsis whitespace-nowrap">
                 {r.name}
               </div>
-              <span className="chip" style={{ fontSize: 11 }}>Pending</span>
+              <span className="chip text-xs">Pending</span>
               <button
                 data-testid={`social-friend-cancel-${r.id}`}
                 className="btn btn--sm btn--ghost"
@@ -522,7 +513,7 @@ export function FriendsPanel() {
       )}
 
       {friends.length === 0 ? (
-        <div style={{ fontSize: 12, color: "var(--text-muted)" }}>No friends yet.</div>
+        <div className="text-sm text-text-muted">No friends yet.</div>
       ) : (
         friends.map((f) => (
           <FriendRow key={f.user_id} friend={f} onRemove={() => remove(f.user_id)} />
@@ -936,7 +927,7 @@ function RoomChat({ roomId, members, realtimePlan, realtimeEpoch }: {
 
   return (
     <>
-      <div style={{ padding: "6px 20px 0", fontSize: 11, color: "var(--text-muted)", minHeight: 18, display: "flex", justifyContent: "space-between", gap: 12 }}>
+      <div className="pt-1.5 px-5 pb-0 text-xs text-text-muted min-h-4.5 flex justify-between gap-3">
         <span>{typingUsers.size > 0 && `${Array.from(typingUsers).join(", ")} typing…`}</span>
         {livePaused && (
           <span
@@ -951,38 +942,38 @@ function RoomChat({ roomId, members, realtimePlan, realtimeEpoch }: {
       <div
         ref={scrollRef}
         data-testid="social-chat-messages"
-        style={{ flex: 1, overflowY: "auto", padding: "12px 24px", display: "flex", flexDirection: "column", gap: 14 }}
+        className="flex-1 overflow-y-auto py-3 px-6 flex flex-col gap-3.5"
       >
         {hasMore && (
-          <div style={{ textAlign: "center" }}>
+          <div className="text-center">
             <button data-testid="social-chat-load-earlier" className="btn btn--ghost btn--sm" onClick={loadEarlier} disabled={loadingEarlier}>
               {loadingEarlier ? "Loading…" : "Load earlier messages"}
             </button>
           </div>
         )}
         {messages.length === 0 && (
-          <div style={{ textAlign: "center", color: "var(--text-muted)", fontSize: 12 }}>No messages yet — say hi.</div>
+          <div className="text-center text-text-muted text-sm">No messages yet — say hi.</div>
         )}
         {messages.map((m) => {
           const self = m.user_id === userId;
           const isMenuOpen = menu === m.id;
           const isEditing = editing === m.id;
           return (
-            <div key={m.id} data-testid={`social-chat-message-${m.id}`} style={{ display: "flex", gap: 10, alignSelf: self ? "flex-end" : "flex-start", maxWidth: "72%", position: "relative" }} className="fade-in">
+            <div key={m.id} data-testid={`social-chat-message-${m.id}`} className={cn("fade-in", "flex gap-2.5 max-w-[72%] relative", self ? "self-end" : "self-start")}>
               {!self && <Avatar name={m.user_name} size={32} />}
-              <div style={{ position: "relative" }}>
-                {!self && <div style={{ fontSize: 11, color: "var(--text-dim)", fontWeight: 600, marginBottom: 2 }}>{m.user_name}</div>}
+              <div className="relative">
+                {!self && <div className="text-xs text-text-dim font-semibold mb-0.5">{m.user_name}</div>}
                 {m.reply_to && (
-                  <div style={{ fontSize: 11, color: "var(--text-muted)", borderLeft: "1px solid var(--border)", paddingLeft: 6, marginBottom: 4 }}>
+                  <div className="text-xs text-text-muted border-l border-l-border pl-1.5 mb-1">
                     ↪ <strong>{m.reply_to.user_name}</strong>: {m.reply_to.text?.slice(0, 60) || "(deleted)"}
                   </div>
                 )}
                 {m.is_deleted ? (
-                  <div style={{ padding: "8px 12px", borderRadius: "var(--r-md)", background: "var(--bg-subtle)", color: "var(--text-muted)", fontStyle: "italic", fontSize: 13 }}>
+                  <div className="py-2 px-3 rounded-md bg-bg-subtle text-text-muted italic text-md">
                     Message deleted
                   </div>
                 ) : isEditing ? (
-                  <div style={{ display: "flex", gap: 6 }}>
+                  <div className="flex gap-1.5">
                     <input
                       data-testid="social-chat-edit-input"
                       autoFocus
@@ -992,10 +983,7 @@ function RoomChat({ roomId, members, realtimePlan, realtimeEpoch }: {
                         if (e.key === "Enter") handleEditSave(m.id);
                         if (e.key === "Escape") { setEditing(null); setEditValue(""); }
                       }}
-                      style={{
-                        padding: "6px 10px", border: "1px solid var(--border)",
-                        borderRadius: "var(--r-sm)", fontSize: 13, background: "var(--bg-panel)",
-                      }}
+                      className="py-1.5 px-2.5 border border-border rounded-sm text-md bg-bg-panel"
                     />
                     <button data-testid="social-chat-edit-save" className="btn btn--sm btn--primary" onClick={() => handleEditSave(m.id)}>Save</button>
                     <button data-testid="social-chat-edit-cancel" className="btn btn--sm btn--ghost" onClick={() => { setEditing(null); setEditValue(""); }}>
@@ -1005,13 +993,7 @@ function RoomChat({ roomId, members, realtimePlan, realtimeEpoch }: {
                 ) : (
                   <div
                     onClick={() => setMenu(v => v === m.id ? null : m.id)}
-                    style={{
-                      padding: "8px 12px", borderRadius: "var(--r-md)",
-                      background: self ? "var(--accent)" : "var(--bg-panel)",
-                      color: self ? "var(--accent-fg)" : "var(--text)",
-                      border: self ? "none" : "1px solid var(--border)",
-                      fontSize: 13.5, whiteSpace: "pre-wrap", cursor: "pointer",
-                    }}
+                    className={cn("py-2 px-3 rounded-md text-[13.5px] whitespace-pre-wrap cursor-pointer", self ? "bg-accent" : "bg-bg-panel", self ? "text-accent-fg" : "text-text", self ? "border-0" : "border border-border")}
                   >
                     {m.image_url && (
                       <img
@@ -1049,22 +1031,17 @@ function RoomChat({ roomId, members, realtimePlan, realtimeEpoch }: {
                       />
                     )}
                     {renderText(m.text)}
-                    {m.edited_at && <span style={{ fontSize: 10, opacity: 0.6, marginLeft: 6 }}>(edited)</span>}
+                    {m.edited_at && <span className="text-2xs opacity-60 ml-1.5">(edited)</span>}
                   </div>
                 )}
                 {m.reactions.length > 0 && (
-                  <div style={{ display: "flex", gap: 4, marginTop: 4, flexWrap: "wrap" }}>
+                  <div className="flex gap-1 mt-1 flex-wrap">
                     {m.reactions.map((r) => (
                       <button
                         key={r.emoji}
                         data-testid={`social-chat-reaction-${r.emoji}`}
                         onClick={() => handleReaction(m.id, r.emoji)}
-                        style={{
-                          fontSize: 11, padding: "2px 8px",
-                          background: r.user_ids.includes(userId) ? "var(--accent-soft)" : "var(--bg-panel)",
-                          color: r.user_ids.includes(userId) ? "var(--accent)" : "var(--text)",
-                          border: "1px solid var(--border)", borderRadius: "var(--r-full)",
-                        }}
+                        className={cn("text-xs py-0.5 px-2 border border-border rounded-[var(--r-full)]", r.user_ids.includes(userId) ? "bg-accent-soft" : "bg-bg-panel", r.user_ids.includes(userId) ? "text-accent" : "text-text")}
                       >
                         {r.emoji} {r.user_ids.length}
                       </button>
@@ -1072,7 +1049,7 @@ function RoomChat({ roomId, members, realtimePlan, realtimeEpoch }: {
                   </div>
                 )}
                 {isMenuOpen && !m.is_deleted && (
-                  <div style={{ position: "absolute", top: -32, right: 0, display: "flex", gap: 4, background: "var(--bg-panel)", border: "1px solid var(--border-strong)", borderRadius: "var(--r-full)", padding: 4, boxShadow: "var(--shadow-md)" }}>
+                  <div className="absolute -top-8 right-0 flex gap-1 bg-bg-panel border border-border-strong rounded-[var(--r-full)] p-1 shadow-md">
                     <button data-testid="social-chat-message-react" className="btn btn--ghost btn--sm" title="React" onClick={(e) => { e.stopPropagation(); setPicker(m.id); }}>
                       😊
                     </button>
@@ -1092,9 +1069,9 @@ function RoomChat({ roomId, members, realtimePlan, realtimeEpoch }: {
                   </div>
                 )}
                 {picker === m.id && (
-                  <div style={{ position: "absolute", top: 20, right: 0, zIndex: 20, background: "var(--bg-panel)", border: "1px solid var(--border-strong)", borderRadius: "var(--r-md)", padding: 10, boxShadow: "var(--shadow-lg)", display: "grid", gridTemplateColumns: "repeat(10, 1fr)", gap: 4, width: 340 }}>
+                  <div className="absolute top-5 right-0 z-20 bg-bg-panel border border-border-strong rounded-md p-2.5 shadow-lg grid grid-cols-[repeat(10,_1fr)] gap-1 w-85">
                     {EMOJI_50.map((e) => (
-                      <button key={e} data-testid={`social-chat-emoji-${e}`} onClick={() => handleReaction(m.id, e)} style={{ fontSize: 16, padding: 4, borderRadius: 4 }}>{e}</button>
+                      <button key={e} data-testid={`social-chat-emoji-${e}`} onClick={() => handleReaction(m.id, e)} className="text-lg p-1 rounded-xs">{e}</button>
                     ))}
                   </div>
                 )}
@@ -1105,8 +1082,8 @@ function RoomChat({ roomId, members, realtimePlan, realtimeEpoch }: {
       </div>
 
       {replyTo && (
-        <div style={{ padding: "6px 20px", borderTop: "1px solid var(--border)", background: "var(--bg-subtle)", fontSize: 11, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <div style={{ color: "var(--text-dim)" }}>
+        <div className="py-1.5 px-5 border-t border-t-border bg-bg-subtle text-xs flex justify-between items-center">
+          <div className="text-text-dim">
             Replying to <strong>{replyTo.user_name}</strong>: {replyTo.text?.slice(0, 80) || "(attachment)"}
           </div>
           <button data-testid="social-chat-reply-cancel" className="btn btn--ghost btn--sm" onClick={() => setReplyTo(null)}>
@@ -1115,26 +1092,22 @@ function RoomChat({ roomId, members, realtimePlan, realtimeEpoch }: {
         </div>
       )}
 
-      <div style={{ position: "relative", padding: "12px 20px", borderTop: "1px solid var(--border)", background: "var(--bg-panel)" }}>
+      <div className="relative py-3 px-5 border-t border-t-border bg-bg-panel">
         {mentionState && filteredMentions.length > 0 && (
-          <div style={{ position: "absolute", left: 20, bottom: 70, background: "var(--bg-panel)", border: "1px solid var(--border-strong)", borderRadius: "var(--r-md)", boxShadow: "var(--shadow-md)", overflow: "hidden", minWidth: 200, zIndex: 10 }}>
+          <div className="absolute left-5 bottom-17.5 bg-bg-panel border border-border-strong rounded-md shadow-md overflow-hidden min-w-50 z-10">
             {filteredMentions.map((m, i) => (
               <button
                 key={m.user_id}
                 data-testid={`social-chat-mention-${m.user_id}`}
                 onClick={() => applyMention(m.name)}
-                style={{
-                  display: "block", width: "100%", textAlign: "left",
-                  padding: "6px 10px", fontSize: 12,
-                  background: i === (mentionState?.index || 0) ? "var(--bg-subtle)" : "transparent",
-                }}
+                className={cn("block w-full text-left py-1.5 px-2.5 text-sm", i === (mentionState?.index || 0) ? "bg-bg-subtle" : "bg-transparent")}
               >
                 @{m.name.replace(/\s+/g, "")}
               </button>
             ))}
           </div>
         )}
-        <div style={{ display: "flex", gap: 8, alignItems: "center", background: "var(--bg-subtle)", borderRadius: "var(--r-full)", padding: "6px 14px", border: "1px solid var(--border)" }}>
+        <div className="flex gap-2 items-center bg-bg-subtle rounded-[var(--r-full)] py-1.5 px-3.5 border border-border">
           <textarea
             ref={inputRef}
             data-testid="social-chat-input"
@@ -1156,10 +1129,7 @@ function RoomChat({ roomId, members, realtimePlan, realtimeEpoch }: {
               if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
             }}
             placeholder="Message the room… (@ to mention)"
-            style={{
-              flex: 1, border: 0, background: "transparent",
-              fontSize: 14, padding: "6px 0", resize: "none", fontFamily: "inherit", color: "inherit",
-            }}
+            className="flex-1 border-0 bg-transparent text-base py-1.5 px-0 resize-none [font-family:inherit] text-inherit"
           />
           <input
             ref={fileRef}
@@ -1245,29 +1215,29 @@ function RoomOverview({ roomId, onChange }: { roomId: string; onChange: () => vo
     }
   });
 
-  if (!data) return <div style={{ flex: 1, padding: 32, color: "var(--text-muted)" }}>Loading…</div>;
+  if (!data) return <div className="flex-1 p-8 text-text-muted">Loading…</div>;
   return (
-    <div style={{ flex: 1, overflowY: "auto", padding: "24px 32px" }}>
-      <div className="card" style={{ padding: "var(--pad-lg)", marginBottom: 20 }}>
+    <div className="flex-1 overflow-y-auto py-6 px-8">
+      <div className="card p-(--pad-lg) mb-5">
         <div className="label-micro">AI room summary</div>
-        <div style={{ fontSize: 14, lineHeight: 1.6, marginTop: 8, color: "var(--text-dim)" }}>
+        <div className="text-base leading-[1.6] mt-2 text-text-dim">
           {data.ai_summary || "No summary yet."}
         </div>
       </div>
 
       {comparison && (
-        <div className="card" style={{ padding: "var(--pad-lg)", marginBottom: 20 }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+        <div className="card p-(--pad-lg) mb-5">
+          <div className="flex items-center justify-between mb-2.5">
             <div className="label-micro">Comparison with {comparison.partner.name}</div>
             <span className="chip chip--accent">Top concepts where they have the edge</span>
           </div>
           {comparison.entries.length === 0 ? (
-            <div style={{ fontSize: 12, color: "var(--text-muted)" }}>No comparable concepts yet.</div>
+            <div className="text-sm text-text-muted">No comparable concepts yet.</div>
           ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <div className="flex flex-col gap-2">
               {comparison.entries.slice(0, 8).map(e => (
-                <div key={e.name} style={{ display: "grid", gridTemplateColumns: "1fr 2fr 2fr", gap: 10, alignItems: "center" }}>
-                  <div style={{ fontSize: 12, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{e.name}</div>
+                <div key={e.name} className="grid grid-cols-[1fr_2fr_2fr] gap-2.5 items-center">
+                  <div className="text-sm font-medium overflow-hidden text-ellipsis whitespace-nowrap">{e.name}</div>
                   <MasteryBar label="You" value={e.my_mastery} color="var(--accent)" />
                   <MasteryBar label={comparison.partner.name} value={e.partner_mastery} color="#8a7bc4" dashed />
                 </div>
@@ -1276,8 +1246,8 @@ function RoomOverview({ roomId, onChange }: { roomId: string; onChange: () => vo
           )}
         </div>
       )}
-      <div className="card" style={{ padding: "var(--pad-lg)" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+      <div className="card p-(--pad-lg)">
+        <div className="flex justify-between items-center mb-2.5">
           <div className="label-micro">Members</div>
           <button
             data-testid="social-room-leave"
@@ -1315,15 +1285,12 @@ function MasteryBar({ label, value, color, dashed }: { label: string; value: num
   const pct = Math.max(0, Math.min(100, Math.round(value * 100)));
   return (
     <div>
-      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "var(--text-muted)", marginBottom: 3 }}>
-        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</span>
+      <div className="flex justify-between text-2xs text-text-muted mb-[3px]">
+        <span className="overflow-hidden text-ellipsis whitespace-nowrap">{label}</span>
         <span className="mono">{pct}%</span>
       </div>
-      <div style={{
-        height: 6, background: "var(--bg-soft)", borderRadius: "var(--r-full)", overflow: "hidden",
-        outline: dashed ? `1px dashed ${color}` : "none", outlineOffset: 1,
-      }}>
-        <div style={{ width: "100%", height: "100%", background: color, transformOrigin: "left", transform: `scaleX(${pct / 100})`, transition: "transform var(--dur) var(--ease)" }} />
+      <div className="h-1.5 bg-bg-soft rounded-[var(--r-full)] overflow-hidden" style={{ outline: dashed ? `1px dashed ${color}` : "none", outlineOffset: 1 }}>
+        <div className="w-full h-full [transform-origin:left] [transition:transform_var(--dur)_var(--ease)]" style={{ background: color, transform: `scaleX(${pct / 100})` }} />
       </div>
     </div>
   );
@@ -1340,20 +1307,16 @@ function MemberRow({
 }) {
   const kick = useConfirm(onKick);
   return (
-    <div data-testid={`social-member-${member.user_id}`} style={{
-      display: "flex", alignItems: "center", gap: 10,
-      padding: "10px 0", borderBottom: last ? "none" : "1px solid var(--border)",
-    }}>
+    <div data-testid={`social-member-${member.user_id}`} className={cn("flex items-center gap-2.5 py-2.5 px-0", last ? "border-b-0" : "border-b border-b-border")}>
       <Avatar name={member.name} size={30} />
-      <div style={{ flex: 1 }}>
-        <div style={{ fontSize: 13, fontWeight: 500 }}>{member.name}</div>
+      <div className="flex-1">
+        <div className="text-md font-medium">{member.name}</div>
       </div>
       {isLeader && <span className="chip chip--accent">Leader</span>}
       <Link
         href={`/profile/${encodeURIComponent(member.user_id)}`}
-        className="btn btn--sm btn--ghost"
+        className="btn btn--sm btn--ghost no-underline"
         title="View profile"
-        style={{ textDecoration: "none" }}
       >
         <Icon name="search" size={11} /> Profile
       </Link>
@@ -1396,12 +1359,12 @@ function StudyMatch({ roomId }: { roomId: string }) {
     }
   };
   return (
-    <div style={{ flex: 1, overflowY: "auto", padding: 32 }}>
-      <div style={{ maxWidth: 800, margin: "0 auto" }}>
-        <div className="card" style={{ padding: "var(--pad-xl)", textAlign: "center", background: "linear-gradient(135deg, var(--accent-soft), var(--bg-panel))" }}>
+    <div className="flex-1 overflow-y-auto p-8">
+      <div className="max-w-200 my-0 mx-auto">
+        <div className="card p-(--pad-xl) text-center [background:linear-gradient(135deg,_var(--accent-soft),_var(--bg-panel))]">
           <Icon name="sparkle" size={28} />
-          <div className="h-serif" style={{ fontSize: 24, margin: "12px 0 6px", fontWeight: 500 }}>Find your study match</div>
-          <div style={{ color: "var(--text-dim)", marginBottom: 20 }}>
+          <div className="h-serif text-[24px] mt-3 mx-0 mb-1.5 font-medium">Find your study match</div>
+          <div className="text-text-dim mb-5">
             We&apos;ll pair you with members whose knowledge complements yours.
           </div>
           <button data-testid="social-match-run" className="btn btn--primary" onClick={run} disabled={loading}>
@@ -1410,21 +1373,21 @@ function StudyMatch({ roomId }: { roomId: string }) {
         </div>
         {matches.length > 0 && (
           <>
-            <div className="label-micro" style={{ margin: "24px 0 12px" }}>Suggested partners</div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <div className="label-micro mt-6 mx-0 mb-3">Suggested partners</div>
+            <div className="grid grid-cols-[1fr_1fr] gap-3">
               {matches.map((m, i) => {
                 const partnerId = m.partner?.id || m.partner?.user_id;
                 const inner = (
                   <>
                     <Avatar name={m.partner?.name || "?"} size={48} />
-                    <div style={{ flex: 1 }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-                        <div style={{ fontWeight: 600 }}>{m.partner?.name}</div>
-                        <span className="mono" style={{ color: "var(--accent)", fontSize: 15 }}>
+                    <div className="flex-1">
+                      <div className="flex justify-between items-baseline">
+                        <div className="font-semibold">{m.partner?.name}</div>
+                        <span className="mono text-accent text-[15px]">
                           {Math.round((m.compatibility_score || 0) * 100)}%
                         </span>
                       </div>
-                      <div style={{ fontSize: 12, color: "var(--text-dim)", marginTop: 4, lineHeight: 1.5 }}>{m.summary}</div>
+                      <div className="text-sm text-text-dim mt-1 leading-[1.5]">{m.summary}</div>
                     </div>
                   </>
                 );
@@ -1432,13 +1395,12 @@ function StudyMatch({ roomId }: { roomId: string }) {
                   <Link
                     key={partnerId}
                     href={`/profile/${encodeURIComponent(partnerId)}`}
-                    className="card"
-                    style={{ padding: "var(--pad-lg)", display: "flex", gap: 14, textDecoration: "none", color: "inherit" }}
+                    className="card p-(--pad-lg) flex gap-3.5 no-underline text-inherit"
                   >
                     {inner}
                   </Link>
                 ) : (
-                  <div key={i} className="card" style={{ padding: "var(--pad-lg)", display: "flex", gap: 14 }}>
+                  <div key={i} className="card p-(--pad-lg) flex gap-3.5">
                     {inner}
                   </div>
                 );
@@ -1457,17 +1419,17 @@ function RoomActivity({ roomId }: { roomId: string }) {
     getRoomActivity(roomId).then((r) => setActivities(r.activities || [])).catch(console.error);
   }, [roomId]);
   return (
-    <div style={{ flex: 1, overflowY: "auto", padding: "24px 32px" }}>
-      {activities.length === 0 && <div style={{ color: "var(--text-muted)", fontSize: 13 }}>No activity yet.</div>}
+    <div className="flex-1 overflow-y-auto py-6 px-8">
+      {activities.length === 0 && <div className="text-text-muted text-md">No activity yet.</div>}
       {activities.map((a) => (
-        <div key={a.id} style={{ display: "flex", gap: 12, padding: "14px 0", borderBottom: "1px solid var(--border)" }}>
+        <div key={a.id} className="flex gap-3 py-3.5 px-0 border-b border-b-border">
           <Avatar name={a.user_name} size={36} />
-          <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 13 }}>
+          <div className="flex-1">
+            <div className="text-md">
               <strong>{a.user_name}</strong> {a.activity_type}{" "}
-              <span style={{ color: "var(--accent)", fontWeight: 600 }}>{a.concept_name}</span>
+              <span className="text-accent font-semibold">{a.concept_name}</span>
             </div>
-            <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>
+            <div className="text-xs text-text-muted mt-0.5">
               {new Date(a.created_at).toLocaleString()}
             </div>
           </div>
@@ -1497,63 +1459,53 @@ function SchoolDirectory() {
   }, [q, students]);
 
   return (
-    <div style={{ flex: 1, overflowY: "auto", padding: "24px 32px" }}>
-      <div style={{ maxWidth: 980, margin: "0 auto" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+    <div className="flex-1 overflow-y-auto py-6 px-8">
+      <div className="max-w-245 my-0 mx-auto">
+        <div className="flex justify-between items-center mb-4">
           <div>
             <div className="label-micro">Directory</div>
-            <div className="h-serif" style={{ fontSize: 22 }}>Students at your school</div>
+            <div className="h-serif text-2xl">Students at your school</div>
           </div>
           <input
             data-testid="social-directory-search"
             value={q}
             onChange={e => setQ(e.target.value)}
             placeholder="Search by name, course, concept"
-            style={{
-              padding: "6px 12px", fontSize: 12, minWidth: 260,
-              border: "1px solid var(--border)", borderRadius: "var(--r-full)",
-              background: "var(--bg-panel)",
-            }}
+            className="py-1.5 px-3 text-sm min-w-65 border border-border rounded-[var(--r-full)] bg-bg-panel"
           />
         </div>
         {loading ? (
-          <div style={{ color: "var(--text-muted)", fontSize: 13 }}>Loading directory…</div>
+          <div className="text-text-muted text-md">Loading directory…</div>
         ) : (
           // Roster list replaces the previous 280px card grid —
           // directories of people should scan like a class roster,
           // not a stock-photo team page.
-          <div style={{ display: "flex", flexDirection: "column" }}>
+          <div className="flex flex-col">
             {filtered.map((s, i) => (
               <Link
                 key={s.user_id}
                 href={`/profile/${encodeURIComponent(s.user_id)}`}
-                style={{
-                  padding: "14px 4px",
-                  borderTop: i === 0 ? "none" : "1px solid var(--border)",
-                  display: "flex", gap: 14, alignItems: "center",
-                  textDecoration: "none", color: "inherit",
-                  transition: "background var(--dur-fast) var(--ease)",
-                }}
+                className={cn("py-3.5 px-1 flex gap-3.5 items-center no-underline text-inherit [transition:background_var(--dur-fast)_var(--ease)]", i === 0 ? "border-t-0" : "border-t border-t-border")}
               >
                 <Avatar name={s.name} size={40} />
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <span className="h-serif" style={{ fontSize: 15, fontWeight: 500 }}>{s.name}</span>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="h-serif text-[15px] font-medium">{s.name}</span>
                     {s.user_id === userId && <span className="chip chip--accent">You</span>}
                   </div>
                   {s.courses.length > 0 && (
-                    <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>
+                    <div className="text-xs text-text-muted mt-0.5">
                       {s.courses.slice(0, 3).join(" · ")}
                     </div>
                   )}
-                  <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 6 }}>
+                  <div className="text-2xs text-text-muted mt-1.5">
                     {s.streak}d streak
                   </div>
                 </div>
               </Link>
             ))}
             {filtered.length === 0 && (
-              <div style={{ color: "var(--text-muted)", fontSize: 13 }}>No matches.</div>
+              <div className="text-text-muted text-md">No matches.</div>
             )}
           </div>
         )}
@@ -1615,13 +1567,13 @@ export function Social() {
 
   return (
     <FullHeightScreen direction="row">
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
+      <div className="flex-1 flex flex-col min-w-0">
         {tab === "directory" ? <SchoolDirectory /> : active ? (
           <>
-            <div style={{ padding: "18px 24px", borderBottom: "1px solid var(--border)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div className="py-4.5 px-6 border-b border-b-border flex justify-between items-center">
               <div>
-                <div data-testid="social-room-name" className="h-serif" style={{ fontSize: 22, fontWeight: 500 }}>{active.name}</div>
-                <div style={{ fontSize: 11, color: "var(--text-muted)", display: "flex", alignItems: "center", gap: 8, marginTop: 2 }}>
+                <div data-testid="social-room-name" className="h-serif text-2xl font-medium">{active.name}</div>
+                <div className="text-xs text-text-muted flex items-center gap-2 mt-0.5">
                   <CopyChip code={active.invite_code} />
                   <span>{active.member_count} members</span>
                 </div>
@@ -1654,32 +1606,28 @@ export function Social() {
             {tab === "activity" && <RoomActivity key={active.id} roomId={active.id} />}
           </>
         ) : (
-          <div style={{ flex: 1, display: "grid", placeItems: "center", color: "var(--text-muted)" }}>
+          <div className="flex-1 grid place-items-center text-text-muted">
             Select or create a room to begin.
           </div>
         )}
       </div>
-      <aside style={{
-        width: 260, borderLeft: "1px solid var(--border)", background: "var(--bg-subtle)",
-        display: "flex", flexDirection: "column", flexShrink: 0,
-      }}>
-        <div style={{ padding: "18px 16px", borderBottom: "1px solid var(--border)" }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}><div className="h-serif" style={{ fontSize: 18, fontWeight: 500 }}>Study Rooms</div></div>
+      <aside className="w-65 border-l border-l-border bg-bg-subtle flex flex-col shrink-0">
+        <div className="py-4.5 px-4 border-b border-b-border">
+          <div className="flex items-center justify-between gap-2"><div className="h-serif text-xl font-medium">Study Rooms</div></div>
           <CreateJoinBar onDone={load} />
           <button
             data-testid="social-directory-open"
-            className="btn btn--sm"
-            style={{ marginTop: 8, width: "100%" }}
+            className="btn btn--sm mt-2 w-full"
             onClick={() => setTab("directory")}
           >
             <Icon name="users" size={12} /> Browse directory
           </button>
         </div>
         <FriendsPanel />
-        <div style={{ flex: 1, overflowY: "auto", padding: 8 }}>
+        <div className="flex-1 overflow-y-auto p-2">
           {loading && <SocialRoomsSkeleton />}
           {!loading && rooms.length === 0 && (
-            <div style={{ padding: 12, color: "var(--text-muted)", fontSize: 12 }}>
+            <div className="p-3 text-text-muted text-sm">
               No rooms yet — create or join one.
             </div>
           )}
@@ -1688,19 +1636,13 @@ export function Social() {
               key={r.id}
               data-testid={`social-room-item-${r.id}`}
               onClick={() => { setActiveId(r.id); setTab("chat"); }}
-              style={{
-                width: "100%", padding: "10px 12px",
-                borderRadius: "var(--r-md)", textAlign: "left",
-                background: activeId === r.id && tab !== "directory" ? "var(--bg-panel)" : "transparent",
-                border: activeId === r.id && tab !== "directory" ? "1px solid var(--border)" : "1px solid transparent",
-                marginBottom: 4, display: "flex", flexDirection: "column", gap: 2,
-              }}
+              className={cn("w-full py-2.5 px-3 rounded-md text-left mb-1 flex flex-col gap-0.5", activeId === r.id && tab !== "directory" ? "bg-bg-panel" : "bg-transparent", activeId === r.id && tab !== "directory" ? "border border-border" : "border border-transparent")}
             >
-              <div style={{ fontSize: 13, fontWeight: 600, display: "flex", alignItems: "center", gap: 6 }}>
+              <div className="text-md font-semibold flex items-center gap-1.5">
                 {r.name}
-                {r.is_public && <span className="chip" style={{ fontSize: 11 }}>Public</span>}
+                {r.is_public && <span className="chip text-xs">Public</span>}
               </div>
-              <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
+              <div className="text-xs text-text-muted">
                 {r.topic ? `${r.topic} · ` : ""}{r.member_count} members
               </div>
             </button>

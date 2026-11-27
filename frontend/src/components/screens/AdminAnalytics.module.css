@@ -1,3 +1,4 @@
+@layer components {
 /* The admin analytics page (AdminAnalytics.tsx). Its tables and section
    prose use admin/adminTable.module.css. */
 
@@ -154,4 +155,6 @@
 
 .link {
   color: var(--accent);
+}
+
 }

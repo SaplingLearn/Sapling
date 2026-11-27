@@ -60,12 +60,12 @@ describe("the guide menu from the keyboard", () => {
     expect(button()).toHaveFocus();
   });
 
-  it("closes when Tab takes the focus out of it", async () => {
+  it("closes on Escape and gives the focus back to the button", async () => {
     const { user } = await opened();
     await user.keyboard("{ArrowUp}");
-    await user.tab();
-    expect(screen.getByRole("button", { name: "After the menu" })).toHaveFocus();
+    await user.keyboard("{Escape}");
     expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    expect(button()).toHaveFocus();
     expect(button()).toHaveAttribute("aria-expanded", "false");
   });
 

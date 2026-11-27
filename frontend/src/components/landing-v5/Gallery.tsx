@@ -42,18 +42,16 @@ import { useEffect, useState } from 'react';
 import { GALLERY_MINIS } from './galleryMinis';
 import { FadeIn } from '@/components/landing/anim';
 
-const LABEL: React.CSSProperties = { fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif" };
-
 /** Card copy, indexed by `data-tk`. Distinct from the lab panels' copy in content.ts. */
 const CARDS = [
-  { kicker: 'Adaptive quizzes', title: <>Questions that <em style={{ color: '#445D22', fontStyle: 'italic' }}>re-tune.</em></>, desc: 'Difficulty moves with every answer, and each result writes mastery back to your graph.' },
-  { kicker: 'Spaced repetition', title: <>Knows what to review, <em style={{ color: '#445D22', fontStyle: 'italic' }}>and when.</em></>, desc: 'Forgot, Hard, Easy: ten minutes, a day, four days. Sapling schedules; you show up.' },
-  { kicker: 'Notetaker', title: <>Notes that <em style={{ color: '#445D22', fontStyle: 'italic' }}>think.</em></>, desc: 'Write normally. Sapling summarizes, pulls the concepts, and links them to your graph.' },
-  { kicker: 'Study guides', title: <>Built from your <em style={{ color: '#445D22', fontStyle: 'italic' }}>gaps.</em></>, desc: 'Pick a course and an exam. The guide is assembled from your own library, weighted to weak concepts.' },
-  { kicker: 'Study rooms', title: <>Learn <em style={{ color: '#445D22', fontStyle: 'italic' }}>together.</em></>, desc: 'Live rooms with chat and a side-by-side graph that shows exactly who knows what.' },
-  { kicker: 'Gradebook', title: <>Know your <em style={{ color: '#445D22', fontStyle: 'italic' }}>real grade.</em></>, desc: 'Syllabus weights become categories. Every score rolls into a live grade and letter.' },
-  { kicker: 'Calendar', title: <>A syllabus becomes a <em style={{ color: '#445D22', fontStyle: 'italic' }}>semester.</em></>, desc: 'Upload once. Every exam, pset, and quiz is extracted, dated, and synced to Google Calendar.' },
-  { kicker: 'AI tutor', title: <>It asks. <em style={{ color: '#445D22', fontStyle: 'italic' }}>You answer.</em></>, desc: 'Socratic, expository, or teachback. It never hands over the solution, it walks you to it.' },
+  { kicker: 'Adaptive quizzes', title: <>Questions that <em className="text-brand-forest italic">re-tune.</em></>, desc: 'Difficulty moves with every answer, and each result writes mastery back to your graph.' },
+  { kicker: 'Spaced repetition', title: <>Knows what to review, <em className="text-brand-forest italic">and when.</em></>, desc: 'Forgot, Hard, Easy: ten minutes, a day, four days. Sapling schedules; you show up.' },
+  { kicker: 'Notetaker', title: <>Notes that <em className="text-brand-forest italic">think.</em></>, desc: 'Write normally. Sapling summarizes, pulls the concepts, and links them to your graph.' },
+  { kicker: 'Study guides', title: <>Built from your <em className="text-brand-forest italic">gaps.</em></>, desc: 'Pick a course and an exam. The guide is assembled from your own library, weighted to weak concepts.' },
+  { kicker: 'Study rooms', title: <>Learn <em className="text-brand-forest italic">together.</em></>, desc: 'Live rooms with chat and a side-by-side graph that shows exactly who knows what.' },
+  { kicker: 'Gradebook', title: <>Know your <em className="text-brand-forest italic">real grade.</em></>, desc: 'Syllabus weights become categories. Every score rolls into a live grade and letter.' },
+  { kicker: 'Calendar', title: <>A syllabus becomes a <em className="text-brand-forest italic">semester.</em></>, desc: 'Upload once. Every exam, pset, and quiz is extracted, dated, and synced to Google Calendar.' },
+  { kicker: 'AI tutor', title: <>It asks. <em className="text-brand-forest italic">You answer.</em></>, desc: 'Socratic, expository, or teachback. It never hands over the solution, it walks you to it.' },
 ];
 
 /** Track A drifts right, track B drifts left. */
@@ -73,17 +71,6 @@ const MOTES: { d: number; s: React.CSSProperties }[] = [
   { d: 0.42, s: { left: '4.5%', top: '13.5%', width: 7, height: 7, background: '#B1D28B', opacity: 0.48, animation: 'nodeFloatB 16s ease-in-out -12s infinite' } },
   { d: 0.27, s: { right: '7.0%', top: '57.4%', width: 8, height: 8, background: '#597731', opacity: 0.46, boxShadow: '0 0 20px #59773166', animation: 'nodeFloatA 13s ease-in-out -4s infinite' } },
 ];
-
-/**
- * Natural (desktop, scale 1) card footprint. All eight cards measure the
- * same height — the description copy was written to a consistent length —
- * so it's safe to fix it here rather than measure post-render. Card size
- * and pane size (166, matching the source) are fixed — they don't grow to
- * fit content; oversized minis get shrunk to fit instead (`MINI_FIT`).
- */
-const CARD_W = 372;
-const MINI_H = 166;
-const CARD_H = 314;
 
 /**
  * Scale factor for a mini too tall for the pane, keyed by `CARDS` index.
@@ -117,48 +104,20 @@ const MINI_FIT: Partial<Record<number, number>> = {
   7: 0.93,
 };
 
-const CARD: React.CSSProperties = {
-  width: CARD_W, height: CARD_H, borderRadius: 20, background: '#FDFCF9',
-  border: '1px solid #E8E5DA', boxShadow: '0 6px 18px -6px rgba(25,31,19,0.14)',
-  padding: '12px 12px 18px', display: 'flex', flexDirection: 'column',
-  position: 'relative', overflow: 'hidden', cursor: 'pointer', userSelect: 'none',
-  transformOrigin: 'top left',
-  transition: 'transform 320ms cubic-bezier(0.22,1,0.36,1)',
-};
-
-/**
- * The flex item the marquee actually measures. It's sized in lockstep with
- * `--gal-scale` (set per breakpoint in globals.css) so `offsetWidth` always
- * matches what's on screen; the card inside is scaled with a CSS transform
- * rather than shrunk via width, so the illustration, type, and every
- * keyframe animation shrink together instead of the illustration getting
- * squashed against a fixed-height pane (the mistake the v4 grove cards
- * made — see the note above `.landing-dc .gal-rail` in globals.css).
- */
-const SLOT: React.CSSProperties = {
-  flex: '0 0 auto',
-  width: `calc(${CARD_W}px * var(--gal-scale, 1))`,
-  height: `calc(${CARD_H}px * var(--gal-scale, 1))`,
-};
-
 function Card({ i, ghost }: { i: number; ghost: boolean }) {
   const c = CARDS[i];
   const fit = MINI_FIT[i];
   return (
-    <div style={SLOT}>
+    <div className="flex-[0_0_auto] w-[calc(372px_*_var(--gal-scale,_1))] h-[calc(314px_*_var(--gal-scale,_1))]">
       <article
         data-tk={i}
         aria-hidden={ghost || undefined}
-        style={CARD}
-        className="ld-galcard"
+        className="ld-galcard w-93 h-78.5 rounded-[20px] [background:#FDFCF9] border border-paper-200 [box-shadow:0_6px_18px_-6px_rgba(25,31,19,0.14)] pt-3 px-3 pb-4.5 flex flex-col relative overflow-hidden cursor-pointer select-none [transform-origin:top_left] [transition:transform_320ms_cubic-bezier(0.22,1,0.36,1)]"
       >
-        <div aria-hidden="true" style={{ position: 'relative', height: MINI_H, borderRadius: 13, overflow: 'hidden', background: '#FDFCF9', border: '1px solid #EDF0EA' }}>
+        <div aria-hidden="true" className="relative h-41.5 rounded-[13px] overflow-hidden bg-bg-panel border border-moss-50">
           {fit ? (
             <div
-              style={{
-                width: `${100 / fit}%`, height: `${100 / fit}%`,
-                transform: `scale(${fit})`, transformOrigin: 'top left',
-              }}
+              className="[transform-origin:top_left]" style={{ width: `${100 / fit}%`, height: `${100 / fit}%`, transform: `scale(${fit})` }}
             >
               {GALLERY_MINIS[i]}
             </div>
@@ -166,12 +125,12 @@ function Card({ i, ghost }: { i: number; ghost: boolean }) {
             GALLERY_MINIS[i]
           )}
         </div>
-        <div style={{ padding: '15px 12px 0', display: 'flex', flexDirection: 'column' }}>
-          <span style={{ ...LABEL, fontSize: 11.5, letterSpacing: '0.01em', color: '#445D22' }}>{c.kicker}</span>
-          <h3 style={{ margin: '10px 0 0', fontFamily: "var(--font-gummi), Georgia, serif", fontSize: 22, fontWeight: 600, lineHeight: 1.2, letterSpacing: '-0.015em', color: '#191F13' }}>
+        <div className="pt-[15px] px-3 pb-0 flex flex-col">
+          <span className="font-sans text-[11.5px] tracking-[0.01em] text-brand-forest">{c.kicker}</span>
+          <h3 className="mt-2.5 mx-0 mb-0 font-display text-2xl font-semibold leading-[1.2] tracking-[-0.015em] text-moss-900">
             {c.title}
           </h3>
-          <p style={{ margin: '9px 0 0', fontSize: 12.5, lineHeight: 1.6, color: '#697062', maxWidth: '40ch', textWrap: 'pretty' }}>
+          <p className="mt-[9px] mx-0 mb-0 text-[12.5px] leading-[1.6] text-moss-500 max-w-[40ch] text-pretty">
             {c.desc}
           </p>
         </div>
@@ -234,7 +193,7 @@ function Track({
         const card = (e.target as HTMLElement).closest<HTMLElement>('[data-tk]');
         if (card) onOpen(Number(card.dataset.tk), card);
       }}
-      style={{ display: 'flex', gap: 'calc(26px * var(--gal-scale, 1))', width: 'max-content', willChange: 'transform', cursor: 'grab', touchAction: 'pan-y' }}
+      className="flex gap-[calc(26px_*_var(--gal-scale,_1))] w-max [will-change:transform] cursor-grab [touch-action:pan-y]"
     >
       {Array.from({ length: copies }, (_, c) => order.map((i) => (
         <Card key={`${c}-${i}`} i={i} ghost={c > 0} />
@@ -264,19 +223,10 @@ function Track({
 function HandNote() {
   return (
     <div
-      className="ld-handnote"
-      style={{
-        position: 'relative', flex: '0 0 auto', paddingBottom: 6,
-        display: 'flex', flexDirection: 'column', alignItems: 'center',
-      }}
+      className="ld-handnote relative flex-[0_0_auto] pb-1.5 flex flex-col items-center"
     >
       <span
-        style={{
-          fontFamily: "var(--font-caveat), cursive",
-          fontSize: 27, fontWeight: 600, lineHeight: 1.15, color: '#445D22',
-          transform: 'rotate(-4.5deg)', transformOrigin: '100% 100%',
-          whiteSpace: 'nowrap',
-        }}
+        className="[font-family:var(--font-caveat),_cursive] text-[27px] font-semibold leading-[1.15] text-brand-forest [transform:rotate(-4.5deg)] [transform-origin:100%_100%] whitespace-nowrap"
       >
         click to demo the features!
       </span>
@@ -286,7 +236,7 @@ function HandNote() {
         height="92"
         viewBox="0 0 80 92"
         fill="none"
-        style={{ marginTop: 18, overflow: 'visible' }}
+        className="mt-4.5 overflow-visible"
       >
         {/* The sweep sits in the middle third of the line, and is centred on
             its own INK rather than on its box.
@@ -325,19 +275,19 @@ export function Gallery({
   onOpen: (i: number, el: HTMLElement | null) => void;
 }) {
   return (
-    <section id="gallery" style={{ position: 'relative', padding: 'clamp(44px,7vh,92px) 0 clamp(30px,4.5vh,60px)', zIndex: 1, isolation: 'isolate' }}>
-      <div aria-hidden="true" style={{ position: 'absolute', inset: 0, pointerEvents: 'none', overflow: 'hidden', zIndex: 0 }}>
+    <section id="gallery" className="relative pt-[clamp(44px,7vh,92px)] px-0 pb-[clamp(30px,4.5vh,60px)] z-1 isolate">
+      <div aria-hidden="true" className="absolute inset-0 pointer-events-none overflow-hidden z-0">
         {MOTES.map((m, i) => (
-          <span key={i} data-depth={m.d} style={{ position: 'absolute', borderRadius: 99, ...m.s }} />
+          <span key={i} data-depth={m.d} className="absolute rounded-[99px]" style={{ ...m.s }} />
         ))}
       </div>
 
-      <div style={{ position: 'relative', zIndex: 1, maxWidth: 1220, margin: '0 auto', padding: '0 24px', display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 24, flexWrap: 'wrap' }}>
+      <div className="relative z-1 max-w-305 my-0 mx-auto py-0 px-6 flex items-end justify-between gap-6 flex-wrap">
         <FadeIn>
-          <h2 style={{ margin: 0, fontFamily: "var(--font-gummi), Georgia, serif", fontSize: 'clamp(2.2rem,4.4vw,3.6rem)', fontWeight: 600, lineHeight: 1.04, letterSpacing: '-0.02em', color: '#191F13' }}>
-            The rest of the <em style={{ color: '#445D22' }}>grove.</em>
+          <h2 className="m-0 font-display text-[length:clamp(2.2rem,4.4vw,3.6rem)] font-semibold leading-[1.04] tracking-[-0.02em] text-moss-900">
+            The rest of the <em className="text-brand-forest">grove.</em>
           </h2>
-          <p style={{ margin: '14px 0 0', color: '#697062', fontSize: 14, lineHeight: 1.65, maxWidth: '62ch' }}>
+          <p className="mt-3.5 mx-0 mb-0 text-moss-500 text-base leading-[1.65] max-w-[62ch]">
             Eight tools covering the whole arc of a course: quizzes and flashcards that test recall,
             notes and study guides that turn your materials into something usable, a tutor that
             talks you through what you missed, and a gradebook and calendar that keep the semester
@@ -353,23 +303,15 @@ export function Gallery({
         </FadeIn>
       </div>
 
-      <div style={{ position: 'relative', zIndex: 1, marginTop: 28 }}>
+      <div className="relative z-1 mt-7">
         {/* the mask feathers both ends so cards enter and leave rather than pop */}
         <div
-          style={{
-            position: 'relative', overflow: 'hidden', padding: '16px 0',
-            WebkitMaskImage: 'linear-gradient(90deg, transparent 0, #000 5%, #000 95%, transparent 100%)',
-            maskImage: 'linear-gradient(90deg, transparent 0, #000 5%, #000 95%, transparent 100%)',
-          }}
+          className="relative overflow-hidden py-4 px-0 [-webkit-mask-image:linear-gradient(90deg,_transparent_0,_#000_5%,_#000_95%,_transparent_100%)] [mask-image:linear-gradient(90deg,_transparent_0,_#000_5%,_#000_95%,_transparent_100%)]"
         >
           <Track trackRef={trackARef} order={TRACK_A} label="Sapling tools, drifting right" onOpen={onOpen} />
         </div>
         <div
-          style={{
-            position: 'relative', overflow: 'hidden', padding: '16px 0',
-            WebkitMaskImage: 'linear-gradient(90deg, transparent 0, #000 5%, #000 95%, transparent 100%)',
-            maskImage: 'linear-gradient(90deg, transparent 0, #000 5%, #000 95%, transparent 100%)',
-          }}
+          className="relative overflow-hidden py-4 px-0 [-webkit-mask-image:linear-gradient(90deg,_transparent_0,_#000_5%,_#000_95%,_transparent_100%)] [mask-image:linear-gradient(90deg,_transparent_0,_#000_5%,_#000_95%,_transparent_100%)]"
         >
           <Track trackRef={trackBRef} order={TRACK_B} label="Sapling tools, drifting left" onOpen={onOpen} />
         </div>

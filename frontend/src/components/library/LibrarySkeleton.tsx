@@ -18,22 +18,6 @@ import React from "react";
 import { Skeleton } from "../Skeleton";
 import { CONTROL_H } from "./primitives";
 
-/** Cosmetic only — never announced, never interactive. */
-const ROOT: React.CSSProperties = {
-  position: "absolute",
-  inset: 0,
-  zIndex: 40,
-  background: "#FAF8F3",
-  padding: "36px 64px 0 56px",
-  boxSizing: "border-box",
-  display: "flex",
-  flexDirection: "column",
-  pointerEvents: "none",
-  animation: "sapSkelOut 260ms ease 720ms both",
-};
-
-const LIST_COLS = "24px minmax(0, 1fr) 120px 120px 56px 64px 40px";
-
 function Bar(props: {
   width: number | string;
   height: number;
@@ -53,14 +37,11 @@ function Bar(props: {
 
 function SkeletonRow() {
   return (
-    <div style={{
-      display: "grid", gridTemplateColumns: LIST_COLS, gap: 12,
-      alignItems: "center", padding: "12px 14px", borderRadius: 12,
-    }}>
+    <div className="grid grid-cols-[24px_minmax(0,_1fr)_120px_120px_56px_64px_40px] gap-3 items-center py-3 px-3.5 rounded-[12px]">
       <Bar width={20} height={20} radius={5} />
-      <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+      <div className="flex items-center gap-3.5">
         <Bar width={30} height={38} radius={5} style={{ flexShrink: 0 }} />
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 7 }}>
+        <div className="flex-1 flex flex-col gap-[7px]">
           <Bar width="46%" height={13} radius={6} />
           <Bar width="30%" height={10} radius={5} style={{ opacity: 0.7 }} />
         </div>
@@ -76,18 +57,11 @@ function SkeletonRow() {
 
 function SkeletonCard() {
   return (
-    <div style={{
-      borderRadius: 14, border: "1px solid rgba(42,39,31,0.08)",
-      overflow: "hidden", background: "#FDFCF9",
-    }}>
-      <div style={{
-        height: 176, background: "#F2EFE8", padding: "16px 22px 0", boxSizing: "border-box",
-      }}>
+    <div className="rounded-[14px] border border-[rgba(42,39,31,0.08)] overflow-hidden bg-bg-panel">
+      <div className="h-44 bg-[#F2EFE8] pt-4 px-5.5 pb-0 box-border">
         <Bar width="100%" height={160} radius={0} style={{ borderRadius: "4px 4px 0 0" }} />
       </div>
-      <div style={{
-        padding: "12px 14px 14px", display: "flex", flexDirection: "column", gap: 8,
-      }}>
+      <div className="pt-3 px-3.5 pb-3.5 flex flex-col gap-2">
         <Bar width="70%" height={13} radius={6} />
         <Bar width="45%" height={10} radius={5} style={{ opacity: 0.7 }} />
       </div>
@@ -97,9 +71,9 @@ function SkeletonCard() {
 
 export function LibrarySkeleton({ view }: { view: "list" | "panel" }) {
   return (
-    <div aria-hidden="true" data-testid="library-skeleton" style={ROOT}>
-      <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 24 }}>
-        <div style={{ display: "flex", flexDirection: "column", gap: 14, flexShrink: 0 }}>
+    <div aria-hidden="true" data-testid="library-skeleton" className="absolute inset-0 z-40 bg-ink-0 pt-9 pr-16 pb-0 pl-14 box-border flex flex-col pointer-events-none [animation:sapSkelOut_260ms_ease_720ms_both]">
+      <div className="flex items-center gap-4 mb-6">
+        <div className="flex flex-col gap-3.5 shrink-0">
           <Bar width={124} height={40} radius={10} style={{ flexShrink: 0 }} />
         </div>
         <Bar
@@ -116,22 +90,17 @@ export function LibrarySkeleton({ view }: { view: "list" | "panel" }) {
         />
       </div>
 
-      <div style={{
-        display: "flex", alignItems: "center", gap: 12, paddingBottom: 14,
-        borderBottom: "1px solid rgba(42,39,31,0.10)",
-      }}>
+      <div className="flex items-center gap-3 pb-3.5 border-b border-b-[rgba(42,39,31,0.10)]">
         {/* The course switcher. No second bar: the Trash chip that sat
             beside it is now the switcher's last option. */}
         <Bar width={230} height={40} radius={12} />
-        <span style={{ flex: 1 }} />
+        <span className="flex-1" />
         <Bar width={184} height={40} radius={12} />
       </div>
 
       {view === "list" ? (
-        <div style={{ display: "flex", flexDirection: "column", gap: 4, paddingTop: 6 }}>
-          <div style={{
-            display: "grid", gridTemplateColumns: LIST_COLS, gap: 12, padding: "12px 14px 8px",
-          }}>
+        <div className="flex flex-col gap-1 pt-1.5">
+          <div className="grid grid-cols-[24px_minmax(0,_1fr)_120px_120px_56px_64px_40px] gap-3 pt-3 px-3.5 pb-2">
             <Bar width={20} height={20} radius={5} />
             <Bar width={48} height={11} radius={5} />
             <Bar width={52} height={11} radius={5} />
@@ -143,10 +112,7 @@ export function LibrarySkeleton({ view }: { view: "list" | "panel" }) {
           {Array.from({ length: 9 }).map((_, i) => <SkeletonRow key={i} />)}
         </div>
       ) : (
-        <div style={{
-          display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(250px, 1fr))",
-          gap: 24, paddingTop: 20,
-        }}>
+        <div className="grid grid-cols-[repeat(auto-fill,_minmax(250px,_1fr))] gap-6 pt-5">
           {Array.from({ length: 8 }).map((_, i) => <SkeletonCard key={i} />)}
         </div>
       )}

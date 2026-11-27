@@ -103,7 +103,10 @@ export function blankGlobalsLanding(css) {
   return out;
 }
 
-const GLOBALS = "src/app/globals.css";
+// The app stylesheet: globals.css is an import list since the Tailwind
+// migration (ADR 0031), and the tokens, the Tailwind theme and the shared
+// rules live in src/styles. Token definitions in any of them are not counted.
+const GLOBALS = new Set(["src/app/globals.css", "src/styles/tokens.css", "src/styles/theme.css", "src/styles/base.css", "src/styles/components.css"]);
 const TOKEN_MIRROR = "src/lib/designTokens.ts";
 
 /** Whether a frontend-relative path is measured at all. */
@@ -334,7 +337,7 @@ export function trackedFiles(root = FRONTEND) {
 export function scanFile(rel, root = FRONTEND) {
   const text = fs.readFileSync(path.join(root, rel), "utf8");
   if (TS_SOURCE.test(rel)) return scanTs(text, rel);
-  return scanCss(text, { isGlobals: rel === GLOBALS });
+  return scanCss(text, { isGlobals: GLOBALS.has(rel) });
 }
 
 /** `{ "<file>::<category>": count }` for every non-zero count in the tree. */

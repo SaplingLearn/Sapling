@@ -1,3 +1,4 @@
+@layer components {
 /* Course setup (CourseSetup.tsx), after the Claude Design board
    (learn/__fixtures__/setup.design.html): the steps, the title, then one card
    per part, the Confirm row last. */
@@ -282,4 +283,6 @@
     flex-direction: column;
     align-items: stretch;
   }
+}
+
 }

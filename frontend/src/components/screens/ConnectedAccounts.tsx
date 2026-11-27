@@ -16,6 +16,7 @@ import {
   gradescopeModeLabel,
   gradescopeReauthShort,
 } from "@/components/Gradebook/gradescopeState";
+import { cn } from "@/lib/cn";
 
 /**
  * Connected Accounts — settings surface for managing third-party
@@ -75,42 +76,23 @@ export function ConnectedAccounts() {
     <>
       <TopBar
         breadcrumb={
-          <Link href="/settings" style={{ color: "var(--text-dim)", textDecoration: "none" }}>
+          <Link href="/settings" className="text-text-dim no-underline">
             ← Settings
           </Link>
         }
         title="Connected accounts"
       />
       <main
-        style={{
-          padding: "var(--pad-xl)",
-          maxWidth: 900,
-          margin: "0 auto",
-        }}
+        className="p-(--pad-xl) max-w-225 my-0 mx-auto"
       >
-        <header style={{ marginBottom: 32 }}>
+        <header className="mb-8">
           <h1
-            style={{
-              fontFamily: "var(--font-display), 'Aleo', Georgia, serif",
-              fontWeight: 500,
-              fontSize: "clamp(28px, 3.6vw, 40px)",
-              lineHeight: 1.05,
-              letterSpacing: "-0.02em",
-              color: "var(--text)",
-              margin: "0 0 10px",
-            }}
+            className="font-display font-medium text-[length:clamp(28px,_3.6vw,_40px)] leading-[1.05] tracking-[-0.02em] text-text mt-0 mx-0 mb-2.5"
           >
             Connected accounts
           </h1>
           <p
-            style={{
-              fontFamily: "var(--font-serif), var(--font-aleo), 'Aleo', Georgia, serif",
-              fontSize: 15,
-              lineHeight: 1.6,
-              color: "var(--text-dim)",
-              margin: 0,
-              maxWidth: 640,
-            }}
+            className="font-serif text-[15px] leading-[1.6] text-text-dim m-0 max-w-160"
           >
             Link the platforms you already use so Sapling can pull grades,
             assignments, and deadlines into one place. Credentials are
@@ -183,64 +165,32 @@ function ProviderCard({
     : null;
   return (
     <section
-      style={{
-        padding: "20px 24px",
-        background: "var(--bg-panel)",
-        border: "1px solid var(--border)",
-        borderRadius: "var(--r-md)",
-        display: "flex",
-        gap: 24,
-        alignItems: "center",
-        flexWrap: "wrap",
-      }}
+      className="py-5 px-6 bg-bg-panel border border-border rounded-md flex gap-6 items-center flex-wrap"
     >
-      <div style={{ flex: "1 1 280px", minWidth: 0 }}>
+      <div className="flex-[1_1_280px] min-w-0">
         <div
-          style={{
-            display: "flex",
-            alignItems: "baseline",
-            gap: 10,
-            marginBottom: 4,
-          }}
+          className="flex items-baseline gap-2.5 mb-1"
         >
           <h2
-            style={{
-              fontFamily:
-                "var(--font-display), 'Aleo', Georgia, serif",
-              fontWeight: 500,
-              fontSize: 22,
-              letterSpacing: "-0.01em",
-              color: "var(--text)",
-              margin: 0,
-            }}
+            className="font-display font-medium text-2xl tracking-[-0.01em] text-text m-0"
           >
             {name}
           </h2>
           <span
-            className="mono"
-            style={{
-              fontSize: 11,
-              color: "var(--text-muted)",
-              letterSpacing: "-0.01em",
-            }}
+            className="mono text-xs text-text-muted tracking-[-0.01em]"
           >
             {domain}
           </span>
         </div>
         <div
-          className="mono"
-          style={{
-            fontSize: 13,
-            
-            
-            color: loading
+          className="mono text-md mb-1.5"
+          style={{ color: loading
               ? "var(--text-muted)"
               : needsReauth
                 ? "var(--err)"
                 : connected
                   ? "var(--sap-600)"
-                  : "var(--text-muted)",
-            marginBottom: 6 }}
+                  : "var(--text-muted)" }}
         >
           {loading
             ? "Checking…"
@@ -253,14 +203,7 @@ function ProviderCard({
                   : "Not connected"}
         </div>
         <p
-          style={{
-            fontFamily: "var(--font-serif), var(--font-aleo), 'Aleo', Georgia, serif",
-            fontSize: 13,
-            lineHeight: 1.55,
-            color: "var(--text-dim)",
-            margin: 0,
-            maxWidth: 520,
-          }}
+          className="font-serif text-md leading-[1.55] text-text-dim m-0 max-w-130"
         >
           Pulls assignments and grades from your enrolled courses. For SSO
           use BU SSO + Duo or paste session cookies. Credentials are verified
@@ -268,21 +211,14 @@ function ProviderCard({
         </p>
         {connected && status?.last_synced_at && (
           <div
-            className="mono"
-            style={{
-              fontSize: 11,
-              color: "var(--text-muted)",
-              marginTop: 8,
-              letterSpacing: "-0.01em",
-            }}
+            className="mono text-xs text-text-muted mt-2 tracking-[-0.01em]"
           >
             Last sync · {new Date(status.last_synced_at).toLocaleString()}
           </div>
         )}
         {syncProblem && (
           <div
-            className="mono"
-            style={{ fontSize: 11, color: "var(--err)", marginTop: 4, letterSpacing: "-0.01em" }}
+            className="mono text-xs text-err mt-1 tracking-[-0.01em]"
           >
             Last attempt · {syncProblem}
             {status?.last_attempt_at ? ` · ${new Date(status.last_attempt_at).toLocaleString()}` : ""}
@@ -290,22 +226,20 @@ function ProviderCard({
         )}
       </div>
 
-      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+      <div className="flex gap-2.5 flex-wrap">
         {connected ? (
           <>
             <button
               type="button"
-              className={needsReauth ? "btn btn--primary" : "btn"}
+              className={cn(needsReauth ? "btn btn--primary" : "btn", "py-2 px-3.5 text-md")}
               onClick={onReconnect}
-              style={{ padding: "8px 14px", fontSize: 13 }}
             >
               Reconnect
             </button>
             <button
               type="button"
-              className="btn btn--danger"
+              className="btn btn--danger py-2 px-3.5 text-md"
               onClick={onDisconnect}
-              style={{ padding: "8px 14px", fontSize: 13 }}
             >
               Disconnect
             </button>
@@ -313,10 +247,9 @@ function ProviderCard({
         ) : (
           <button
             type="button"
-            className="btn btn--primary"
+            className="btn btn--primary py-2.5 px-4 text-md"
             onClick={onConnect}
             disabled={loading}
-            style={{ padding: "10px 16px", fontSize: 13 }}
           >
             Connect
           </button>

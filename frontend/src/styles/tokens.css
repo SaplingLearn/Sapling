@@ -1,0 +1,328 @@
+/* Sapling design tokens: the one source of every value.
+ *
+ * Plain CSS custom properties on :root, unlayered, so every stylesheet and
+ * every Tailwind utility can read them. src/styles/theme.css maps them onto
+ * Tailwind's namespaces (bg-bg-panel, text-text-dim, rounded-md, text-md).
+ * Font roles and shadows live in theme.css instead, because Tailwind owns
+ * those variable names (--font-sans, --shadow-sm).
+ */
+
+/* Sapling — design tokens
+ *
+ * Typography per .impeccable.md (the approved Pen type, from #728):
+ *  - display = Aleo (brand moments, h1s, hero)
+ *  - serif   = Aleo (long-form prose, tutor voice in chat)
+ *  - sans    = SUSE (all UI chrome)
+ *  - code    = the system monospace, for real code only (code blocks, ids,
+ *              pasted tokens). No mono webfont ships: labels, eyebrows and
+ *              numerals are SUSE with tabular figures (`.mono`, `.label-micro`).
+ *
+ * "Serif for soul, sans for function" — a slab serif for headings and
+ * long-form, SUSE for UI chrome, so the hierarchy is doing the work, not
+ * decoration. display and serif are one face today; they stay two roles so
+ * a screen can still split them.
+ */
+:root {
+  /* Each role leads with the loader's variable, not the human family name.
+     `next/font/local` registers every face under a generated name, so a bare
+     'Aleo' matches nothing and silently renders Times — see
+     lib/landing/fonts.ts. The human names stay behind the variable as a
+     courtesy to anyone who has the font installed. */
+  /* Gummi is licensed for saplinglearn.com only, so it is not loaded here:
+     lib/licensedFonts.ts's boot script overrides both of these (html:root) on
+     a licensed host, and every other host — a workers.dev preview, an E2E
+     slot — keeps Aleo and never requests the font. */
+  --font-gummi: var(--font-aleo);
+  /* Gummi ships no medium (500): a medium heading renders Regular, thickened by
+     this outline stroke (0.6px under Gummi; 0 on the Aleo fallback, which has a
+     real 500). */
+  --medium-stroke: 0px;
+
+  /* Canonical brand green — olive ("forest" is the legacy role name; the
+     value moved from #1B6C42 to the moss olive #445D22). Mirrored by
+     BRAND_FOREST in lib/brand.ts. 7.4:1 under white text. */
+  --brand-forest: #445D22;
+  /* Hover-darken of the base forest, for primary-forest button :hover states. */
+  --brand-forest-hover: #384E19;
+  /* Brighter olive used for the primary CTA fill + the hero "growth" leaf.
+     5.2:1 under white text — still AA for the white-on-accent sinks. */
+  --brand-forest-bright: #597536;
+  --brand-forest-bright-hover: #4B6627;
+  /* The SideNav rail's fill; read by the rail and the ShellFrame corners.
+     A light olive, a step above --brand-forest-bright, so the rail sits back
+     from the forest CTAs — and AA for the rail's text: pure white is 4.85:1
+     here and the 96% cream labels 4.61:1 (spec §13 A135; it was #688443, where
+     white was 4.23:1). Going lighter means dark rail text. */
+  --sidenav-bg: #5f7a3b;
+  /* Text, chips and secondary buttons on that olive where it is a fill
+     outside the rail (the Study hub's Up Next block; the rail's own scoped
+     tokens, [data-app-sidenav] below, do not reach it). White is the light
+     text that clears AA for small type there, 4.85:1: --sap-100 is 3.96:1 and
+     an 86% white 4.06:1. A chip or a secondary button is a DARK wash, as the
+     rail's selected row is: a white wash lightens the fill under white text
+     (13%: 3.77:1), a dark one darkens it (white on the wash 6.11:1, on the
+     strong wash 7.05:1) — spec §13 A135. */
+  --sidenav-fg: #ffffff;
+  --sidenav-wash: rgba(18, 17, 13, 0.16);
+  --sidenav-wash-strong: rgba(18, 17, 13, 0.26);
+
+  /* Brand greens — the original ramp's lightness/chroma steps, re-hued onto
+     the olive (OKLCH h≈129) so tints and the brand anchor read as one family. */
+  --sap-50:  #f2f6ee;
+  --sap-100: #e1ecd7;
+  --sap-200: #c5d7b2;
+  --sap-300: #a1bc83;
+  --sap-400: #7ea055;
+  --sap-500: #60842c;
+  --sap-600: #49671d;
+  --sap-700: #385015;
+  --sap-800: #293c0e;
+  --sap-900: #19250b;
+
+  /* Warm neutrals (paper) */
+  --ink-0:   #faf8f3;
+  --ink-50:  #f4f1ea;
+  --ink-100: #ebe6dc;
+  --ink-200: #ddd6c6;
+  --ink-300: #b9b1a0;
+  --ink-400: #8a8372;
+  --ink-500: #5d5749;
+  --ink-600: #3f3b31;
+  --ink-700: #2a271f;
+  --ink-800: #1a1814;
+  --ink-900: #12110d;
+
+  /* Semantic (light) */
+  --bg:        var(--ink-0);
+  --bg-panel:  #fdfcf9;
+  --bg-subtle: var(--ink-50);
+  --bg-soft:   var(--ink-100);
+  --bg-input:  #fdfcf9;
+  --bg-inset:  #f7f3eb;
+  --bg-topbar: var(--ink-50);
+  --border:    rgba(42, 39, 31, 0.10);
+  --border-strong: rgba(42, 39, 31, 0.18);
+  --text:      var(--ink-800);
+  --text-dim:  var(--ink-600);
+  /* WCAG AA: ≥4.5:1 on every surface token — paper, panel, subtle, inset,
+     --bg-soft and the four -soft tints (4.51:1 on --err-soft, the darkest).
+     Was #6f6857, which missed on --bg-soft (4.45:1); spec §13 A135. */
+  --text-muted:#696252;
+  /* --accent (sage) is a distinct ROLE (highlights/focus), NOT a primary green.
+     Do not consolidate into --brand-forest. As text (links, the current step)
+     it is AA on every surface token, the -soft tints included (4.57:1 on
+     --err-soft); it was --brand-forest-bright (#597536), which missed on the
+     tints (4.29:1 on --warn-soft) — spec §13 A135. */
+  --accent:    #4e6a2d;
+  --accent-fg: #ffffff;
+  --accent-soft: var(--sap-50);
+  --accent-border: var(--sap-200);
+
+  /* Each status colour is AA text on its own -soft fill (the .chip--* pairs):
+     --warn 4.77:1, --err 4.70:1, --info 4.82:1. --warn (was #b4562c, 4.01:1)
+     and --info (was #3e6f8a, 4.43:1) were darkened for it — spec §13 A135. */
+  --warn: #a34c26;
+  --warn-soft: #f7e6d8;
+  --err:  #a83a3a;
+  --err-soft: #f5d8d3;
+  --info: #3a6984;
+  --info-soft: #dfe9ef;
+
+  /* Knowledge-status palette (mastery/progress/struggle legend + graph dots).
+     Single source for the 3 previously-inlined copies in Dashboard / Tree /
+     notetaker. Values are byte-identical to those inline copies. */
+  /* Canonical "positive status" green — one value for mastery + grade-A (Phase 2 green collapse). */
+  --positive:       #3a7d4e;
+  --state-mastery:  var(--positive);
+  --state-progress: #c89b5e;
+  --state-struggle: #b25855;
+  --state-neutral:  #9a9a9a;
+
+  /* Course "unknown" placeholder gray. Coincidentally equal to --state-neutral
+     today, but a distinct concept (a UI fallback, not a mastery status), so a
+     future neutral-state change won't silently move the notetaker fallback. */
+  --fallback-muted: #9a9a9a;
+
+  /* Dashboard alert one-offs (streak shield / notification dot). Kept distinct
+     from --warn (#a34c26) / --err (#a83a3a), whose values differ. */
+  --alert-warn: #e87734;
+  --alert-err:  #e94b5c;
+
+  --font-inter: var(--font-sans);
+
+  /* Category palette — 10 colors, one per hue family, no repeats. */
+  --c-crimson: #c03535;   /* red          */
+  --c-rust:    #c06020;   /* orange       */
+  --c-amber:   #a88020;   /* amber        */
+  --c-brown:   #7a4220;   /* brown        */
+  --c-sage:    #3e8030;   /* green        */
+  --c-teal:    #207878;   /* teal         */
+  --c-sky:     #2868b0;   /* blue         */
+  --c-plum:    #7030a8;   /* purple       */
+  --c-magenta: #b02888;   /* magenta      */
+  --c-rose:    #b83060;   /* rose         */
+  --c-ink:    #3f3b31;
+
+  /* Grade-band semantic colors. Used by the Gradebook landing and any
+   * future "grade pill" surface. Tied to the 90/80/70/60 letter scale. */
+  --grade-a: var(--positive);
+  --grade-b: var(--c-amber);
+  --grade-c: var(--c-rust);
+  --grade-d: var(--c-rose);
+  --grade-f: var(--err);
+
+  --r-xs: 4px;
+  --r-sm: 6px;
+  --r-md: 10px;
+  --r-lg: 16px;
+  --r-xl: 22px;
+  --r-full: 999px;
+
+
+  /* Spacing scale (#866). For margin, padding and gap. DERIVED like the type
+     scale: the steps are the px values the app's margins, paddings and gaps
+     already use, counted across src/ (8, 10, 12, 6, 16 and 4 lead; 22 is
+     --pad-lg). `--sp-N` is N × 2px, so the name says the size: --sp-4 = 8px,
+     --sp-8 = 16px. Contiguous to 32px, then the four large steps in use.
+     Odd values (3, 5, 7, 9px) have no step: round to a neighbour.
+     Not density-aware; --pad-* below is, and stays the token for a panel's
+     inset. docs/frontend-design-tokens.md. */
+  --sp-1:  2px;
+  --sp-2:  4px;
+  --sp-3:  6px;
+  --sp-4:  8px;
+  --sp-5:  10px;
+  --sp-6:  12px;
+  --sp-7:  14px;
+  --sp-8:  16px;
+  --sp-9:  18px;
+  --sp-10: 20px;
+  --sp-11: 22px;
+  --sp-12: 24px;
+  --sp-13: 26px;
+  --sp-14: 28px;
+  --sp-15: 30px;
+  --sp-16: 32px;
+  --sp-20: 40px;
+  --sp-24: 48px;
+  --sp-28: 56px;
+  --sp-32: 64px;
+
+  /* Density-aware insets: html[data-density] below redefines these with its
+     own px values. The defaults are steps of the scale above. */
+  --pad-sm: var(--sp-5);
+  --pad-md: var(--sp-8);
+  --pad-lg: var(--sp-11);
+  --pad-xl: var(--sp-16);
+  --row-h: 40px;
+
+  /* Layering (#866). Every z-index the app uses, by role, measured: a raised
+     sibling (1), sticky chrome (TopNav, sticky bars: 20), menus and selects
+     (100), full-screen takeovers (Tree / Dashboard fullscreen: 150), modals
+     and their backdrops (200), toasts (1000). Stay inside a role's band:
+     a value between two roles is a new role, so name it here. */
+  --z-base:    0;
+  --z-raised:  1;
+  --z-sticky:  20;
+  --z-popover: 100;
+  --z-overlay: 150;
+  --z-modal:   200;
+  --z-toast:   1000;
+
+  /* Role colours (#866) the app writes out by hand in several places.
+     --text-on-fill: text and marks on a saturated fill (a verdict badge, a
+     step dot, a dark hero). --scrim: the dimmed page behind a modal.
+     --focus-ring / --focus-halo: the keyboard-focus outline and the soft ring
+     an input wears while focused. --tool-quiz(-soft): the Quiz tool's hue
+     wherever the study hub, flashcards and the daily goal name it.
+     --series-compare: the second series when two people's mastery is drawn
+     together (Social's comparison, the graph's comparison overlay). */
+  --text-on-fill:   #ffffff;
+  --scrim:          rgba(25, 37, 11, 0.45);
+  --focus-ring:     var(--accent);
+  --focus-halo:     var(--accent-soft);
+  --tool-quiz:      #7a4a78;
+  --tool-quiz-soft: #ebddee;
+  --series-compare: #8a7bc4;
+
+  /* Type scale (#289).
+     DERIVED, not invented: every step is a size the app already uses, counted
+     across screens/ and components/ — 13px is the true body size (107 uses),
+     12/11/10 carry chrome and micro-labels, 14-16 body copy, 18-26 headings,
+     30 is TopBar's screen title, 32 the display numeral on Dashboard.
+
+     Deliberately NOT density-aware, unlike --pad-*. Retuning the whole type
+     ramp with the density preference is a real product decision — it changes
+     how much text fits on every screen — and this scale's job right now is to
+     give one source of truth for sizes that are currently inline literals at
+     ~300 call sites. Making it density-aware later is additive; making it
+     density-aware now would ship a behaviour change disguised as a refactor.
+
+     Adopted by Onboarding first. The rest of the app keeps its inline sizes
+     until each screen is converted deliberately. */
+  --fs-2xs:  10px;
+  --fs-xs:   11px;
+  --fs-sm:   12px;
+  --fs-md:   13px;   /* body */
+  --fs-base: 14px;
+  --fs-lg:   16px;
+  --fs-xl:   18px;
+  --fs-2xl:  22px;
+  --fs-3xl:  26px;
+  --fs-4xl:  30px;   /* screen title — matches TopBar */
+  --fs-5xl:  32px;
+
+  --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --dur-fast: 140ms;
+  --dur: 220ms;
+  --dur-slow: 420ms;
+
+  /* Motion (#866), beside the four above. Mirrored in seconds and as
+     cubic-bezier arrays by lib/designTokens.ts (MOTION) for framer-motion;
+     designTokens.test.ts fails if the two drift. lib/motion.ts holds the
+     presets built from them.
+     --ease-out: entrances and anything settling into place (the app's most
+       used curve: modals, tool switches). --ease-in: exits (modal-out).
+     --ease-in-out: a thing moving between two resting places.
+     --ease-emphasized: an entrance meant to be noticed (study-mode-enter).
+     --dur-instant: press feedback. --dur-slower: a large surface arriving
+       (onboarding's moments, a full-screen takeover). */
+  --ease-out:        cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in:         cubic-bezier(0.4, 0, 1, 1);
+  --ease-in-out:     cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-emphasized: cubic-bezier(0.2, 0.85, 0.35, 1);
+  --dur-instant: 60ms;
+  --dur-slower: 600ms;
+
+  /* Marketing palette: the public pages (landing, careers, news, wiki,
+     library-design surfaces) draw in a cooler moss ink and paper than the
+     app's warm --ink-* ramp. These were raw hex at ~450 call sites. */
+  --moss-900: #191F13;  /* headings */
+  --moss-700: #3B4233;  /* body */
+  --moss-500: #697062;  /* secondary */
+  --moss-400: #91978B;  /* muted */
+  --moss-300: #9FA49A;  /* faint, placeholders */
+  --moss-200: #C7CBC2;
+  --moss-100: #E0E6DA;  /* hairlines */
+  --moss-75:  #E6EAE2;
+  --moss-50:  #EDF0EA;
+  --moss-25:  #F6F8F4;  /* page wash */
+  --leaf-800: #2F4417;
+  --leaf-500: #68951F;  /* marketing accent */
+  --leaf-100: #D9E7C4;
+  --leaf-50:  #EAF1E4;
+  --paper-100: #ECE9DE;
+  --paper-200: #E8E5DA;
+  --paper-300: #E3E0D5;
+}
+
+/* Light-mode only per .impeccable.md. Dark-mode rules removed to
+ * prevent accidental activation. If we ever ship dark mode, it gets
+ * its own branch — not squatting in the same stylesheet. */
+
+html[data-density="compact"] {
+  --pad-sm: 8px; --pad-md: 12px; --pad-lg: 16px; --pad-xl: 22px; --row-h: 34px;
+}
+html[data-density="spacious"] {
+  --pad-sm: 14px; --pad-md: 20px; --pad-lg: 28px; --pad-xl: 44px; --row-h: 48px;
+}

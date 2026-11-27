@@ -1,3 +1,4 @@
+@layer components {
 /* The knowledge graph's chrome: the zoom stack, the colour toggle and its
    key (KnowledgeGraph), and the SVG's frame, hover card and a11y list
    (KnowledgeGraph2D). The graph itself is SVG, drawn in code. */
@@ -108,4 +109,6 @@
 .crash {
   display: flex; flex-direction: column; gap: var(--sp-5); align-items: center; justify-content: center;
   height: 100%; color: var(--text-dim); font-size: var(--fs-md);
+}
+
 }

@@ -2,9 +2,8 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, cleanup, fireEvent } from "@testing-library/react";
 import React from "react";
-import fs from "node:fs";
-import path from "node:path";
 import { EmptyState } from "./EmptyState";
+import { readAppCss } from "@/test-utils/appCss";
 
 afterEach(cleanup);
 
@@ -115,10 +114,7 @@ describe("EmptyState — the Gradebook promotion renders identically", () => {
   });
 
   it("pins the four promoted values in globals.css", () => {
-    const css = fs.readFileSync(
-      path.resolve(__dirname, "../../app/globals.css"),
-      "utf8",
-    );
+    const css = readAppCss();
     // The tokens, at the values the screen was drawn at…
     expect(css).toMatch(/--empty-hero-fs:\s*56px;/);
     expect(css).toMatch(/--empty-hero-eyebrow-fs:\s*15px;/);

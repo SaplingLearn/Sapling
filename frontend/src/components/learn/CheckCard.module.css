@@ -1,3 +1,4 @@
+@layer components {
 /* The loop's posed check (CheckCard): the styles its inline style objects held (#866). */
 
 /* The calm trust chrome (W4.4 "Key verified", W4.1a withheld figure): the
@@ -50,4 +51,6 @@
 .hintIcon {
   margin-top: var(--sp-1);
   color: var(--accent);
+}
+
 }

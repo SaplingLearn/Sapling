@@ -1,3 +1,4 @@
+@layer components {
 /* The actions between checks (TeachActions). */
 
 /* The status lines beside the buttons: the dwell, why Check me waits, the
@@ -19,4 +20,6 @@
     transform: scale(var(--teach-press-scale));
     transition-duration: var(--dur-instant);
   }
+}
+
 }

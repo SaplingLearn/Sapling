@@ -10,7 +10,7 @@ interface Props {
 
 export function SemesterChips({ semesters, selected, onSelect }: Props) {
   return (
-    <div style={{ marginBottom: 16 }}>
+    <div className="mb-4">
       <Toggle
         options={semesters.map((s) => ({ value: s, label: s }))}
         value={selected}

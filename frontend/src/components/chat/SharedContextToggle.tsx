@@ -4,6 +4,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { useUser } from "@/context/UserContext";
 import { fetchSettings, updateSettings } from "@/lib/api";
 import type { UserSettings } from "@/lib/types";
+import { cn } from "@/lib/cn";
 
 const STORAGE_KEY = "sapling_shared_ctx";
 
@@ -94,7 +95,7 @@ export function SharedContextToggle({
 
   return (
     <div
-      style={{ position: "relative", display: "inline-block" }}
+      className="relative inline-block"
       onMouseEnter={() => setTooltip(true)}
       onMouseLeave={() => setTooltip(false)}
       onFocus={() => setTooltip(true)}
@@ -104,40 +105,14 @@ export function SharedContextToggle({
         role="switch"
         aria-checked={enabled}
         onClick={() => onChange(!enabled)}
-        className="btn btn--sm"
-        style={{
-          padding: "5px 10px",
-          background: enabled ? "var(--accent-soft)" : "var(--bg-subtle)",
-          color: enabled ? "var(--accent)" : "var(--text-dim)",
-          borderColor: enabled ? "var(--accent-border)" : "var(--border)",
-          fontSize: 12,
-          display: "inline-flex",
-          alignItems: "center",
-          gap: 6,
-        }}
+        className={cn("btn btn--sm", "py-[5px] px-2.5 text-sm inline-flex items-center gap-1.5", enabled ? "bg-accent-soft" : "bg-bg-subtle", enabled ? "text-accent" : "text-text-dim", enabled ? "border-accent-border" : "border-border")}
       >
         <span
           aria-hidden
-          style={{
-            width: 24,
-            height: 12,
-            borderRadius: "var(--r-full)",
-            background: enabled ? "var(--accent)" : "var(--border-strong)",
-            position: "relative",
-            transition: "background var(--dur-fast) var(--ease)",
-          }}
+          className={cn("w-6 h-3 rounded-[var(--r-full)] relative [transition:background_var(--dur-fast)_var(--ease)]", enabled ? "bg-accent" : "bg-border-strong")}
         >
           <span
-            style={{
-              position: "absolute",
-              top: 1,
-              left: enabled ? 13 : 1,
-              width: 10,
-              height: 10,
-              borderRadius: "50%",
-              background: "#fff",
-              transition: "left var(--dur-fast) var(--ease)",
-            }}
+            className={cn("absolute top-px w-2.5 h-2.5 rounded-[50%] bg-accent-fg [transition:left_var(--dur-fast)_var(--ease)]", enabled ? "left-[13px]" : "left-px")}
           />
         </span>
         Class intel
@@ -145,23 +120,9 @@ export function SharedContextToggle({
       {tooltip && (
         <div
           role="tooltip"
-          style={{
-            position: "absolute",
-            top: "calc(100% + 6px)",
-            ...(align === "left" ? { left: 0 } : { right: 0 }),
-            zIndex: 60,
-            width: 240,
-            padding: 10,
-            background: "var(--bg-panel)",
-            border: "1px solid var(--border-strong)",
-            borderRadius: "var(--r-md)",
-            boxShadow: "var(--shadow-md)",
-            fontSize: 11,
-            color: "var(--text-dim)",
-            lineHeight: 1.5,
-          }}
+          className="absolute top-[calc(100%_+_6px)] z-60 w-60 p-2.5 [background:var(--bg-panel)] border border-border-strong rounded-md shadow-md text-xs text-text-dim leading-[1.5]" style={{ ...(align === "left" ? { left: 0 } : { right: 0 }) }}
         >
-          <strong style={{ color: "var(--text)", display: "block", marginBottom: 4 }}>
+          <strong className="text-text block mb-1">
             Shared course context
           </strong>
           Includes anonymized class-level patterns (common gaps, frequent questions). Disabling keeps the

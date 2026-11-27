@@ -1,3 +1,4 @@
+@layer components {
 /* The question screen (§5 B2) — the one place a student is mid-attempt.
  *
  * Every rule here is a class over tokens (R-1). The design's own geometry
@@ -2513,4 +2514,6 @@
   .quiz-question__footer > :first-child { grid-row: 2; }
   .quiz-question__footer > :last-child:not(.quiz-question__progress) { grid-row: 2; grid-column: 2; }
   .quiz-question__aside { flex-wrap: wrap; gap: var(--pad-sm); }
+}
+
 }

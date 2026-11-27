@@ -1,3 +1,4 @@
+@layer components {
 /* The rebuilt review queue's head (ReviewHead.tsx), after the Claude Design
    board: the title, the course chips and the progress on one wrapping line. */
 
@@ -58,4 +59,6 @@
   font-size: var(--fs-md);
   color: var(--text-dim);
   font-variant-numeric: tabular-nums;
+}
+
 }

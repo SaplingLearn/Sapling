@@ -1,3 +1,4 @@
+@layer components {
 /* The "retention check due" mark (RetentionDueDot.tsx). */
 .dot {
   /* A 7px mark: smaller than any spacing step, sized to sit beside a nav label. */
@@ -28,4 +29,6 @@
 @keyframes due-dot-in {
   from { opacity: 0; transform: scale(0.4); }
   to { opacity: 1; transform: none; }
+}
+
 }

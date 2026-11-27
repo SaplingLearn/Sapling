@@ -21,7 +21,7 @@ import Link from 'next/link';
 import { CompanionShell } from '@/components/companion/CompanionShell';
 import { ZoomableShot } from '@/components/companion/ZoomableShot';
 import { GALLERY_FILTERS, GALLERY_SHOTS } from '@/lib/landing/companionContent';
-import { DISPLAY, LABEL, SERIF } from '@/lib/landing/companionType';
+import { cn } from "@/lib/cn";
 
 export default function GalleryPage() {
   const [filter, setFilter] = useState('all');
@@ -30,18 +30,18 @@ export default function GalleryPage() {
   return (
     <CompanionShell current="/gallery">
       <div>
-        <span style={{ display: 'block', fontFamily: LABEL, fontSize: 12, color: '#6f6857', animation: 'fadeUp 600ms ease both' }}>
+        <span className="block font-sans text-sm text-text-muted [animation:fadeUp_600ms_ease_both]">
           Inside the product
         </span>
-        <h1 style={{ margin: '14px 0 0', fontFamily: DISPLAY, fontWeight: 500, fontSize: 48, lineHeight: 1.15, letterSpacing: '-0.015em', animation: 'fadeUp 700ms ease 60ms both' }}>
+        <h1 className="mt-3.5 mx-0 mb-0 font-display font-medium text-[48px] leading-[1.15] tracking-[-0.015em] [animation:fadeUp_700ms_ease_60ms_both]">
           Gallery
         </h1>
-        <p style={{ margin: '24px 0 0', fontFamily: SERIF, fontSize: 16, lineHeight: 1.6, color: '#3f3b31', maxWidth: '62ch', animation: 'fadeUp 700ms ease 140ms both' }}>
+        <p className="mt-6 mx-0 mb-0 font-serif text-lg leading-[1.6] text-ink-600 max-w-[62ch] [animation:fadeUp_700ms_ease_140ms_both]">
           Every screen in Sapling, as it actually looks. One course, one semester, and the same
           graph behind all of it.
         </p>
 
-        <div style={{ marginTop: 34, display: 'flex', gap: 8, flexWrap: 'wrap', animation: 'fadeUp 700ms ease 200ms both' }}>
+        <div className="mt-8.5 flex gap-2 flex-wrap [animation:fadeUp_700ms_ease_200ms_both]">
           {GALLERY_FILTERS.map((f) => {
             const on = f.key === filter;
             return (
@@ -50,14 +50,7 @@ export default function GalleryPage() {
                 onClick={() => setFilter(f.key)}
                 type="button"
                 aria-pressed={on}
-                style={{
-                  padding: '8px 15px', borderRadius: 99, cursor: 'pointer',
-                  fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif", fontSize: 13, fontWeight: 500,
-                  transition: 'all 200ms',
-                  border: `1px solid ${on ? 'var(--brand-forest)' : 'rgba(42,39,31,0.16)'}`,
-                  background: on ? 'var(--brand-forest)' : 'transparent',
-                  color: on ? '#faf8f3' : '#6f6857',
-                }}
+                className={cn("py-2 px-[15px] rounded-[99px] cursor-pointer font-sans text-md font-medium [transition:all_200ms]", on ? "border border-brand-forest" : "border border-[rgba(42,39,31,0.16)]", on ? "bg-brand-forest" : "bg-transparent", on ? "text-ink-0" : "text-text-muted")}
               >
                 {f.label}
               </button>
@@ -65,16 +58,11 @@ export default function GalleryPage() {
           })}
         </div>
 
-        <div style={{ marginTop: 26, display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px,1fr))', gap: 22 }}>
+        <div className="mt-6.5 grid grid-cols-[repeat(auto-fill,_minmax(320px,1fr))] gap-5.5">
           {shots.map((s, i) => (
             <figure
               key={s.slot}
-              style={{
-                margin: 0, display: 'flex', flexDirection: 'column', gap: 12,
-                animation: 'fadeUp 600ms ease both',
-                // capped so a large filter result still settles quickly
-                animationDelay: `${Math.min(i * 50, 400)}ms`,
-              }}
+              className="m-0 flex flex-col gap-3 [animation:fadeUp_600ms_ease_both]" style={{ animationDelay: `${Math.min(i * 50, 400)}ms` }}
             >
               <ZoomableShot
                 src={`/gallery/${s.slot}.png`}
@@ -83,28 +71,28 @@ export default function GalleryPage() {
                 caption={s.body}
                 route={s.route}
               />
-              <figcaption style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-                <span style={{ display: 'flex', alignItems: 'baseline', gap: 9 }}>
-                  <span style={{ fontSize: 15, fontWeight: 600, color: '#1a1814', letterSpacing: '-0.01em' }}>{s.title}</span>
-                  <span style={{ fontFamily: LABEL, fontSize: 11, lineHeight: 1, color: 'var(--brand-forest-bright)' }}>{s.group}</span>
+              <figcaption className="flex flex-col gap-[5px]">
+                <span className="flex items-baseline gap-[9px]">
+                  <span className="text-[15px] font-semibold text-ink-800 tracking-[-0.01em]">{s.title}</span>
+                  <span className="font-sans text-xs leading-none text-brand-forest-bright">{s.group}</span>
                 </span>
-                <span style={{ fontFamily: SERIF, fontSize: 14, lineHeight: 1.6, color: '#3f3b31' }}>{s.body}</span>
+                <span className="font-serif text-base leading-[1.6] text-ink-600">{s.body}</span>
               </figcaption>
             </figure>
           ))}
         </div>
 
-        <div style={{ marginTop: 52, borderRadius: 18, background: '#faf8f3', border: '1px solid rgba(42,39,31,0.10)', padding: 'clamp(26px,4vw,40px)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 24, flexWrap: 'wrap' }}>
-          <div style={{ maxWidth: '46ch' }}>
-            <span style={{ display: 'block', fontFamily: LABEL, fontSize: 12, color: 'var(--brand-forest-bright)' }}>
+        <div className="mt-13 rounded-[18px] bg-ink-0 border border-[rgba(42,39,31,0.10)] p-[clamp(26px,4vw,40px)] flex items-center justify-between gap-6 flex-wrap">
+          <div className="max-w-[46ch]">
+            <span className="block font-sans text-sm text-brand-forest-bright">
               Rather try it than look at it
             </span>
-            <p style={{ margin: '10px 0 0', fontFamily: SERIF, fontSize: 15.5, lineHeight: 1.65, color: '#3f3b31' }}>
+            <p className="mt-2.5 mx-0 mb-0 font-serif text-[15.5px] leading-[1.65] text-ink-600">
               Every screen here is playable on the home page. Open any tool in the toolkit and it
               runs a real scenario.
             </p>
           </div>
-          <Link href="/#gallery" className="cp-cta" style={{ background: 'var(--brand-forest)', color: '#fff', borderRadius: 8, padding: '13px 24px', fontSize: 14.5, fontWeight: 600, whiteSpace: 'nowrap' }}>
+          <Link href="/#gallery" className="cp-cta [background:var(--brand-forest)] text-accent-fg rounded-[8px] py-[13px] px-6 text-[14.5px] font-semibold whitespace-nowrap">
             Open the toolkit
           </Link>
         </div>
