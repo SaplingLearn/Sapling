@@ -105,7 +105,7 @@ def _adopt_e2e_stack(argv: list[str]) -> str | None:
     if os.environ.get("E2E_BACKEND_URL", "").strip():
         return None
     try:
-        stack = json.loads(_STACK_MANIFEST.read_text())
+        stack = json.loads(_STACK_MANIFEST.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         stack = None
     if stack and stack.get("backendUrl") and stack.get("dbUrl"):

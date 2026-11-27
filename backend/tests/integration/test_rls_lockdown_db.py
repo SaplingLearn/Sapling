@@ -643,7 +643,7 @@ def test_app_auth_helpers_are_executable_by_authenticated_and_service_only(db_co
     assert not wrong, f"app_auth EXECUTE is wrong for: {wrong}"
     # app_auth must not be a PostgREST-exposed schema: config.toml lists
     # public and graphql_public only, and the helpers are not RPCs.
-    config = (_BACKEND.parent / "supabase" / "config.toml").read_text()
+    config = (_BACKEND.parent / "supabase" / "config.toml").read_text(encoding="utf-8")
     exposed = re.search(r"^schemas\s*=\s*\[(.*?)\]", config, re.MULTILINE)
     assert exposed and "app_auth" not in exposed.group(1)
 

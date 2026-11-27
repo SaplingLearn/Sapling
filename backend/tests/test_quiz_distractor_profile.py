@@ -128,7 +128,7 @@ def test_the_prompt_template_has_a_slot_for_the_profile():
 
     tpl = (
         Path(__file__).resolve().parents[1] / "prompts/quiz_context_update.txt"
-    ).read_text()
+    ).read_text(encoding="utf-8")
     assert "{distractor_profile_json}" in tpl
 
 

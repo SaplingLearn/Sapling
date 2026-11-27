@@ -124,7 +124,7 @@ def test_threshold_is_the_complexity_target():
 
 
 def test_ruff_exempts_exactly_the_exempt_dirs_from_c901():
-    config = tomllib.loads((ROOT / "ruff.toml").read_text())
+    config = tomllib.loads((ROOT / "ruff.toml").read_text(encoding="utf-8"))
     ignores = config["lint"]["per-file-ignores"]
     for d in ratchet.COMPLEXITY_EXEMPT_DIRS:
         assert "C901" in ignores.get(f"{d}**", []), f'ruff.toml needs "{d}**" = ["C901"]'

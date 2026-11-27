@@ -48,7 +48,7 @@ IGNORED = ("B008",)
 
 def measure(root: Path = BACKEND) -> tuple[Counter[str], list[dict]]:
     """Every violation of RULES under ``root``, counted per ``<file>::<rule>``."""
-    target = tomllib.loads((BACKEND / "ruff.toml").read_text())["target-version"]
+    target = tomllib.loads((BACKEND / "ruff.toml").read_text(encoding="utf-8"))["target-version"]
     proc = subprocess.run(
         [
             sys.executable, "-m", "ruff", "check", ".",

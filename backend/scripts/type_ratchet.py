@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from collections import Counter
@@ -54,19 +55,31 @@ PYRIGHT_DIR = BACKEND / "scripts" / "pyright"
 def _pyright() -> str:
     """Path to the locked pyright, installing it with ``npm ci`` when it is
     missing or is not the version package.json pins."""
-    wanted = json.loads((PYRIGHT_DIR / "package.json").read_text())["dependencies"]["pyright"]
+    wanted = json.loads((PYRIGHT_DIR / "package.json").read_text(encoding="utf-8"))["dependencies"]["pyright"]
     installed = PYRIGHT_DIR / "node_modules" / "pyright" / "package.json"
-    if not installed.exists() or json.loads(installed.read_text())["version"] != wanted:
+    # npm writes two shims side by side: an extensionless sh script and a
+    # `.cmd` batch file. Windows cannot execute the sh one — CreateProcess
+    # rejects it with WinError 193 — so the suffix is not cosmetic here.
+    binary = PYRIGHT_DIR / "node_modules" / ".bin" / "pyright"
+    if os.name == "nt":
+        binary = binary.with_suffix(".cmd")
+    # The shim is checked too: node_modules installed from WSL in the same
+    # checkout has the right version but no `.cmd`.
+    if (not installed.exists() or not binary.exists()
+            or json.loads(installed.read_text(encoding="utf-8"))["version"] != wanted):
         # `npm ci` installs exactly what package-lock.json records and fails on
         # an integrity mismatch. --ignore-scripts: nothing here needs one.
         done = subprocess.run(
             ["npm", "ci", "--ignore-scripts", "--no-audit", "--no-fund"],
             cwd=PYRIGHT_DIR, capture_output=True, text=True,
+            shell=(os.name == "nt"),
         )
         if done.returncode != 0:
             sys.stderr.write(done.stdout + done.stderr)
             raise SystemExit("type_ratchet: could not install the locked pyright (needs node and npm)")
-    return str(PYRIGHT_DIR / "node_modules" / ".bin" / "pyright")
+    if not binary.exists():
+        raise SystemExit(f"type_ratchet: npm ci did not write {binary}")
+    return str(binary)
 
 
 def measure() -> tuple[Counter[str], list[dict]]:

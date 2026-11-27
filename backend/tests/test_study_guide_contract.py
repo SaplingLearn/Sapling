@@ -17,7 +17,7 @@ FIXTURE = Path(__file__).parent / "fixtures" / "study_guide_contract.json"
 
 
 def _fixture() -> dict:
-    return json.loads(FIXTURE.read_text())
+    return json.loads(FIXTURE.read_text(encoding="utf-8"))
 
 
 def test_fixture_round_trips_through_the_models():

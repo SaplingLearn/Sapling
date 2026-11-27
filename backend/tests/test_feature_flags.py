@@ -502,7 +502,7 @@ def test_nav_flags_match_the_frontend_nav_list():
     from pathlib import Path
 
     nav = Path(__file__).resolve().parents[2] / "frontend/src/lib/navFeatures.ts"
-    frontend = set(re.findall(r'flag: "(hide_[a-z_]+)"', nav.read_text()))
+    frontend = set(re.findall(r'flag: "(hide_[a-z_]+)"', nav.read_text(encoding="utf-8")))
     backend = {k for k in ff.REGISTRY if k.startswith("hide_")}
     assert frontend == backend == {f"hide_{slug}" for slug, _ in ff.NAV_FEATURES}
     assert all(ff.REGISTRY[k].client_visible and ff.REGISTRY[k].variants == ("off", "on")

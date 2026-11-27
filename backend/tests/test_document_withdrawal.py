@@ -299,13 +299,13 @@ def test_record_sources_is_best_effort(monkeypatch, caplog):
 def _migration() -> str:
     hits = sorted(MIG_DIR.glob("*_state_machines_audit.sql"))
     assert len(hits) == 1, hits
-    return hits[0].read_text()
+    return hits[0].read_text(encoding="utf-8")
 
 
 def _latest_match_course_chunks() -> str:
     """The body of the LAST migration that defines match_course_chunks."""
     for path in sorted(MIG_DIR.glob("*.sql"), reverse=True):
-        sql = path.read_text()
+        sql = path.read_text(encoding="utf-8")
         if "FUNCTION match_course_chunks(" in sql:
             return sql
     raise AssertionError("no match_course_chunks definition")
