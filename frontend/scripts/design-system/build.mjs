@@ -2,12 +2,11 @@
 // code: tokens from src/styles, the app's fonts and compiled CSS, and a static
 // preview of every Storybook story.
 //
-//   npm run build-storybook
-//   node scripts/design-system/build.mjs        (PW_CHROMIUM=<chromium> if Playwright's own isn't installed)
+//   npm run design-system     (builds Storybook, then runs this; PW_CHROMIUM=<chromium> if Playwright's own isn't installed)
 //
 // Writes design-system/project/, which is committed: the design system is
 // versioned with the code and reviewed in PRs. Publishing that folder to the
-// artifact is a separate step (design-system/README.md). The system is marked
+// artifact happens from main (design-system/README.md). The system is marked
 // `"editing": "code"`, so its page is read-only and every change comes from
 // here.
 import fs from "node:fs";
@@ -43,7 +42,7 @@ const escapeHtml = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;")
 
 // ---------------------------------------------------------------- inputs
 if (!fs.existsSync(path.join(sbDir, "index.json"))) {
-  console.error("storybook-static/ is missing: run `npm run build-storybook` first.");
+  console.error("storybook-static/ is missing: run `npm run design-system`, which builds it first.");
   process.exit(1);
 }
 const sha = git("rev-parse", "--short", "HEAD");

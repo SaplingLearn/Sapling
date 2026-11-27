@@ -20,22 +20,21 @@ Published as the **Sapling** design system artifact: https://claude.ai/artifact/
 ## Regenerate
 
 ```
-npm run build-storybook
-npm run design-system                                   # writes project/
+npm run design-system                                   # builds Storybook, then writes project/
 node scripts/design-system/render-previews.mjs /tmp/ds  # optional: screenshots of every preview as the page frames it
 ```
 
-Commit `project/` with the change that caused it. The Design system workflow (`.github/workflows/design-system.yml`) does this on main when someone forgets: it opens a `chore/design-system-sync` PR. That PR is opened by the workflow's token, so other checks don't start on it on their own; push an empty commit or re-run them before merging. The repo must allow Actions to create pull requests (Settings > Actions > General).
+Commit `project/` in the same PR as the change that caused it. CI's "Design system is regenerated" check (`.github/workflows/design-system.yml`) fails a PR that changes components, stories, tokens, fonts or the generator without touching `project/`.
 
 ## Publish
 
-Run the Trov prompt `sapling-design-system-sync` (SaplingLearn org, Prompt Library) in a Claude session: it compares the artifact with main and publishes only when main is ahead. A Claude scheduled task can run it daily or weekly. The repo stays the source of truth either way.
+A Claude scheduled task runs the Trov prompt `sapling-design-system-sync` (SaplingLearn org, Prompt Library) every day. It compares the artifact with main and publishes only when main is ahead, so a merged change reaches Claude Design within a day. To publish right away, run the same prompt in any Claude session. The repo stays the source of truth either way.
 
 ## Add a component
 
 1. Build it in `src/components/ui` and export it from `index.ts`.
 2. Add `<Name>.stories.tsx` beside it: a `docs.description.component` whose first sentence says what it is for, and a story per variant and state.
-3. Regenerate and commit `project/`.
+3. Run `npm run design-system` and commit `project/`.
 
 ## Use it in Claude Design
 
