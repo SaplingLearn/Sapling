@@ -1,10 +1,25 @@
 """Email bodies. Pure functions returning `(subject, html, text)`.
 
-The look: a white card topped with the landing page's hero, frozen into an
-image (the pale ground, the point cloud and the wordmark), then Aleo headlines
-and SUSE body text, everything left-aligned. The three lifecycle
-emails carry a progress line (Signed up, Approved, Signed in) so a student can
-see where they are; broadcasts are the same card without it.
+The look: one flat white column (no outer background, no card border, no
+boxed sections) topped with the landing page's hero, frozen into an image (the
+pale ground, the point cloud and the wordmark) with rounded top corners that
+fades into the page, then Aleo headlines and SUSE body text, left-aligned, with
+buttons centred. Nested frames read
+as boxes inside boxes on a phone, where the mail client already frames the
+message, so there is one column and nothing else. On a desktop the text runs
+flush with the header's edges; on a phone it sits 20px in. The 20px is the
+inline default and a min-width media query removes it on wide screens, not
+the other way round: the Gmail phone app ignores media queries, and a missed
+rule there must leave the padding, not text against the screen edge. The
+waitlist and approval emails carry a progress line (Signed up, Approved, Signed in) so a student can
+see where they are; the welcome email drops it, since signing in is the very
+thing that sent it. Broadcasts have no progress line either.
+
+Every colour, type size and the button come from the app's design system
+(frontend/src/styles/tokens.css, the `.btn--xl` button), copied into TOKENS
+and the _FS_* sizes below because email clients can't read CSS variables;
+tests/test_email_tokens.py fails when a copy drifts. Spacing runs on the
+app's 4px grid.
 
 Built for email clients, not browsers: nested tables, inline styles, `bgcolor`
 attributes for Outlook, and one JPEG (Gmail won't render SVG or run canvas):
@@ -28,14 +43,34 @@ from html import escape
 import config
 from services import email_variables
 
-BRAND = "#445D22"     # brand forest: buttons, links, progress
-_OUTER = "#f1f2ed"    # the page around the card
-_PAPER = "#ffffff"
-_TINT = "#f4f7f0"     # sap-50-ish: progress and figure wells
-_RULE = "#e6e3da"
-_INK = "#1a1814"
-_BODY = "#3f3b31"
-_MUTED = "#736c5c"
+# The app's design tokens (frontend/src/styles/tokens.css), as email-safe hex.
+# Email clients can't read CSS variables, so the values are copied here, and
+# tests/test_email_tokens.py fails when one drifts from tokens.css. An rgba
+# token is flattened onto the white page (Outlook ignores rgba backgrounds).
+TOKENS = {
+    "brand-forest": "#445D22",   # buttons, links, progress
+    "text": "#1a1814",           # headings, emphasis
+    "text-dim": "#3f3b31",       # body copy
+    "text-muted": "#696252",     # footer, upcoming steps
+    "border": "#eae9e9",         # rules (rgba(42,39,31,.10) on white)
+    "ink-300": "#b9b1a0",        # an unreached step's ring
+}
+# The type scale (--fs-*) and radius (--r-*) the emails use.
+_FS_MD = 13    # --fs-md: footer, progress labels
+_FS_LG = 16    # --fs-lg: body copy, buttons
+_FS_XL = 18    # --fs-xl: lead paragraph, item titles
+_FS_2XL = 22   # --fs-2xl: section headings
+_FS_4XL = 30   # --fs-4xl: the headline on a phone
+_FS_5XL = 32   # --fs-5xl: the headline
+R_SM = 6       # --r-sm: the app's button radius
+R_LG = 16      # --r-lg: the header banner's top corners
+
+BRAND = TOKENS["brand-forest"]
+_PAPER = "#ffffff"    # the page and the column: one surface, no card
+_RULE = TOKENS["border"]
+_INK = TOKENS["text"]
+_BODY = TOKENS["text-dim"]
+_MUTED = TOKENS["text-muted"]
 
 _SERIF = "Aleo,Georgia,'Times New Roman',serif"
 _SANS = "SUSE,-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif"
@@ -64,7 +99,7 @@ def _asset(name: str) -> str:
 # ── Building blocks ─────────────────────────────────────────────────────────
 
 
-def _row(inner: str, *, pad: str = "0 48px") -> str:
+def _row(inner: str, *, pad: str = "0 20px") -> str:
     """One row of the card. `inner` must already be safe HTML."""
     return (
         f'<tr><td class="px" bgcolor="{_PAPER}" align="left" '
@@ -85,40 +120,40 @@ def _rule() -> str:
 
 def _headline(text: str) -> str:
     return (
-        f'<h1 class="h1" style="margin:0;font-family:{_SERIF};font-size:32px;line-height:1.15;'
+        f'<h1 class="h1" style="margin:0;font-family:{_SERIF};font-size:{_FS_5XL}px;line-height:1.15;'
         f'font-weight:500;letter-spacing:-0.4px;color:{_INK};">{_e(text)}</h1>'
     )
 
 
 def _lede(text: str) -> str:
     return (
-        f'<p style="margin:14px 0 0 0;font-family:{_SANS};font-size:17px;line-height:1.6;'
+        f'<p style="margin:12px 0 0 0;font-family:{_SANS};font-size:{_FS_XL}px;line-height:1.6;'
         f'color:{_BODY};">{_e(text)}</p>'
     )
 
 
 def _p(inner_html: str) -> str:
     return (
-        f'<p style="margin:0 0 16px 0;font-family:{_SANS};font-size:16px;'
+        f'<p style="margin:0 0 16px 0;font-family:{_SANS};font-size:{_FS_LG}px;'
         f'line-height:1.65;color:{_BODY};">{inner_html}</p>'
     )
 
 
-def _button(href: str, label: str, *, margin: str = "26px 0 0 0") -> str:
+def _button(href: str, label: str, *, margin: str = "24px 0 0 0") -> str:
     return (
-        '<table role="presentation" cellpadding="0" cellspacing="0" border="0" '
-        f'style="margin:{margin};"><tr>'
-        f'<td bgcolor="{BRAND}" style="border-radius:8px;background:{BRAND};">'
+        '<table role="presentation" align="center" cellpadding="0" cellspacing="0" border="0" '
+        f'style="margin:{margin};margin-left:auto;margin-right:auto;"><tr>'
+        f'<td bgcolor="{BRAND}" style="border-radius:{R_SM}px;background:{BRAND};">'
         f'<a href="{_e(href)}" target="_blank" '
-        f'style="display:inline-block;padding:14px 26px;font-family:{_SANS};font-size:16px;'
-        f'font-weight:600;line-height:1;color:#ffffff;text-decoration:none;border-radius:8px;">'
+        f'style="display:inline-block;padding:14px 32px;font-family:{_SANS};font-size:{_FS_LG}px;'
+        f'font-weight:600;line-height:1;color:#ffffff;text-decoration:none;border-radius:{R_SM}px;">'
         f"{_e(label)}</a></td></tr></table>"
     )
 
 
 def _section_title(text: str) -> str:
     return (
-        f'<h2 style="margin:0 0 16px 0;font-family:{_SERIF};font-size:20px;line-height:1.3;'
+        f'<h2 style="margin:0 0 16px 0;font-family:{_SERIF};font-size:{_FS_2XL}px;line-height:1.3;'
         f'font-weight:500;color:{_INK};">{_e(text)}</h2>'
     )
 
@@ -147,7 +182,7 @@ def _progress(current: int) -> str:
         done = i <= current
         here = i == current
         fill = BRAND if done else _PAPER
-        ring = BRAND if done else "#c9c4b6"
+        ring = BRAND if done else TOKENS["ink-300"]
         left = None if i == 0 else i <= current
         right = None if i == n - 1 else i + 1 <= current
         dots.append(
@@ -161,18 +196,15 @@ def _progress(current: int) -> str:
             + "</tr></table></td>"
         )
         labels.append(
-            f'<td width="33%" align="center" valign="top" style="width:33.33%;padding-top:9px;'
-            f'font-family:{_SANS};font-size:13px;line-height:1.3;text-align:center;'
+            f'<td width="33%" align="center" valign="top" style="width:33.33%;padding-top:8px;'
+            f'font-family:{_SANS};font-size:{_FS_MD}px;line-height:1.3;text-align:center;'
             f'color:{_INK if here else (_BODY if done else _MUTED)};'
             f'font-weight:{600 if here else 400};">{_e(stage)}</td>'
         )
     return (
-        f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" '
-        f'bgcolor="{_TINT}" style="background:{_TINT};border-radius:10px;">'
-        '<tr><td style="padding:18px 8px 16px 8px;">'
         '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">'
         "<tr>" + "".join(dots) + "</tr><tr>" + "".join(labels) + "</tr>"
-        "</table></td></tr></table>"
+        "</table>"
     )
 
 
@@ -183,8 +215,8 @@ def _steps(items: list[tuple[str, str]]) -> str:
         rows.append(
             "<tr>"
             f'<td width="32" valign="top" style="width:32px;padding:1px 0 16px 0;font-family:{_SERIF};'
-            f'font-size:17px;line-height:1.5;font-weight:600;color:{BRAND};">{n}.</td>'
-            f'<td valign="top" style="padding:0 0 16px 0;font-family:{_SANS};font-size:16px;'
+            f'font-size:{_FS_XL}px;line-height:1.45;font-weight:600;color:{BRAND};">{n}.</td>'
+            f'<td valign="top" style="padding:0 0 16px 0;font-family:{_SANS};font-size:{_FS_LG}px;'
             f'line-height:1.6;color:{_BODY};">'
             f'<strong style="color:{_INK};font-weight:600;">{_e(lead)}</strong> {_e(rest)}</td>'
             "</tr>"
@@ -202,10 +234,10 @@ def _points(items: list[tuple[str, str]]) -> str:
     for i, (title, text) in enumerate(items):
         top = f"border-top:1px solid {_RULE};" if i else ""
         rows.append(
-            f'<tr><td style="{top}padding:{14 if i else 0}px 0 14px 0;font-family:{_SANS};'
-            f'font-size:16px;line-height:1.6;color:{_BODY};">'
-            f'<div style="font-family:{_SERIF};font-size:17px;line-height:1.35;font-weight:500;'
-            f'color:{_INK};margin:0 0 3px 0;">{_e(title)}</div>{_e(text)}</td></tr>'
+            f'<tr><td style="{top}padding:{16 if i else 0}px 0 16px 0;font-family:{_SANS};'
+            f'font-size:{_FS_LG}px;line-height:1.6;color:{_BODY};">'
+            f'<div style="font-family:{_SERIF};font-size:{_FS_XL}px;line-height:1.35;font-weight:500;'
+            f'color:{_INK};margin:0 0 4px 0;">{_e(title)}</div>{_e(text)}</td></tr>'
         )
     return (
         '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">'
@@ -216,7 +248,7 @@ def _points(items: list[tuple[str, str]]) -> str:
 
 def _signoff(closing: str) -> str:
     return (
-        f'<p style="margin:0;font-family:{_SANS};font-size:16px;line-height:1.6;color:{_BODY};">'
+        f'<p style="margin:0;font-family:{_SANS};font-size:{_FS_LG}px;line-height:1.6;color:{_BODY};">'
         f'{_e(closing)}<br><strong style="color:{_INK};font-weight:600;">The Sapling team</strong></p>'
     )
 
@@ -247,25 +279,27 @@ def _layout(
   body {{ margin:0; padding:0; -webkit-text-size-adjust:100%; }}
   a {{ color:{BRAND}; }}
   @media (max-width: 620px) {{
-    .px {{ padding-left:24px !important; padding-right:24px !important; }}
-    .h1 {{ font-size:28px !important; }}
+    .h1 {{ font-size:{_FS_4XL}px !important; }}
+  }}
+  @media (min-width: 621px) {{
+    .px {{ padding-left:0 !important; padding-right:0 !important; }}
   }}
 </style>
 </head>
-<body bgcolor="{_OUTER}" style="margin:0;padding:0;background:{_OUTER};">
+<body bgcolor="{_PAPER}" style="margin:0;padding:0;background:{_PAPER};">
 <div style="display:none;max-height:0;overflow:hidden;opacity:0;mso-hide:all;">{_e(preheader)}&#8199;&#847;&#8199;&#847;&#8199;&#847;&#8199;&#847;</div>
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="{_OUTER}" style="background:{_OUTER};">
-<tr><td align="center" style="padding:32px 12px 40px 12px;">
-<table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:600px;border-radius:12px;overflow:hidden;background:{_PAPER};border:1px solid {_RULE};">
-<tr><td bgcolor="#F2F4F0" style="font-size:0;line-height:0;background:#F2F4F0;">
-<a href="{_e(site)}" target="_blank"><img src="{_e(_asset("header.jpg"))}" width="600" alt="Sapling" style="display:block;width:100%;max-width:600px;height:auto;border:0;"></a>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="{_PAPER}" style="background:{_PAPER};">
+<tr><td align="center" style="padding:0 0 40px 0;">
+<table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:600px;background:{_PAPER};">
+<tr><td bgcolor="#F2F4F0" style="font-size:0;line-height:0;background:#F2F4F0;border-radius:{R_LG}px {R_LG}px 0 0;">
+<a href="{_e(site)}" target="_blank"><img src="{_e(_asset("header.jpg"))}" width="600" alt="Sapling" style="display:block;width:100%;max-width:600px;height:auto;border:0;border-radius:{R_LG}px {R_LG}px 0 0;"></a>
 </td></tr>
-{_spacer(12)}
+{_spacer(28)}
 {"".join(rows)}
 {_spacer(40)}
 </table>
 <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:600px;">
-<tr><td class="px" align="left" style="padding:20px 48px 0 48px;font-family:{_SANS};font-size:13px;line-height:1.7;color:{_MUTED};">
+<tr><td class="px" align="left" style="padding:20px 20px 0 20px;font-family:{_SANS};font-size:{_FS_MD}px;line-height:1.7;color:{_MUTED};">
 {_e(reason)}{unsubscribe}
 </td></tr>
 </table>
@@ -393,9 +427,7 @@ def welcome(first_name: str | None, *, app_url: str, unsubscribe_url: str) -> tu
     reason = "You're getting this because you just signed in to Sapling for the first time."
     rows = [
         _row(_headline(heading) + _lede(lede) + _button(app_url, "Open Sapling")),
-        _spacer(32),
-        _row(_progress(2)),
-        _spacer(32),
+        _spacer(40),
         _row(_section_title("Four things to try this week") + _points(tips)),
         _spacer(8),
         _rule(),
@@ -485,7 +517,7 @@ def broadcast(
     reason = "You're getting this because you signed up for Sapling."
     rows = [
         _row(_headline(clean_subject)),
-        _spacer(22),
+        _spacer(24),
         _row(render_plain_text_body(html_body, links)),
         _spacer(8),
         _row(_signoff("Thanks!")),
@@ -518,7 +550,7 @@ def ops_alert(
     subject = f"[Sapling alert] {title}"
     rows = [
         _row(_headline(title)),
-        _spacer(22),
+        _spacer(24),
         _row(_points(points)),
         _row(_button(dashboard_url, "Open admin analytics")),
     ]
