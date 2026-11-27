@@ -5,8 +5,9 @@ boxed sections) topped with the landing page's hero, frozen into an image (the
 pale ground, the point cloud and the wordmark) that fades into the page, then
 Aleo headlines and SUSE body text, everything left-aligned. Nested frames read
 as boxes inside boxes on a phone, where the mail client already frames the
-message, so there is one column and nothing else, and the text runs flush
-with the header's edges (16px in from the screen edge on a phone). The
+message, so there is one column and nothing else, and the text sits 20px in
+from the header's edges. That padding is inline, not a media query: the Gmail
+app ignores media queries, which left text flush with the screen edge. The
 waitlist and approval emails carry a progress line (Signed up, Approved, Signed in) so a student can
 see where they are; the welcome email drops it, since signing in is the very
 thing that sent it. Broadcasts have no progress line either.
@@ -67,7 +68,7 @@ def _asset(name: str) -> str:
 # ── Building blocks ─────────────────────────────────────────────────────────
 
 
-def _row(inner: str, *, pad: str = "0") -> str:
+def _row(inner: str, *, pad: str = "0 20px") -> str:
     """One row of the card. `inner` must already be safe HTML."""
     return (
         f'<tr><td class="px" bgcolor="{_PAPER}" align="left" '
@@ -247,7 +248,6 @@ def _layout(
   body {{ margin:0; padding:0; -webkit-text-size-adjust:100%; }}
   a {{ color:{BRAND}; }}
   @media (max-width: 620px) {{
-    .px {{ padding-left:16px !important; padding-right:16px !important; }}
     .h1 {{ font-size:28px !important; }}
   }}
 </style>
@@ -265,7 +265,7 @@ def _layout(
 {_spacer(40)}
 </table>
 <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:600px;">
-<tr><td class="px" align="left" style="padding:20px 0 0 0;font-family:{_SANS};font-size:13px;line-height:1.7;color:{_MUTED};">
+<tr><td class="px" align="left" style="padding:20px 20px 0 20px;font-family:{_SANS};font-size:13px;line-height:1.7;color:{_MUTED};">
 {_e(reason)}{unsubscribe}
 </td></tr>
 </table>
