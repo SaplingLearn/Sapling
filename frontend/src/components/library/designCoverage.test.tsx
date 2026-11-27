@@ -102,6 +102,14 @@ const NOTES_DESIGN = read("../notes/__fixtures__/notes.design.html");
  * the faithful offset at 40px is 46 — the rebuild writes `CONTROL_H + 6` so
  * the menu keeps following the button. It is the only `top: 54px` there.
  *
+ * The search field's clear button: the handoff draws it 32x32 on a #F4F1EA
+ * fill, immediately beside the 24x24 `/` keyboard hint it replaces. Owner's
+ * call 2026-11-26 — typing one character swapped a quiet key-cap for a filled
+ * button a third larger, which jumped the row and read as an oversized X — so
+ * it takes the hint's own box instead. It is the only 32x32 box, the only
+ * #F4F1EA fill and the only #3F3B31 ink in the prototype, so allowlisting
+ * them hides nothing else. The radius and glyph are still the handoff's.
+ *
  * The Trash button: the handoff draws a Trash chip beside the course
  * switcher — a drop target whose can lid tilts on drag-over and whose count
  * bumps when something lands. Owner's calls 2026-11-25: first the count went
@@ -122,6 +130,8 @@ const EXPECTED_DEVIATIONS = [
   /^grid-template-rows: auto minmax\(0, 1fr\)$/,
   /^height: 48px$/, /^top: 54px$/,
   /^align-items: baseline$/,
+  /^width: 32px$/, /^height: 32px$/,
+  /^background: #F4F1EA$/, /^color: #3F3B31$/,
 ];
 
 /**

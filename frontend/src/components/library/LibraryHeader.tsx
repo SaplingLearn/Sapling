@@ -283,11 +283,19 @@ export function LibraryHeader(props: LibraryHeaderProps) {
             onClick={() => onQuery("")}
             aria-label="Clear search"
             style={{
-              width: 32, height: 32, display: "grid", placeItems: "center", border: 0,
-              borderRadius: 8, background: "#F4F1EA", color: "#3F3B31", cursor: "pointer",
+              // The handoff draws this at 32x32 with a filled background,
+              // next to a 24x24 `/` hint. Typing one character swapped a
+              // quiet 24px key-cap for a filled 32px button, which jumped the
+              // row and read as an oversized X. Owner's call 2026-11-26: the
+              // two occupy the same box, so the control that replaces the
+              // hint is the same size as the hint. Only the box and the ink
+              // move; the radius and the glyph are the handoff's.
+              width: 24, height: 24, display: "grid", placeItems: "center", border: 0,
+              borderRadius: 6, background: "transparent", color: "#6F6857",
+              marginRight: 4, cursor: "pointer",
             }}
           >
-            <Glyph name="cross" size={12} />
+            <Glyph name="cross" size={11} />
           </button>
         ) : (
           <span title="Press / to search" style={{
