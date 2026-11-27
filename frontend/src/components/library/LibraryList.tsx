@@ -115,8 +115,12 @@ export function FolderRow(props: FolderRowProps) {
         animationDelay: delay,
         display: "grid", gridTemplateColumns: columns, gap: 12, minWidth: 0,
         alignItems: "center", padding: "10px 14px", borderRadius: 12,
-        background: dragOver ? "#DCE8CE" : selected ? "#EDE9E0" : "transparent",
-        boxShadow: dragOver ? "inset 0 0 0 1.5px #597536" : "none",
+        // Same three states the prototype gives a folder: the drop tint, the
+        // selected green, nothing.
+        background: dragOver ? "#DCE8CE" : selected ? "#EBF0E1" : "transparent",
+        boxShadow: dragOver
+          ? "inset 0 0 0 1.5px #597536"
+          : selected ? "inset 0 0 0 1px rgba(68,93,34,0.25)" : "none",
         cursor: "pointer",
       }}
     >
@@ -197,9 +201,15 @@ export function DocRow(props: DocRowProps) {
         animationDelay: view.delay,
         display: "grid", gridTemplateColumns: columns, gap: 12, minWidth: 0,
         alignItems: "center", padding: "12px 14px", borderRadius: 12,
-        // The current row (a click, or the arrow keys) is a neutral tint with no
-        // outline, so it never reads as checked or as the green selection bar.
-        background: selected ? "#EDE9E0" : "transparent",
+        // The current row (a click, or the arrow keys) is the handoff's own
+        // green, with its hairline ring: `bg: on ? "#EBF0E1"`, `ring: on ?
+        // "inset 0 0 0 1px rgba(68,93,34,0.25)"`. The rebuild had made it a
+        // neutral tint to keep it clear of the checked state; owner's call
+        // 2026-11-27 puts the prototype's colour back. Checked rows stay
+        // distinct by their checkbox and the bulk bar, as they do in the
+        // prototype, which tints the current row green there too.
+        background: selected ? "#EBF0E1" : "transparent",
+        boxShadow: selected ? "inset 0 0 0 1px rgba(68,93,34,0.25)" : "none",
         cursor: "pointer",
         opacity: dimmed ? 0.45 : 1,
       }}

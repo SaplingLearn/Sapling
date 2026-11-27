@@ -325,9 +325,11 @@ describe("what the redesign adds, end to end", () => {
     const row = screen.getByTestId("library-doc-d1");
     fireEvent.click(row);
     expect(row.getAttribute("aria-selected")).toBe("true");
-    // A neutral tint with no outline: never the selection bar's green.
-    expect(row.style.background).not.toBe("");
-    expect(row.style.boxShadow).toBe("");
+    // The prototype's own green for the current row, with its hairline ring
+    // (owner's call 2026-11-27, replacing the rebuild's neutral tint).
+    // jsdom reports the computed form; rgb(235,240,225) IS #EBF0E1.
+    expect(row.style.background.replace(/\s+/g, "")).toBe("rgb(235,240,225)");
+    expect(row.style.boxShadow).toBe("inset 0 0 0 1px rgba(68,93,34,0.25)");
 
     fireEvent.click(screen.getByLabelText("Select all"));
     expect(row.getAttribute("aria-selected")).toBe("false");
