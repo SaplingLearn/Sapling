@@ -5,9 +5,11 @@ boxed sections) topped with the landing page's hero, frozen into an image (the
 pale ground, the point cloud and the wordmark) that fades into the page, then
 Aleo headlines and SUSE body text, everything left-aligned. Nested frames read
 as boxes inside boxes on a phone, where the mail client already frames the
-message, so there is one column and nothing else, and the text sits 20px in
-from the header's edges. That padding is inline, not a media query: the Gmail
-app ignores media queries, which left text flush with the screen edge. The
+message, so there is one column and nothing else. On a desktop the text runs
+flush with the header's edges; on a phone it sits 20px in. The 20px is the
+inline default and a min-width media query removes it on wide screens, not
+the other way round: the Gmail phone app ignores media queries, and a missed
+rule there must leave the padding, not text against the screen edge. The
 waitlist and approval emails carry a progress line (Signed up, Approved, Signed in) so a student can
 see where they are; the welcome email drops it, since signing in is the very
 thing that sent it. Broadcasts have no progress line either.
@@ -276,6 +278,9 @@ def _layout(
   a {{ color:{BRAND}; }}
   @media (max-width: 620px) {{
     .h1 {{ font-size:{_FS_4XL}px !important; }}
+  }}
+  @media (min-width: 621px) {{
+    .px {{ padding-left:0 !important; padding-right:0 !important; }}
   }}
 </style>
 </head>
