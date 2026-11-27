@@ -5,7 +5,6 @@
     "src/components/Gradebook/GradescopeSyncModal.tsx": 1173,
     "src/components/graph/KnowledgeGraph2D.tsx": 1374,
     "src/components/screens/Admin.tsx": 1056,
-    "src/components/screens/Calendar.tsx": 817,
     "src/components/screens/Dashboard.tsx": 1035,
     "src/components/screens/Gradebook/Course.tsx": 1274,
     "src/components/screens/Learn.tsx": 1876,

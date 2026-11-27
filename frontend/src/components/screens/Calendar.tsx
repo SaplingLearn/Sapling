@@ -1,5 +1,4 @@
 "use client";
-import { PanelModal } from "@/components/ui/PanelModal";
 import React from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { AnimatePresence, motion, MotionGlobalConfig, useReducedMotion } from "framer-motion";
@@ -39,6 +38,9 @@ import { now } from "@/lib/testMode";
 import { humanizeError } from "@/lib/errorMessage";
 import { CALENDAR_ERROR_PARAM, calendarConnectError } from "@/lib/calendarConnect";
 import { cn } from "@/lib/cn";
+import { useFlag } from "@/context/FlagsContext";
+import { CalendarV2 } from "../calendar/v2/CalendarV2";
+import { GOOGLE_EVENTS_DAYS, GoogleEventsModal } from "../calendar/GoogleEventsModal";
 
 type View = "month" | "week" | "day" | "table";
 
@@ -86,6 +88,7 @@ export function Calendar() {
   // The global CSS reduced-motion rule only neutralises CSS transitions;
   // framer's JS-driven animations need this explicit opt-out.
   const prefersReduced = useReducedMotion();
+  const v2 = useFlag("calendar_v2") === "on";
 
   const [assignments, setAssignments] = React.useState<Assignment[]>([]);
   const [courses, setCourses] = React.useState<EnrolledCourse[]>([]);
@@ -205,7 +208,7 @@ export function Calendar() {
   const doImport = async () => {
     setImportingGoogle(true);
     try {
-      const res = await importGoogleEvents(userId, 60);
+      const res = await importGoogleEvents(userId, GOOGLE_EVENTS_DAYS);
       setGoogleEvents(res.events || []);
     } catch (err) {
       toast.error(humanizeError(err, "Couldn't import those events."));
@@ -301,6 +304,12 @@ export function Calendar() {
 
   return (
     <div>
+      {v2 && !loading && !loadError ? (
+        <CalendarV2 assignments={assignments} courses={courses} now={new Date(now())} googleConnected={googleConnected}
+          importingGoogle={importingGoogle} disconnectArmed={disconnectConfirm.armed} onImportSyllabus={() => setUploadOpen(true)}
+          onConnectGoogle={connect} onSyncGoogle={doSync} onViewGoogleEvents={doImport} onDisconnectGoogle={disconnectConfirm.trigger}
+          onExportCsv={exportCsv} onReload={() => void load()} />
+      ) : (<>
       <TopBar
         title="Calendar"
         subtitle={`${rangeLabel} · ${assignments.length} assignment${assignments.length === 1 ? "" : "s"}`}
@@ -341,6 +350,7 @@ export function Calendar() {
           )}
         </motion.div>
       </AnimatePresence>
+      </>)}
 
       <DocumentUploadModal
         open={uploadOpen}
@@ -393,57 +403,6 @@ function LoadErrorBanner({ message, onRetry }: { message: string; onRetry: () =>
         </button>
       </div>
     </div>
-  );
-}
-
-function GoogleEventsModal({
-  events, onClose,
-}: {
-  events: GoogleEvent[];
-  onClose: () => void;
-}) {
-  return (
-    <PanelModal label="Upcoming Google Calendar events" onClose={onClose} maxWidth="max-w-160" maxHeight="max-h-[82vh]">
-        <div className="p-5">
-          {events.length === 0 ? (
-            <div className="text-text-muted text-md text-center p-7">
-              No upcoming events in the next 60 days.
-            </div>
-          ) : (
-            <div className="flex flex-col gap-2.5">
-              {events.map(e => (
-                <div key={e.google_event_id} className="card p-3">
-                  <div className="flex justify-between items-baseline gap-2.5">
-                    <div className="font-semibold text-md">{e.title}</div>
-                    <span className="chip text-xs">
-                      {e.all_day ? "All day" : e.start_datetime?.slice(11, 16) || ""}
-                    </span>
-                  </div>
-                  <div className="text-xs text-text-muted mt-1">
-                    {e.start_date} {e.end_date && e.end_date !== e.start_date ? `→ ${e.end_date}` : ""}
-                    {e.location ? ` · ${e.location}` : ""}
-                  </div>
-                  {e.description && (
-                    <div className="text-sm text-text-dim mt-1.5 leading-[1.5]">
-                      {e.description.length > 140 ? e.description.slice(0, 140) + "…" : e.description}
-                    </div>
-                  )}
-                  {e.html_link && (
-                    <a
-                      href={e.html_link}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-xs text-accent mt-1.5 inline-block"
-                    >
-                      Open in Google Calendar →
-                    </a>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-    </PanelModal>
   );
 }
 
