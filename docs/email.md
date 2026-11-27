@@ -134,7 +134,10 @@ takes its sent count from `email_sends`. Two clicks start one run.
 that fades into one flat white column (no outer background, card border or
 boxed sections, which stack into boxes inside boxes on a phone), then Aleo
 headlines and SUSE body text, all left-aligned, 20px in from the header's
-edges. The padding is inline because the Gmail app ignores media queries. The waitlist and approval
+edges. The padding is inline because the Gmail app ignores media queries.
+Colours, type sizes and the button are the app's design tokens
+(`frontend/src/styles/tokens.css`), copied into `email_templates.TOKENS`;
+`tests/test_email_tokens.py` fails when one drifts. The waitlist and approval
 emails show a Signed up / Approved / Signed in progress line; the welcome email
 and broadcasts don't. The "you're in" and welcome
 emails greet the person by first name when it's known. Aleo and SUSE load from
