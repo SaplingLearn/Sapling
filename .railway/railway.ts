@@ -138,6 +138,8 @@ const FLAG_KILL_SWITCHES = [
   "stateless_rate_limit",
   "stateless_locks",
   "stateless_tutor_sessions",
+  // the calendar redesign (frontend only; shared so the switch reads the same everywhere)
+  "calendar_v2",
   // services/spend_alerts.py: the API's hourly admin alert emails. No job
   // reads it; shared so the switch reads the same on every service.
   "spend_alerts",

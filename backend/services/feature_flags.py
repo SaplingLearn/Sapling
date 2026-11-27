@@ -95,6 +95,15 @@ REGISTRY: dict[str, FlagDef] = {f.key: f for f in (
     # "on", so analytics stays on wherever it already was.
     FlagDef("product_analytics", ("off", "on"),
             "PostHog product analytics, frontend + backend (ADR 0028).", True),
+    # The calendar redesign (owner decision 2026-11-26; the Claude Design
+    # boards in frontend/src/components/calendar/v2/__fixtures__): Agenda
+    # first, a refined Month, Week, a Semester timeline, an item opened in a
+    # side panel. Frontend only, over the calendar's own routes.
+    FlagDef("calendar_v2", ("off", "on"),
+            "The redesigned calendar: Agenda (what is due, soonest first, with "
+            "countdowns), a refined Month, Week, and a Semester timeline with the "
+            "busiest week marked; each item opens in a side panel to edit, delete "
+            "or send to Google. Off: the calendar as before.", True),
     # #119: cross-provider LLM fallback (agents/_providers.py). Resolved
     # GLOBALLY (user_id=None — the model layer never sees a student), so only
     # the stored default and SAPLING_FLAG_LLM_FALLBACK (the kill switch)
