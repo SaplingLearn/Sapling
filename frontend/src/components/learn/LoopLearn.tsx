@@ -1498,9 +1498,7 @@ export function LoopLearn() {
   const rate = (rating: LoopRating) => {
     const sid = askRating;
     setAskRating(null); // one click answers it
-    if (sid) {
-      submitLoopRating(sid, rating).catch((err) => reportError(err, "Couldn't save your rating."));
-    }
+    if (sid) submitLoopRating(sid, rating).catch((err) => reportError(err, "Couldn't save your rating."));
   };
 
   const submitAttempt = async (idk: boolean) => {

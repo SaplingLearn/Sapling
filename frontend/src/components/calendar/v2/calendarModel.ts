@@ -25,6 +25,8 @@ export interface CalItem {
   color: string;
   notes: string;
   raw: Assignment;
+  /** No due date yet (undatedOf): `iso` is "" and `day` is not a date. */
+  undated?: boolean;
 }
 
 const DAY_MS = 86_400_000;
@@ -72,27 +74,39 @@ export function courseColors(courses: readonly EnrolledCourse[]): Map<string, st
 }
 
 /** The calendar's dated assignments as items, soonest first. */
-export function toItems(assignments: readonly Assignment[], courses: readonly EnrolledCourse[]): CalItem[] {
+function itemMaker(courses: readonly EnrolledCourse[]) {
   const colors = courseColors(courses);
   const byId = new Map(courses.map((c) => [c.course_id, c]));
+  return (a: Assignment, iso: string): CalItem => {
+    const course = a.course_id ? byId.get(a.course_id) : undefined;
+    return {
+      id: a.id,
+      title: a.title,
+      iso,
+      day: iso ? parseDay(iso) : new Date(Number.NaN),
+      kind: classifyAssessment(a.assignment_type, a.title) as ItemKind,
+      courseId: a.course_id ?? null,
+      course: course ? courseLabel(course) : a.course_code || a.course_name || "No course",
+      color: (a.course_id && colors.get(a.course_id)) || "var(--text-muted)",
+      notes: a.notes ?? "",
+      raw: a,
+      ...(iso ? {} : { undated: true }),
+    };
+  };
+}
+
+/** Assignments with no due date yet, by title: the agenda's "No date yet" list,
+ *  where each opens on the form so it can be given one. */
+export function undatedOf(assignments: readonly Assignment[], courses: readonly EnrolledCourse[]): CalItem[] {
+  const make = itemMaker(courses);
+  return assignments.filter((a) => !a.due_date).map((a) => make(a, "")).sort((x, y) => x.title.localeCompare(y.title));
+}
+
+export function toItems(assignments: readonly Assignment[], courses: readonly EnrolledCourse[]): CalItem[] {
+  const make = itemMaker(courses);
   return assignments
     .filter((a) => !!a.due_date)
-    .map((a) => {
-      const iso = String(a.due_date).slice(0, 10);
-      const course = a.course_id ? byId.get(a.course_id) : undefined;
-      return {
-        id: a.id,
-        title: a.title,
-        iso,
-        day: parseDay(iso),
-        kind: classifyAssessment(a.assignment_type, a.title) as ItemKind,
-        courseId: a.course_id ?? null,
-        course: course ? courseLabel(course) : a.course_code || a.course_name || "No course",
-        color: (a.course_id && colors.get(a.course_id)) || "var(--text-muted)",
-        notes: a.notes ?? "",
-        raw: a,
-      };
-    })
+    .map((a) => make(a, String(a.due_date).slice(0, 10)))
     .sort((x, y) => x.iso.localeCompare(y.iso) || x.title.localeCompare(y.title));
 }
 

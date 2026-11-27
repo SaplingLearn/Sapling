@@ -841,6 +841,7 @@ test("calendar redesign: every view, an item opened, empty and phone (calendar_v
     row("cal-q4", "Quiz 4", "2026-03-13", "quiz"), row("cal-mid2", "Midterm 2", "2026-03-20", "exam"),
     row("cal-mid3", "Midterm", "2026-03-30", "exam"), row("cal-prop", "Project proposal", "2026-03-31", "homework"),
     row("cal-prac", "Lab practical", "2026-04-01", "exam"),
+    { ...row("cal-read", "Reading response", "", "homework"), due_date: null },
   ];
   let served: object[] = dates;
   const { context, page } = await signIn(browser, USER_LOOP, "Lou Loop");
@@ -852,6 +853,7 @@ test("calendar redesign: every view, an item opened, empty and phone (calendar_v
     await expect(cal).toHaveAttribute("data-view", "agenda");
     await expect(page.getByTestId("calendar-item-cal-hw7")).toContainText("Tomorrow");
     await expect(page.getByTestId("calendar-prepare-cal-mid2")).toHaveAttribute("href", `/learn?course=${courseId}&milestone=cal-mid2`);
+    await expect(page.getByTestId("calendar-undated")).toContainText("Reading response");
     await expectAccessible(page, "calendar: agenda");
 
     const title = page.getByTestId("calendar-item-cal-mid2").getByRole("button", { name: /Midterm 2/ });
@@ -906,6 +908,7 @@ test("calendar redesign: every control, with motion on (calendar_v2 on)", async 
     row("cal-mid1", "Midterm Exam", "2026-03-02", "exam"), row("cal-hw7", "HW 7", "2026-03-12", "homework"),
     row("cal-q4", "Quiz 4", "2026-03-13", "quiz"), row("cal-mid2", "Midterm 2", "2026-03-20", "exam"),
     row("cal-mid3", "Midterm", "2026-03-30", "exam"),
+    { ...row("cal-read", "Reading response", "", "homework"), due_date: null },
   ];
   const writes: { method: string; url: string; body: string | null }[] = [];
   // motion explicitly on: headless Chromium can report reduced motion by default
@@ -992,13 +995,22 @@ test("calendar redesign: every control, with motion on (calendar_v2 on)", async 
       await expect(opener).toBeFocused();
     }
 
+    // an undated assignment: No date yet → Set a date opens its form; saving sends the date
+    await page.getByTestId("calendar-view-agenda").click();
+    await page.getByTestId("calendar-undated").getByRole("button", { name: /Set a date for Reading response/ }).click();
+    await expect(page.getByTestId("calendar-field-date")).toHaveValue("");
+    await page.getByTestId("calendar-field-date").fill("2026-03-25");
+    await page.getByTestId("calendar-panel-save").click();
+    await expect.poll(() => writes.find((w) => w.method === "PATCH" && w.url.includes("cal-read"))?.body ?? "").toContain("2026-03-25");
+    await expect(panel).toHaveCount(0);
+
     // Edit + Save sends a PATCH; Delete asks once, then sends a DELETE
     await page.getByTestId("calendar-view-agenda").click();
     await page.getByTestId("calendar-item-cal-mid2").getByRole("button", { name: /Midterm 2/ }).click();
     await page.getByTestId("calendar-panel-edit").click();
     await page.getByTestId("calendar-field-title").fill("Midterm 2 (room 101)");
     await page.getByTestId("calendar-panel-save").click();
-    await expect.poll(() => writes.find((w) => w.method === "PATCH")?.body ?? "").toContain("Midterm 2 (room 101)");
+    await expect.poll(() => writes.find((w) => w.method === "PATCH" && w.url.includes("cal-mid2"))?.body ?? "").toContain("Midterm 2 (room 101)");
     const del = page.getByTestId("calendar-panel-delete");
     await del.click();
     await expect(del).toHaveText("Click again to delete");

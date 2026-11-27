@@ -4,7 +4,7 @@
     "src/app/(shell)/notetaker/page.tsx": 1308,
     "src/components/Gradebook/GradescopeSyncModal.tsx": 1173,
     "src/components/graph/KnowledgeGraph2D.tsx": 1334,
-    "src/components/learn/LoopLearn.tsx": 2033,
+    "src/components/learn/LoopLearn.tsx": 2031,
     "src/components/screens/Admin.tsx": 1102,
     "src/components/screens/AdminAnalytics.tsx": 944,
     "src/components/screens/Dashboard.tsx": 972,

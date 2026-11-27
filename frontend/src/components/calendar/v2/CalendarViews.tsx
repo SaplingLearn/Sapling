@@ -20,6 +20,8 @@ export const VIEWS_COPY = {
     n === 1 && first ? `Show 1 earlier date (${first.title}, ${shortDate(first.day)})` : `Show ${plural(n, "earlier date")}`,
   hideEarlier: "Hide earlier dates",
   earlierName: "Earlier",
+  undatedName: "No date yet",
+  setDate: "Set a date",
   nothingAhead: "Nothing else is due. Import a syllabus or add a date to fill it in.",
   ready: (r: Pick<ExamReadiness, "ready" | "total">) => `${r.ready} of ${plural(r.total, "concept")} ready`,
   prepare: "Prepare",
@@ -117,7 +119,35 @@ function AgendaSection({ name, range, items, id, ...rest }: ItemProps & { name: 
   );
 }
 
-export function AgendaView({ earlier, groups, ...rest }: ItemProps & { earlier: CalItem[]; groups: AgendaGroup[] }) {
+/** Assignments with no due date: each opens on the form, to be given one. */
+function UndatedSection({ items, onOpen }: { items: CalItem[]; onOpen: ItemProps["onOpen"] }) {
+  return (
+    <section aria-labelledby="calendar-undated-h" className={styles.list} data-testid="calendar-undated">
+      <div className={styles.groupHead}>
+        <h2 id="calendar-undated-h" className={styles.h2}>{VIEWS_COPY.undatedName}</h2>
+      </div>
+      <ul className={styles.list}>
+        {items.map((it) => (
+          <li key={it.id} className={styles.row} data-testid={`calendar-undated-${it.id}`}>
+            <div className={styles.rowMain}>
+              <span className={styles.titleText}>{it.title}</span>
+              <div className={styles.meta}>
+                <span className={styles.course}><Swatch color={it.color} />{it.course}</span>
+                <KindLabel kind={it.kind} />
+              </div>
+            </div>
+            <div className={styles.rowEnd}>
+              <button type="button" className={styles.prepare} onClick={(e) => onOpen(it, e.currentTarget)}
+                aria-label={`${VIEWS_COPY.setDate} for ${it.title}`}>{VIEWS_COPY.setDate}</button>
+            </div>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+export function AgendaView({ earlier, groups, undated = [], ...rest }: ItemProps & { earlier: CalItem[]; groups: AgendaGroup[]; undated?: CalItem[] }) {
   const [showEarlier, setShowEarlier] = React.useState(false);
   return (
     <div className={styles.agenda} data-testid="calendar-agenda">
@@ -133,6 +163,7 @@ export function AgendaView({ earlier, groups, ...rest }: ItemProps & { earlier: 
       {groups.length === 0 ? <p className={styles.nothing}>{VIEWS_COPY.nothingAhead}</p> : groups.map((g) => (
         <AgendaSection key={g.key} id={`calendar-${g.key}-h`} name={g.name} range={g.range} items={g.items} {...rest} />
       ))}
+      {undated.length > 0 && <UndatedSection items={undated} onOpen={rest.onOpen} />}
     </div>
   );
 }

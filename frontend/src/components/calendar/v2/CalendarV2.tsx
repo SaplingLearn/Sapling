@@ -6,6 +6,7 @@
 // filter, an opened item, and an empty state for a calendar with nothing on it.
 import React from "react";
 import { useFlag } from "@/context/FlagsContext";
+import { LEARNING_LOOP_FLAG } from "@/lib/learningLoopFlag";
 import { useUser } from "@/context/UserContext";
 import type { Assignment, EnrolledCourse } from "@/lib/api";
 import { studyGuideHref } from "@/lib/toolHrefs";
@@ -13,7 +14,7 @@ import { TopBar } from "../../TopBar";
 import { Toggle } from "@/components/ui";
 import {
   addDays, agendaOf, busiestWeek, coursesOf, daysBetween, monthCells, monthTitle, rangeText,
-  semesterLanes, semesterStart, shortDate, startOfWeek, toItems, weekCells, weekLoads, weekdayShort, WEEKDAYS,
+  semesterLanes, semesterStart, shortDate, startOfWeek, toItems, undatedOf, weekCells, weekLoads, weekdayShort, WEEKDAYS,
   type CalItem,
 } from "./calendarModel";
 import { AgendaView, KindKey, MonthView, SemesterView, Swatch, WeekView } from "./CalendarViews";
@@ -109,9 +110,11 @@ function usePopover() {
   return { open, setOpen, ref, button };
 }
 
-function MoreMenu(p: Pick<CalendarV2Props, "googleConnected" | "importingGoogle" | "disconnectArmed" | "onConnectGoogle" | "onSyncGoogle" | "onViewGoogleEvents" | "onDisconnectGoogle" | "onExportCsv"> & { onAdd: () => void }) {
+function MoreMenu(p: Pick<CalendarV2Props, "googleConnected" | "importingGoogle" | "disconnectArmed" | "onConnectGoogle" | "onSyncGoogle" | "onViewGoogleEvents" | "onDisconnectGoogle" | "onExportCsv"> & { onAdd: (from: HTMLElement | null) => void }) {
   const { open, setOpen, ref, button } = usePopover();
-  const run = (fn: () => void, keepOpen = false) => () => { fn(); if (!keepOpen) setOpen(false); };
+  // Closing the menu removes the item just used: focus goes back to More
+  // (Add a date then moves it on into the panel it opens).
+  const run = (fn: () => void, keepOpen = false) => () => { fn(); if (!keepOpen) { setOpen(false); button.current?.focus(); } };
   return (
     <div className={styles.more} ref={ref}>
       <button ref={button} type="button" className={styles.iconBtn} aria-label={CALENDAR_COPY.more} aria-expanded={open}
@@ -120,7 +123,7 @@ function MoreMenu(p: Pick<CalendarV2Props, "googleConnected" | "importingGoogle"
       </button>
       {open && (
         <div id="calendar-more-menu" className={styles.menu} data-testid="calendar-more-menu">
-          <button type="button" className={styles.menuItem} onClick={run(p.onAdd)} data-testid="calendar-add-date">{CALENDAR_COPY.addDate}</button>
+          <button type="button" className={styles.menuItem} onClick={() => { p.onAdd(button.current); setOpen(false); }} data-testid="calendar-add-date">{CALENDAR_COPY.addDate}</button>
           <button type="button" className={styles.menuItem} onClick={run(p.onExportCsv)}>{CALENDAR_COPY.exportCsv}</button>
           {p.googleConnected ? (
             <>
@@ -234,7 +237,7 @@ function WeekStrip({ today, items, onPick }: { today: Date; items: CalItem[]; on
   );
 }
 
-function EmptyCalendar({ onImport, onAdd, onConnect, googleConnected }: { onImport: () => void; onAdd: () => void; onConnect: () => void; googleConnected: boolean }) {
+function EmptyCalendar({ onImport, onAdd, onConnect, googleConnected }: { onImport: () => void; onAdd: (from: HTMLElement) => void; onConnect: () => void; googleConnected: boolean }) {
   return (
     <section aria-labelledby="calendar-empty-h" className={styles.empty} data-testid="calendar-empty">
       <div className={styles.form}>
@@ -248,11 +251,31 @@ function EmptyCalendar({ onImport, onAdd, onConnect, googleConnected }: { onImpo
       </ol>
       <div className={styles.emptyActions}>
         <button type="button" className="btn btn--primary" onClick={onImport} data-testid="calendar-empty-import">{CALENDAR_COPY.emptyImport}</button>
-        <button type="button" className="btn" onClick={onAdd} data-testid="calendar-empty-add">{CALENDAR_COPY.emptyAdd}</button>
+        <button type="button" className="btn" onClick={(e) => onAdd(e.currentTarget)} data-testid="calendar-empty-add">{CALENDAR_COPY.emptyAdd}</button>
         {!googleConnected && <button type="button" className={styles.textBtn} onClick={onConnect}>{CALENDAR_COPY.emptyGoogle}</button>}
       </div>
     </section>
   );
+}
+
+/** The opened item, held by id (null: a new date) so the panel shows it as
+ *  reloaded after a save, and closed when a reload no longer has it. Closing
+ *  hands focus back to the control that opened it, or to More if that is gone. */
+function useOpenItem(all: CalItem[], undated: CalItem[]) {
+  const [open, setOpen] = React.useState<{ id: string | null } | null>(null);
+  const opener = React.useRef<HTMLElement | null>(null);
+  const item = open?.id ? all.find((i) => i.id === open.id) ?? undated.find((i) => i.id === open.id) ?? null : null;
+  const gone = !!open?.id && !item;
+  React.useEffect(() => { if (gone) setOpen(null); }, [gone]);
+  const openItem = (it: CalItem | null, from?: HTMLElement | null) => { opener.current = from ?? null; setOpen({ id: it?.id ?? null }); };
+  const closeItem = () => {
+    setOpen(null);
+    requestAnimationFrame(() => {
+      const back = opener.current?.isConnected ? opener.current : document.querySelector<HTMLElement>('[data-testid="calendar-more"]');
+      back?.focus();
+    });
+  };
+  return { isOpen: open !== null && !gone, item, openItem, closeItem };
 }
 
 function usePeriod(view: View, today: Date) {
@@ -283,21 +306,22 @@ export function CalendarV2(props: CalendarV2Props) {
   const [view, setView] = React.useState<View>("agenda");
   const period = usePeriod(view, today);
   const [hidden, setHidden] = React.useState<ReadonlySet<string>>(new Set());
-  const [open, setOpen] = React.useState<{ item: CalItem | null } | null>(null);
-  const opener = React.useRef<HTMLElement | null>(null);
-  const milestones = useFlag("milestones") === "on";
+  // `milestones` is a loop flag, and /api/flags does not apply the loop's gate:
+  // the calendar (outside the loop) checks the loop itself.
+  const loopOn = useFlag(LEARNING_LOOP_FLAG) === "on";
+  const milestones = useFlag("milestones") === "on" && loopOn;
   const tutorShown = useFlag("hide_tutor") !== "on";
   const studyShown = useFlag("hide_study") !== "on";
 
   const all = React.useMemo(() => toItems(props.assignments, props.courses), [props.assignments, props.courses]);
+  const undated = React.useMemo(() => undatedOf(props.assignments, props.courses), [props.assignments, props.courses]);
+  const { isOpen, item: openItemNow, openItem, closeItem } = useOpenItem(all, undated);
   const items = React.useMemo(() => all.filter((i) => !hidden.has(i.courseId ?? "none")), [all, hidden]);
   const upcomingExams = React.useMemo(() => all.filter((i) => i.kind === "Exam" && daysBetween(today, i.day) >= 0), [all, today]);
   const readiness = useExamReadiness(upcomingExams, props.courses, milestones);
   const prepareHref = (i: CalItem) => (milestones && tutorShown && i.courseId
     ? `/learn?course=${encodeURIComponent(i.courseId)}&milestone=${encodeURIComponent(i.id)}` : null);
 
-  const openItem = (item: CalItem | null, from?: HTMLElement | null) => { opener.current = from ?? null; setOpen({ item }); };
-  const closeItem = () => { setOpen(null); requestAnimationFrame(() => opener.current?.focus()); };
   const toggleCourse = (id: string | null) => setHidden((h) => {
     if (id === null) return new Set();
     const next = new Set(h);
@@ -320,16 +344,18 @@ export function CalendarV2(props: CalendarV2Props) {
       <button type="button" className="btn btn--sm btn--primary" onClick={props.onImportSyllabus} data-testid="calendar-import-syllabus">
         {CALENDAR_COPY.importSyllabus}
       </button>
-      <MoreMenu {...props} onAdd={() => openItem(null)} />
+      <MoreMenu {...props} onAdd={(from) => openItem(null, from)} />
     </>
   );
 
   return (
     <>
+      {/* While an item is open the calendar behind it is inert: the panel is modal. */}
+      <div className={styles.shell} inert={isOpen} data-testid="calendar-shell">
       <TopBar title={CALENDAR_COPY.title} actions={actions} />
       <div className={styles.page} data-testid="calendar-v2" data-view={view}>
-        {all.length === 0 ? (
-          <EmptyCalendar onImport={props.onImportSyllabus} onAdd={() => openItem(null)} onConnect={props.onConnectGoogle} googleConnected={props.googleConnected} />
+        {all.length === 0 && undated.length === 0 ? (
+          <EmptyCalendar onImport={props.onImportSyllabus} onAdd={(from) => openItem(null, from)} onConnect={props.onConnectGoogle} googleConnected={props.googleConnected} />
         ) : (
           <>
             {view !== "agenda" && (
@@ -352,7 +378,7 @@ export function CalendarV2(props: CalendarV2Props) {
                 <>
                   <WeekStrip today={today} items={items} onPick={pickDay} />
                   <div className={styles.agendaLayout}>
-                    <AgendaView earlier={agenda.earlier} groups={agenda.groups} {...itemProps} />
+                    <AgendaView earlier={agenda.earlier} groups={agenda.groups} undated={undated} {...itemProps} />
                     <aside className={styles.rail} aria-label="At a glance">
                       <MiniMonth today={today} items={items} onPick={pickDay} />
                       <BusiestCard items={items} today={today} prepareHref={prepareHref} />
@@ -376,11 +402,12 @@ export function CalendarV2(props: CalendarV2Props) {
           </>
         )}
       </div>
-      {open && (
-        <ItemPanel item={open.item} userId={userId} courses={props.courses} today={today}
-          readiness={open.item ? readiness.get(open.item.id) ?? null : null}
-          prepareHref={open.item ? prepareHref(open.item) : null}
-          studyHref={open.item && studyShown && open.item.courseId ? studyGuideHref({ course: open.item.courseId }) : null}
+      </div>
+      {isOpen && (
+        <ItemPanel item={openItemNow} userId={userId} courses={props.courses} today={today}
+          readiness={openItemNow ? readiness.get(openItemNow.id) ?? null : null}
+          prepareHref={openItemNow && !openItemNow.undated ? prepareHref(openItemNow) : null}
+          studyHref={openItemNow && studyShown && openItemNow.courseId ? studyGuideHref({ course: openItemNow.courseId }) : null}
           googleConnected={props.googleConnected} onClose={closeItem}
           onChanged={(closed) => { props.onReload(); if (closed) closeItem(); }} />
       )}

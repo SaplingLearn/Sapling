@@ -126,10 +126,45 @@ describe("Agenda (the default)", () => {
 
   it("with milestones on, an exam shows its readiness and Prepare opens its milestone in the Tutor", async () => {
     flags.milestones = "on";
+    flags.learning_loop = "on";
     renderCalendar();
     const row = screen.getByTestId("calendar-item-mid2");
     await waitFor(() => expect(row.textContent).toContain("1 of 2 concepts ready"));
     expect(within(row).getByTestId("calendar-prepare-mid2").getAttribute("href")).toBe("/learn?course=cs&milestone=mid2");
+  });
+
+  it("milestones is a loop flag: with the loop off the calendar shows no readiness and no Prepare, and reads no graph", async () => {
+    flags.milestones = "on"; // stored on, but /api/flags does not apply the loop's gate
+    renderCalendar();
+    await act(async () => {});
+    expect(screen.queryByTestId("calendar-prepare-mid2")).toBeNull();
+    expect(screen.getByTestId("calendar-item-mid2").textContent).not.toContain("concepts ready");
+    expect(api.getGraph).not.toHaveBeenCalled();
+  });
+
+  it("an assignment with no date is listed under No date yet, and Set a date opens its form", async () => {
+    const undated = { ...a("read", "Reading response", "", "cs"), due_date: null } as unknown as Assignment;
+    const props = renderCalendar({ assignments: [...ASSIGNMENTS, undated] });
+    const section = screen.getByTestId("calendar-undated");
+    expect(within(section).getByText("Reading response")).toBeTruthy();
+    fireEvent.click(within(section).getByRole("button", { name: /Set a date for Reading response/ }));
+    const panel = screen.getByTestId("calendar-panel");
+    expect(within(panel).getByTestId("calendar-panel-form")).toBeTruthy();
+    expect((within(panel).getByTestId("calendar-field-date") as HTMLInputElement).value).toBe("");
+    await act(async () => { fireEvent.click(within(panel).getByTestId("calendar-panel-save")); });
+    expect(within(panel).getByRole("alert").textContent).toBe(PANEL_COPY.needDate);
+    fireEvent.change(within(panel).getByTestId("calendar-field-date"), { target: { value: "2026-03-25" } });
+    await act(async () => { fireEvent.click(within(panel).getByTestId("calendar-panel-save")); });
+    expect(api.updateAssignment).toHaveBeenCalledWith("read", "u1", expect.objectContaining({ due_date: "2026-03-25" }));
+    expect(props.onReload).toHaveBeenCalled();
+    expect(screen.queryByTestId("calendar-panel")).toBeNull();
+  });
+
+  it("only undated assignments: no empty state, the No date yet list instead", () => {
+    const undated = { ...a("read", "Reading response", "", "cs"), due_date: null } as unknown as Assignment;
+    renderCalendar({ assignments: [undated] });
+    expect(screen.queryByTestId("calendar-empty")).toBeNull();
+    expect(screen.getByTestId("calendar-undated")).toBeTruthy();
   });
 
   it("the course filter is one dropdown: untick a course to hide it, All courses brings it back, Escape closes it", () => {
@@ -211,14 +246,48 @@ describe("the item panel", () => {
     const panel = screen.getByTestId("calendar-panel");
     expect(document.activeElement?.textContent).toBe("HW 7");
     fireEvent.click(within(panel).getByTestId("calendar-panel-edit"));
+    // Edit removes the Edit button: focus moves to the form's first field
+    expect(document.activeElement).toBe(within(panel).getByTestId("calendar-field-title"));
     fireEvent.change(within(panel).getByTestId("calendar-field-title"), { target: { value: "HW 7: Hash tables" } });
     fireEvent.change(within(panel).getByTestId("calendar-field-date"), { target: { value: "2026-03-13" } });
     await act(async () => { fireEvent.click(within(panel).getByTestId("calendar-panel-save")); });
     expect(api.updateAssignment).toHaveBeenCalledWith("hw7", "u1", expect.objectContaining({ title: "HW 7: Hash tables", due_date: "2026-03-13", course_id: "cs" }));
     expect(props.onReload).toHaveBeenCalled();
-    fireEvent.keyDown(window, { key: "Escape" });
+    // Saving removes Save: focus goes back to Edit
+    expect(document.activeElement).toBe(within(panel).getByTestId("calendar-panel-edit"));
+    fireEvent.keyDown(document.activeElement!, { key: "Escape" });
     expect(screen.queryByTestId("calendar-panel")).toBeNull();
     await waitFor(() => expect(document.activeElement).toBe(title));
+  });
+
+  it("Cancel hands focus back to Edit; the calendar behind an open panel is inert", () => {
+    renderCalendar();
+    fireEvent.click(within(screen.getByTestId("calendar-item-hw7")).getByRole("button", { name: /HW 7/ }));
+    expect(screen.getByTestId("calendar-shell").hasAttribute("inert")).toBe(true);
+    const panel = screen.getByTestId("calendar-panel");
+    fireEvent.click(within(panel).getByTestId("calendar-panel-edit"));
+    fireEvent.click(within(panel).getByRole("button", { name: PANEL_COPY.cancel }));
+    expect(document.activeElement).toBe(within(panel).getByTestId("calendar-panel-edit"));
+    fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+    expect(screen.getByTestId("calendar-shell").hasAttribute("inert")).toBe(false);
+  });
+
+  it("after a save the open panel shows the reloaded item, not the one it opened with", () => {
+    const base = {
+      courses: COURSES, now: NOW, googleConnected: false, importingGoogle: false, disconnectArmed: false,
+      onImportSyllabus: vi.fn(), onConnectGoogle: vi.fn(), onSyncGoogle: vi.fn(), onViewGoogleEvents: vi.fn(),
+      onDisconnectGoogle: vi.fn(), onExportCsv: vi.fn(), onReload: vi.fn(),
+    };
+    const view = render(<CalendarV2 {...base} assignments={ASSIGNMENTS} />);
+    fireEvent.click(within(screen.getByTestId("calendar-item-hw7")).getByRole("button", { name: /HW 7/ }));
+    const renamed = ASSIGNMENTS.map((x) => (x.id === "hw7" ? { ...x, title: "HW 7: Hash tables", course_id: "ma" } : x));
+    view.rerender(<CalendarV2 {...base} assignments={renamed} />);
+    const panel = screen.getByTestId("calendar-panel");
+    expect(within(panel).getByRole("heading", { level: 2 }).textContent).toBe("HW 7: Hash tables");
+    expect(panel.textContent).toContain("MA 123");
+    // and deleted elsewhere: the panel closes
+    view.rerender(<CalendarV2 {...base} assignments={ASSIGNMENTS.filter((x) => x.id !== "hw7")} />);
+    expect(screen.queryByTestId("calendar-panel")).toBeNull();
   });
 
   it("Delete asks twice, then deletes and closes", async () => {
@@ -232,6 +301,31 @@ describe("the item panel", () => {
     expect(api.deleteAssignment).toHaveBeenCalledWith("q4", "u1");
     expect(props.onReload).toHaveBeenCalled();
     expect(screen.queryByTestId("calendar-panel")).toBeNull();
+  });
+
+  it("a failed delete keeps the panel open and says so", async () => {
+    api.deleteAssignment.mockRejectedValueOnce(new Error("boom"));
+    const props = renderCalendar();
+    fireEvent.click(within(screen.getByTestId("calendar-item-q4")).getByRole("button", { name: /Quiz 4/ }));
+    const del = screen.getByTestId("calendar-panel-delete");
+    fireEvent.click(del);
+    await act(async () => { fireEvent.click(del); });
+    expect(screen.getByTestId("calendar-panel")).toBeTruthy();
+    expect(screen.getByTestId("calendar-panel-delete-error").getAttribute("role")).toBe("alert");
+    expect(props.onReload).not.toHaveBeenCalled();
+  });
+
+  it("a More action that only closes the menu hands focus back to More; Add a date's panel returns it there", async () => {
+    const props = renderCalendar();
+    const more = screen.getByTestId("calendar-more");
+    fireEvent.click(more);
+    fireEvent.click(screen.getByRole("button", { name: CALENDAR_COPY.exportCsv }));
+    expect(props.onExportCsv).toHaveBeenCalled();
+    expect(document.activeElement).toBe(more);
+    fireEvent.click(more);
+    fireEvent.click(screen.getByTestId("calendar-add-date"));
+    fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+    await waitFor(() => expect(document.activeElement).toBe(more));
   });
 
   it("More → Add a date saves a new one; Google sends one when connected", async () => {
@@ -255,6 +349,7 @@ describe("the item panel", () => {
 
   it("an exam's panel lists its concepts' levels and the ways to prepare, with milestones on", async () => {
     flags.milestones = "on";
+    flags.learning_loop = "on";
     renderCalendar();
     await waitFor(() => expect(screen.getByTestId("calendar-item-mid2").textContent).toContain("concepts ready"));
     fireEvent.click(within(screen.getByTestId("calendar-item-mid2")).getByRole("button", { name: /Midterm 2/ }));

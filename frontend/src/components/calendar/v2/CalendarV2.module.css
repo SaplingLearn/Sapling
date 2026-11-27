@@ -2,6 +2,10 @@
    Design boards in calendar/v2/__fixtures__. Colours and sizes come from the
    globals.css tokens; a course's colour arrives as --course on the element. */
 
+.shell {
+  display: contents;
+}
+
 .page {
   display: flex;
   flex-direction: column;
@@ -316,6 +320,13 @@
   gap: var(--sp-3);
 }
 
+/* An undated assignment's name: the title's voice, not a control. */
+.titleText {
+  color: var(--text);
+  font-size: var(--fs-lg);
+  font-weight: 600;
+}
+
 .titleBtn {
   align-self: flex-start;
   padding: 0;
@@ -399,8 +410,10 @@
   color: var(--accent);
   display: inline-flex;
   align-items: center;
+  font-family: inherit;
   font-size: var(--fs-base);
   font-weight: 600;
+  cursor: pointer;
 }
 
 .textBtn {
