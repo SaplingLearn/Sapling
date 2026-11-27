@@ -27,6 +27,13 @@ export interface NotesToolbarProps {
   /** The row is tight: wear the narrow metrics so it still fits on one line. */
   compact: boolean;
   /**
+   * Even the narrow bar will not fit the header row, so it has its own row
+   * under the header and spans the editor column. Whole and uncompressed
+   * beats on-the-line-but-scrolling: a toolbar you have to scroll sideways
+   * to reach is a toolbar whose tools are hidden.
+   */
+  stacked: boolean;
+  /**
    * The bar itself. The page measures its `scrollWidth` — the width it WANTS,
    * which it still reports while clamped — to decide whether the header row
    * can hold it.
@@ -104,7 +111,7 @@ function renderTools(tools: ToolOrSeparator[], metrics: typeof METRICS.wide) {
 
 export function NotesToolbar(props: NotesToolbarProps) {
   const {
-    formats, clovOpen, compact, barRef, menu, onMenu, menuClosing,
+    formats, clovOpen, compact, stacked, barRef, menu, onMenu, menuClosing,
     exec, insertHTML,
     insertCode, insertLink, insertEquation, insertBlock, insertGraph, setBlockStyle,
   } = props;
@@ -135,8 +142,10 @@ export function NotesToolbar(props: NotesToolbarProps) {
     // calculation agreed.
     <div style={{
       animation: "sapFadeIn 220ms cubic-bezier(0.2, 0.7, 0.2, 1) 900ms both",
-      flex: "1 1 0",
-      minWidth: 0,
+      // In the header row it is a flex cell; on its own row it is the row.
+      ...(stacked
+        ? { width: "100%" }
+        : { flex: "1 1 0", minWidth: 0 }),
       display: "flex",
       justifyContent: "center",
       zIndex: 11,

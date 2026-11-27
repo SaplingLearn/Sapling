@@ -109,6 +109,28 @@ export const METRICS: Record<"wide" | "narrow", ToolbarMetrics> = {
 };
 
 /**
+ * What the header row's two sizes actually measure, in the browser, at the
+ * design's own type and metrics (2026-11-27). They are constants because
+ * they are consequences of `METRICS` and the labels, not of the window: the
+ * bar and the actions are the same width at 1280 as at 1920.
+ *
+ * Reading them off the live DOM instead is what made the row flicker. Each
+ * reading depended on the state it was being used to choose — collapse the
+ * actions and the row looks roomier, which un-collapses them — so the layout
+ * settled on whichever pass happened to run last.
+ */
+export const ROW_WIDTHS = {
+  /** The bar with every label: the style name and "Insert". */
+  wideBar: 937,
+  /** The bar under `METRICS.narrow`, labels dropped. */
+  narrowBar: 656,
+  /** Share / Download / Finalize written out, plus the Regenerate icon. */
+  wideActions: 371,
+  /** The same four as icons, with Finalize keeping its word. */
+  narrowActions: 227,
+} as const;
+
+/**
  * Narrowest corridor between the breadcrumb and the header actions that the
  * toolbar will still centre itself in. Below it the bar drops to its own row.
  * Sized off the bar's own natural width: `METRICS.narrow` measures ~656px
