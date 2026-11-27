@@ -459,7 +459,8 @@ def test_an_unknown_image_target_fails_the_build_with_a_clear_message():
         with tempfile.TemporaryDirectory() as tmp:
             out = pathlib.Path(tmp, "sapling-image-target")
             r = subprocess.run(
-                ["sh", "-c", script.replace("/sapling-image-target", out.as_posix())],
+                ["sh", "-c", script.replace("/sapling-image-target",
+                                                   shlex.quote(out.as_posix()))],
                 env={"SAPLING_IMAGE_TARGET": value, "PATH": "/usr/bin:/bin"},
                 capture_output=True, text=True)
             assert (r.returncode == 0) is ok, (value, r.stderr)
