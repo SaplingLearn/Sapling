@@ -26,6 +26,8 @@ export interface NotesToolbarProps {
 
   /** The row is tight: wear the narrow metrics so it still fits on one line. */
   compact: boolean;
+  /** Tighter still — the last size before the bar leaves the row. */
+  mini: boolean;
   /**
    * Even the narrow bar will not fit the header row, so it has its own row
    * under the header and spans the editor column. Whole and uncompressed
@@ -111,7 +113,7 @@ function renderTools(tools: ToolOrSeparator[], metrics: typeof METRICS.wide) {
 
 export function NotesToolbar(props: NotesToolbarProps) {
   const {
-    formats, clovOpen, compact, stacked, barRef, menu, onMenu, menuClosing,
+    formats, clovOpen, compact, mini, stacked, barRef, menu, onMenu, menuClosing,
     exec, insertHTML,
     insertCode, insertLink, insertEquation, insertBlock, insertGraph, setBlockStyle,
   } = props;
@@ -121,8 +123,8 @@ export function NotesToolbar(props: NotesToolbarProps) {
   // Either reason to be narrow produces the same bar, and it has to reach
   // every width the bar spends: the METRICS alone move ~13px, while the
   // LABELS (the style name, "Insert") are most of the difference.
-  const tight = clovOpen || compact;
-  const m = tight ? METRICS.narrow : METRICS.wide;
+  const tight = clovOpen || compact || mini;
+  const m = mini ? METRICS.mini : tight ? METRICS.narrow : METRICS.wide;
   const anim = menuClosing ? MENU_OUT : MENU_IN;
   const style = currentStyle(formats);
   const align = currentAlignment(formats);
@@ -195,15 +197,20 @@ export function NotesToolbar(props: NotesToolbarProps) {
             aria-expanded={menu === "style"}
             title="Text style"
             style={{
-              display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
+              display: "flex", alignItems: "center", gap: 10,
               width: m.styleWidth, height: m.button,
               transition: `width ${SQUEEZE}, height ${SQUEEZE}, background 120ms`,
-              padding: "0 10px 0 12px", border: 0, borderRadius: 9,
+              padding: mini ? "0 6px" : "0 10px 0 12px", border: 0, borderRadius: 9,
+              justifyContent: mini ? "center" : "space-between",
               background: menu === "style" ? "#F0ECE3" : "transparent",
               color: "#1A1814", font: "inherit", fontSize: 15, fontWeight: 500, cursor: "pointer",
             }}
           >
-            <span style={{ whiteSpace: "nowrap" }}>{styleLabel(style, tight)}</span>
+            {/* At mini the chevron alone stands for the control; the menu
+                still names the current style when it opens. */}
+            {!mini && (
+              <span style={{ whiteSpace: "nowrap" }}>{styleLabel(style, tight)}</span>
+            )}
             <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
               <path
                 d="M3 4.5L6 7.5 9 4.5" fill="none" stroke="#6F6857" strokeWidth="1.5"

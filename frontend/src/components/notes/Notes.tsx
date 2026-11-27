@@ -265,6 +265,7 @@ export function Notes({ documentId }: { documentId: string }) {
   // scroll sideways is worse than a bar on the next line, which is what the
   // squeezed toolbar beside an open Clov panel was.
   const [compact, setCompact] = React.useState(false);
+  const [mini, setMini] = React.useState(false);
   const [stacked, setStacked] = React.useState(false);
   React.useEffect(() => {
     // Found from the BREADCRUMB, which never leaves the header — not from
@@ -287,11 +288,26 @@ export function Notes({ documentId }: { documentId: string }) {
       const back = (header.firstElementChild as HTMLElement | null)?.offsetWidth ?? 0;
       const room = header.clientWidth - pad - gaps - back - left.offsetWidth;
 
+      // Four sizes, each tried before the one below it, and the row only
+      // breaks when none of them fit:
+      //   wide    the handoff's bar, actions written out
+      //   narrow  action labels down, the bar's labels with them
+      //   mini    the bar taken in again, style control down to its chevron
+      //   own row the bar cannot be seated at all
       // With Clov open the bar already wears the narrow metrics for the
-      // panel's sake, so there is nothing for `compact` to take off.
-      const tight = clovOpen || room - ROW_WIDTHS.wideActions < ROW_WIDTHS.wideBar + 40;
+      // panel's sake, so `compact` has nothing of its own to take off.
+      const forWide = room - ROW_WIDTHS.wideActions;
+      const forNarrow = room - ROW_WIDTHS.narrowActions;
+      const tight = clovOpen || forWide < ROW_WIDTHS.wideBar + 40;
+      const tooTightForNarrow = tight && forNarrow < ROW_WIDTHS.narrowBar + 16;
+
       setCompact(!clovOpen && tight);
-      setStacked(tight && room - ROW_WIDTHS.narrowActions < ROW_WIDTHS.narrowBar + 16);
+      // A thin margin here on purpose: mini is the last size that keeps the
+      // row together, so it is worth using whenever it genuinely fits. The
+      // wider margin above belongs to `wide`, where overshooting only costs
+      // the action labels rather than the line.
+      setMini(tooTightForNarrow && forNarrow >= ROW_WIDTHS.miniBar + 4);
+      setStacked(tooTightForNarrow && forNarrow < ROW_WIDTHS.miniBar + 4);
     };
     measure();
     window.addEventListener("resize", measure);
@@ -408,6 +424,7 @@ export function Notes({ documentId }: { documentId: string }) {
             formats={editor.formats}
             clovOpen={clovOpen}
             compact={compact}
+            mini={mini}
             barRef={barRef}
             menu={toolbarMenu}
             onMenu={openToolbarMenu}
@@ -461,6 +478,7 @@ export function Notes({ documentId }: { documentId: string }) {
             formats={editor.formats}
             clovOpen={clovOpen}
             compact={compact}
+              mini={mini}
             barRef={barRef}
             menu={toolbarMenu}
             onMenu={openToolbarMenu}

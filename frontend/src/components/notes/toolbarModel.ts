@@ -95,7 +95,7 @@ export interface ToolbarMetrics {
   headerButtonPad: string;
 }
 
-export const METRICS: Record<"wide" | "narrow", ToolbarMetrics> = {
+export const METRICS: Record<"wide" | "narrow" | "mini", ToolbarMetrics> = {
   wide: {
     button: "36px", padX: "8px", separator: "6px", outerPad: "6px 8px",
     styleWidth: "148px", insertPadLeft: "10px", insertPadRight: "14px",
@@ -104,6 +104,21 @@ export const METRICS: Record<"wide" | "narrow", ToolbarMetrics> = {
   narrow: {
     button: "30px", padX: "5px", separator: "3px", outerPad: "4px 5px",
     styleWidth: "108px", insertPadLeft: "8px", insertPadRight: "8px",
+    top: "18px", navMax: "220px", headerRight: "440px", headerButtonPad: "0px",
+  },
+  /**
+   * The last size before the bar would have to leave the header row.
+   *
+   * The handoff draws two sizes because it draws one window; the app has to
+   * hold the row together with Clov's 440px panel open at widths the
+   * prototype never sat at. Every number here is the narrow one taken in,
+   * and the style control drops to its chevron — the single biggest saving
+   * in the bar, and the one tool whose current value the editor shows again
+   * the moment the menu opens.
+   */
+  mini: {
+    button: "28px", padX: "3px", separator: "2px", outerPad: "3px 4px",
+    styleWidth: "34px", insertPadLeft: "6px", insertPadRight: "6px",
     top: "18px", navMax: "220px", headerRight: "440px", headerButtonPad: "0px",
   },
 };
@@ -124,6 +139,8 @@ export const ROW_WIDTHS = {
   wideBar: 937,
   /** The bar under `METRICS.narrow`, labels dropped. */
   narrowBar: 656,
+  /** The bar under `METRICS.mini`, the style control down to its chevron. */
+  miniBar: 538,
   /** Share / Download / Finalize written out, plus the Regenerate icon. */
   wideActions: 371,
   /** The same four as icons, with Finalize keeping its word. */
