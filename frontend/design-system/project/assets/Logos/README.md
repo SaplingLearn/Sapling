@@ -1,0 +1,1 @@
+Sapling's own marks, copied from frontend/public. `sapling-icon.svg` is the sprout alone, one ink (#416207, a step deeper than `brand-forest`): use it on `bg`, `bg-panel` or `sap-50` grounds, never on dark fills. `sapling-word-icon.png` is the sprout with the wordmark, for headers and documents. Do not redraw, recolour or stretch either.

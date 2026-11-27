@@ -1,0 +1,50 @@
+name: Design system
+
+# frontend/design-system/project/ holds the files published as Sapling's
+# Claude Design System artifact. It is generated from the code with
+# `npm run design-system` and committed in the same PR as the change.
+#
+# This check fails a PR that changes what the system is built from (ui
+# components, stories, tokens, fonts, the generator or its hand-written
+# inputs) without touching design-system/project/. It only compares which
+# files changed, so it needs no build and can't flake.
+#
+# Publishing to the artifact is the Trov prompt `sapling-design-system-sync`,
+# run daily by a Claude scheduled task (frontend/design-system/README.md).
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  fresh:
+    name: Design system is regenerated
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Inputs changed without design-system/project
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          changed=$(git diff --name-only "$BASE...$HEAD")
+          inputs=$(printf '%s\n' "$changed" | grep -E '^frontend/(src/components/ui/|src/components/Dialog\.tsx$|src/components/.*\.stories\.tsx$|src/styles/|src/app/fonts/|\.storybook/|scripts/design-system/|design-system/(brand\.md|cover\.html|assets\.json)$)' | grep -vE '\.test\.tsx?$' || true)
+          if [ -z "$inputs" ]; then
+            echo "No design-system inputs changed."
+            exit 0
+          fi
+          if printf '%s\n' "$changed" | grep -q '^frontend/design-system/project/'; then
+            echo "design-system/project/ was regenerated."
+            exit 0
+          fi
+          echo "These files feed the design system, but design-system/project/ wasn't regenerated:"
+          printf '  %s\n' $inputs
+          echo
+          echo "Run this in frontend/ and commit the result:"
+          echo "  npm run design-system"
+          echo "::error::Run 'npm run design-system' in frontend/ and commit design-system/project/."
+          exit 1

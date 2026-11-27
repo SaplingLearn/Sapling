@@ -19,6 +19,8 @@ Next.js 16 + React 19 on Cloudflare Workers. Styling decision: `docs/decisions/0
 - Check `src/components/ui/` first (`index.ts` exports): Button, Chip, Badge, Toggle, Switch, SegmentedControl, Sheet, EmptyState, InlineBanner, Menu, PanelModal, Tooltip …
 - Modals: `Dialog` (`@/components/Dialog`), `Sheet`, `ui/PanelModal`, or `useOverlayBehaviour` for a custom panel. Never hand-build `fixed inset-0` overlays.
 - Menus: `Menu`/`MenuTrigger`/`MenuContent`/`MenuItem` from `@/components/ui/Menu` (Radix). Never hand-build `role="menu"`.
+- Every `ui/` component has a `<Name>.stories.tsx` beside it: a `docs.description.component` whose first sentence says when to use it, and a story per variant and state. `npm run storybook` serves them (port 6006).
+- After changing `ui/`, stories or tokens, run `npm run design-system` and commit `design-system/project/` in the same PR: it is Sapling's design system for Claude Design (`design-system/README.md`). CI fails a PR that changes them without it.
 
 ## Tests
 

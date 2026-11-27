@@ -1456,7 +1456,8 @@ describe("StudyHub saves exams and deadlines", () => {
     expect(refreshTopicChecklist).toHaveBeenCalledTimes(1);
     addExam("Final");
     expect(await screen.findByText("Ready for Final")).toBeTruthy();
-    expect(refreshTopicChecklist).toHaveBeenCalledTimes(2);
+    // The save shows first; the re-read and the second refresh follow it.
+    await waitFor(() => expect(refreshTopicChecklist).toHaveBeenCalledTimes(2));
   });
 
   it("saving with nothing changed re-reads nothing", async () => {

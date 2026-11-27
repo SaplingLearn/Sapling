@@ -1,0 +1,128 @@
+/* Sapling — generated from tokens.json */
+:root, [data-theme="light"] {
+  --brand-forest: #445d22;
+  --brand-forest-hover: #384e19;
+  --brand-forest-bright: #597536;
+  --brand-forest-bright-hover: #4b6627;
+  --sidenav-bg: #688443;
+  --sap-50: #f2f6ee;
+  --sap-100: #e1ecd7;
+  --sap-200: #c5d7b2;
+  --sap-300: #a1bc83;
+  --sap-400: #7ea055;
+  --sap-500: #60842c;
+  --sap-600: #49671d;
+  --sap-700: #385015;
+  --sap-800: #293c0e;
+  --sap-900: #19250b;
+  --ink-0: #faf8f3;
+  --ink-50: #f4f1ea;
+  --ink-100: #ebe6dc;
+  --ink-200: #ddd6c6;
+  --ink-300: #b9b1a0;
+  --ink-400: #8a8372;
+  --ink-500: #5d5749;
+  --ink-600: #3f3b31;
+  --ink-700: #2a271f;
+  --ink-800: #1a1814;
+  --ink-900: #12110d;
+  --bg: var(--ink-0);
+  --bg-panel: #fdfcf9;
+  --bg-subtle: var(--ink-50);
+  --bg-soft: var(--ink-100);
+  --bg-input: #fdfcf9;
+  --bg-inset: #f7f3eb;
+  --bg-topbar: var(--ink-50);
+  --border: rgba(42, 39, 31, 0.10);
+  --border-strong: rgba(42, 39, 31, 0.18);
+  --text: var(--ink-800);
+  --text-dim: var(--ink-600);
+  --text-muted: #6f6857;
+  --accent: var(--brand-forest-bright);
+  --accent-fg: #ffffff;
+  --accent-soft: var(--sap-50);
+  --accent-border: var(--sap-200);
+  --warn: #b4562c;
+  --warn-soft: #f7e6d8;
+  --err: #a83a3a;
+  --err-soft: #f5d8d3;
+  --info: #3e6f8a;
+  --info-soft: #dfe9ef;
+  --positive: #3a7d4e;
+  --state-mastery: var(--positive);
+  --state-progress: #c89b5e;
+  --state-struggle: #b25855;
+  --state-neutral: #9a9a9a;
+  --fallback-muted: #9a9a9a;
+  --alert-warn: #e87734;
+  --alert-err: #e94b5c;
+  --c-crimson: #c03535;
+  --c-rust: #c06020;
+  --c-amber: #a88020;
+  --c-brown: #7a4220;
+  --c-sage: #3e8030;
+  --c-teal: #207878;
+  --c-sky: #2868b0;
+  --c-plum: #7030a8;
+  --c-magenta: #b02888;
+  --c-rose: #b83060;
+  --c-ink: #3f3b31;
+  --grade-a: var(--positive);
+  --grade-b: var(--c-amber);
+  --grade-c: var(--c-rust);
+  --grade-d: var(--c-rose);
+  --grade-f: var(--err);
+  --moss-900: #191f13;
+  --moss-700: #3b4233;
+  --moss-500: #697062;
+  --moss-400: #91978b;
+  --moss-300: #9fa49a;
+  --moss-200: #c7cbc2;
+  --moss-100: #e0e6da;
+  --moss-75: #e6eae2;
+  --moss-50: #edf0ea;
+  --moss-25: #f6f8f4;
+  --leaf-800: #2f4417;
+  --leaf-500: #68951f;
+  --leaf-100: #d9e7c4;
+  --leaf-50: #eaf1e4;
+  --paper-100: #ece9de;
+  --paper-200: #e8e5da;
+  --paper-300: #e3e0d5;
+  --shadow-sm: 0 1px 2px rgba(25, 37, 11, 0.04), 0 1px 1px rgba(25, 37, 11, 0.03);
+  --shadow-md: 0 4px 12px rgba(25, 37, 11, 0.06), 0 1px 2px rgba(25, 37, 11, 0.04);
+  --shadow-lg: 0 20px 48px rgba(25, 37, 11, 0.10), 0 4px 8px rgba(25, 37, 11, 0.04);
+  --shadow-inset: inset 0 1px 0 rgba(255,255,255,0.6), inset 0 -1px 0 rgba(42,39,31,0.04);
+}
+:root {
+  --spacing: 4px;
+  --pad-sm: 8px;
+  --pad-md: 12px;
+  --pad-lg: 16px;
+  --pad-xl: 22px;
+  --row-h: 34px;
+  --r-xs: 4px;
+  --r-sm: 6px;
+  --r-md: 10px;
+  --r-lg: 16px;
+  --r-xl: 22px;
+  --r-full: 999px;
+  --font-sans: 'SUSE', system-ui, -apple-system, sans-serif;
+  --font-serif: 'Aleo', georgia, serif;
+  --font-display: 'Aleo', georgia, serif;
+  --font-code: ui-monospace, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+}
+.fs-2xs { font-family: var(--font-sans); font-size: 10px; line-height: 1.3; font-weight: 600; }
+.fs-xs { font-family: var(--font-sans); font-size: 11px; line-height: 1.3; font-weight: 600; }
+.fs-sm { font-family: var(--font-sans); font-size: 12px; line-height: 1.3; font-weight: 400; }
+.fs-md { font-family: var(--font-sans); font-size: 13px; line-height: 1.5; font-weight: 400; }
+.fs-base { font-family: var(--font-sans); font-size: 14px; line-height: 1.5; font-weight: 400; }
+.fs-lg { font-family: var(--font-sans); font-size: 16px; line-height: 1.5; font-weight: 400; }
+.fs-xl { font-family: var(--font-display); font-size: 18px; line-height: 1.15; font-weight: 500; }
+.fs-2xl { font-family: var(--font-display); font-size: 22px; line-height: 1.15; font-weight: 500; }
+.fs-3xl { font-family: var(--font-display); font-size: 26px; line-height: 1.15; font-weight: 500; }
+.fs-4xl { font-family: var(--font-display); font-size: 30px; line-height: 1.15; font-weight: 500; }
+.fs-5xl { font-family: var(--font-display); font-size: 32px; line-height: 1.15; font-weight: 500; }
+@font-face { font-family: "SUSE"; src: url("fonts/SUSE-variable.woff2") format("woff2"); font-weight: 100 900; font-style: normal; font-display: swap; }
+@font-face { font-family: "Aleo"; src: url("fonts/Aleo-variable.woff2") format("woff2"); font-weight: 100 900; font-style: normal; font-display: swap; }
+@font-face { font-family: "Aleo"; src: url("fonts/Aleo-variable-italic.woff2") format("woff2"); font-weight: 100 900; font-style: italic; font-display: swap; }

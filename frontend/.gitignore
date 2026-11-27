@@ -16,3 +16,8 @@ playwright-report/
 e2e/.auth/
 e2e/results/
 
+
+# Storybook build output
+storybook-static
+*storybook.log
+design-system-previews
