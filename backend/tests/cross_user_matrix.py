@@ -394,6 +394,16 @@ BODY_OVERRIDES: dict[tuple[str, str], dict[str, Any]] = {
     ("PATCH", "/api/documents/folders/{folder_id}"): {
         "user_id": SELF, "name": "Matrix Probe Folder",
     },
+    # `save` refuses a body with no `content` (400) before it reads the row,
+    # so the probe has to carry one to reach the ownership check.
+    ("PUT", "/api/documents/doc/{document_id}/notes"): {
+        "user_id": SELF, "content": "<p>matrix probe</p>",
+    },
+    ("POST", "/api/documents/doc/{document_id}/notes/regenerate"): {"user_id": SELF},
+    # Likewise `ask`: an empty `message` is a 400 before ownership.
+    ("POST", "/api/documents/doc/{document_id}/notes/ask"): {
+        "user_id": SELF, "message": "matrix probe",
+    },
     ("POST", "/api/documents/course/{course_id}/scan-concepts"): {"user_id": SELF},
     ("PATCH", "/api/calendar/assignments/{assignment_id}"): {"user_id": SELF, "title": "matrix"},
     # The default scope_kind is "course", which refuses any scope_id (422)

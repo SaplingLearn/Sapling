@@ -218,7 +218,7 @@ async def hard_delete_document(document_id: str, user_id: str) -> None:
     30-day grace the Trash gives.
 
     ``enrollments.syllabus_doc_id`` is ``ON DELETE SET NULL`` and
-    ``course_chunks`` cascade, so the row can go.
+    ``document_notes`` / ``course_chunks`` cascade, so the row can go.
     """
     await table("documents").adelete(
         filters={

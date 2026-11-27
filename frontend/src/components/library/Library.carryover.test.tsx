@@ -33,6 +33,7 @@ vi.mock("@/lib/libraryApi", () => ({
   restoreDocument: vi.fn(async () => ({ restored: true })),
   purgeDocument: vi.fn(async () => ({ deleted: true, purged: true })),
   updateDocument: vi.fn(async () => ({ id: "d1" })),
+  createBlankDocument: vi.fn(),
   createFolder: vi.fn(),
   renameFolder: vi.fn(),
   deleteFolder: vi.fn(),
@@ -165,18 +166,10 @@ describe("the old page's actions all still work", () => {
     expect(within(toast).getByTestId("library-toast-undo")).toBeTruthy();
   });
 
-  it("double-clicking a row opens its details, the old panel's content", async () => {
+  it("double-clicking a row opens its notes, as the design specifies", async () => {
     await renderLibrary();
     fireEvent.doubleClick(screen.getByTestId("library-doc-d1"));
-    const dialog = await screen.findByTestId("library-doc-menu");
-    expect(dialog.textContent).toContain("Cofactor expansion");
-    expect(push).not.toHaveBeenCalled();
-  });
-
-  it("Enter on a focused row opens the same details", async () => {
-    await renderLibrary();
-    fireEvent.keyDown(screen.getByTestId("library-doc-d1"), { key: "Enter" });
-    expect(await screen.findByTestId("library-doc-menu")).toBeTruthy();
+    expect(push).toHaveBeenCalledWith("/library/d1/notes");
   });
 
   it("the search still reaches the summary and the concepts", async () => {
@@ -245,9 +238,8 @@ describe("what the redesign adds, end to end", () => {
     } as never);
     await renderLibrary();
 
-    // The Trash is the course switcher's last option.
-    fireEvent.click(screen.getByTestId("library-course-switcher"));
-    fireEvent.click(screen.getByRole("option", { name: /Trash/ }));
+    // The Trash is its own chip beside the switcher.
+    fireEvent.click(screen.getByTestId("library-trash"));
     const row = await screen.findByTestId("library-doc-t1");
     expect(within(row).getByText("Restore")).toBeTruthy();
 
@@ -259,7 +251,7 @@ describe("what the redesign adds, end to end", () => {
       .toBe("Click Again to Empty Trash");
   });
 
-  it("the switcher lists the Trash last, with its count, and picking it opens the Trash", async () => {
+  it("the Trash chip opens the Trash, and its rows offer Restore", async () => {
     const { getTrashedDocuments } = await import("@/lib/libraryApi");
     vi.mocked(getTrashedDocuments).mockResolvedValue({
       documents: [
@@ -268,17 +260,13 @@ describe("what the redesign adds, end to end", () => {
       ],
     } as never);
     await renderLibrary();
-    // No Trash chip beside the switcher any more.
-    expect(screen.queryByTestId("library-trash")).toBeNull();
-
+    // The Trash is its own chip beside the switcher (owner's call
+    // 2026-11-26), carrying the design's word and no count.
     const switcher = screen.getByTestId("library-course-switcher");
-    fireEvent.click(switcher);
-    const options = screen.getAllByRole("option");
-    const trash = options[options.length - 1];
+    const trash = screen.getByTestId("library-trash");
     expect(trash.textContent).toContain("Trash");
-    await waitFor(() =>
-      expect(trash.textContent).toContain("Deleted after 30 days · 2 documents"));
-    expect(trash.getAttribute("aria-selected")).toBe("false");
+    expect(trash.textContent).not.toMatch(/\d/);
+    expect(trash.getAttribute("aria-pressed")).toBe("false");
 
     fireEvent.click(trash);
     // The heading names the Trash, and its rows offer Restore.
@@ -293,10 +281,28 @@ describe("what the redesign adds, end to end", () => {
     expect(within(bar).getByText("Delete Forever")).toBeTruthy();
     expect(within(bar).queryByText("Move To")).toBeNull();
 
-    // And reopened, the switcher marks the Trash as the open scope.
-    fireEvent.click(switcher);
-    const reopened = screen.getAllByRole("option");
-    expect(reopened[reopened.length - 1].getAttribute("aria-selected")).toBe("true");
+    // And the chip itself marks the Trash as the open scope.
+    await waitFor(() =>
+      expect(screen.getByTestId("library-trash").getAttribute("aria-pressed")).toBe("true"));
+  });
+
+  it("dropping a dragged row on the Trash chip trashes it", async () => {
+    await renderLibrary();
+    const row = screen.getByTestId("library-doc-d1");
+    const chip = screen.getByTestId("library-trash");
+
+    // The row names itself on the drag; the chip acts on that.
+    const dt = {
+      types: [] as string[], setData: vi.fn(), getData: () => "d1",
+      dropEffect: "", effectAllowed: "",
+    };
+    fireEvent.dragStart(row, { dataTransfer: dt });
+    fireEvent.dragOver(chip, { dataTransfer: dt });
+    fireEvent.drop(chip, { dataTransfer: dt });
+
+    // Trashing is a soft delete — the same call the row menu's Delete makes.
+    await waitFor(() => expect(vi.mocked(deleteDocument)).toHaveBeenCalled());
+    expect(vi.mocked(deleteDocument).mock.calls.at(-1)![0]).toBe("d1");
   });
 
   it("a row can be renamed in place", async () => {
@@ -319,9 +325,11 @@ describe("what the redesign adds, end to end", () => {
     const row = screen.getByTestId("library-doc-d1");
     fireEvent.click(row);
     expect(row.getAttribute("aria-selected")).toBe("true");
-    // A neutral tint with no outline: never the selection bar's green.
-    expect(row.style.background).not.toBe("");
-    expect(row.style.boxShadow).toBe("");
+    // The prototype's own green for the current row, with its hairline ring
+    // (owner's call 2026-11-27, replacing the rebuild's neutral tint).
+    // jsdom reports the computed form; rgb(235,240,225) IS #EBF0E1.
+    expect(row.style.background.replace(/\s+/g, "")).toBe("rgb(235,240,225)");
+    expect(row.style.boxShadow).toBe("inset 0 0 0 1px rgba(68,93,34,0.25)");
 
     fireEvent.click(screen.getByLabelText("Select all"));
     expect(row.getAttribute("aria-selected")).toBe("false");

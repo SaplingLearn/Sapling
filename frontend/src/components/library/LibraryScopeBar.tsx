@@ -55,6 +55,14 @@ export interface LibraryScopeBarProps {
   emptyConfirm: boolean;
   onEmptyTrash: () => void;
 
+  /** Open the Trash. */
+  onTrash: () => void;
+  /** A document is being dragged over the Trash chip. */
+  trashDragOver: boolean;
+  onTrashDragOver: (e: React.DragEvent) => void;
+  onTrashDragLeave: () => void;
+  onTrashDrop: (e: React.DragEvent) => void;
+
   /** A search running inside a course or folder offers to widen itself. */
   scoped: boolean;
   scopeName: string;
@@ -219,6 +227,71 @@ function FolderActions({ onRename, onDelete }: { onRename: () => void; onDelete:
   );
 }
 
+/**
+ * The Trash, as its own control beside the scope switcher.
+ *
+ * This is the handoff's `trashBtn` — a chip with a can whose lid tilts when a
+ * document is dragged over it, and a drop target that trashes what lands on
+ * it. It was briefly folded into the scope switcher as a last option, which
+ * cost it both of those: a menu item cannot be a drop target, and the can
+ * cannot react to a drag the student is in the middle of. Owner's call
+ * 2026-11-26 puts it back out here, where the prototype has it.
+ *
+ * Without the count the handoff draws (owner's call 2026-11-25), so the label
+ * is the chip's only text.
+ */
+function TrashButton({ active, over, onPick, onOver, onLeave, onDrop }: {
+  active: boolean;
+  over: boolean;
+  onPick: () => void;
+  onOver: (e: React.DragEvent) => void;
+  onLeave: () => void;
+  onDrop: (e: React.DragEvent) => void;
+}) {
+  return (
+    <button
+      type="button"
+      data-testid="library-trash"
+      className="sapHoverWarmer"
+      onClick={onPick}
+      onDragOver={onOver}
+      onDragLeave={onLeave}
+      onDrop={onDrop}
+      aria-pressed={active}
+      aria-label="Trash"
+      style={{
+        display: "inline-flex", alignItems: "center", gap: 6,
+        height: 40, padding: "0 14px", border: 0, borderRadius: 12,
+        background: over ? "#DCE8CE" : active ? "#EDE9E0" : "transparent",
+        boxShadow: over ? "inset 0 0 0 1.5px #597536" : "none",
+        color: "#1A1814", font: "inherit", fontSize: 15,
+        fontWeight: active ? 700 : 400,
+        whiteSpace: "nowrap", flexShrink: 0, cursor: "pointer",
+      }}
+    >
+      <svg
+        width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#6F6857"
+        strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"
+        aria-hidden="true" style={{ display: "block", flexShrink: 0 }}
+      >
+        {/* The lid is its own group so it can tilt off the can's right edge. */}
+        <g style={{
+          transformBox: "fill-box", transformOrigin: "85% 100%",
+          transform: over ? "rotate(-18deg) translateY(-1px)" : "none",
+          transition: "transform 200ms cubic-bezier(0.2, 0.7, 0.2, 1)",
+        }}>
+          <path d="M4 7h16" />
+          <path d="M9 7V4.5h6V7" />
+        </g>
+        <path d="M6 7l1 13h10l1-13" />
+        <path d="M10 11v5.5M14 11v5.5" />
+      </svg>
+      <span>Trash</span>
+    </button>
+  );
+}
+
+
 /** The 30-day notice and the two-step Empty Trash. */
 function EmptyTrash({ confirm, onClick }: { confirm: boolean; onClick: () => void }) {
   return (
@@ -247,6 +320,7 @@ export function LibraryScopeBar(props: LibraryScopeBarProps) {
     isTrash, isFolder, folderRenaming, folderDraft, onFolderDraft,
     onFolderRenameStart, onFolderRenameCommit, onFolderRenameCancel, onFolderDelete,
     trashHasItems, emptyConfirm, onEmptyTrash, scoped, scopeName, onSearchAll,
+    onTrash, trashDragOver, onTrashDragOver, onTrashDragLeave, onTrashDrop,
     courseScanLabel, courseScanning, onCourseScan, view, onView,
   } = props;
 
@@ -289,6 +363,15 @@ export function LibraryScopeBar(props: LibraryScopeBarProps) {
           options={scopeOptions}
         />
       )}
+
+      <TrashButton
+        active={isTrash}
+        over={trashDragOver}
+        onPick={onTrash}
+        onOver={onTrashDragOver}
+        onLeave={onTrashDragLeave}
+        onDrop={onTrashDrop}
+      />
 
       {isFolder && !folderRenaming && (
         <FolderActions onRename={onFolderRenameStart} onDelete={onFolderDelete} />

@@ -6,8 +6,10 @@ The Library redesign's new routes in routes/documents.py:
   - POST   /api/documents/doc/{id}/restore  take one back out
   - DELETE /api/documents/doc/{id}?hard=1   delete forever
   - GET/POST/PATCH/DELETE /api/documents/folders
+  - POST   /api/documents/blank             "New Document"
+  - the per-document notes: GET / PUT / regenerate / ask
 
-Every DB call is mocked; what is pinned here is the contract the
+Every DB call and agent run is mocked; what is pinned here is the contract the
 Library depends on, and the two guards that keep it safe: a hard delete is
 Trash-only, and a move is refused into a course the student is not taking.
 """
@@ -234,6 +236,152 @@ class TestFolders:
             r = client.delete("/api/documents/folders/f1?user_id=u1")
         assert r.status_code == 404
         delete.assert_not_awaited()
+
+
+# ── "New Document" ───────────────────────────────────────────────────────────
+
+class TestBlankDocument:
+    def test_creates_an_unindexable_row(self):
+        """An empty document has no text, so it is born terminal: a `pending`
+        row with nothing to index would be claimed until it exhausted its
+        attempt budget."""
+        with _validated(), patch_documents("table", return_value=fake_table()) as t:
+            t.return_value.insert.side_effect = lambda row: [dict(row)]
+            r = client.post("/api/documents/blank", json={"user_id": "u1"})
+
+        assert r.status_code == 200
+        row = t.return_value.insert.call_args[0][0]
+        assert row["index_status"] == "skipped"
+        assert row["file_name"] == "New Document"
+        assert row["category"] == "other"
+        # The HTTP boundary speaks the abstract course id, not the offering.
+        assert "offering_id" not in r.json()
+
+    def test_inherits_the_open_course_and_folder(self):
+        with _validated(), patch_documents("table", return_value=fake_table()) as t, \
+                patch_documents("require_course_enrollment", return_value="off-2"), \
+                patch_documents("get_folder", new=AsyncMock(return_value={"id": "f1"})):
+            t.return_value.insert.side_effect = lambda row: [dict(row)]
+            r = client.post(
+                "/api/documents/blank",
+                json={"user_id": "u1", "file_name": "Scratch", "course_id": "c1",
+                      "folder_id": "f1"},
+            )
+
+        assert r.status_code == 200
+        row = t.return_value.insert.call_args[0][0]
+        assert row["offering_id"] == "off-2"
+        assert row["folder_id"] == "f1"
+        assert r.json()["course_id"] == "c1"
+
+
+# ── the document's notes ─────────────────────────────────────────────────────
+
+STORED = {
+    "document_id": "d1", "user_id": "u1", "title": "Determinants",
+    "content": "<h2>Overview</h2>", "final": False,
+    "created_at": "2026-11-01T00:00:00Z", "updated_at": "2026-11-01T00:00:00Z",
+}
+
+
+class TestDocumentNotes:
+    def test_returns_what_is_stored_without_generating_again(self):
+        with _validated(), patch_documents("table", return_value=fake_table()) as t, \
+                patch_documents("doc_notes") as notes:
+            _owned(t)
+            notes.get_notes = AsyncMock(return_value=STORED)
+            notes.save_notes = AsyncMock()
+            r = client.get("/api/documents/doc/d1/notes?user_id=u1")
+
+        assert r.status_code == 200
+        assert r.json()["content"] == "<h2>Overview</h2>"
+        # Generation happens once; a reload must not draft a second version.
+        notes.save_notes.assert_not_awaited()
+
+    def test_generates_and_stores_on_the_first_read(self):
+        with _validated(), patch_documents("table", return_value=fake_table()) as t, \
+                patch_documents("doc_notes") as notes, \
+                patch_documents("generate", new=AsyncMock(return_value="<p>Drafted</p>")):
+            _owned(t)
+            notes.get_notes = AsyncMock(return_value=None)
+            notes.source_text = AsyncMock(return_value=("text", {"file_name": "a.pdf"}))
+            notes.save_notes = AsyncMock(return_value={**STORED, "content": "<p>Drafted</p>"})
+            r = client.get("/api/documents/doc/d1/notes?user_id=u1")
+
+        assert r.status_code == 200
+        assert r.json()["content"] == "<p>Drafted</p>"
+        assert notes.save_notes.await_args.kwargs["content"] == "<p>Drafted</p>"
+
+    def test_saves_only_the_fields_it_is_given(self):
+        """The editor autosaves a body on a debounce while Finalize flips a
+        flag; neither may clear the other."""
+        with _validated(), patch_documents("table", return_value=fake_table()) as t, \
+                patch_documents("doc_notes") as notes:
+            _owned(t)
+            notes.MAX_CONTENT = 400_000
+            notes.save_notes = AsyncMock(return_value=STORED)
+            r = client.put("/api/documents/doc/d1/notes", json={"user_id": "u1", "final": True})
+
+        assert r.status_code == 200
+        kwargs = notes.save_notes.await_args.kwargs
+        assert kwargs["final"] is True
+        assert kwargs["content"] is None
+        assert kwargs["title"] is None
+
+    def test_refuses_a_body_past_the_cap(self):
+        with _validated(), patch_documents("table", return_value=fake_table()) as t, \
+                patch_documents("doc_notes") as notes:
+            _owned(t)
+            notes.MAX_CONTENT = 10
+            notes.save_notes = AsyncMock()
+            r = client.put(
+                "/api/documents/doc/d1/notes",
+                json={"user_id": "u1", "content": "x" * 50},
+            )
+        assert r.status_code == 413
+        notes.save_notes.assert_not_awaited()
+
+    def test_regenerate_replaces_the_body_and_clears_final(self):
+        with _validated(), patch_documents("table", return_value=fake_table()) as t, \
+                patch_documents("doc_notes") as notes, \
+                patch_documents("generate", new=AsyncMock(return_value="<p>Fresh</p>")):
+            _owned(t)
+            notes.source_text = AsyncMock(return_value=("text", {"file_name": "a.pdf"}))
+            notes.save_notes = AsyncMock(return_value={**STORED, "content": "<p>Fresh</p>"})
+            r = client.post("/api/documents/doc/d1/notes/regenerate", json={"user_id": "u1"})
+
+        assert r.status_code == 200
+        kwargs = notes.save_notes.await_args.kwargs
+        assert kwargs["content"] == "<p>Fresh</p>"
+        assert kwargs["final"] is False
+
+    def test_ask_needs_a_question(self):
+        with _validated(), patch_documents("table", return_value=fake_table()) as t:
+            _owned(t)
+            r = client.post("/api/documents/doc/d1/notes/ask", json={"user_id": "u1", "message": " "})
+        assert r.status_code == 400
+
+    def test_ask_answers_with_the_reply(self):
+        with _validated(), patch_documents("table", return_value=fake_table()) as t, \
+                patch_documents("doc_notes") as notes, \
+                patch_documents("run_agent", new=AsyncMock(return_value="  Try this.  ")):
+            _owned(t)
+            notes.MAX_SOURCE_CHARS = 24_000
+            notes.source_text = AsyncMock(return_value=("text", {"file_name": "a.pdf"}))
+            r = client.post(
+                "/api/documents/doc/d1/notes/ask",
+                json={"user_id": "u1", "message": "What is a determinant?",
+                      "notes": "Some notes", "history": [{"role": "user", "text": "hi"}]},
+            )
+
+        assert r.status_code == 200
+        assert r.json() == {"reply": "Try this."}
+
+    def test_notes_for_a_document_that_is_not_yours_is_a_404(self):
+        with _validated(), patch_documents("table", return_value=fake_table()) as t:
+            _owned(t, [])
+            r = client.get("/api/documents/doc/d1/notes?user_id=u1")
+        assert r.status_code == 404
 
 
 # ── the deploy-before-migrate window ─────────────────────────────────────────

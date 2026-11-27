@@ -26,6 +26,7 @@ export interface LibraryHeaderProps {
   searchRef: React.RefObject<HTMLInputElement | null>;
   fileRef: React.RefObject<HTMLInputElement | null>;
   onFiles: (files: File[]) => void;
+  onNewDocument: () => void;
   onNewFolder: () => void;
   sort: SortKey;
   onSort: (s: SortKey) => void;
@@ -79,11 +80,26 @@ function GuidesButton() {
 
 export function LibraryHeader(props: LibraryHeaderProps) {
   const {
-    query, onQuery, searchRef, fileRef, onFiles, onNewFolder,
+    query, onQuery, searchRef, fileRef, onFiles, onNewDocument, onNewFolder,
     sort, onSort, type, onType, typeCounts, scopedCount, menu, onMenu, menuClosing, canUpload,
   } = props;
   const [focused, setFocused] = React.useState(false);
   const menuAnim = menuClosing ? MENU_OUT : MENU_IN;
+
+  // Escape closes whichever header menu is open. The design handoff binds
+  // Escape only inside text inputs, so a menu opened by keyboard could be
+  // dismissed only by clicking its scrim — which is a mouse-only exit from a
+  // keyboard-reachable control. One listener covers all three menus because
+  // they share `menu`/`onMenu`, and it closes through the same exit animation
+  // a scrim click does.
+  React.useEffect(() => {
+    if (!menu) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") { e.stopPropagation(); onMenu(null); }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [menu, onMenu]);
 
   const sortLabel = SORTS.find(([k]) => k === sort)?.[1] ?? "Recently Added";
   const typeLabel = type === "all" ? "All Types" : TYPES[type].label;
@@ -267,11 +283,19 @@ export function LibraryHeader(props: LibraryHeaderProps) {
             onClick={() => onQuery("")}
             aria-label="Clear search"
             style={{
-              width: 32, height: 32, display: "grid", placeItems: "center", border: 0,
-              borderRadius: 8, background: "#F4F1EA", color: "#3F3B31", cursor: "pointer",
+              // The handoff draws this at 32x32 with a filled background,
+              // next to a 24x24 `/` hint. Typing one character swapped a
+              // quiet 24px key-cap for a filled 32px button, which jumped the
+              // row and read as an oversized X. Owner's call 2026-11-26: the
+              // two occupy the same box, so the control that replaces the
+              // hint is the same size as the hint. Only the box and the ink
+              // move; the radius and the glyph are the handoff's.
+              width: 24, height: 24, display: "grid", placeItems: "center", border: 0,
+              borderRadius: 6, background: "transparent", color: "#6F6857",
+              marginRight: 4, cursor: "pointer",
             }}
           >
-            <Glyph name="cross" size={12} />
+            <Glyph name="cross" size={11} />
           </button>
         ) : (
           <span title="Press / to search" style={{
@@ -369,6 +393,16 @@ export function LibraryHeader(props: LibraryHeaderProps) {
                     Upload Documents
                   </button>
                   <MenuDivider />
+                  <button role="menuitem" className="sapHoverMenu" onClick={onNewDocument} style={MENU_ITEM}>
+                    <svg
+                      width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#445D22"
+                      strokeWidth="1.8" strokeLinejoin="round" aria-hidden="true"
+                    >
+                      <path d="M6 3h8l4 4v14H6z" />
+                      <path d="M14 3v4h4" />
+                    </svg>
+                    New Document
+                  </button>
                   <button role="menuitem" className="sapHoverMenu" onClick={onNewFolder} style={MENU_ITEM}>
                     <FolderIcon size={16} />
                     New Folder

@@ -16,12 +16,13 @@
  * `useLibraryUpload`.
  */
 import React from "react";
+import { useRouter } from "next/navigation";
 
 import { FullHeightScreen } from "../FullHeightScreen";
 import { useToast } from "../ToastProvider";
 import { useUser } from "@/context/UserContext";
 
-import { DocMenu, menuPositionFor } from "./DocMenu";
+import { DocMenu } from "./DocMenu";
 import { BulkBar, BulkBarReveal, UndoToast } from "./LibraryBits";
 import { LibraryBody } from "./LibraryBody";
 import { LibraryHeader } from "./LibraryHeader";
@@ -46,6 +47,7 @@ import { useRowProps } from "./useRowProps";
 const BOOT_MS = 980;
 
 export function Library() {
+  const router = useRouter();
   const toast = useToast();
   const { userId, userReady } = useUser();
   const data = useLibraryData(userId, userReady);
@@ -70,24 +72,14 @@ export function Library() {
     ui, data.documents, data.trash, data.folders, courses, courseById,
   );
 
-  // Opening a document (double-click, or Enter on a focused row) shows its
-  // details: the row's "⋯" dialog, anchored to that row's own button. A row in
-  // the Trash has no dialog — Restore is its only action — so it opens nothing.
-  const { setSelected, openDocMenu } = ui;
-  const openDoc = React.useCallback((docId: string) => {
-    const section = sectionRef.current;
-    const button = section
-      ?.querySelector(`[data-testid="library-doc-${docId}"]`)
-      ?.querySelector<HTMLElement>('[aria-haspopup="dialog"]');
-    if (!section || !button) return;
-    setSelected(docId);
-    openDocMenu({ docId, position: menuPositionFor(button, section), sub: null });
-  }, [setSelected, openDocMenu]);
+  const openDoc = React.useCallback(
+    (docId: string) => router.push(`/library/${docId}/notes`), [router],
+  );
 
   // Checking rows takes over from the single current row: it clears, so it
   // does not come back when the checks are cleared.
   const anyChecked = scope.checkedIds.length > 0;
-  const { setSelectedFolder } = ui;
+  const { setSelected, setSelectedFolder } = ui;
   React.useEffect(() => {
     if (!anyChecked) return;
     setSelected(null);
@@ -141,6 +133,23 @@ export function Library() {
     documents: data.documents, courses, loc: ui.loc,
     scopeCourseId: scope.scopeCourseId, trashCount: data.trash.length, go: ui.setLoc,
   }), [data.documents, courses, ui.loc, scope.scopeCourseId, data.trash.length, ui.setLoc]);
+
+  // The Trash chip's own drag-over state. The row being dragged already named
+  // itself in `ui.dragIds`, so the drop only has to act on it.
+  const [trashOver, setTrashOver] = React.useState(false);
+  const onTrashDragOver = React.useCallback((e: React.DragEvent) => {
+    // Files are the page's own drop target (a new upload), never the Trash.
+    if (e.dataTransfer.types.includes("Files")) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    setTrashOver(true);
+  }, []);
+  const onTrashDrop = React.useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setTrashOver(false);
+    const ids = ui.dragIds.current;
+    if (ids?.length) act.trashDocs(ids);
+  }, [ui.dragIds, act]);
 
   const empty = scope.rows.length + scope.folderItems.length === 0;
   const menuDoc = ui.docMenu
@@ -198,6 +207,7 @@ export function Library() {
             searchRef={searchRef}
             fileRef={fileRef}
             onFiles={upload.pickFiles}
+            onNewDocument={act.newDocument}
             onNewFolder={act.newFolder}
             sort={ui.sortKey}
             onSort={ui.setSortKey}
@@ -230,6 +240,11 @@ export function Library() {
               onFolderRenameCommit={act.commitEdit}
               onFolderRenameCancel={ui.cancelEdit}
               onFolderDelete={act.deleteOpenFolder}
+              onTrash={() => ui.setLoc("trash")}
+              trashDragOver={trashOver}
+              onTrashDragOver={onTrashDragOver}
+              onTrashDragLeave={() => setTrashOver(false)}
+              onTrashDrop={onTrashDrop}
               trashHasItems={scope.isTrash && data.trash.length > 0}
               emptyConfirm={ui.emptyConfirm}
               onEmptyTrash={() => {
@@ -331,10 +346,14 @@ export function Library() {
               sub={ui.docMenu.sub}
               onSub={ui.setDocMenuSub}
               onClose={ui.closeAllMenus}
+              onOpen={() => { ui.closeAllMenus(); openDoc(menuDoc.id); }}
               onRename={() => {
                 ui.closeAllMenus();
                 ui.startEdit(menuDoc.id, "doc", titleOf(menuDoc));
               }}
+              // The uploaded file is not kept after processing, so there is no
+              // original to hand back — the notes page is what can be exported.
+              onDownload={() => { ui.closeAllMenus(); openDoc(menuDoc.id); }}
               onMoveCourse={id => { ui.closeAllMenus(); act.moveToCourse([menuDoc.id], id); }}
               onMoveFolder={id => { ui.closeAllMenus(); act.moveToFolder([menuDoc.id], id); }}
               onType={c => { ui.closeAllMenus(); void data.setCategory(menuDoc.id, c); }}

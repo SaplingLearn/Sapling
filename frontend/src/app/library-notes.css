@@ -7,15 +7,16 @@
  *     --bg and --brand-forest, which hold the same values.
  *  2. The rules the design writes against `*` — the custom scrollbar and the
  *     reduced-motion override — are scoped to `[data-sap-surface]`, the
- *     attribute the Library puts on its root, so they cannot repaint or
- *     flatten the rest of the app.
+ *     attribute the Library and the Notes page put on their root, so they
+ *     cannot repaint or flatten the rest of the app.
  *  3. The Trash button's keyframes (sapBumpA/B, sapLidA/B) are dropped with
  *     the button itself (owner's call 2026-11-25).
  *
  * Everything else (every keyframe, every literal value) is byte-for-byte what
  * the prototype ships. Hover and focus states, which the prototype expresses
  * as `style-hover="…"` attributes on elements, live at the bottom of this file
- * as `.sap-*` classes.
+ * as `.sap-*` classes. The Notes editor's own rules, and the hover classes only
+ * it uses, are in notes-editor.css.
  */
 
 /* ── from reference/library-global.css ─────────────────────────────────── */
@@ -81,7 +82,7 @@
 
 /* ── skeletons ─────────────────────────────────────────────────────────────
  * The repo's `Skeleton` primitive paints `.skeleton` with the app's shimmer
- * (--bg-soft → --bg-subtle, 400px, 1.8s). The Library's skeleton adds
+ * (--bg-soft → --bg-subtle, 400px, 1.8s). The Library and Notes skeletons add
  * `.sapSkeleton`, which swaps in the handoff's exact gradient and timing while
  * keeping the primitive's sizing, radius and aria handling.
  */
@@ -125,7 +126,9 @@
    the next step down the same warm family (the design names it for
    `.sapHoverWarmest`), so a hovered row is obvious without leaving the
    palette or colliding with the green selection states. */
-.sapRow:hover              { background: #EDE9E0 !important; }
+/* The selected row keeps its green under the cursor, as the prototype does
+   (`hoverBg: on ? "#EBF0E1" : …`); only unselected rows take the hover tint. */
+.sapRow:not([data-on="1"]):hover { background: #EDE9E0 !important; }
 /* the upload modal's course radio keeps its chosen tint on hover */
 .sapUplCourse:hover            { background: #F7F4EE; }
 .sapUplCourse[data-on="1"]:hover { background: #F2F6EE; }

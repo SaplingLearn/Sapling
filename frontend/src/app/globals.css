@@ -1,7 +1,9 @@
 @import "tailwindcss";
-/* Library: the design handoff's own stylesheet, kept in its own file so a
-   future drop can be re-ported by replacing it. See its header. */
+/* Library + Notes: the design handoff's own stylesheets, kept in their own
+   files so a future drop can be re-ported by replacing them. See their
+   headers. */
 @import "./library-notes.css";
+@import "./notes-editor.css";
 
 /* Sapling — design tokens
  *

@@ -1,6 +1,7 @@
 /**
  * The Library's own client (routes/documents.py): rename, move and re-type a
- * document, the Trash (list, restore, delete forever) and folders. Kept out of
+ * document, the Trash (list, restore, delete forever), folders and "New
+ * Document". Kept out of
  * lib/api.ts, which is at its size ceiling, so the Library owns its calls; the
  * reads and writes the old Library already made (getDocuments, deleteDocument,
  * the concept scans, upload) stay where they were.
@@ -43,6 +44,19 @@ export const purgeDocument = (documentId: string, userId: string) =>
     `/api/documents/doc/${documentId}?hard=1&user_id=${encodeURIComponent(userId)}`,
     { method: "DELETE" },
   );
+
+/**
+ * "New Document": an empty library document to write notes in. Unlike every
+ * other row it has no file behind it, so the server marks it un-indexable.
+ */
+export const createBlankDocument = (
+  userId: string,
+  input: { file_name?: string; course_id?: string | null; folder_id?: string | null },
+) =>
+  fetchJSON<Doc>("/api/documents/blank", {
+    method: "POST",
+    body: JSON.stringify({ user_id: userId, ...input }),
+  });
 
 // Folders — a named box inside a course that holds documents.
 export const getFolders = (userId: string) =>

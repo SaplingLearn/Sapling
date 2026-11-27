@@ -16,6 +16,7 @@ import React from "react";
 
 import { deleteDocument, getCourses, getDocuments, type EnrolledCourse } from "@/lib/api";
 import {
+  createBlankDocument,
   createFolder as apiCreateFolder,
   deleteFolder as apiDeleteFolder,
   getFolders,
@@ -57,6 +58,9 @@ export interface LibraryData {
   trashDocuments: (ids: string[]) => Promise<void>;
   restoreDocuments: (ids: string[]) => Promise<void>;
   purgeDocuments: (ids: string[]) => Promise<void>;
+  createDocument: (
+    name: string, courseId: string | null, folderId: string | null,
+  ) => Promise<Doc | null>;
   addFolder: (name: string, courseId: string | null) => Promise<DocFolder | null>;
   renameFolderTo: (id: string, name: string) => Promise<void>;
   removeFolder: (id: string) => Promise<void>;
@@ -237,6 +241,25 @@ export function useLibraryData(userId: string, userReady: boolean): LibraryData 
     );
   }, [userId, run]);
 
+  const createDocument = React.useCallback(async (
+    name: string, courseId: string | null, folderId: string | null,
+  ) => {
+    try {
+      const doc = await createBlankDocument(userId, {
+        file_name: name, course_id: courseId, folder_id: folderId,
+      });
+      // Optimistic: the new row is put into rename-in-place straight away, so
+      // it has to be on screen before the reload comes back.
+      setDocuments(prev => [doc, ...prev]);
+      void reload();
+      return doc;
+    } catch (err) {
+      console.error("create document failed", err);
+      flash({ msg: humanizeError(err, "Couldn't make that document. Try again.") });
+      return null;
+    }
+  }, [userId, reload, flash]);
+
   const addFolder = React.useCallback(async (name: string, courseId: string | null) => {
     try {
       const folder = await apiCreateFolder(userId, name, courseId);
@@ -288,6 +311,6 @@ export function useLibraryData(userId: string, userReady: boolean): LibraryData 
     toast, flash, clearToast,
     moveDocuments, renameDocument, setCategory,
     trashDocuments, restoreDocuments, purgeDocuments,
-    addFolder, renameFolderTo, removeFolder,
+    createDocument, addFolder, renameFolderTo, removeFolder,
   };
 }

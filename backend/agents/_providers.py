@@ -57,6 +57,7 @@ if TYPE_CHECKING:  # keep pydantic-ai's function-model imports out of the prod p
 AgentTask = Literal[
     "classifier", "summary", "concepts", "syllabus", "quiz", "chat_tutor",
     "note_summary", "note_concepts", "note_chat",
+    "document_notes", "document_notes_chat",
     "study_guide", "social_summary",
     "flashcard",
     "course_summary", "quiz_context",
@@ -93,6 +94,8 @@ _DEFAULTS: dict[AgentTask, str] = {
     "note_summary": "claude-haiku-5-5",
     "note_concepts": "claude-haiku-5-5",
     "note_chat": "claude-haiku-5-5",
+    "document_notes": "claude-haiku-5-5",
+    "document_notes_chat": "claude-haiku-5-5",
     "study_guide": "claude-haiku-5-5",
     "social_summary": "claude-haiku-5-5",
     "flashcard": "claude-haiku-5-5",
@@ -136,6 +139,8 @@ _GEMINI_FALLBACKS: dict[AgentTask, str] = {
     "note_summary": "gemini-2.5-flash-lite",
     "note_concepts": "gemini-2.5-flash-lite",
     "note_chat": "gemini-2.5-flash",
+    "document_notes": "gemini-2.5-flash-lite",
+    "document_notes_chat": "gemini-2.5-flash",
     "study_guide": "gemini-2.5-flash",
     "social_summary": "gemini-2.5-flash-lite",
     "flashcard": "gemini-2.5-flash",
@@ -170,6 +175,8 @@ _SLOT_TIMEOUT_S: dict[AgentTask, float] = {
     "concept_edges": 180.0,
     "concept_prune": 180.0,
     "note_chat": 180.0,
+    "document_notes": 180.0,
+    "document_notes_chat": 180.0,
     # Streamed in the SSE routes: the read (inter-chunk) bound.
     "chat_tutor": 180.0,
     # Latency-sensitive, short output.
@@ -240,6 +247,8 @@ _ANTHROPIC_EFFORT: dict[AgentTask, Literal["low", "medium", "high"]] = {
     "note_summary": "low",
     "note_concepts": "low",
     "note_chat": "medium",
+    "document_notes": "low",
+    "document_notes_chat": "medium",
     "study_guide": "medium",
     "social_summary": "low",
     # Flashcards ran on Flash with thinking disabled for parity with the
@@ -264,7 +273,7 @@ _ANTHROPIC_EFFORT: dict[AgentTask, Literal["low", "medium", "high"]] = {
 # read ~99% of its input from cache at 0.1x the input rate. Single-shot
 # structured workers are left uncached: a 5-minute cache write costs 1.25x
 # and they rarely repeat a prefix in time to read it back.
-_ANTHROPIC_CACHED_TASKS: frozenset[AgentTask] = frozenset({"chat_tutor", "quiz", "note_chat"})
+_ANTHROPIC_CACHED_TASKS: frozenset[AgentTask] = frozenset({"chat_tutor", "quiz", "note_chat", "document_notes_chat"})
 
 
 def _anthropic_settings_for(task: AgentTask | None) -> AnthropicModelSettings:

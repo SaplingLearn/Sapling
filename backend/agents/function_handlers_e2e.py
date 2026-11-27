@@ -404,6 +404,43 @@ register_function_handler(
 register_function_handler("note_chat", _note_chat_handler)
 
 
+# ── The Library's per-document notes (agents/document_notes.py) ─────────────
+#
+# Both are free-text agents, so they answer with a TextPart rather than an
+# output tool. The body is the editor's own block markup, so the lane exercises
+# the round-trip (`lib/notes/blocks.ts`) rather than a bare paragraph.
+E2E_DOCUMENT_NOTES = (
+    "<p>These notes cover how a determinant measures the signed volume a "
+    "matrix scales by, and why a zero determinant means no inverse.</p>"
+    "<h2>1. What a Determinant Measures</h2>"
+    "<p>The determinant of a square matrix is the factor by which it scales "
+    "oriented volume.</p>"
+    '<div class="blk" data-blk="qa" data-open="0">'
+    "<div class=\"qa-q\">Why does a zero determinant mean no inverse?</div>"
+    "<div class=\"qa-a\">It collapses volume to zero, so no map can undo "
+    "it.</div></div>"
+    "<h2>Questions to Review</h2>"
+    '<ul class="check"><li data-done="0"><span>Compute a 3x3 determinant by '
+    "cofactor expansion.</span></li></ul>"
+)
+E2E_DOCUMENT_NOTES_REPLY = (
+    "The determinant is the factor your matrix scales oriented volume by. "
+    "When it is zero the map flattens space, so nothing can invert it."
+)
+
+
+def _document_notes_handler(messages, info) -> ModelResponse:
+    return ModelResponse(parts=[TextPart(content=E2E_DOCUMENT_NOTES)])
+
+
+def _document_notes_chat_handler(messages, info) -> ModelResponse:
+    return ModelResponse(parts=[TextPart(content=E2E_DOCUMENT_NOTES_REPLY)])
+
+
+register_function_handler("document_notes", _document_notes_handler)
+register_function_handler("document_notes_chat", _document_notes_chat_handler)
+
+
 # ── Typed decision seam / tutor router (#640, ADR 0027) ─────────────────────
 #
 # services/decisions.py runs the `decision` agent on the FunctionModel whenever

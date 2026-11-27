@@ -3,7 +3,7 @@
  * Total coverage of the design handoff's style declarations.
  *
  * `designParity.test.tsx` checks specific values the rebuild must carry. This
- * file checks the complement: that NO declaration in the prototype was left
+ * file checks the complement: that NO declaration in either prototype was left
  * behind. Every `style="…"` declaration in the handoff must appear either in
  * the rendered DOM or somewhere in the rebuild's source — the latter because a
  * menu, modal, trash view or skeleton is not mounted in a single render.
@@ -16,7 +16,7 @@ import fs from "node:fs";
 import path from "node:path";
 import React from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 
 import { declarations, normalizeColor, renderedDeclarations } from "./designParity";
 
@@ -27,6 +27,13 @@ vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
 vi.mock("@/context/FlagsContext", () => ({
   useFlagMap: () => ({ flags: {}, ready: true }),
 }));
+vi.mock("@/lib/notes/useNoteMath", () => ({
+  useNoteMath: () => ({
+    open: vi.fn(), close: vi.fn(), active: null, paletteOpen: false,
+    insert: vi.fn(), preview: () => "", refresh: vi.fn(),
+    palettePos: { left: 0, top: 0 },
+  }),
+}));
 vi.mock("@/lib/api", () => ({
   getDocuments: vi.fn(),
   getCourses: vi.fn(),
@@ -35,12 +42,19 @@ vi.mock("@/lib/api", () => ({
   scanCourseConcepts: vi.fn(),
   uploadDocumentStream: vi.fn(),
 }));
+vi.mock("@/lib/notesApi", () => ({
+  getDocumentNotes: vi.fn(),
+  saveDocumentNotes: vi.fn(),
+  regenerateDocumentNotes: vi.fn(),
+  askDocumentNotes: vi.fn(),
+}));
 vi.mock("@/lib/libraryApi", () => ({
   getFolders: vi.fn(async () => ({ folders: [] })),
   getTrashedDocuments: vi.fn(async () => ({ documents: [] })),
   restoreDocument: vi.fn(),
   purgeDocument: vi.fn(),
   updateDocument: vi.fn(),
+  createBlankDocument: vi.fn(),
   createFolder: vi.fn(),
   renameFolder: vi.fn(),
   deleteFolder: vi.fn(),
@@ -48,11 +62,14 @@ vi.mock("@/lib/libraryApi", () => ({
 vi.mock("@/lib/studyGuide/api", () => ({ listGuides: vi.fn(async () => ({ guides: [] })) }));
 
 import { getCourses, getDocuments, type EnrolledCourse } from "@/lib/api";
+import { getDocumentNotes } from "@/lib/notesApi";
 import { Library } from "./Library";
+import { Notes } from "../notes/Notes";
 import { ToastProvider } from "../ToastProvider";
 
 const read = (p: string) => fs.readFileSync(path.join(__dirname, p), "utf8");
 const LIBRARY_DESIGN = read("__fixtures__/library-v2.design.html");
+const NOTES_DESIGN = read("../notes/__fixtures__/notes.design.html");
 
 /**
  * Declarations the rebuild deliberately does not carry.
@@ -85,6 +102,25 @@ const LIBRARY_DESIGN = read("__fixtures__/library-v2.design.html");
  * the faithful offset at 40px is 46 — the rebuild writes `CONTROL_H + 6` so
  * the menu keeps following the button. It is the only `top: 54px` there.
  *
+ * The toolbar's travel: the prototype positions the formatting bar absolutely
+ * into the gap between the breadcrumb and the header actions, and animates
+ * `top` / `left` / `right` on the 380ms curve as that gap moves. Owner's call
+ * 2026-11-27 — the bar had been landing on a second row in a header that had
+ * the width for it — makes the bar the row's middle flex cell instead, so it
+ * has no `top`/`left`/`right` of its own to travel. The movement is still
+ * there and still on this curve: the header's right edge slides when Clov
+ * opens and the cell follows it, which `designParity` pins. This single
+ * declaration is the whole deviation; the bar's own 380ms padding squeeze and
+ * every other transition in the prototype are unchanged.
+ *
+ * The search field's clear button: the handoff draws it 32x32 on a #F4F1EA
+ * fill, immediately beside the 24x24 `/` keyboard hint it replaces. Owner's
+ * call 2026-11-26 — typing one character swapped a quiet key-cap for a filled
+ * button a third larger, which jumped the row and read as an oversized X — so
+ * it takes the hint's own box instead. It is the only 32x32 box, the only
+ * #F4F1EA fill and the only #3F3B31 ink in the prototype, so allowlisting
+ * them hides nothing else. The radius and glyph are still the handoff's.
+ *
  * The Trash button: the handoff draws a Trash chip beside the course
  * switcher — a drop target whose can lid tilts on drag-over and whose count
  * bumps when something lands. Owner's calls 2026-11-25: first the count went
@@ -102,9 +138,24 @@ const LIBRARY_DESIGN = read("__fixtures__/library-v2.design.html");
 const EXPECTED_DEVIATIONS = [
   /^font-family: '(Aleo|SUSE|IBM Plex Mono)'/,
   /^width: 1920px$/, /^height: 1080px$/, /^transform-origin: 0 0$/,
-  /^grid-template-rows: auto minmax\(0, 1fr\)$/, /^min-height: 0$/,
+  /^grid-template-rows: auto minmax\(0, 1fr\)$/,
   /^height: 48px$/, /^top: 54px$/,
-  /^align-items: baseline$/, /^display: inline-block$/,
+  /^align-items: baseline$/,
+  /^transition: top 380ms cubic-bezier\(0\.3, 0\.7, 0\.2, 1\), left .*right .*$/,
+  /^width: 32px$/, /^height: 32px$/,
+  /^background: #F4F1EA$/, /^color: #3F3B31$/,
+];
+
+/**
+ * What the Library's own owner's calls take with them (the inner scroller's
+ * `min-height: 0`s, and the Trash chip: its count's `inline-block` and
+ * `translateY(0.5px)`, the lid's transform-box / origin / tilt transition, the
+ * skeleton's 104px placeholder; see above). They are excused for the Library
+ * design ONLY: the Notes page has its own scrollers, inline boxes and
+ * transitions, and a dropped one there is a real drop.
+ */
+const LIBRARY_ONLY_DEVIATIONS = [
+  /^min-height: 0$/, /^display: inline-block$/,
   /^transform-box: fill-box$/, /^transform-origin: 85% 100%$/,
   /^transition: transform 200ms cubic-bezier\(0\.2, 0\.7, 0\.2, 1\)$/,
   /^transform: translateY\(0\.5px\)$/, /^width: 104px$/,
@@ -121,7 +172,10 @@ function sourceText(): string {
     }
   };
   walk(path.join(__dirname, "..", "library"));
+  walk(path.join(__dirname, "..", "notes"));
+  walk(path.join(__dirname, "../../lib/notes"));
   files.push(path.join(__dirname, "../../app/library-notes.css"));
+  files.push(path.join(__dirname, "../../app/notes-editor.css"));
   return files.map(f => fs.readFileSync(f, "utf8")).join("\n");
 }
 
@@ -161,7 +215,7 @@ function carried(have: Set<string>, haveSets: Set<string>, p: string, v: string)
   return false;
 }
 
-function dropped(design: string, root: HTMLElement): string[] {
+function dropped(design: string, root: HTMLElement, also: RegExp[] = []): string[] {
   const have = new Set<string>();
   const haveSets = new Set<string>();
   for (const [p, v] of renderedDeclarations(root)) {
@@ -178,7 +232,7 @@ function dropped(design: string, root: HTMLElement): string[] {
     const key = norm(p, v);
     if (seen.has(key)) continue;
     seen.add(key);
-    if (EXPECTED_DEVIATIONS.some(re => re.test(key))) continue;
+    if ([...EXPECTED_DEVIATIONS, ...also].some(re => re.test(key))) continue;
     if (!carried(have, haveSets, p, v)) out.push(key);
   }
   return out.sort();
@@ -194,17 +248,32 @@ const DOC = {
   concept_notes: [{ name: "Determinants", description: "" }], page_count: 18,
   created_at: "2026-11-05T00:00:00Z", processed_at: "2026-11-05T00:00:00Z",
 };
+const NOTES_ROW = {
+  document_id: "d1", user_id: "u1", title: "Determinants",
+  content: "<h2>Overview</h2><p>What a determinant measures.</p>", final: false,
+  created_at: "2026-11-01T00:00:00Z", updated_at: "2026-11-01T00:00:00Z",
+};
 
 beforeEach(() => {
   vi.spyOn(console, "error").mockImplementation(() => {});
   vi.mocked(getDocuments).mockResolvedValue({ documents: [DOC] } as never);
   vi.mocked(getCourses).mockResolvedValue({ courses: [COURSE] });
+  vi.mocked(getDocumentNotes).mockResolvedValue(NOTES_ROW);
 });
 
 describe("every design declaration was ported", () => {
   it("the Library drops nothing", async () => {
     const view = render(<ToastProvider><Library /></ToastProvider>);
     await screen.findByTestId("library-doc-d1");
-    expect(dropped(LIBRARY_DESIGN, view.container as HTMLElement)).toEqual([]);
+    expect(dropped(LIBRARY_DESIGN, view.container as HTMLElement, LIBRARY_ONLY_DEVIATIONS))
+      .toEqual([]);
+  });
+
+  it("the Notes page drops nothing", async () => {
+    const view = render(<ToastProvider><Notes documentId="d1" /></ToastProvider>);
+    await screen.findByTestId("notes-editor");
+    await waitFor(() =>
+      expect(screen.getByTestId("notes-title").textContent).toBe("Determinants"));
+    expect(dropped(NOTES_DESIGN, view.container as HTMLElement)).toEqual([]);
   });
 });

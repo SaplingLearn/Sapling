@@ -94,7 +94,7 @@ from services.documents.library import (  # noqa: F401  (re-export, #118)
     _courses_for_offerings, hard_delete_document, list_trashed_documents,
     list_user_documents, restore_document, soft_delete_document, update_document_row,
 )
-from services.documents import folders as folders_service, library_api
+from services.documents import blank, folders as folders_service, library_api, notes_api
 from services.documents.page_count import page_count_of
 from services.documents.stream import upload_event_stream
 
@@ -507,6 +507,13 @@ def scan_course_concepts(course_id: str, request: Request, body: ScanConceptsBod
         raise HTTPException(status_code=500, detail=e.detail)
 
 
+@router.post("/blank")
+async def create_blank_document(request: Request, body: dict = Body(...)):
+    """Make an empty document to write notes in ("New Document")."""
+    user_id = await _session_or_self(body.get("user_id"), request)
+    return await blank.create_for_request(user_id, body)
+
+
 # -- folders ----------------------------------------------------------------
 
 
@@ -541,3 +548,45 @@ async def delete_document_folder(
     user_id = await _session_or_self(user_id, request)
     await folders_service.delete_for_request(folder_id, user_id)
     return {"deleted": True}
+
+
+# -- the document's editable notes page (/library/{id}/notes) ----------------
+#
+# The bodies live in services/documents/notes_api.py (#118): the agent runs,
+# the prompts and the generate-once rule are that module's business.
+
+
+@router.get("/doc/{document_id}/notes")
+async def get_document_notes(
+    document_id: str, request: Request, user_id: str | None = None,
+):
+    """The notes for a document, generated on the first read."""
+    user_id = await _session_or_self(user_id, request)
+    await _require_owned_document(document_id, user_id)
+    return await notes_api.read(document_id, user_id, _upload_request_id(request))
+
+
+@router.put("/doc/{document_id}/notes")
+async def save_document_notes(document_id: str, request: Request, body: dict = Body(...)):
+    """Save the notes. Called on the editor's autosave debounce."""
+    user_id = await _session_or_self(body.get("user_id"), request)
+    await _require_owned_document(document_id, user_id)
+    return await notes_api.save(document_id, user_id, body)
+
+
+@router.post("/doc/{document_id}/notes/regenerate")
+async def regenerate_document_notes(
+    document_id: str, request: Request, body: dict = Body(default={}),
+):
+    """Rebuild the notes from the source document, replacing the edits."""
+    user_id = await _session_or_self(body.get("user_id"), request)
+    await _require_owned_document(document_id, user_id)
+    return await notes_api.regenerate(document_id, user_id, _upload_request_id(request))
+
+
+@router.post("/doc/{document_id}/notes/ask")
+async def ask_document_notes(document_id: str, request: Request, body: dict = Body(...)):
+    """Ask Clov one question about the notes on screen."""
+    user_id = await _session_or_self(body.get("user_id"), request)
+    await _require_owned_document(document_id, user_id)
+    return await notes_api.ask(document_id, user_id, body, _upload_request_id(request))

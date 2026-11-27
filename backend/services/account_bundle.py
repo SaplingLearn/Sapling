@@ -111,6 +111,7 @@ JSON = "json"
 _ENCRYPTED_TABLES = (
     "user_profiles", "assignments", "topic_checklists", "documents", "notes", "flashcards",
     "sessions", "messages", "study_guides", "quiz_attempts", "quiz_responses", "quiz_context",
+    "document_notes",
 )
 
 ENCRYPTED: dict[str, dict[str, str]] = {
@@ -265,6 +266,9 @@ SPECS: tuple[_Spec, ...] = (
     _Spec("document_folders"),
     # Before enrollments: enrollments.syllabus_doc_id references documents.
     _Spec("documents"),
+    # The editable notes page for a document; keyed BY the document, so it
+    # follows it. Row ids are preserved, so document_id travels unchanged.
+    _Spec("document_notes", order="document_id"),
     _Spec("enrollments"),
     _Spec("gradebook_categories", key="enrollment_id", parent="enrollments"),
     _Spec("assignments", key="enrollment_id", parent="enrollments"),

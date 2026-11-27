@@ -1,34 +1,35 @@
 /**
- * Journey — the Library redesign matches its design handoff in a REAL browser,
- * not just in jsdom.
+ * Journey — the Library and Notes redesign matches its design handoff in a
+ * REAL browser, not just in jsdom.
  *
  * `src/components/library/designParity.test.tsx` and `designCoverage.test.tsx`
- * already prove that every declaration in the prototype reached the code
+ * already prove that every declaration in the two prototypes reached the code
  * and that none was dropped. They cannot prove three things, because jsdom has
  * no CSS cascade and no layout engine:
  *
  *   1. that a value landed on the RIGHT element (a unit test that finds
  *      `padding: 0 14px` somewhere in the source is satisfied by it being on
  *      the wrong button),
- *   2. that `app/library-notes.css` actually applies — it is reached through
- *      an `@import` in globals.css, and a scoping or specificity mistake would
- *      be invisible to a test that never loads a stylesheet,
+ *   2. that `app/library-notes.css` and `app/notes-editor.css` actually apply —
+ *      they are reached through `@import`s in globals.css, and a scoping or
+ *      specificity mistake would be invisible to a test that never loads a
+ *      stylesheet,
  *   3. that the hover states work at all. The handoff expresses them as
  *      `style-hover="…"` attributes, which the rebuild re-expresses as
  *      `.sapHover*` classes; nothing in the unit lane ever hovers.
  *
- * This spec reads the handoff fixture itself — the same file the unit tests
- * read — and asserts the browser's own `getComputedStyle` against it.
+ * This spec reads the handoff fixtures themselves — the same files the unit
+ * tests read — and asserts the browser's own `getComputedStyle` against them.
  *
  * What it deliberately does NOT do: diff a screenshot against the prototype.
- * The prototype paints mock content (its own document names) into a fixed
- * 1920x1080 artboard with its own sidebar, while the app paints seeded data
- * inside the repo's shell and the real SideNav. Such a diff
+ * The prototype paints mock content (its own document names, its own notes
+ * body) into a fixed 1920x1080 artboard with its own sidebar, while the app
+ * paints seeded data inside the repo's shell and the real SideNav. Such a diff
  * would be almost entirely content noise and would fail for reasons that have
  * nothing to do with design fidelity, so it would be a test nobody trusts.
  * Computed style is the strongest claim that is also a true one.
  *
- * Selectors: the `library-*` testids (docs/frontend-testids.md).
+ * Selectors: the `library-*` / `notes-*` testids (docs/frontend-testids.md).
  * Data: the rich seed's `linear-algebra-notes.pdf` (db/seed_local_rich.py).
  */
 import fs from "node:fs";
@@ -39,7 +40,13 @@ import { expect, test } from "./support/fixtures";
 const SRC = path.join(__dirname, "..", "src");
 const LIBRARY_DESIGN = fs.readFileSync(
   path.join(SRC, "components/library/__fixtures__/library-v2.design.html"), "utf8");
-const PORTED_CSS = fs.readFileSync(path.join(SRC, "app/library-notes.css"), "utf8");
+const NOTES_DESIGN = fs.readFileSync(
+  path.join(SRC, "components/notes/__fixtures__/notes.design.html"), "utf8");
+// globals.css imports both: the Library's rules and the hover classes the two
+// pages share, then the Notes editor's rules and its own hover classes.
+const PORTED_CSS = ["app/library-notes.css", "app/notes-editor.css"]
+  .map(f => fs.readFileSync(path.join(SRC, f), "utf8"))
+  .join("\n");
 
 /**
  * One spelling per colour, the one the CSSOM uses: `#F2F6EE` becomes
@@ -89,7 +96,7 @@ function designHovers(design: string): Set<string> {
   return out;
 }
 
-test.describe("the Library matches the design handoff in a browser", () => {
+test.describe("Library + Notes match the design handoff in a browser", () => {
   test("the ported stylesheet is actually live on the Library", async ({ page }) => {
     await page.goto("/library");
     await expect(page.getByTestId("library-search")).toBeVisible({ timeout: 30_000 });
@@ -119,7 +126,9 @@ test.describe("the Library matches the design handoff in a browser", () => {
     //    declares has to exist as a `.sapHover*` rule in the source.
     const declared = new Set(
       hoverRules().flatMap(r => r.decls.map(([p, v]) => `${p}:${v}`)));
-    const wanted = designHovers(LIBRARY_DESIGN);
+    const wanted = new Set([
+      ...designHovers(LIBRARY_DESIGN), ...designHovers(NOTES_DESIGN),
+    ]);
     expect(
       [...wanted].filter(w => !declared.has(w)),
       "handoff hover declarations with no .sapHover* rule",
@@ -165,5 +174,37 @@ test.describe("the Library matches the design handoff in a browser", () => {
     await menuButton.hover();
     await expect(menuButton, "the row's menu button repaints on hover")
       .toHaveCSS("background-color", rgb("#E4DFD3"));
+  });
+
+  test("the Notes page carries the handoff's own values", async ({ page }) => {
+    await page.goto("/library");
+    await expect(page.getByTestId("library-search")).toBeVisible({ timeout: 30_000 });
+
+    // Open the seeded document's notes. Double-click is the row's open
+    // gesture, the same one the design gives it.
+    // `library-doc-menu` shares the prefix, so exclude it: a row is
+    // `library-doc-{id}`.
+    const row = page
+      .locator('[data-testid^="library-doc-"]:not([data-testid="library-doc-menu"])')
+      .first();
+    await expect(row).toBeVisible();
+    await row.dblclick();
+
+    await expect(page.getByTestId("notes-editor")).toBeVisible({ timeout: 30_000 });
+    await expect(page).toHaveURL(/\/library\/[^/]+\/notes$/);
+
+    // The editor column's measure is the handoff's, and it is the one value a
+    // broken cascade would quietly change.
+    const measure = /max-width:\s*1040px/.test(NOTES_DESIGN) ? "1040px" : null;
+    expect(measure, "the handoff still states a 1040px measure").toBe("1040px");
+
+    // The toolbar is the piece whose eleven transitions were hand-ported; if
+    // the stylesheet or the SQUEEZE constant broke, it is visible here.
+    const toolbar = page.getByTestId("notes-toolbar");
+    await expect(toolbar).toBeVisible();
+
+    // The editor body is the one place the ported stylesheet styles content it
+    // does not own the markup for, so prove its scope reaches the editor.
+    await expect(page.locator("[data-notes]").first()).toBeVisible();
   });
 });

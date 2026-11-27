@@ -1,7 +1,7 @@
 "use client";
 /**
- * The dialog a row's "⋯" opens: Rename, Move, Add to Folder, Type, Scan to
- * Knowledge Graph, Move to Trash.
+ * The dialog a row's "⋯" opens: Open, Rename, Download Notes, Move, Add to
+ * Folder, Type, Scan to Knowledge Graph, Move to Trash.
  *
  * Three things are not in the prototype's menu and are here deliberately:
  *
@@ -11,8 +11,8 @@
  *    closest matching spot, which is this menu (README §2.3).
  *  - The prototype's **Download** is a stub that only closes the menu. The
  *    uploaded file is not kept after processing — `document_uploads.file_data`
- *    is cleared at a terminal stage — so there is no original to hand back,
- *    and the item is left out.
+ *    is cleared at a terminal stage — so there is no original to hand back.
+ *    It downloads the document's notes instead, and says so.
  *  - The **summary and the key concepts** the pipeline extracted. v2 drops the
  *    preview panel they used to live in, and the prototype's menu does not
  *    show them — but they are the old Library's content, and the handoff is
@@ -26,7 +26,7 @@ import type { DocFolder, Document as Doc } from "@/lib/types";
 import type { EnrolledCourse } from "@/lib/api";
 import { TYPE_ORDER, TYPES, courseLabel } from "./libraryModel";
 import {
-  FolderIcon, Glyph, MENU_HEADING, MENU_IN, MENU_ITEM, MENU_OUT,
+  ChevronRight, FolderIcon, Glyph, MENU_HEADING, MENU_IN, MENU_ITEM, MENU_OUT,
   MenuDivider, MenuScrim,
 } from "./primitives";
 
@@ -82,7 +82,9 @@ export interface DocMenuProps {
   sub: DocMenuSub;
   onSub: (s: DocMenuSub) => void;
   onClose: () => void;
+  onOpen: () => void;
   onRename: () => void;
+  onDownload: () => void;
   onMoveCourse: (courseId: string | null) => void;
   onMoveFolder: (folderId: string | null) => void;
   onType: (c: Doc["category"]) => void;
@@ -97,7 +99,8 @@ export interface DocMenuProps {
  * v2 removes; they are kept here rather than lost.
  *
  * A concept's description is markdown in the old panel. Here it is the plain
- * name, with the description as its tooltip — the dialog is 240px wide.
+ * name — the dialog is 240px wide, and the description belongs on the Notes
+ * page, which is a click away under Open.
  */
 function DocumentFacts({ doc }: { doc: Doc }) {
   const concepts = doc.concept_notes ?? [];
@@ -141,8 +144,8 @@ function DocumentFacts({ doc }: { doc: Doc }) {
 
 export function DocMenu(props: DocMenuProps) {
   const {
-    doc, position, closing, courses, folders, sub, onSub, onClose, onRename,
-    onMoveCourse, onMoveFolder, onType, onScan, scanState, onTrash,
+    doc, position, closing, courses, folders, sub, onSub, onClose, onOpen, onRename,
+    onDownload, onMoveCourse, onMoveFolder, onType, onScan, scanState, onTrash,
   } = props;
 
   const anim = closing ? MENU_OUT : MENU_IN;
@@ -225,8 +228,26 @@ export function DocMenu(props: DocMenuProps) {
         }}
       >
         <div style={{ padding: 6, display: "flex", flexDirection: "column", gap: 1 }}>
+          <button
+            role="menuitem"
+            className="sapHoverMenu"
+            onClick={onOpen}
+            style={{ ...MENU_ITEM, color: "#2F4417", fontWeight: 700 }}
+          >
+            <span style={{ flex: 1 }}>Open</span>
+            <ChevronRight size={12} />
+          </button>
           <button role="menuitem" className="sapHoverMenu" onClick={onRename} style={MENU_ITEM}>
             Rename
+          </button>
+          <button
+            role="menuitem"
+            className="sapHoverMenu"
+            onClick={onDownload}
+            title="The original file isn't kept after processing; this downloads the notes."
+            style={MENU_ITEM}
+          >
+            Download Notes
           </button>
 
           <MenuDivider />
