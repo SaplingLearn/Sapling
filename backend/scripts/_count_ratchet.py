@@ -33,7 +33,7 @@ def run(
     printed under each entry that grew. ``what`` names the unit ("type errors").
     """
     exists = baseline_path.exists()
-    baseline: dict[str, int] = json.loads(baseline_path.read_text()) if exists else {}
+    baseline: dict[str, int] = json.loads(baseline_path.read_text(encoding="utf-8")) if exists else {}
 
     grew = {k: (baseline.get(k, 0), n) for k, n in counts.items() if n > baseline.get(k, 0)}
     shrunk = {k: (n, counts.get(k, 0)) for k, n in baseline.items() if counts.get(k, 0) < n}

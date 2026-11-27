@@ -115,7 +115,7 @@ class TestMasteryModelSeam:
 
         doc = Path(__file__).resolve().parents[2] / "docs" / "quiz-mastery-model.md"
         assert doc.exists(), "the mastery-model options write-up is missing"
-        text = doc.read_text()
+        text = doc.read_text(encoding="utf-8")
         assert "0.03" in text and "0.02" in text
         assert "#393" in text, "the write-up must flag the pinned journey value"
 

@@ -75,7 +75,7 @@ _MESSAGE = re.compile(r"^`(?P<name>[^`]+)` is too complex \((?P<score>\d+) > \d+
 
 
 def _ruff_config(root: pathlib.Path) -> dict:
-    return tomllib.loads((root / "ruff.toml").read_text())
+    return tomllib.loads((root / "ruff.toml").read_text(encoding="utf-8"))
 
 
 def max_complexity(root: pathlib.Path = BACKEND) -> int:
@@ -291,7 +291,7 @@ def shrink(baseline: dict[str, int], current: dict[str, int]) -> dict[str, int]:
 
 
 def load_baseline(root: pathlib.Path = BACKEND) -> dict:
-    return json.loads((root / BASELINE_FILE).read_text())
+    return json.loads((root / BASELINE_FILE).read_text(encoding="utf-8"))
 
 
 def write_baseline(data: dict, root: pathlib.Path = BACKEND) -> None:

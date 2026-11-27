@@ -13,7 +13,7 @@ MIG_DIR = pathlib.Path(__file__).resolve().parents[1] / "db" / "migrations"
 def _migration() -> str:
     hits = sorted(MIG_DIR.glob("*_document_index_status.sql"))
     assert len(hits) == 1, f"expected exactly one index-status migration, got {hits}"
-    return hits[0].read_text()
+    return hits[0].read_text(encoding="utf-8")
 
 
 def test_every_status_value_is_in_the_check_constraint():
@@ -64,7 +64,7 @@ def test_confidence_is_range_checked():
 def _backoff_migration() -> str:
     hits = sorted(MIG_DIR.glob("*_document_index_retry_backoff.sql"))
     assert len(hits) == 1, f"expected exactly one retry-backoff migration, got {hits}"
-    return hits[0].read_text()
+    return hits[0].read_text(encoding="utf-8")
 
 
 def test_the_backoff_migration_sorts_after_the_one_it_amends():
@@ -104,12 +104,12 @@ def _terminal_migration() -> str:
     # DDL is its "#758 indexing: explicit 'exhausted'" section.
     hits = sorted(MIG_DIR.glob("*_state_machines_audit.sql"))
     assert len(hits) == 1, f"expected exactly one state-machines migration, got {hits}"
-    return hits[0].read_text()
+    return hits[0].read_text(encoding="utf-8")
 
 
 def _latest_claim() -> str:
     for path in sorted(MIG_DIR.glob("*.sql"), reverse=True):
-        sql = path.read_text()
+        sql = path.read_text(encoding="utf-8")
         if "FUNCTION claim_documents_for_indexing(" in sql:
             return sql
     raise AssertionError("no claim_documents_for_indexing definition")

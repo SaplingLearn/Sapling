@@ -36,7 +36,7 @@ def load_cassette(dataset: str, case_name: str) -> dict[str, Any] | None:
     p = _cassette_path(dataset, case_name)
     if not p.exists():
         return None
-    return json.loads(p.read_text())
+    return json.loads(p.read_text(encoding="utf-8"))
 
 
 def save_cassette(dataset: str, case_name: str, output: Any) -> None:
@@ -83,7 +83,7 @@ def _aggregate_scores(report) -> dict[str, float]:
 def _load_baselines() -> dict[str, dict[str, float]]:
     if not BASELINES_PATH.exists():
         return {}
-    return json.loads(BASELINES_PATH.read_text())
+    return json.loads(BASELINES_PATH.read_text(encoding="utf-8"))
 
 
 def _write_baselines(all_baselines: dict[str, dict[str, float]]) -> None:

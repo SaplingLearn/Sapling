@@ -9,6 +9,7 @@ exercised once against a throwaway PG15 container (see the PR body).
 
 from __future__ import annotations
 
+import os
 import stat
 import subprocess
 from datetime import datetime, timezone
@@ -237,8 +238,15 @@ def test_take_backup_writes_a_validated_private_dump(tmp_path):
     assert result.path.read_bytes() == GOOD_ARCHIVE
     assert result.size_bytes == len(GOOD_ARCHIVE)
     assert result.toc_entries == 3  # comment lines excluded
-    assert stat.S_IMODE(result.path.stat().st_mode) == 0o600
-    assert stat.S_IMODE(result.path.parent.stat().st_mode) == 0o700
+    # The dump holds every encrypted column in the database, so it is written
+    # 0600 inside a 0700 directory. NTFS does not implement POSIX modes —
+    # Windows reports 0666 for any writable file whatever `os.open` was given
+    # — so the guarantee is asserted only where the filesystem can express it.
+    # Backups are taken on Linux (`make backup-db`, and CI), which is where
+    # this must hold and does.
+    if os.name != "nt":
+        assert stat.S_IMODE(result.path.stat().st_mode) == 0o600
+        assert stat.S_IMODE(result.path.parent.stat().st_mode) == 0o700
     assert not list(result.path.parent.glob("*.partial"))
 
     for cmd, kw in world.calls:
@@ -330,7 +338,7 @@ def test_cli_success_prints_the_path(monkeypatch, capsys, tmp_path):
 
 def test_default_backup_dir_is_gitignored_repo_root_backups():
     assert backup.BACKUP_DIR == Path(backup.__file__).resolve().parents[2] / "backups"
-    gitignore = (backup.REPO_ROOT / ".gitignore").read_text()
+    gitignore = (backup.REPO_ROOT / ".gitignore").read_text(encoding="utf-8")
     assert "/backups/" in gitignore.splitlines()
 
 

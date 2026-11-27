@@ -663,7 +663,7 @@ def test_the_new_event_types_are_in_the_pinned_taxonomy():
     blind."""
     from services import events_service
 
-    source = Path(events_service.__file__).read_text()
+    source = Path(events_service.__file__).read_text(encoding="utf-8")
     for event_type in ("rag.index_failed", "rag.index_recovered"):
         assert f'"{event_type}"' in source, event_type
 

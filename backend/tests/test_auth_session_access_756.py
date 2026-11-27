@@ -524,7 +524,7 @@ def test_no_async_route_calls_the_guard_on_the_loop():
     # services/quiz: the handler bodies the #118 split moved out of routes/quiz.py.
     paths = [*routes_dir.glob("*.py"), *(backend / "services" / "quiz").glob("*.py")]
     for path in sorted(paths):
-        tree = ast.parse(path.read_text())
+        tree = ast.parse(path.read_text(encoding="utf-8"))
         for fn in ast.walk(tree):
             if not isinstance(fn, ast.AsyncFunctionDef):
                 continue

@@ -203,7 +203,7 @@ def scan_destructive(paths: list[Path]) -> list[Finding]:
     """
     findings: list[Finding] = []
     for path in paths:
-        raw_lines = path.read_text().splitlines()
+        raw_lines = path.read_text(encoding="utf-8").splitlines()
         stripped = _strip_comments("\n".join(raw_lines))
         offset = 0
         for statement in stripped.split(";"):

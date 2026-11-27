@@ -65,7 +65,7 @@ def _user_edges(page_all, table, user_id: str) -> list[dict]:
 def _rollback(manifest_path: str) -> int:
     from db.connection import table
 
-    manifest = json.loads(Path(manifest_path).read_text())
+    manifest = json.loads(Path(manifest_path).read_text(encoding="utf-8"))
     if manifest.get("target") != target_project():
         print(f"ABORT: manifest is for project {manifest.get('target')!r}, "
               f"this run targets {target_project()!r}")

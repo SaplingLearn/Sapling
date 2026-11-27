@@ -47,7 +47,7 @@ def test_lowercases_every_handle_that_has_no_case_twin(db_conn):
                 (user_id, username),
             )
 
-        db_conn.execute(MIGRATION.read_text())
+        db_conn.execute(MIGRATION.read_text(encoding="utf-8"))
 
         assert _usernames(db_conn) == {
             "itest-un-1": "ItestAlice",
@@ -59,5 +59,5 @@ def test_lowercases_every_handle_that_has_no_case_twin(db_conn):
             "itest-un-7": "ItestDave",
         }
 
-        db_conn.execute(MIGRATION.read_text())      # re-runnable on its own result
+        db_conn.execute(MIGRATION.read_text(encoding="utf-8"))      # re-runnable on its own result
         assert _usernames(db_conn)["itest-un-3"] == "itestbob"

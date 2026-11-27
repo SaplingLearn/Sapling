@@ -106,7 +106,7 @@ def test_the_frontend_mirror_matches_the_backend_thresholds():
     src = (
         Path(__file__).resolve().parents[2]
         / "frontend/src/components/screens/Learn.tsx"
-    ).read_text()
+    ).read_text(encoding="utf-8")
 
     body = re.search(
         r"function tierForScore\(score: number\)[^{]*\{(.*?)\n\}", src, re.S

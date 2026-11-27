@@ -53,7 +53,7 @@ sys.path.insert(0, ".")
 from scripts.lock_constraints import parse_lock
 
 ALWAYS = set(json.loads(sys.argv[1]))
-locked = {canonicalize_name(p.name) for p in parse_lock(open("requirements.lock").read())}
+locked = {canonicalize_name(p.name) for p in parse_lock(open("requirements.lock", encoding="utf-8").read())}
 TOOLING = {"pip", "setuptools", "wheel"}
 blocked = set(ALWAYS)
 for module, dists in md.packages_distributions().items():

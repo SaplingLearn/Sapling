@@ -216,8 +216,8 @@ def scan() -> set[tuple[str, str, str]]:
         p for d in ("routes", "services", "agents") for p in (BACKEND / d).rglob("*.py")
     )
     for path in files:
-        rel = str(path.relative_to(BACKEND))
-        src = path.read_text()
+        rel = path.relative_to(BACKEND).as_posix()
+        src = path.read_text(encoding="utf-8")
         tree = ast.parse(src)
         parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
 
