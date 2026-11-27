@@ -118,7 +118,7 @@ def test_iat_is_truncated_to_the_millisecond_never_rounded_up(monkeypatch):
 def test_session_max_age_is_seven_days():
     assert config.SESSION_MAX_AGE_SECONDS == 7 * 24 * 3600
     frontend = pathlib.Path(__file__).resolve().parents[2] / "frontend/src/lib/sessionToken.ts"
-    assert "export const SESSION_MAX_AGE = 604800;" in frontend.read_text()
+    assert "export const SESSION_MAX_AGE = 604800;" in frontend.read_text(encoding="utf-8")
 
 
 # ── revocation ───────────────────────────────────────────────────────────────
@@ -424,7 +424,7 @@ DESTRUCTIVE = [
 @pytest.mark.parametrize(("path", "handler"), DESTRUCTIVE)
 def test_destructive_admin_actions_use_the_strict_window(path, handler):
     backend = pathlib.Path(__file__).resolve().parent.parent
-    tree = ast.parse((backend / path).read_text())
+    tree = ast.parse((backend / path).read_text(encoding="utf-8"))
     fn = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == handler)
     first_guard = next(
         n.func.id for n in ast.walk(fn)

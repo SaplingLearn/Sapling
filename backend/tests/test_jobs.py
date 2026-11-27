@@ -509,7 +509,7 @@ def test_prune_jobs_sql_deletes_only_succeeded_rows():
     from pathlib import Path
 
     sql = (Path(__file__).resolve().parents[1] / "db" / "migrations"
-           / "20261108213623_jobs_upkeep.sql").read_text()
+           / "20261108213623_jobs_upkeep.sql").read_text(encoding="utf-8")
     body = re.search(r"FUNCTION public\.prune_jobs\(.*?\$\$(.*?)\$\$;", sql, re.S).group(1)
     assert re.search(r"d\.status\s*=\s*'succeeded'", body)
     assert re.search(r"DELETE FROM public\.jobs j.*j\.status\s*=\s*'succeeded'", body, re.S)

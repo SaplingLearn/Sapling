@@ -302,6 +302,6 @@ def test_llm_budgets_is_service_only(db_conn):
 def test_the_migration_is_safe_to_apply_again_and_keeps_an_edited_default(world):
     _budget(world, "default", "", 123)
     with world.transaction() as tx:
-        world.execute(_MIGRATION.read_text())
+        world.execute(_MIGRATION.read_text(encoding="utf-8"))
         assert _status(world)["limit"] == 123  # the seed never overwrites an admin's value
         raise psycopg.Rollback(tx)

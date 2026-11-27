@@ -95,7 +95,7 @@ def test_a_charge_counts_per_student_and_action_and_can_be_given_back(per_proces
 def test_the_e2e_lanes_raise_every_limit(lane):
     """A held stack re-runs its journeys inside one hour, on one backend
     process. A limit a lane forgets to raise turns up there as a 429."""
-    text = (Path(__file__).resolve().parents[2] / lane).read_text()
+    text = (Path(__file__).resolve().parents[2] / lane).read_text(encoding="utf-8")
 
     for variable, _ in NAMES.values():
         assert variable in text, f"{lane} does not set {variable}"

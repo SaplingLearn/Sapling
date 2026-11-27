@@ -222,7 +222,7 @@ def test_no_upload_route_keeps_a_capped_reader_of_its_own():
 
     routes = pathlib.Path(__file__).resolve().parents[1] / "routes"
     hand_rolled = re.compile(r"\.read\([^)]*\+\s*1\s*\)")
-    offenders = sorted(p.name for p in routes.glob("*.py") if hand_rolled.search(p.read_text()))
+    offenders = sorted(p.name for p in routes.glob("*.py") if hand_rolled.search(p.read_text(encoding="utf-8")))
     assert offenders == []
 
 

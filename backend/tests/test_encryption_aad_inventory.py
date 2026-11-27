@@ -99,7 +99,7 @@ def _unbound_sites(source: str) -> list[int]:
 def test_every_seal_and_open_is_bound_or_listed():
     found = {}
     for rel, path in _modules():
-        sites = _unbound_sites(path.read_text())
+        sites = _unbound_sites(path.read_text(encoding="utf-8"))
         if sites:
             found[rel] = sites
     problems = []

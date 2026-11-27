@@ -146,7 +146,7 @@ def test_the_credential_sweep_flag_is_registered_off_first_and_seeded_on():
     assert fd.variants == ("off", "on") and fd.client_visible is False
     migrations = Path(__file__).resolve().parents[1] / "db" / "migrations"
     seeded = [p for p in migrations.glob("*_credential_sweep_flag.sql")
-              if "('credential_sweep', 'on')" in p.read_text()]
+              if "('credential_sweep', 'on')" in p.read_text(encoding="utf-8")]
     assert len(seeded) == 1
 
 
@@ -322,7 +322,7 @@ async def _start_and_stop():
 
 
 def _claim_sql() -> str:
-    sql = re.sub(r"--[^\n]*", "", MIGRATION.read_text())
+    sql = re.sub(r"--[^\n]*", "", MIGRATION.read_text(encoding="utf-8"))
     return re.sub(r"\s+", " ", sql)
 
 
@@ -350,5 +350,5 @@ def test_the_claim_is_executable_by_service_role_only():
 
 
 def test_the_rls_lockdown_lane_knows_the_rpc():
-    lockdown = (Path(__file__).resolve().parent / "integration" / "test_rls_lockdown_db.py").read_text()
+    lockdown = (Path(__file__).resolve().parent / "integration" / "test_rls_lockdown_db.py").read_text(encoding="utf-8")
     assert '"claim_accounts_for_purge"' in lockdown

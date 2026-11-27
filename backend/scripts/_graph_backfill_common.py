@@ -48,7 +48,7 @@ def load_prior(path: str | None) -> dict[tuple[str, str], dict] | None:
     """A reviewed dry-run report keyed by (user_id, course_id), or None."""
     if not path:
         return None
-    return {(c["user_id"], c["course_id"]): c for c in json.loads(Path(path).read_text())["courses"]}
+    return {(c["user_id"], c["course_id"]): c for c in json.loads(Path(path).read_text(encoding="utf-8"))["courses"]}
 
 
 def write_json(path: str | None, payload: dict) -> None:

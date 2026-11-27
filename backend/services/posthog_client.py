@@ -791,11 +791,16 @@ def _relative_filename(module: str | None, path: str) -> str:
     parts = [p for p in (module or "").split(".") if p]
     if not parts:
         return base
-    if base == "__init__.py":
-        candidate = os.path.join(*parts, base)
-    else:
-        candidate = os.path.join(*parts[:-1], base)
-    return candidate if path.endswith(os.sep + candidate) else base
+    candidate = "/".join(
+        [*parts, base] if base == "__init__.py" else [*parts[:-1], base])
+    # Both sides compared in POSIX form, and the result emitted that way too.
+    # `co_filename` carries the separator of whatever host raised the error,
+    # but this string is the frame identity PostHog groups issues on and the
+    # one `in_app` is read from — it must not change shape with the OS. The
+    # suffix check is unchanged in substance: the real path must still end
+    # with the module's own package path, or only the bare name is sent.
+    posix = path.replace("\\", "/")
+    return candidate if posix.endswith("/" + candidate) else base
 
 
 def _exception_list(summary: list[dict]) -> list[dict]:

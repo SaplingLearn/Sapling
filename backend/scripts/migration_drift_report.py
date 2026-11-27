@@ -97,7 +97,7 @@ def report_already_exists(conn, pending: list[str]) -> bool:
     found_any = False
     unsafe_already = False
     for name in pending:
-        sql = (MIGRATIONS / name).read_text()
+        sql = (MIGRATIONS / name).read_text(encoding="utf-8")
         hits: list[str] = []
 
         for tbl in {bare(t) for t in RE_TABLE.findall(sql)}:
@@ -144,7 +144,7 @@ def report_data_blockers(conn, pending: list[str]) -> bool:
     print("\nDATA BLOCKERS (pending UNIQUE index vs rows already present)")
     blocked = False
     for name in pending:
-        sql = (MIGRATIONS / name).read_text()
+        sql = (MIGRATIONS / name).read_text(encoding="utf-8")
         for idx, table, cols, pred in RE_UNIQUE_INDEX.findall(sql):
             cols_sql = ", ".join(c.strip() for c in cols.split(","))
             where = f" WHERE {pred.strip()}" if pred else ""

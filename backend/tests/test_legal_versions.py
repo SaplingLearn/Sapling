@@ -31,7 +31,7 @@ def test_frontend_and_backend_versions_match():
     # A missing file fails rather than skips: a moved module must move this
     # check with it, or the two copies could drift unseen.
     assert VERSIONS_TS.exists(), f"{VERSIONS_TS} is gone; point this test at its new home"
-    src = VERSIONS_TS.read_text()
+    src = VERSIONS_TS.read_text(encoding="utf-8")
     assert _ts_constant(src, "TERMS_VERSION") == legal.TERMS_VERSION, (
         f"TERMS_VERSION differs: {VERSIONS_TS.name} says "
         f"{_ts_constant(src, 'TERMS_VERSION')!r}, config.py says {legal.TERMS_VERSION!r}"

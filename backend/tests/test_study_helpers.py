@@ -328,7 +328,7 @@ def test_goal_bounds_match_the_migration():
     from pathlib import Path
 
     sql = (Path(__file__).resolve().parents[1] / "db" / "migrations"
-           / "20261108225631_user_settings_daily_goal_minutes.sql").read_text()
+           / "20261108225631_user_settings_daily_goal_minutes.sql").read_text(encoding="utf-8")
     assert f"daily_goal_minutes INT NOT NULL DEFAULT {goal.DEFAULT_GOAL_MIN}" in sql
     assert f"daily_goal_minutes BETWEEN {goal.MIN_GOAL_MIN} AND {goal.MAX_GOAL_MIN}" in sql
 

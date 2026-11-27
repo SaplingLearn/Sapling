@@ -215,7 +215,7 @@ class TestCommittedDemoSecrets:
 
         repo = Path(__file__).resolve().parents[2]
         committed = "\n".join(
-            (repo / p).read_text()
+            (repo / p).read_text(encoding="utf-8")
             for p in ("backend/.env.local.example", "frontend/.env.local.example",
                       "frontend/package.json", "frontend/.env.example")
         )
